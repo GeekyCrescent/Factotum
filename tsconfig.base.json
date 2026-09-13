@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    // ESNext.Disposable is what provides the global `Disposable` interface used by
+    // `Timers` in @factotum/core. The kernel owns every timer it hands to a module and
+    // disposes it on shutdown, so this type is load-bearing, not decoration.
+    "lib": ["ES2023", "ESNext.Disposable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // Source imports carry the `.ts` extension and the compiler rewrites them to `.js`
+    // on the way out. That is what lets `node src/main.ts` run the same file that
+    // `tsc -b` compiles, without a second module resolution story.
+    "rewriteRelativeImportExtensions": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

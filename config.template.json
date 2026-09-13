@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Template for ~/.factotum/<env>/config.json. `factotum init` writes the real one;",
+    "this is here to read. The real file is never versioned.",
+    "",
+    "listen: declare EXACTLY ONE of `address` or `interface`. Startup never guesses.",
+    "Prefer `address` — on macOS the utunN number Tailscale gets changes across reboots,",
+    "while the 100.x address does not. `interface` is for Linux, where tailscale0 is stable.",
+    "",
+    "extraOrigins is only for a reverse proxy in front. Everything else about the origin",
+    "policy is decided by shape: same host, same port. See docs/networking.md.",
+    "",
+    "modules: a module is OFF unless its block says enabled. Everything else in the block",
+    "belongs to that module and is validated by its own schema — a bad value disables that",
+    "module with a reason and leaves the rest running."
+  ],
+  "environment": "prod",
+  "listen": {
+    "address": "100.87.12.34",
+    "port": 7777,
+    "extraOrigins": []
+  },
+  "modules": {
+    "example": {
+      "enabled": true,
+      "greeting": "hello from factotum",
+      "tickSeconds": 30
+    }
+  }
+}

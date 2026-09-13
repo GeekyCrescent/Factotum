@@ -1,0 +1,13 @@
+packages:
+  - 'packages/*'
+  - 'modules'
+  - 'apps/*'
+
+allowBuilds:
+  esbuild: set this to true or false
+
+# esbuild ships a platform binary and needs its install script to unpack it. pnpm
+# blocks build scripts by default, which is a good default — approving exactly one
+# dependency by name keeps that protection for everything else in the tree.
+onlyBuiltDependencies:
+  - esbuild

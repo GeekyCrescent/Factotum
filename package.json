@@ -1,0 +1,22 @@
+{
+  "name": "factotum",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A modular remote client for Claude Code. Run your agents on your own machines, reach them from your phone.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/gen-version.mjs && tsc -b && pnpm --filter @factotum/web build",
+    "typecheck": "node scripts/gen-version.mjs && tsc -b --noEmit",
+    "clean": "tsc -b --clean && rm -rf packages/*/dist modules/dist apps/web/dist",
+    "test": "pnpm -r --no-bail run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3"
+  }
+}

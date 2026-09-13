@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/kernel"
+    },
+    {
+      "path": "modules"
+    },
+    {
+      "path": "packages/cli"
+    }
+  ]
+}

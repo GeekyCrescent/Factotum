@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Generated at build time from package.json (see packages/kernel/src/version.ts).
+packages/kernel/src/version.ts
+
+.DS_Store

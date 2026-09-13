@@ -1,0 +1,23 @@
+{
+  "name": "@factotum/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Types and schemas shared across the workspace. No I/O.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-lines=80 --test-coverage-branches=80 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  }
+}

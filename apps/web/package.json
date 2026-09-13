@@ -1,0 +1,22 @@
+{
+  "name": "@factotum/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The client shell. Navigation and module mounting, nothing else.",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "echo 'no unit tests: the shell is covered by the kernel integration tests' "
+  },
+  "dependencies": { "preact": "^10.25.4" },
+  "devDependencies": {
+    "@factotum/core": "workspace:*",
+    "@factotum/modules": "workspace:*",
+    "@preact/preset-vite": "^2.10.1",
+    "vite": "^6.0.7"
+  }
+}

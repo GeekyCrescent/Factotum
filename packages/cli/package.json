@@ -1,0 +1,23 @@
+{
+  "name": "@factotum/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The `factotum` binary. The composition root: this is what knows the modules.",
+  "license": "MIT",
+  "bin": { "factotum": "./dist/main.js" },
+  "exports": { ".": { "types": "./dist/main.d.ts", "default": "./dist/main.js" } },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-lines=60 --test-coverage-branches=60 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@factotum/core": "workspace:*",
+    "@factotum/kernel": "workspace:*",
+    "@factotum/modules": "workspace:*",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": { "@types/qrcode": "^1.5.5" }
+}

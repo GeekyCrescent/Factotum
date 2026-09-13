@@ -1,0 +1,25 @@
+{
+  "name": "@factotum/modules",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The bundled modules, and the barrel where you add your own.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-lines=80 --test-coverage-branches=80 '**/*.test.ts'"
+  },
+  "dependencies": {
+    "@factotum/core": "workspace:*",
+    "zod": "^4.1.12",
+    "preact": "^10.25.4"
+  }
+}
