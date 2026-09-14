@@ -48,16 +48,36 @@ test('setting sources are the user ones, so the owner’s skills are reachable',
   assert.equal(args[args.indexOf('--setting-sources') + 1], 'user')
 })
 
-test('NO flag that skips permissions is ever emitted', () => {
-  // Criterion 3, at the one place that could plausibly want one.
-  const all = [
-    argsFor({ kind: 'none' }, false),
-    argsFor({ kind: 'command', name: 'x' }, true),
-    argsFor({ kind: 'subagent', name: 'y' }, false),
-  ].flat()
-  assert.equal(
-    all.some((arg) => /bypassPermissions|dangerously-skip-permissions|allow-dangerously/i.test(arg)),
-    false,
+test('the argv is EXACTLY this, so nothing can be slipped in unnoticed', () => {
+  // Criterion 3 at the one place that could plausibly want a flag that skips
+  // permissions. Asserted as an exact list rather than by scanning for the forbidden
+  // names, for two reasons: the criterion is a grep over this directory and a grep
+  // with exceptions is a grep that gets argued about, and an exact list catches
+  // ANYTHING new — including whatever the next such flag ends up being called.
+  assert.deepEqual(argsFor({ kind: 'none' }, false), [
+    '-p',
+    'do the thing',
+    '--session-id',
+    'sid-1',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--setting-sources',
+    'user',
+    '--permission-mode',
+    'manual',
+    '--settings',
+    '/state/settings.json',
+  ])
+})
+
+test('and on a resume the only difference is how the session is named', () => {
+  const first = argsFor({ kind: 'none' }, false)
+  const later = argsFor({ kind: 'none' }, true)
+  assert.equal(later.length, first.length)
+  assert.deepEqual(
+    later.filter((_, i) => i !== later.indexOf('--resume')),
+    first.filter((_, i) => i !== first.indexOf('--session-id')),
   )
 })
 
