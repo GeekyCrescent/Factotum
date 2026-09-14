@@ -57,6 +57,9 @@ importers:
       '@factotum/modules':
         specifier: workspace:*
         version: link:../../modules
+      '@factotum/sessions':
+        specifier: workspace:*
+        version: link:../sessions
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -72,6 +75,15 @@ importers:
         version: 4.6.3
 
   packages/kernel:
+    dependencies:
+      '@factotum/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.3
+
+  packages/sessions:
     dependencies:
       '@factotum/core':
         specifier: workspace:*

@@ -5,4 +5,7 @@ dist/
 # Generated at build time from package.json (see packages/kernel/src/version.ts).
 packages/kernel/src/version.ts
 
+# A local code-intelligence index. Machine-specific and rebuilt on demand.
+.codegraph/
+
 .DS_Store

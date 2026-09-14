@@ -1,0 +1,36 @@
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - link "factotum" [ref=e4] [cursor=pointer]:
+      - /url: /
+    - link "Sessions" [ref=e5] [cursor=pointer]:
+      - /url: /m/sessions
+    - link "Example" [ref=e6] [cursor=pointer]:
+      - /url: /m/example
+  - main [ref=e7]:
+    - heading "Launch" [level=1] [ref=e131]
+    - paragraph [ref=e132]:
+      - generic [ref=e133]:
+        - text: Site
+        - combobox "Site" [ref=e134]:
+          - option "scratch" [selected]
+    - paragraph [ref=e135]:
+      - generic [ref=e136]:
+        - text: What
+        - combobox "What" [ref=e137]:
+          - option "Free prompt" [selected]
+    - paragraph [ref=e138]:
+      - textbox "What should it do?" [ref=e139]
+    - paragraph [ref=e140]:
+      - button "Launch" [disabled] [ref=e141]
+    - paragraph [ref=e143]:
+      - strong [ref=e144]: Deliberately broken
+      - text: "is disabled:"
+      - code [ref=e145]: invoke.kind "skill" is not one of none, command, subagent
+    - heading "Sessions" [level=1] [ref=e146]
+    - list [ref=e147]:
+      - listitem [ref=e148]:
+        - link "01a0a1a6 · scratch · free · running · 9/15/2026, 6:41:02 AM" [ref=e149] [cursor=pointer]:
+          - /url: "#01a0a1a6-dcd0-7a23-8868-4b49ee7ecd70"
+      - listitem [ref=e150]:
+        - link "01a0a1a5 · scratch · free · finished · 9/15/2026, 6:40:04 AM" [ref=e151] [cursor=pointer]:
+          - /url: "#01a0a1a5-fbff-77a5-a4ae-3cfddbb87ad2"

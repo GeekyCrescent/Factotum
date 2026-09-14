@@ -12,7 +12,16 @@
     "",
     "modules: a module is OFF unless its block says enabled. Everything else in the block",
     "belongs to that module and is validated by its own schema — a bad value disables that",
-    "module with a reason and leaves the rest running."
+    "module with a reason and leaves the rest running.",
+    "",
+    "sessions.sites: directories an agent is allowed to write in. ABSOLUTE, no '..', and",
+    "nothing is authorised by being inside one of them — a site is allowed because it is",
+    "written here. A write outside its site is denied; reading is never asked about; and",
+    "Bash is NOT checked against the boundary. Read docs/running-agents.md first.",
+    "",
+    "sessions.catalog: what you can launch. kind is one of none, command or subagent. An",
+    "entry naming something that cannot be invoked is disabled with its reason and the",
+    "rest of the catalog keeps working."
   ],
   "environment": "prod",
   "listen": {
@@ -25,6 +34,16 @@
       "enabled": true,
       "greeting": "hello from factotum",
       "tickSeconds": 30
+    },
+    "sessions": {
+      "enabled": false,
+      "sites": [
+        { "id": "notes", "path": "/Users/you/notes" }
+      ],
+      "catalog": [
+        { "id": "free", "label": "Free prompt", "invoke": { "kind": "none" } },
+        { "id": "review", "label": "Code review", "invoke": { "kind": "command", "name": "code-review" } }
+      ]
     }
   }
 }

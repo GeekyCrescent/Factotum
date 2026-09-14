@@ -158,3 +158,77 @@ const response = await module.routes!(ctx)['GET /items']!(request)
 
 `modules/example/server.test.ts` has a `fakeTimers` you can copy, and shows how to
 test a background task without waiting for it.
+
+---
+
+## Three lessons from the sessions module
+
+That module is the first one large enough to hurt, and it produced three rules that
+apply to whatever you write next.
+
+### 1. `routes()` may not throw anything but a `BootError`
+
+Step 8 of boot — where the kernel asks your module for its route table — has **no
+`try/catch` above it anywhere**. This was not reasoned about, it was executed: a plain
+`Error` from `routes()` takes the whole daemon down with a raw stack, while the same
+error from `start()` disables only your module and leaves a reason a person can read.
+
+So `routes()` composes functions and nothing else. Anything that can fail belongs in
+one of the two places that are protected:
+
+| Where | What belongs there | Why |
+|---|---|---|
+| `configSchema`, step 6 | Shape. Is the path absolute, is the number in range | It runs synchronously, so it **cannot touch the disk** |
+| `start()`, step 12 | Everything that does I/O, everything that can fail | It runs inside the registry's `try/catch`, after the bind is verified |
+
+And **your schema itself may not throw.** The kernel uses `safeParse`, which catches a
+validation *failure* but not an exception raised by the schema. No `.transform` that
+can throw, no async refinement.
+
+### 2. A capability you receive travels complete
+
+If your module needs something the contract does not hand it — a function, a client, a
+whole engine — take it as a **constructor argument** and have `packages/cli` pass it
+in. That is the composition root's job and it already imports everything.
+
+**Pass what it needs in one object.** Splitting it in two — half declared by the
+module, half added by the root — is not impossible to type, but the obvious way to do
+it does not compile: with `strict` the parameter is contravariant, and a literal with
+the extra property is an excess-property error. A complete setup has neither problem.
+
+Declare the shape in your own `types.ts`, importing only `@factotum/core`. You may
+**not** import the package that implements it: a module depends on core and only on
+core. TypeScript is structural, so the two descriptions meet at one assignment in
+`packages/cli`:
+
+```ts
+const engineFactory: CreateEngine = createEngine
+```
+
+That line is load-bearing. Write the members as **function-typed properties**, never
+method syntax:
+
+```ts
+// catches an argument that changes shape
+readonly launch: (input: LaunchInput) => Promise<LaunchResult>
+
+// does NOT — the parameter is bivariant even under strictFunctionTypes
+launch(input: LaunchInput): Promise<LaunchResult>
+```
+
+Know what it does not catch: a field **added** to a return type on the other side.
+Your module drops it silently. That is survivable — a feature nobody sees — and it
+stays survivable only because of the next rule.
+
+### 3. One zod schema per config fragment
+
+Exactly one, and it lives in your module.
+
+Two validators of the same data drift, and zod strips keys it does not know. A field
+one side knows about and the other does not **disappears before the consumer sees it**
+— not as an error, as a missing value. For the sessions module that data is the
+permission boundary, which makes the difference between "a feature nobody sees" and
+"a decision taken with incomplete data".
+
+If a component you inject needs the parsed config, hand it the value. Do not hand it
+a second schema.

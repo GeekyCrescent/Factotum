@@ -7,10 +7,10 @@ A *factotum* is a servant who does everything. The kernel here knows how to do
 nothing at all — what it can do arrives as **modules**, and you switch on the ones
 you want.
 
-> **Status: the kernel works, the client is a placeholder.** You can clone this, run
-> it, and reach a module from your phone. The included module does nothing useful on
-> purpose — it exists to be copied. Sessions (actually launching Claude Code agents)
-> are the next piece.
+> **Status: it launches agents.** You can clone this, run it, declare a directory you
+> are willing to let an agent write in, and launch Claude Code in it from your phone —
+> watching its messages arrive, replying, and cancelling. The client is deliberately
+> plain; its design is a separate piece of work.
 
 ---
 
@@ -60,6 +60,12 @@ That is defensible for one person on their own machines, and it is why:
 they can do everything you can. Read [docs/networking.md](docs/networking.md) before
 you run this anywhere unusual.
 
+> **And since it launches agents, that sentence got sharper.** Before, the worst
+> somebody else on your tailnet could do was read a `ping`. Now they can **launch
+> agents in your sites**, which is running code as you, on your machine. There is no
+> password in front of that. If your tailnet has anyone else on it, read
+> [docs/running-agents.md](docs/running-agents.md) first.
+
 ## Modules
 
 The kernel has no idea what a shopping list or a calendar is. Modules do, and each
@@ -84,6 +90,31 @@ Write your own by copying `modules/example/` and adding a line to `modules/local
 > module is exactly as risky as installing any npm dependency. The contract buys
 > design discipline, not containment.
 
+## Sessions
+
+The module that launches agents. You declare **sites** — directories you are willing
+to let an agent write in — and a **catalog** of things to launch:
+
+```json
+{
+  "modules": {
+    "sessions": {
+      "enabled": true,
+      "sites": [{ "id": "notes", "path": "/Users/you/notes" }],
+      "catalog": [{ "id": "free", "label": "Free prompt", "invoke": { "kind": "none" } }]
+    }
+  }
+}
+```
+
+A write whose destination lands inside the site is allowed; outside it is denied, with
+the reason in the log and on the screen. Reading is never asked about. Sessions
+persist to an append-only log, so you can close the tab and come back.
+
+**`Bash` is not checked against that boundary, and this is not containment.**
+[docs/running-agents.md](docs/running-agents.md) lists all ten limits, and it is worth
+reading before you declare your first site.
+
 ## Two environments
 
 `dev` and `prod` are separate configs, separate state and separate ports, and they
@@ -102,6 +133,8 @@ State lives in `~/.factotum/<env>/`. Nothing about one environment touches the o
 ```
 packages/core     types and schemas — the module contract. No I/O
 packages/kernel   config, bind, origin policy, registry, HTTP. Knows no module
+packages/sessions the session engine: subprocess, event log, locks, permissions.
+                  Knows nothing about HTTP, and no module depends on it
 packages/cli      the `factotum` binary — and the composition root
 modules/          the bundled modules, plus local.ts where yours go
 apps/web          the client shell: navigation and module mounting

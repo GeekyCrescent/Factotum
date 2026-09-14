@@ -17,6 +17,7 @@
     "@factotum/core": "workspace:*",
     "@factotum/kernel": "workspace:*",
     "@factotum/modules": "workspace:*",
+    "@factotum/sessions": "workspace:*",
     "qrcode": "^1.5.4"
   },
   "devDependencies": { "@types/qrcode": "^1.5.5" }

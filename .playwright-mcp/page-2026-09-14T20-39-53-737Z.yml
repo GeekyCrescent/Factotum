@@ -1,0 +1,29 @@
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - link "factotum" [ref=e4] [cursor=pointer]:
+      - /url: /
+    - link "Sessions" [ref=e5] [cursor=pointer]:
+      - /url: /m/sessions
+    - link "Example" [ref=e6] [cursor=pointer]:
+      - /url: /m/example
+  - main [ref=e7]:
+    - heading "Launch" [level=1] [ref=e8]
+    - paragraph [ref=e9]:
+      - generic [ref=e10]:
+        - text: Site
+        - combobox "Site" [ref=e11]:
+          - option "scratch" [selected]
+    - paragraph [ref=e12]:
+      - generic [ref=e13]:
+        - text: What
+        - combobox "What" [ref=e14]:
+          - option "Free prompt" [selected]
+    - paragraph [ref=e15]:
+      - textbox "What should it do?" [ref=e16]
+    - paragraph [ref=e17]:
+      - button "Launch" [disabled] [ref=e18]
+    - paragraph [ref=e20]:
+      - strong [ref=e21]: Deliberately broken
+      - text: "is disabled:"
+      - code [ref=e22]: invoke.kind "skill" is not one of none, command, subagent
+    - paragraph [ref=e23]: No sessions yet.
