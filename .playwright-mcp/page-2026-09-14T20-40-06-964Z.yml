@@ -1,0 +1,17 @@
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - link "factotum" [ref=e4] [cursor=pointer]:
+      - /url: /
+    - link "Sessions" [ref=e5] [cursor=pointer]:
+      - /url: /m/sessions
+    - link "Example" [ref=e6] [cursor=pointer]:
+      - /url: /m/example
+  - main [ref=e7]:
+    - paragraph [ref=e24]:
+      - button "← all sessions" [ref=e25]
+    - heading "01a0a1a5 · running" [level=1] [ref=e26]
+    - list [ref=e27]:
+      - listitem [ref=e28]:
+        - emphasis [ref=e30]: running
+    - paragraph [ref=e31]:
+      - button "Cancel" [ref=e32]

@@ -12,6 +12,10 @@
  *                child insufficient — and then sleeps itself.
  *   "noise"      valid stream-json mixed with lines that are not JSON at all.
  *   "boom"       writes to stderr and exits non-zero.
+ *   "traps"      catches SIGTERM and exits with 143 instead of dying from the signal.
+ *                That is what the REAL CLI looks like from outside, and the difference
+ *                matters: a finalizer that inferred cancellation from the exit status
+ *                would call this one "failed: exited with code 143".
  */
 import { spawn } from 'node:child_process'
 
@@ -50,7 +54,10 @@ if (prompt.startsWith('noise')) {
 
 emit(text)
 
-if (prompt.startsWith('linger')) {
+if (prompt.startsWith('traps')) {
+  process.on('SIGTERM', () => process.exit(143))
+  setTimeout(() => emit({ type: 'result', subtype: 'success', result: 'late' }), 60_000)
+} else if (prompt.startsWith('linger')) {
   // A grandchild that inherits stdout. This is the reason the runner kills the GROUP:
   // killing the child alone leaves this running with the pipe still open.
   spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'inherit' })

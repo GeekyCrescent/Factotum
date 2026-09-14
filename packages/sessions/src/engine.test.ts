@@ -448,6 +448,38 @@ function groupAlive(pid: number): boolean {
   }
 }
 
+test('a cancelled session reads CANCELLED even when the exit looks like an ordinary failure', async () => {
+  // The real CLI traps SIGTERM and exits 143, which from the outside is
+  // indistinguishable from a program that failed. Inferring cancellation from the exit
+  // status therefore gets it wrong — this was found by cancelling a real session from
+  // the browser and reading "failed — exited with code 143" on the screen.
+  const { engine, store } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'traps', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  // Wait until it is actually under way. Signalling a node process before it has run
+  // any of its script kills it by the default disposition, which is NOT the shape the
+  // real CLI has — it traps the signal and exits 143 like an ordinary failure.
+  const deadline = Date.now() + 15_000
+  while ((await engine.read(id, 0)).events.length < 2 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  await engine.cancel(id)
+
+  const meta = await store.readMeta(id)
+  assert.equal(meta?.state, 'cancelled')
+  assert.equal(meta?.reason, 'cancelled by the owner')
+
+  // And the LOG agrees, because the log is what the screen reads.
+  const page = await engine.read(id, 0)
+  assert.equal(page.state, 'cancelled')
+  const last = page.events.at(-1)
+  assert.equal(last?.kind === 'state' ? last.state : '', 'cancelled')
+  // Exactly one terminal state event: no "cancelled" followed by "failed".
+  assert.equal(page.events.filter((e) => e.kind === 'state' && e.state !== 'running').length, 1)
+})
+
 test('cancelling a session that already finished is a no-op', async () => {
   const { engine, store } = await world()
   const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })

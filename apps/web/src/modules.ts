@@ -10,6 +10,7 @@
 import type { ComponentType } from 'preact'
 import type { ModuleApi } from './api.ts'
 import { exampleClient } from '../../../modules/example/client.tsx'
+import { sessionsClient } from '../../../modules/sessions/client.tsx'
 
 export interface ModuleViewProps {
   readonly api: ModuleApi
@@ -20,7 +21,7 @@ export interface ModuleClient {
   readonly View: ComponentType<ModuleViewProps>
 }
 
-export const CLIENTS: readonly ModuleClient[] = [exampleClient]
+export const CLIENTS: readonly ModuleClient[] = [exampleClient, sessionsClient]
 
 export function clientFor(id: string): ModuleClient | undefined {
   return CLIENTS.find((client) => client.id === id)

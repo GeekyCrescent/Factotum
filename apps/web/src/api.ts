@@ -46,7 +46,28 @@ export function moduleApi(id: string): ModuleApi {
       headers: { 'content-type': 'application/json', ...init.headers },
     })
     const body = (await response.json()) as T & { error?: { message: string } }
-    if (!response.ok) throw new Error(body.error?.message ?? `${response.status}`)
+    if (!response.ok) {
+      // THE BODY TRAVELS WITH THE ERROR. It used to be thrown away, which was fine
+      // while every failure was just a message — and stops being fine the moment a
+      // server says "that site is busy, here is the session that has it" and the
+      // screen has to be able to offer to go there.
+      //
+      // PROPERTIES ON AN ORDINARY `Error`, NOT AN EXPORTED CLASS, and that is the
+      // decision rather than the shortcut. A class is a value at runtime, so reading
+      // it with `instanceof` would force a module's screen to import from `apps/web/`
+      // — and CLAUDE.md §1 says a module depends on `packages/core` and only on core.
+      // Read structurally instead, the way `modules/example/client.tsx` already
+      // declares the api it is handed.
+      //
+      // This does not grow `ModuleApi`: it still has `get` and `post`, and no module
+      // gains a new way to talk to the kernel. What changes is that an error stops
+      // discarding what the server sent to explain it — which is a fix for every
+      // module, not a favour to one.
+      throw Object.assign(new Error(body.error?.message ?? `${response.status}`), {
+        status: response.status,
+        body,
+      })
+    }
     return body
   }
 

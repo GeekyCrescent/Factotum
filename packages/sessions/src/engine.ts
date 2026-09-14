@@ -41,6 +41,8 @@ import type {
 export const PAGE_SIZE = 25
 
 const STOPPED = 'engine stopped'
+const CANCELLED_REASON = 'cancelled by the owner'
+const SHUTDOWN_REASON = 'the daemon was shutting down'
 
 /**
  * A seam, and the only one, for exactly the reason the kernel's `makeServer` is one:
@@ -55,6 +57,15 @@ interface Live {
   readonly siteId: string
   /** Resolves when the terminal state is on disk and the lock is back. */
   readonly settled: Promise<void>
+  /**
+   * Set before the group is signalled, and read by the finalizer.
+   *
+   * WITHOUT IT A CANCELLED SESSION READS "failed: exited with code 143", because that
+   * is what a process killed by SIGTERM looks like from the outside and the finalizer
+   * has no other way to tell the two apart. Inferring cancellation from the exit code
+   * would be guessing at something this process actually knows.
+   */
+  cancelled: boolean
 }
 
 export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): Promise<SessionEngine> {
@@ -180,12 +191,25 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       ...(deps.bin !== undefined ? { bin: deps.bin } : {}),
     })
 
-    const settled = run.done.then(async (exit) => {
-      const { state, reason } = stateOf(exit, reported)
-      await finalize(sessionId, site.id, state, reason)
+    const entry: Live = {
+      run,
+      siteId: site.id,
+      cancelled: false,
+      settled: Promise.resolve(),
+    }
+
+    // THE ONE PLACE A SESSION ENDS. Whether it was cancelled is read from the flag and
+    // never inferred from the exit code, which for a group killed with SIGTERM is an
+    // ordinary-looking 143.
+    Object.assign(entry, {
+      settled: run.done.then(async (exit) => {
+        const { state, reason } = entry.cancelled
+          ? ({ state: 'cancelled' as SessionState, reason: CANCELLED_REASON })
+          : stateOf(exit, reported)
+        await finalize(sessionId, site.id, state, reason)
+      }),
     })
 
-    const entry: Live = { run, siteId: site.id, settled }
     live.set(sessionId, entry)
     return entry
   }
@@ -330,11 +354,12 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       return
     }
 
-    await store.append(id, { kind: 'state', state: 'cancelled', reason: 'cancelled by the owner' })
-    finalized.delete(id)
+    entry.cancelled = true
     entry.run.kill()
-    await entry.run.done
-    await finalize(id, entry.siteId, 'cancelled', 'cancelled by the owner')
+    // WAITING IS NOT OPTIONAL. Criterion 18 says no `claude` descendant is alive
+    // afterwards, so returning as soon as the signal was sent would let the screen say
+    // "cancelled" while the agent was still writing to the repository — and would let
+    // the next launch take the lock while it did.
     await entry.settled.catch(() => undefined)
   }
 
@@ -460,16 +485,12 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // Already gone. That is the outcome that was wanted.
       }
       finalized.add(sessionId)
-      await store.append(sessionId, {
-        kind: 'state',
-        state: 'cancelled',
-        reason: 'the daemon was shutting down',
-      })
+      await store.append(sessionId, { kind: 'state', state: 'cancelled', reason: SHUTDOWN_REASON })
       await store.patchMeta(sessionId, (current) => ({
         ...current,
         state: 'cancelled',
         endedAt: setup.now().toISOString(),
-        reason: 'the daemon was shutting down',
+        reason: SHUTDOWN_REASON,
       }))
     }
     live.clear()
