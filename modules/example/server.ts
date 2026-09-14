@@ -76,11 +76,25 @@ export const exampleModule: FactotumModule<ExampleConfig> = {
     let ticks = state.ticks
     const since = state.ticks === 0 ? ctx.now().toISOString() : state.since
 
+    // THE WRITES ARE CHAINED, and that is not ceremony.
+    //
+    // Two of these overlapping is a lost update: the write carrying `ticks: 1` can
+    // land AFTER the one carrying `ticks: 2`, and the file then says 1 for ever. At
+    // thirty seconds apart that never happens; under a loaded test run it happens
+    // about one time in three. Chaining costs one variable and makes the last value
+    // written the last value on disk.
+    //
+    // A failed write must still not take the timer down, so the catch stays.
+    let writes: Promise<void> = Promise.resolve()
+
     const timer = ctx.timers.setInterval(() => {
       ticks += 1
-      void writeTicks(ctx.stateDir, { ticks, since }).catch((error: unknown) => {
-        ctx.log.warn(`could not persist ticks: ${String(error)}`)
-      })
+      const snapshot = { ticks, since }
+      writes = writes.then(() =>
+        writeTicks(ctx.stateDir, snapshot).catch((error: unknown) => {
+          ctx.log.warn(`could not persist ticks: ${String(error)}`)
+        }),
+      )
     }, ctx.config.tickSeconds * 1_000)
 
     ctx.log.info(`ticking every ${ctx.config.tickSeconds}s`)

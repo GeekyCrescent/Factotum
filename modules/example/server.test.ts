@@ -23,10 +23,10 @@ function fakeTimers(): { timers: Timers; tick: () => void } {
 }
 
 /**
- * The tick persists with a fire-and-forget write — correct for the module, since a
- * failed write must not take down a timer — so a test cannot assume it has landed by
- * the next microtask. Polling is honest about that; `setImmediate` only looked
- * deterministic until coverage instrumentation shifted the timing.
+ * The tick persists asynchronously and the writes are chained, so a test cannot assume
+ * anything has landed by the next microtask — not even that the file EXISTS yet.
+ * Polling is honest about that; `setImmediate` only looked deterministic until
+ * coverage instrumentation shifted the timing.
  */
 async function eventually<T>(read: () => Promise<T>, want: (value: T) => boolean): Promise<T> {
   // Ten seconds, not two. Polling costs nothing when it passes — the loop exits on
@@ -34,11 +34,20 @@ async function eventually<T>(read: () => Promise<T>, want: (value: T) => boolean
   // anyway. Two seconds flaked once under the load of the whole workspace testing in
   // parallel with coverage instrumentation, which is not a failure worth reporting.
   const deadline = Date.now() + 10_000
+  let last: unknown = 'nothing read yet'
   for (;;) {
-    const value = await read()
-    if (want(value)) return value
+    try {
+      const value = await read()
+      last = value
+      if (want(value)) return value
+    } catch (error) {
+      // A READ THAT THROWS IS "NOT YET", NOT A FAILURE. The first poll can easily
+      // arrive before the first write has created the file at all, and treating that
+      // as fatal turns a timing question into an ENOENT.
+      last = String(error)
+    }
     if (Date.now() > deadline) {
-      assert.fail(`condition never became true; last value ${JSON.stringify(value)}`)
+      assert.fail(`condition never became true; last value ${JSON.stringify(last)}`)
     }
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
