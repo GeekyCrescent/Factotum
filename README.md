@@ -25,8 +25,8 @@ you want.
 ## Five minutes
 
 ```sh
-git clone https://github.com/GeekyCrescent/factotum
-cd factotum
+git clone https://github.com/GeekyCrescent/Factotum
+cd Factotum
 pnpm install
 pnpm build
 
@@ -110,6 +110,12 @@ docs/adr/         why things are the way they are
 
 The kernel never depends on `modules/`; the CLI passes the list in. That is what keeps
 the kernel free of special cases, and it is checked by a test.
+
+## How this repo is meant to be worked on
+
+[`CLAUDE.md`](CLAUDE.md) is the rules that get broken by accident — the traps that have
+already bitten, why the boot order is what it is, and the four things holding up the
+no-credential decision. Read it before changing anything in `packages/kernel`.
 
 ## Working on it
 
