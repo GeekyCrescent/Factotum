@@ -6,7 +6,7 @@ import type { CatalogEntry } from './types.ts'
 const entry = (id: string, kind: string, name?: string): CatalogEntry => ({
   id,
   label: id,
-  invoke: { kind, name },
+  invoke: name === undefined ? { kind } : { kind, name },
 })
 
 test('the three kinds resolve', () => {

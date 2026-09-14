@@ -31,7 +31,7 @@ const timers: Timers = {
 }
 
 const CATALOG: readonly CatalogEntry[] = [
-  { id: 'free', label: 'Free prompt', invoke: { kind: 'none', name: undefined } },
+  { id: 'free', label: 'Free prompt', invoke: { kind: 'none' } },
   { id: 'review', label: 'Review', invoke: { kind: 'command', name: 'code-review' } },
   { id: 'broken', label: 'Broken', invoke: { kind: 'skill', name: 'x' } },
 ]

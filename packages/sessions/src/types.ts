@@ -40,7 +40,18 @@ export interface SiteConfig {
  */
 export interface InvokeConfig {
   readonly kind: string
-  readonly name: string | undefined
+  /**
+   * `?:` AND `| undefined` BOTH, and neither is redundant under
+   * `exactOptionalPropertyTypes`.
+   *
+   * This type has to be exactly what the module's zod schema infers, because that
+   * schema's output IS this value: `z.string().optional()` produces a property that
+   * may be ABSENT (so `?:`) or present and explicitly undefined (so `| undefined`).
+   * Writing either half alone makes the parsed config unassignable to the engine's
+   * setup — which is the compiler correctly noticing that the two are not the same
+   * type, and is the whole reason the link in `main.ts` is worth having.
+   */
+  readonly name?: string | undefined
 }
 
 export interface CatalogEntry {
