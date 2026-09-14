@@ -1,0 +1,24 @@
+{
+  "name": "@factotum/sessions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The session engine: subprocess, event log, locks, permission gate. Knows nothing about HTTP.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-exclude=\"test/**\" --test-coverage-lines=80 --test-coverage-branches=80 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@factotum/core": "workspace:*",
+    "zod": "^4.1.12"
+  }
+}

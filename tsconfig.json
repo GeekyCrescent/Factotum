@@ -8,6 +8,9 @@
       "path": "packages/kernel"
     },
     {
+      "path": "packages/sessions"
+    },
+    {
       "path": "modules"
     },
     {
