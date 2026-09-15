@@ -83,7 +83,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
       res,
       403,
       'unknown-origin',
-      `origin ${origin} is not this host: ${describePolicy(deps.origin).join('; ')}`,
+      `origin ${origin} is not an accepted origin: ${describePolicy(deps.origin).join('; ')}`,
     )
   }
 
