@@ -16,6 +16,19 @@ import { fileURLToPath } from 'node:url'
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..')
 const readPublic = (name: string) => readFile(join(WEB, 'public', name))
 
+/**
+ * `.webmanifest`, NOT `.json`, and the extension is the whole point.
+ *
+ * The daemon's static server picks the content type from the extension
+ * (`kernel/src/http/static.ts`), so `manifest.json` goes out as `application/json`.
+ * MEASURED on Android: with that type Chrome parses the manifest, registers the
+ * service worker, reports a secure context — and then offers a plain HOME SCREEN
+ * SHORTCUT instead of installing, which opens in a tab with the address bar. The
+ * throwaway A7 probe served `application/manifest+json` and was offered as an app.
+ * Same manifest, same icons, same worker: the type was the difference.
+ */
+const MANIFEST = 'manifest.webmanifest'
+
 interface Manifest {
   readonly icons: readonly { src: string; sizes: string; type: string; purpose?: string }[]
   readonly display: string
@@ -23,7 +36,7 @@ interface Manifest {
 }
 
 async function manifest(): Promise<Manifest> {
-  return JSON.parse(await readPublic('manifest.json').then((b) => b.toString('utf8'))) as Manifest
+  return JSON.parse(await readPublic(MANIFEST).then((b) => b.toString('utf8'))) as Manifest
 }
 
 test('the manifest declares both icons — with none, Chrome never offers to install', async () => {
@@ -63,6 +76,17 @@ test('the service worker has NO fetch handler, because the phone does not requir
   assert.doesNotMatch(sw, /addEventListener\(\s*['"]fetch['"]/)
   assert.match(sw, /addEventListener\(\s*['"]install['"]/)
   assert.match(sw, /addEventListener\(\s*['"]activate['"]/)
+})
+
+test('index.html links THE FILE THAT EXISTS, with the extension that types it', async () => {
+  // Two halves of one failure. The href must resolve — a 404 manifest is no manifest —
+  // and it must end in `.webmanifest`, because that extension is what makes the daemon
+  // send `application/manifest+json`. With `application/json` Android downgrades the
+  // install to a home-screen shortcut, silently: no console error, no 404, no warning.
+  const html = await readFile(join(WEB, 'index.html'), 'utf8')
+  const href = /<link rel="manifest" href="([^"]+)"/.exec(html)?.[1]
+  assert.equal(href, `/${MANIFEST}`)
+  await readPublic(MANIFEST)
 })
 
 test('registration is guarded by isSecureContext, so plain HTTP does not throw', async () => {
