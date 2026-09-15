@@ -5,51 +5,65 @@
  * asks it which modules ended up disabled, because that state exists only in the
  * live process: persisting it to a file so doctor could read it would create a
  * second source of truth that goes stale the moment the daemon restarts.
+ *
+ * DOCTOR NEVER THROWS. Every external thing it touches — the config file, the
+ * `tailscale` binary, the network interfaces, the daemon itself — is reported on
+ * rather than relied upon. A diagnostic tool that crashes on the broken machine is
+ * the one place a crash is least affordable.
  */
 
-import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
 import { version as nodeVersion } from 'node:process'
 import {
+  BootError,
   describePolicy,
   localUrl,
   policyFor,
+  resolveListen,
   statePaths,
+  type Interfaces,
   type StatePaths,
 } from '@factotum/kernel'
 import { ENVIRONMENTS, rootConfigSchema, type Environment } from '@factotum/core'
-
-const run = promisify(execFile)
+import { execRunner, readServeStatus, type Runner } from './tailscale.ts'
 
 export interface DoctorDeps {
   readonly home?: string
   readonly out?: (line: string) => void
   readonly fetch?: typeof globalThis.fetch
+  /** Injected so tests do not require `tailscale` or `claude` to be installed. */
+  readonly run?: Runner
+  /** Injected so the `listen.interface` case does not depend on the test machine. */
+  readonly interfaces?: Interfaces
 }
 
 export async function doctor(deps: DoctorDeps = {}): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line))
   const doFetch = deps.fetch ?? globalThis.fetch
+  const run = deps.run ?? execRunner
 
   out(`node          ${nodeVersion}`)
-  out(`claude CLI    ${await claudeStatus()}`)
+  out(`claude CLI    ${await claudeStatus(run)}`)
   out('')
 
   for (const env of ENVIRONMENTS) {
-    await reportEnvironment(env, statePaths(env, deps.home), out, doFetch)
+    await reportEnvironment(env, statePaths(env, deps.home), out, doFetch, run, deps.interfaces)
   }
 
   return 0
 }
 
-async function claudeStatus(): Promise<string> {
-  try {
-    const { stdout } = await run('claude', ['--version'], { timeout: 5_000 })
-    return `${stdout.trim()}  (on PATH)`
-  } catch {
-    return 'NOT FOUND on PATH — factotum can configure itself without it, but it is the engine'
-  }
+/**
+ * Uses the injected runner like everything else here. It used to hold its own
+ * module-level `promisify(execFile)`, which returns `{ stdout, stderr }` and is not
+ * the same shape — so leaving it would have meant `doctor.test.ts` still required
+ * `claude` on the PATH, and the coverage criterion would not have been reachable
+ * deterministically on any machine.
+ */
+async function claudeStatus(run: Runner): Promise<string> {
+  const result = await run('claude', ['--version'])
+  if (result.code === 0) return `${result.stdout.trim()}  (on PATH)`
+  return 'NOT FOUND on PATH — factotum can configure itself without it, but it is the engine'
 }
 
 async function reportEnvironment(
@@ -57,6 +71,8 @@ async function reportEnvironment(
   paths: StatePaths,
   out: (line: string) => void,
   doFetch: typeof globalThis.fetch,
+  run: Runner,
+  interfaces: Interfaces | undefined,
 ): Promise<void> {
   out(`[${env}]`)
 
@@ -69,37 +85,128 @@ async function reportEnvironment(
     return
   }
 
-  const parsed = rootConfigSchema.safeParse(JSON.parse(raw))
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch (error) {
+    out(`  config at ${paths.config} is not valid JSON: ${(error as Error).message}`)
+    out('')
+    return
+  }
+
+  const parsed = rootConfigSchema.safeParse(json)
   if (!parsed.success) {
-    out(`  config at ${paths.config} does not validate: ${parsed.error.issues[0]?.message ?? ''}`)
+    // THE PATH, not just the message. This spec invalidates every config written
+    // before it, so the common failure is a missing `publicOrigin` — and zod's
+    // message for that is "Invalid input", which names nothing. Measured: the issue
+    // arrives as { path: ['publicOrigin'], … }.
+    const issue = parsed.error.issues[0]
+    const where = issue?.path.join('.') ?? ''
+    const at = where === '' ? '' : ` at \`${where}\``
+    out(`  config at ${paths.config} does not validate${at}: ${issue?.message ?? ''}`)
     out('')
     return
   }
 
   const { listen, modules, publicOrigin } = parsed.data
-  const address = listen.address ?? `(from interface ${listen.interface ?? '?'})`
   out(`  config      ${paths.config}`)
-  out(`  listen      ${address}:${listen.port}`)
+  out(`  public      ${publicOrigin}`)
 
   const enabled = Object.entries(modules).filter(([, entry]) => entry.enabled).map(([id]) => id)
   out(`  enabled     ${enabled.length === 0 ? '(none)' : enabled.join(', ')}`)
 
-  out(`  public      ${publicOrigin}`)
-
-  if (listen.address !== undefined) {
-    // `policyFor`, never a local copy of the isLoopback rule: doctor printing a
-    // rescue route that `boot` leaves undefined is doctor lying about the daemon.
-    const policy = policyFor({
-      publicOrigin,
-      address: listen.address,
-      port: listen.port,
-      extraOrigins: listen.extraOrigins,
-    })
-    out('  origins     ' + describePolicy(policy).join('\n              '))
-    await reportLive(localUrl(listen.address, listen.port), out, doFetch)
+  // Resolve the bind the same way `boot` does, including the `listen.interface`
+  // case, which doctor used to skip entirely. `resolveListen` THROWS a BootError —
+  // for an address no interface has, as well as for an unknown interface — and that
+  // is exactly the situation where a diagnosis is most wanted, so it is caught.
+  let resolved: { address: string; port: number } | undefined
+  try {
+    const r = resolveListen(listen, interfaces)
+    resolved = { address: r.address, port: r.port }
+    out(`  listen      ${r.address}:${r.port}${r.from.kind === 'interface' ? ` (via ${r.from.name})` : ''}`)
+  } catch (error) {
+    const declared = listen.address ?? `interface ${listen.interface ?? '?'}`
+    out(`  listen      ${declared}:${listen.port} — CANNOT RESOLVE`)
+    out(`              ${error instanceof BootError ? error.message : String(error)}`)
   }
 
+  if (resolved === undefined) {
+    // Without a resolved bind there is no honest rescue route to print, and nothing
+    // can be listening on an address no interface holds, so probing would only buy
+    // a timeout. The public origin is still worth showing.
+    out(`  origins     ${publicOrigin} (publicOrigin)`)
+    out('')
+    return
+  }
+
+  const policy = policyFor({
+    publicOrigin,
+    address: resolved.address,
+    port: resolved.port,
+    extraOrigins: listen.extraOrigins,
+  })
+  out('  origins     ' + describePolicy(policy).join('\n              '))
+
+  await reportServe(env, publicOrigin, localUrl(resolved.address, resolved.port), out, run)
+  await reportLive(localUrl(resolved.address, resolved.port), out, doFetch)
+
   out('')
+}
+
+/**
+ * Whether `tailscale serve` is putting TLS in front of THIS daemon.
+ *
+ * NOT CHECKED IN `dev`, and that is a decision rather than an omission. A machine has
+ * one MagicDNS name and `serve` puts 443 in front of one backend, so the secure
+ * context belongs to prod — dev's `publicOrigin` is its own loopback origin. Since
+ * this function walks both environments, checking dev would report "serve is not
+ * serving what the config says" on every run, for ever. A warning that is always
+ * wrong is a warning that gets ignored, which is the failure this is avoiding.
+ */
+async function reportServe(
+  env: Environment,
+  publicOrigin: string,
+  bindOrigin: string,
+  out: (line: string) => void,
+  run: Runner,
+): Promise<void> {
+  if (env === 'dev') {
+    out('  serve       not checked in dev — the secure context is prod\'s')
+    return
+  }
+
+  const status = await readServeStatus(run)
+
+  if (status.kind === 'unknown') {
+    out('  serve       UNKNOWN — the `tailscale` command did not answer')
+    out('              factotum still runs; the client is reachable at the bind above')
+    return
+  }
+  if (status.kind === 'not-serving') {
+    out('  serve       NOT SERVING — nothing is terminating TLS in front of factotum')
+    // The command must point at the BIND, not at the public origin. Composing it by
+    // rewriting publicOrigin's scheme produced `http://127.0.0.1:<hostname>`, which
+    // compiled, passed the test that only looked for "NOT SERVING", and would have
+    // failed the moment anyone pasted it. Found by running doctor, not by reading it.
+    out(`              tailscale serve --bg --https=443 ${bindOrigin}`)
+    return
+  }
+
+  if (status.servedOrigin === publicOrigin) {
+    out(`  serve       serving ${status.servedOrigin} -> ${status.target ?? '?'}`)
+  } else {
+    // The mismatch worth naming: both strings are printed, because this is the
+    // family of failure where they look the same and are not.
+    out(`  serve       MISMATCH — serving ${status.servedOrigin ?? '(nothing)'}`)
+    out(`              but publicOrigin is ${publicOrigin}`)
+  }
+
+  out(`  funnel      ${status.funnel ? 'ON — THIS DAEMON IS EXPOSED TO THE INTERNET' : 'off'}`)
+  if (status.funnel) {
+    out('              the origin policy stops another browser, not `curl`.')
+    out('              turn it off with: tailscale funnel --https=443 off')
+    out('              NOTE: that also removes the whole serve config, so re-add serve after.')
+  }
 }
 
 async function reportLive(

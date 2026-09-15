@@ -1,6 +1,20 @@
 # 2. No credential; a private bind plus an origin check
 
-**Status:** accepted
+**Status:** accepted — **partly superseded by [ADR-0007](0007-loopback-behind-tls.md)**
+
+> **What is superseded: the bind, and the shape of the origin rule.** The daemon now
+> listens on loopback behind `tailscale serve`, and the origin check compares two
+> declared origins rather than deciding by shape. ADR-0007 has the reasoning and the
+> replacement; it is not repeated here.
+>
+> **What still stands, and is the reason this decision was made:** no credential, and
+> reachability as the authorisation. The four properties under *What makes it
+> defensible* still hold — the address is declared, ranges are validated, every
+> spelling of a wide bind is refused, and the socket is asked what it actually bound
+> to. The loopback bind makes them stricter, not obsolete.
+>
+> This document is **not** rewritten. It records what was decided in its own time, and
+> *When to revisit* below named the trigger correctly before it happened.
 
 ## Context
 

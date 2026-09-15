@@ -79,7 +79,7 @@ binary request/response bodies. Both are written down in the spec's design §9.
 
 ### Zod strips unknown keys, and it bites twice
 
-`moduleEntrySchema` carries `.catchall(z.unknown())` (`packages/core/src/config.ts:57`).
+`moduleEntrySchema` carries `.catchall(z.unknown())` (`packages/core/src/config.ts:65`).
 **Do not remove it.** The root schema knows nothing about any module's fields, so
 without it, validating the config would empty every module's fragment before its owner
 saw it. In the predecessor project the same trap silently deleted fields from disk
@@ -102,7 +102,7 @@ cites approvingly.
 `ModuleContext<C>` is an *argument* of `routes` and `start`, so
 `FactotumModule<Specific>` is not assignable to `FactotumModule<unknown>` and a
 heterogeneous list does not type. TypeScript has no existential types; the workaround
-is `AnyModule` (`packages/core/src/module.ts:137`) and it uses `any` on purpose. The
+is `AnyModule` (`packages/core/src/module.ts:157`) and it uses `any` on purpose. The
 safety is not lost, only moved: `composeModules` parses each fragment with the only
 schema that knows its shape.
 
@@ -129,7 +129,7 @@ and both were moved after an audit:
   already written to disk and called its provider before anyone knew where the process
   was listening.
 - **READY is step 13.** Between `listen` and READY the API answers `503`
-  (`boot.ts:103`). Without it the server would dispatch to a module whose `start` had
+  (`boot.ts:112`). Without it the server would dispatch to a module whose `start` had
   not run, and would have been serving on whatever the socket actually bound to while
   step 11 was still deciding.
 
@@ -143,29 +143,55 @@ during a restart must get HTML, not a bare 503, and a supervisor needs to tell
 
 There is no credential. That decision only holds because of these, and each has a test:
 
-1. **The address is declared in the config, never guessed at startup.** Auto-detection
-   lives in `factotum init` and nowhere else.
+1. **The address is declared in the config, never guessed — at startup or anywhere
+   else.** `init` now writes `127.0.0.1` unconditionally, so the auto-detection that
+   used to live in `packages/cli/src/detect.ts` is gone with the file: the bind is a
+   constant and the thing that varies is the public name, which comes from Tailscale.
 2. **Every spelling of a wide bind is refused, with no flag.** See above.
 3. **After `listen`, the socket is asked what it actually bound to**, and the process
    closes if that disagrees. Steps 4 and 5 validate the intention; step 11 is the only
    thing that checks the outcome.
-4. **`Origin` is checked by shape: same host, same port**
-   (`packages/kernel/src/net/origin.ts:58`).
+4. **`Origin` is compared against two exact declared origins** — `publicOrigin` from
+   the config, and the bind itself when it is loopback
+   (`packages/kernel/src/net/origin.ts`, `originAllowed`).
 
 ### On the origin policy specifically
 
-**This was got wrong three times before it was got right.** If you touch it, read the
-tests first — they encode the failures:
+**This was got wrong three times before it was got right, and then the model changed
+underneath it.** The daemon now binds to loopback behind `tailscale serve`, so there is
+exactly one name a client can have loaded from. See
+[`docs/adr/0007-loopback-behind-tls.md`](docs/adr/0007-loopback-behind-tls.md) for what
+was deleted and why — it is not repeated here.
 
-- A list derived from `listen` gives **403 on MagicDNS**, which is a normal way in.
-- Accepting any private-range address lets in `192.168.1.1` (another machine) and
-  `localhost:3000` (another service). **Requiring the port is what does the work**, and
-  it is also what currently blocks Tailscale Funnel.
-- `endsWith` instead of exact hostname equality admits
-  `http://127.0.0.1.attacker.com`, a name the attacker owns.
-- `localhost` is accepted **only when the bind is loopback**. The predecessor accepts it
-  unconditionally, but it opens a second listener there; this does not, so the policy
-  follows the bind rather than copying the precedent.
+**The lesson that survives, and it is about tests rather than about origins:**
+
+> **`net/origin.test.ts` is no longer a regression suite, and its header says so.**
+> While the policy inferred permission from an origin's shape, each negative case was
+> refused by a *different*
+> rule, so breaking one rule broke one test. With exact equality they are all refused
+> by string inequality: they pass or fail together, and **no realistic bug flips
+> exactly one**. They are kept as a record of what the file was built against.
+
+So if you change that file, two things are load-bearing and neither is "the tests pass":
+
+- **The test named `the three non-canonical forms of the right host are refused`.** It
+  is the only one that tells a raw `===` from `new URL(x).origin`, which would accept a
+  path, embedded credentials and any casing. Measured: `tailscale serve` passes
+  `Origin` through **verbatim**, so those shapes really do arrive.
+- **A grep, not a test.** `endsWith`, `startsWith` and `includes` are banned in
+  `origin.ts` except on the `extra` **array**. A substring test is how this was got
+  wrong before, and a passing suite will not tell you.
+
+**Both sides of an exact comparison have to be canonical, and this is where the time
+goes.** `tailscale status --json` returns `Self.DNSName` **with a trailing dot** and a
+browser sends it without; `new URL('https://x.ts.net.').origin` is byte-identical to
+its input, so the obvious guard passes it. Same family: the serve-status JSON key
+carries `:443` explicitly while a canonical origin omits it. **Two strings that look
+identical is the characteristic failure of this design.**
+
+**The `isLoopback` rule lives in exactly one place** (`net/policy.ts`), because `boot`
+and `doctor` both need it and two copies is how `doctor` starts lying about what the
+daemon accepts.
 
 `Host` is **not** checked, so DNS rebinding is not covered. That is declared in
 `docs/networking.md`, not forgotten.
