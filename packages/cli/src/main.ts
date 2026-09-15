@@ -19,12 +19,15 @@ import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
 import { init, terminalAsk } from './init.ts'
+import { install, uninstall } from './install.ts'
 
 const USAGE = `factotum ${VERSION}
 
-  factotum init [--env dev|prod]    find an address, write a config, show a QR
-  factotum start [--env dev|prod]   run the daemon in the foreground
-  factotum doctor                   report what is set up, without starting anything
+  factotum init [--env dev|prod]       write a config, show a QR
+  factotum start [--env dev|prod]      run the daemon in the foreground
+  factotum doctor                      report what is set up, without starting anything
+  factotum install [--env dev|prod]    keep it running across logins (launchd)
+  factotum uninstall [--env dev|prod]  stop doing that
 
 Environment resolves as --env, then FACTOTUM_ENV, then prod.
 `
@@ -60,6 +63,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       return await doctor()
     case 'start':
       return await start(env)
+    case 'install':
+      return await install({ env })
+    case 'uninstall':
+      return await uninstall({ env })
     default:
       console.error(`unknown command "${command}"\n`)
       process.stdout.write(USAGE)
