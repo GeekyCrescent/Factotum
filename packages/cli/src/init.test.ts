@@ -176,6 +176,57 @@ test('prod tells you to run `tailscale serve`, because init does not do it', asy
   assert.match(text(), /tailscale serve --bg --https=443 http:\/\/127\.0\.0\.1:7777/)
 })
 
+/** Tailscale up, with `serve` already answering for the given handlers. */
+function withServe(web: Record<string, string>): Runner {
+  const serveJson = JSON.stringify({
+    Web: Object.fromEntries(
+      Object.entries(web).map(([key, proxy]) => [key, { Handlers: { '/': { Proxy: proxy } } }]),
+    ),
+  })
+  return async (cmd, args) => {
+    if (cmd === 'tailscale' && args[0] === 'serve') {
+      return { stdout: serveJson, code: 0, signal: null, timedOut: false }
+    }
+    return withTailscale(cmd, args)
+  }
+}
+
+test('443 held by ANOTHER backend: init picks 8443 instead of telling you to replace it', async () => {
+  // The incident this guards: 443 on the machine belonged to another service, and
+  // the printed `serve --https=443` would have taken it away.
+  const h = await home()
+  const { out, text } = collector()
+  const run = withServe({ 'mimac.tail1234.ts.net:443': 'http://127.0.0.1:3000' })
+
+  assert.equal(await init({ env: 'prod', home: h, run, out }), 0)
+  assert.equal((await readConfig(h)).publicOrigin, 'https://mimac.tail1234.ts.net:8443')
+  assert.match(text(), /tailscale serve --bg --https=8443 http:\/\/127\.0\.0\.1:7777/)
+  assert.doesNotMatch(text(), /--https=443/)
+  assert.match(text(), /already serves http:\/\/127\.0\.0\.1:3000/)
+})
+
+test('443 already pointing at THIS bind is kept — re-running init changes nothing', async () => {
+  const h = await home()
+  const { out } = collector()
+  const run = withServe({ 'mimac.tail1234.ts.net:443': 'http://127.0.0.1:7777' })
+
+  assert.equal(await init({ env: 'prod', home: h, run, out }), 0)
+  assert.equal((await readConfig(h)).publicOrigin, 'https://mimac.tail1234.ts.net')
+})
+
+test('443 AND 8443 both held by others: refuses, and writes NOTHING', async () => {
+  const h = await home()
+  const { out, text } = collector()
+  const run = withServe({
+    'mimac.tail1234.ts.net:443': 'http://127.0.0.1:3000',
+    'mimac.tail1234.ts.net:8443': 'http://127.0.0.1:4000',
+  })
+
+  assert.equal(await init({ env: 'prod', home: h, run, out }), 1)
+  await assert.rejects(readFile(configPath(h), 'utf8'))
+  assert.doesNotMatch(text(), /tailscale serve --bg/)
+})
+
 test('dev prints NO QR, because a loopback QR opens nothing on a phone', async () => {
   const h = await home()
   const { out, text } = collector()

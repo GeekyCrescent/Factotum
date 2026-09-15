@@ -137,6 +137,66 @@ test('serving something ELSE prints both strings, because they look alike', asyn
   assert.match(output, /MISMATCH/)
   assert.match(output, /serving https:\/\/otra\.tail9999\.ts\.net/)
   assert.match(output, /but publicOrigin is https:\/\/mimac\.tail1234\.ts\.net/)
+  // Nothing holds publicOrigin's port, so the command is safe to print.
+  assert.match(output, /tailscale serve --bg --https=443 http:\/\/127\.0\.0\.1:7777$/m)
+})
+
+// ---------------------------------------------------------------------------
+// Sharing serve with another service — the machine this spec was built on
+// ---------------------------------------------------------------------------
+
+const PUBLIC_8443 = `${PUBLIC}:8443`
+const prodOn8443 = {
+  ...goodProd,
+  listen: { address: '127.0.0.1', port: 7877 },
+  publicOrigin: PUBLIC_8443,
+}
+
+test('another service on 443 and factotum on 8443: serving, not MISMATCH', async () => {
+  const shared = JSON.stringify({
+    Web: {
+      'mimac.tail1234.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7777' } } },
+      'mimac.tail1234.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7877' } } },
+    },
+  })
+  const home = await withConfig('prod', prodOn8443)
+  const output = await report(home, { run: runner(ok(shared)) })
+
+  assert.match(output, /serve {7}serving https:\/\/mimac\.tail1234\.ts\.net:8443 -> http:\/\/127\.0\.0\.1:7877/)
+  assert.doesNotMatch(output, /MISMATCH/)
+})
+
+test('serve off with publicOrigin on 8443 suggests --https=8443, not 443', async () => {
+  const home = await withConfig('prod', prodOn8443)
+  const output = await report(home, { run: runner(ok('{}')) })
+
+  assert.match(output, /tailscale serve --bg --https=8443 http:\/\/127\.0\.0\.1:7877$/m)
+  assert.doesNotMatch(output, /--https=443/)
+})
+
+test('publicOrigin served by ANOTHER backend: TAKEN, and no command that would replace it', async () => {
+  // The incident: 443 on this name belonged to another service, and pasting
+  // `serve --https=443` pointed it at factotum instead — cutting that service off.
+  const home = await withConfig('prod', { ...goodProd, listen: { address: '127.0.0.1', port: 7877 } })
+  const output = await report(home, { run: runner(ok(SERVING)) })
+
+  assert.match(output, /serve {7}TAKEN — https:\/\/mimac\.tail1234\.ts\.net -> http:\/\/127\.0\.0\.1:7777/)
+  assert.match(output, /REPLACE/)
+  assert.match(output, /:8443/)
+  assert.doesNotMatch(output, /tailscale serve --bg --https=443/)
+})
+
+test('funnel on 8443: the off command names 8443, and warns it wipes EVERY handler', async () => {
+  const funnelled = JSON.stringify({
+    Web: { 'mimac.tail1234.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7877' } } } },
+    AllowFunnel: { 'mimac.tail1234.ts.net:8443': true },
+  })
+  const home = await withConfig('prod', prodOn8443)
+  const output = await report(home, { run: runner(ok(funnelled)) })
+
+  assert.match(output, /tailscale funnel --https=8443 off/)
+  assert.match(output, /every serve handler on this machine/)
+  assert.match(output, /tailscale serve status --json/)
 })
 
 test('no tailscale binary is UNKNOWN, not "you forgot to set up serve"', async () => {

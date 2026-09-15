@@ -108,46 +108,93 @@ function originFromKey(key: string): string | undefined {
   return port === '443' ? `https://${host}` : `https://${host}:${port}`
 }
 
-export async function readServeStatus(run: Runner): Promise<ServeStatus> {
+export interface ServeHandler {
+  readonly servedOrigin?: string
+  readonly target?: string
+  readonly funnel: boolean
+}
+
+export interface ServeHandlers {
+  readonly kind: ServeStatus['kind']
+  readonly handlers: readonly ServeHandler[]
+}
+
+/**
+ * EVERY handler `serve` holds on this machine.
+ *
+ * A machine is not factotum's alone. The one this spec was built on had another
+ * service on 443 and factotum on 8443, and reading only the first entry made `doctor`
+ * look at the other service. Worse, it is exactly the situation where a printed
+ * `serve --https=443` REPLACES someone else's handler — so `init` needs the full list
+ * to avoid suggesting it.
+ */
+export async function readServeHandlers(run: Runner): Promise<ServeHandlers> {
   const result = await run('tailscale', ['serve', 'status', '--json'])
 
   // ENOENT is a string code: Tailscale is not installed, which is not the same as
   // being installed and not serving. Saying "unknown" is the honest answer, and
   // `doctor` reports it rather than treating it as a misconfiguration.
   if (typeof result.code === 'string' || result.timedOut) {
-    return { kind: 'unknown', funnel: false }
+    return { kind: 'unknown', handlers: [] }
   }
   if (result.code !== 0) {
-    return { kind: 'not-serving', funnel: false }
+    return { kind: 'not-serving', handlers: [] }
   }
 
   let parsed: ServeStatusJson
   try {
     parsed = JSON.parse(result.stdout) as ServeStatusJson
   } catch {
-    return { kind: 'unknown', funnel: false }
+    return { kind: 'unknown', handlers: [] }
   }
 
   // An empty object is what `tailscale serve status --json` prints with nothing
   // configured. Measured, after `tailscale funnel --https=443 off` wiped the config.
-  const entries = Object.entries(parsed.Web ?? {})
-  const first = entries[0]
-  if (first === undefined) return { kind: 'not-serving', funnel: false }
+  const handlers = Object.entries(parsed.Web ?? {}).map(([key, value]): ServeHandler => {
+    const servedOrigin = originFromKey(key)
+    const target = value.Handlers?.['/']?.Proxy
+    return {
+      // Funnel is read FOR THIS KEY, not as "does AllowFunnel exist": a node can have
+      // Funnel on 8443 and not on 443, and a warning that fires for the wrong port is
+      // a warning that gets ignored.
+      funnel: parsed.AllowFunnel?.[key] === true,
+      ...(target !== undefined ? { target } : {}),
+      ...(servedOrigin !== undefined ? { servedOrigin } : {}),
+    }
+  })
 
-  const [key, value] = first
-  const servedOrigin = originFromKey(key)
-  const target = value.Handlers?.['/']?.Proxy
+  return { kind: handlers.length === 0 ? 'not-serving' : 'serving', handlers }
+}
 
-  // Funnel is read FOR THIS KEY, not as "does AllowFunnel exist": a node can have
-  // Funnel on 8443 and not on 443, and a warning that fires for the wrong port is a
-  // warning that gets ignored.
-  const funnel = parsed.AllowFunnel?.[key] === true
+/**
+ * The handler for `wanted` if there is one, otherwise the first — which is then, by
+ * construction, a handler for something else, and `doctor` names it as a mismatch.
+ */
+export async function readServeStatus(run: Runner, wanted?: string): Promise<ServeStatus> {
+  const { kind, handlers } = await readServeHandlers(run)
+  const chosen = handlers.find((h) => h.servedOrigin === wanted) ?? handlers[0]
+  if (chosen === undefined) return { kind, funnel: false }
+  return { kind, ...chosen }
+}
 
-  return {
-    kind: 'serving',
-    funnel,
-    ...(target !== undefined ? { target } : {}),
-    ...(servedOrigin !== undefined ? { servedOrigin } : {}),
+/** The HTTPS port an origin is served on, with the implicit 443 made explicit. */
+export function httpsPort(origin: string): number {
+  const { port } = new URL(origin)
+  return port === '' ? 443 : Number(port)
+}
+
+/** The command that puts TLS for `publicOrigin` in front of the bind. Port from the ORIGIN. */
+export function serveCommand(publicOrigin: string, bindOrigin: string): string {
+  return `tailscale serve --bg --https=${httpsPort(publicOrigin)} ${bindOrigin}`
+}
+
+/** Whether a serve proxy target is this bind. Compared as origins: `serve` may add a slash. */
+export function sameBackend(target: string | undefined, bindOrigin: string): boolean {
+  if (target === undefined) return false
+  try {
+    return new URL(target).origin === new URL(bindOrigin).origin
+  } catch {
+    return target === bindOrigin
   }
 }
 

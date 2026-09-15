@@ -35,11 +35,15 @@ factotum start
 ```
 
 `init` reads your machine's MagicDNS name, writes `~/.factotum/prod/config.json` with
-a loopback bind, and prints a **QR code**. One more command puts HTTPS in front:
+a loopback bind, and prints a **QR code**. One more command puts HTTPS in front —
+`init` prints it for you, usually:
 
 ```sh
 tailscale serve --bg --https=443 http://127.0.0.1:7777
 ```
+
+If 443 already serves something else on this machine, `init` picks 8443 and prints
+that instead: `serve` on a taken port replaces the other service rather than failing.
 
 Scan the QR with your phone. You never type an address, and the client arrives over
 **HTTPS** — which is what lets it install as an app.

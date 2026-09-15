@@ -89,8 +89,10 @@ export async function install(deps: InstallDeps): Promise<number> {
   out('')
   out(`Check it with:  launchctl list | grep factotum`)
   out('')
-  out('This does not start `tailscale serve`. If it is not already running:')
-  out(`    tailscale serve --bg --https=443 http://127.0.0.1:${paths.config.includes('dev') ? 7778 : 7777}`)
+  // No command printed here: the port comes from publicOrigin, and `serve` on a port
+  // another service holds REPLACES it. `doctor` reads both and prints the safe one.
+  out('This does not start `tailscale serve`. `factotum doctor` prints the exact command')
+  out('for your config, and says so if that port already belongs to another service.')
   return 0
 }
 

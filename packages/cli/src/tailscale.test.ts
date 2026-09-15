@@ -1,7 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execPath } from 'node:process'
-import { execRunner, readFqdn, readServeStatus, type RunResult, type Runner } from './tailscale.ts'
+import {
+  execRunner,
+  httpsPort,
+  readFqdn,
+  readServeHandlers,
+  readServeStatus,
+  sameBackend,
+  serveCommand,
+  type RunResult,
+  type Runner,
+} from './tailscale.ts'
 
 /**
  * The fixtures are REAL OUTPUT, captured from `tailscale` 1.102.2 on a live tailnet
@@ -125,6 +135,69 @@ test('a timeout is unknown too, because tailscaled may still be starting', async
 test('unparseable output is unknown rather than a crash', async () => {
   const status = await readServeStatus(runner(ok('not json at all')))
   assert.equal(status.kind, 'unknown')
+})
+
+// Shaped like the machine this spec was built on: another service holds 443, and
+// factotum lives on 8443. Reading only the first handler made `doctor` look at the
+// OTHER service and report a mismatch on a correct setup.
+const SHARED = JSON.stringify({
+  TCP: { '443': { HTTPS: true }, '8443': { HTTPS: true } },
+  Web: {
+    'host.tail1234.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7777' } } },
+    'host.tail1234.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:7877' } } },
+  },
+  AllowFunnel: { 'host.tail1234.ts.net:443': true },
+})
+
+test('with several handlers, the one for the WANTED origin is picked, not the first', async () => {
+  const status = await readServeStatus(runner(ok(SHARED)), 'https://host.tail1234.ts.net:8443')
+  assert.equal(status.kind, 'serving')
+  assert.equal(status.servedOrigin, 'https://host.tail1234.ts.net:8443')
+  assert.equal(status.target, 'http://127.0.0.1:7877')
+  // Funnel belongs to the 443 handler, and this is not it.
+  assert.equal(status.funnel, false)
+})
+
+test('with no handler for the wanted origin, it falls back to the first', async () => {
+  const status = await readServeStatus(runner(ok(SHARED)), 'https://host.tail1234.ts.net:9443')
+  assert.equal(status.servedOrigin, 'https://host.tail1234.ts.net')
+})
+
+test('readServeHandlers lists every handler, each with its own origin and funnel', async () => {
+  const handlers = await readServeHandlers(runner(ok(SHARED)))
+  assert.equal(handlers.kind, 'serving')
+  assert.deepEqual(handlers.handlers, [
+    { servedOrigin: 'https://host.tail1234.ts.net', target: 'http://127.0.0.1:7777', funnel: true },
+    { servedOrigin: 'https://host.tail1234.ts.net:8443', target: 'http://127.0.0.1:7877', funnel: false },
+  ])
+})
+
+// ---------------------------------------------------------------------------
+// serveCommand / httpsPort
+// ---------------------------------------------------------------------------
+
+test('the serve command takes its port from publicOrigin, never a hardcoded 443', () => {
+  // `--https=443` printed for a publicOrigin on 8443 is not just wrong: pasted on a
+  // machine where something else holds 443, it REPLACES that service.
+  assert.equal(
+    serveCommand('https://host.tail1234.ts.net:8443', 'http://127.0.0.1:7777'),
+    'tailscale serve --bg --https=8443 http://127.0.0.1:7777',
+  )
+  assert.equal(
+    serveCommand('https://host.tail1234.ts.net', 'http://127.0.0.1:7777'),
+    'tailscale serve --bg --https=443 http://127.0.0.1:7777',
+  )
+})
+
+test('httpsPort reads the implicit 443 as 443', () => {
+  assert.equal(httpsPort('https://host.tail1234.ts.net'), 443)
+  assert.equal(httpsPort('https://host.tail1234.ts.net:8443'), 8443)
+})
+
+test('sameBackend compares proxy targets as origins, not raw strings', () => {
+  assert.equal(sameBackend('http://127.0.0.1:7777', 'http://127.0.0.1:7777/'), true)
+  assert.equal(sameBackend('http://127.0.0.1:7777', 'http://127.0.0.1:7877'), false)
+  assert.equal(sameBackend(undefined, 'http://127.0.0.1:7777'), false)
 })
 
 // ---------------------------------------------------------------------------

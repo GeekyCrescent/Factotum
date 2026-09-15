@@ -16,7 +16,15 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
 import { ensureStateRoots, localUrl, statePaths } from '@factotum/kernel'
 import { rootConfigSchema, type Environment } from '@factotum/core'
-import { execRunner, readFqdn, type Runner } from './tailscale.ts'
+import {
+  execRunner,
+  readFqdn,
+  readServeHandlers,
+  sameBackend,
+  serveCommand,
+  type Runner,
+  type ServeHandler,
+} from './tailscale.ts'
 import { printQr } from './qr.ts'
 
 const DEFAULT_PORTS: Readonly<Record<Environment, number>> = { prod: 7777, dev: 7778 }
@@ -66,14 +74,19 @@ export async function init(deps: InitDeps): Promise<number> {
     }
   }
 
-  const publicOrigin = await resolvePublicOrigin(deps.env, port, run)
-  if (publicOrigin === undefined) {
+  const resolved = await resolvePublicOrigin(deps.env, port, run)
+  if (resolved.kind === 'no-name') {
     explainMissingTailscale(out)
     // Deliberately writing NOTHING, exactly as the old "no private address" branch
     // did: a config that starts but cannot be reached is worse than a clear refusal,
     // and a config that does not start at all is worse still.
     return 1
   }
+  if (resolved.kind === 'no-port') {
+    explainNoFreePort(resolved.taken, out)
+    return 1
+  }
+  const { publicOrigin, displaced } = resolved
 
   const config = {
     environment: deps.env,
@@ -115,6 +128,11 @@ export async function init(deps: InitDeps): Promise<number> {
     return 0
   }
 
+  if (displaced !== undefined) {
+    out('')
+    out(`Port 443 on this name already serves ${displaced.target ?? 'another backend'}, so factotum`)
+    out(`uses ${publicOrigin} and leaves that handler alone.`)
+  }
   await reportProd(publicOrigin, port, out)
   return 0
 }
@@ -138,12 +156,48 @@ async function resolvePublicOrigin(
   env: Environment,
   port: number,
   run: Runner,
-): Promise<string | undefined> {
-  if (env === 'dev') return localUrl(BIND_ADDRESS, port)
+): Promise<ResolvedOrigin> {
+  if (env === 'dev') return { kind: 'ok', publicOrigin: localUrl(BIND_ADDRESS, port) }
 
   const fqdn = await readFqdn(run)
-  if (fqdn === undefined) return undefined
-  return `https://${fqdn}`
+  if (fqdn === undefined) return { kind: 'no-name' }
+
+  // A machine is not factotum's alone: 443 may already be serving another service,
+  // and `serve --https=443` REPLACES that handler rather than failing. So the port
+  // is chosen here, before anything is written, from what `serve` already holds.
+  // A handler already pointing at this bind is factotum's own — re-running init
+  // must not move it.
+  const bind = localUrl(BIND_ADDRESS, port)
+  const { handlers } = await readServeHandlers(run)
+  const takenBy = (origin: string) =>
+    handlers.find((h) => h.servedOrigin === origin && !sameBackend(h.target, bind))
+
+  const preferred = `https://${fqdn}`
+  const displaced = takenBy(preferred)
+  if (displaced === undefined) return { kind: 'ok', publicOrigin: preferred }
+
+  const fallback = `https://${fqdn}:${FALLBACK_HTTPS_PORT}`
+  const alsoTaken = takenBy(fallback)
+  if (alsoTaken === undefined) return { kind: 'ok', publicOrigin: fallback, displaced }
+  return { kind: 'no-port', taken: [displaced, alsoTaken] }
+}
+
+type ResolvedOrigin =
+  | { readonly kind: 'ok'; readonly publicOrigin: string; readonly displaced?: ServeHandler }
+  | { readonly kind: 'no-name' }
+  | { readonly kind: 'no-port'; readonly taken: readonly ServeHandler[] }
+
+/** Tailscale's other conventional HTTPS port, used when 443 belongs to someone else. */
+const FALLBACK_HTTPS_PORT = 8443
+
+function explainNoFreePort(taken: readonly ServeHandler[], out: (line: string) => void): void {
+  out('Both HTTPS ports factotum would use are already serving other backends:')
+  out('')
+  for (const h of taken) out(`    ${h.servedOrigin ?? '?'} -> ${h.target ?? '?'}`)
+  out('')
+  out('Running `tailscale serve` on either would REPLACE that handler, so init stops here')
+  out('and writes nothing. Free one of them, or write publicOrigin by hand with another')
+  out('port (`https://<name>:<port>`) and check it with `factotum doctor`.')
 }
 
 function explainMissingTailscale(out: (line: string) => void): void {
@@ -168,7 +222,7 @@ async function reportProd(
   out('')
   out('One more step, because factotum does not do this for you:')
   out('')
-  out(`    tailscale serve --bg --https=443 http://${BIND_ADDRESS}:${port}`)
+  out(`    ${serveCommand(publicOrigin, localUrl(BIND_ADDRESS, port))}`)
   out('')
   await printQr(publicOrigin, out)
   out('')

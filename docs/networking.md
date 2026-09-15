@@ -34,6 +34,11 @@ the daemon would refuse to start on.
    tailscale serve --bg --https=443 http://127.0.0.1:7777
    ```
 
+   `init` prints this with the port it chose. **If 443 on this machine already serves
+   another service, `init` uses 8443 instead** — because `serve --https=443` does not
+   fail on a taken port, it *replaces* that handler, and the other service goes dark.
+   `doctor` reports that case as `TAKEN` and prints no command.
+
 5. `factotum start`, then open the `https://` URL on your phone.
 
 `factotum doctor` checks steps 3 and 4 agree with each other.
@@ -149,9 +154,10 @@ that can make an HTTP request.
 
 `factotum doctor` warns when Funnel is on for the origin it is serving.
 
-> **`tailscale funnel --https=443 off` removes your entire serve config**, not just the
-> Funnel flag. After turning Funnel off you have to re-add serve, or factotum is left
-> without TLS in front of it, and nothing says so.
+> **`tailscale funnel --https=<port> off` removes your entire serve config**, not just the
+> Funnel flag — and not just factotum's handler: **every** serve handler on the machine,
+> other services included. Save `tailscale serve status --json` first and re-add each
+> handler after, or they are all left without TLS, and nothing says so.
 
 ### Running the client with `pnpm dev`
 

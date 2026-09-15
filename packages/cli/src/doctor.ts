@@ -25,7 +25,14 @@ import {
   type StatePaths,
 } from '@factotum/kernel'
 import { ENVIRONMENTS, rootConfigSchema, type Environment } from '@factotum/core'
-import { execRunner, readServeStatus, type Runner } from './tailscale.ts'
+import {
+  execRunner,
+  httpsPort,
+  readServeStatus,
+  sameBackend,
+  serveCommand,
+  type Runner,
+} from './tailscale.ts'
 
 export interface DoctorDeps {
   readonly home?: string
@@ -175,7 +182,12 @@ async function reportServe(
     return
   }
 
-  const status = await readServeStatus(run)
+  const status = await readServeStatus(run, publicOrigin)
+  // The command must point at the BIND, not at the public origin. Composing it by
+  // rewriting publicOrigin's scheme produced `http://127.0.0.1:<hostname>`, which
+  // compiled, passed the test that only looked for "NOT SERVING", and would have
+  // failed the moment anyone pasted it. Found by running doctor, not by reading it.
+  const command = serveCommand(publicOrigin, bindOrigin)
 
   if (status.kind === 'unknown') {
     out('  serve       UNKNOWN — the `tailscale` command did not answer')
@@ -184,28 +196,36 @@ async function reportServe(
   }
   if (status.kind === 'not-serving') {
     out('  serve       NOT SERVING — nothing is terminating TLS in front of factotum')
-    // The command must point at the BIND, not at the public origin. Composing it by
-    // rewriting publicOrigin's scheme produced `http://127.0.0.1:<hostname>`, which
-    // compiled, passed the test that only looked for "NOT SERVING", and would have
-    // failed the moment anyone pasted it. Found by running doctor, not by reading it.
-    out(`              tailscale serve --bg --https=443 ${bindOrigin}`)
+    out(`              ${command}`)
     return
   }
 
-  if (status.servedOrigin === publicOrigin) {
-    out(`  serve       serving ${status.servedOrigin} -> ${status.target ?? '?'}`)
-  } else {
+  if (status.servedOrigin !== publicOrigin) {
     // The mismatch worth naming: both strings are printed, because this is the
-    // family of failure where they look the same and are not.
+    // family of failure where they look the same and are not. publicOrigin's port
+    // holds no handler (it would have been chosen), so the command replaces nothing.
     out(`  serve       MISMATCH — serving ${status.servedOrigin ?? '(nothing)'}`)
     out(`              but publicOrigin is ${publicOrigin}`)
+    out(`              ${command}`)
+  } else if (!sameBackend(status.target, bindOrigin)) {
+    // publicOrigin IS served — by something that is not this daemon. Printing the
+    // command here is how another service on this machine lost its 443: pasting it
+    // replaces that handler. So no command, and the way out instead.
+    out(`  serve       TAKEN — ${publicOrigin} -> ${status.target ?? '?'}, not this daemon (${bindOrigin})`)
+    out(`              running serve on port ${httpsPort(publicOrigin)} would REPLACE that handler.`)
+    out(`              give factotum a free port instead, e.g. publicOrigin https://${new URL(publicOrigin).hostname}:8443`)
+  } else {
+    out(`  serve       serving ${status.servedOrigin} -> ${status.target ?? '?'}`)
   }
 
   out(`  funnel      ${status.funnel ? 'ON — THIS DAEMON IS EXPOSED TO THE INTERNET' : 'off'}`)
   if (status.funnel) {
     out('              the origin policy stops another browser, not `curl`.')
-    out('              turn it off with: tailscale funnel --https=443 off')
-    out('              NOTE: that also removes the whole serve config, so re-add serve after.')
+    out(`              turn it off with: tailscale funnel --https=${httpsPort(publicOrigin)} off`)
+    // Measured: `funnel … off` leaves `{}` — not just factotum's handler, all of them.
+    out('              NOTE: that also removes the whole serve config —')
+    out('              every serve handler on this machine, other services included.')
+    out('              Save `tailscale serve status --json` first, and re-add each one after.')
   }
 }
 
