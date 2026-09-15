@@ -4,3 +4,21 @@ import './style.css'
 
 const root = document.getElementById('app')
 if (root !== null) render(<Shell />, root)
+
+/**
+ * The service worker, and the two guards around it.
+ *
+ * `isSecureContext` is the one that matters: over plain HTTP —  `pnpm dev`, or the
+ * bind when `tailscale serve` is not up — `register` rejects, and an unhandled
+ * rejection on every load is how a console stops being worth reading. The secure
+ * context is the whole point of the TLS spec, so asking for it directly says what
+ * this depends on.
+ *
+ * A failure here is REPORTED AND SURVIVED, not thrown: the shell works without a
+ * service worker; only installing does not.
+ */
+if (isSecureContext && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+    console.warn('service worker not registered; the app still works, installing may not', error)
+  })
+}
