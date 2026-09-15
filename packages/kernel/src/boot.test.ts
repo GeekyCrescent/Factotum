@@ -9,6 +9,7 @@ import { boot } from './boot.ts'
 import type { BootError } from './errors.ts'
 import { statePaths } from './config/paths.ts'
 import { createServer } from './http/server.ts'
+import type { OriginPolicy } from './net/origin.ts'
 
 /** Loopback and an ephemeral port: real sockets, no collisions across runs. */
 const loopback = () => ({ lo0: [{ address: '127.0.0.1', internal: false }] }) as never
@@ -35,6 +36,11 @@ async function withConfig(overrides: Record<string, unknown> = {}, port = takePo
     JSON.stringify({
       environment: 'prod',
       listen: { address: '127.0.0.1', port },
+      // The bind is loopback in every one of these tests, so `handle.localUrl` is
+      // what talks to the socket. `publicOrigin` is deliberately NOT derived from
+      // the bind: it is a different value, and conflating the two is the bug this
+      // spec is built to avoid.
+      publicOrigin: `https://mimac.tail1234.ts.net`,
       ...overrides,
     }),
     'utf8',
@@ -60,7 +66,7 @@ test('boots, serves a module route, and stops cleanly', async () => {
   const handle = await bootWith(paths, [example])
 
   try {
-    const response = await fetch(`${handle.url}/modules/example/ping`)
+    const response = await fetch(`${handle.localUrl}/modules/example/ping`)
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { pong: true })
   } finally {
@@ -73,7 +79,7 @@ test('health answers with the environment, which is how dev and prod are told ap
   const handle = await bootWith(paths)
   try {
     const body = await json<{ environment: string; ready: boolean }>(
-      await fetch(`${handle.url}/health`),
+      await fetch(`${handle.localUrl}/health`),
     )
     assert.equal(body.environment, 'prod')
     assert.equal(body.ready, true)
@@ -86,8 +92,8 @@ test('a module that is off is absent, not merely quiet', async () => {
   const paths = await withConfig({ modules: { example: { enabled: false } } })
   const handle = await bootWith(paths, [example])
   try {
-    assert.equal((await fetch(`${handle.url}/modules/example/ping`)).status, 404)
-    const { modules } = await json<{ modules: unknown[] }>(await fetch(`${handle.url}/modules`))
+    assert.equal((await fetch(`${handle.localUrl}/modules/example/ping`)).status, 404)
+    const { modules } = await json<{ modules: unknown[] }>(await fetch(`${handle.localUrl}/modules`))
     assert.deepEqual(modules, [])
   } finally {
     await handle.stop()
@@ -122,6 +128,116 @@ test('a server that binds somewhere other than intended is closed and boot abort
       return true
     },
   )
+})
+
+// ---------------------------------------------------------------------------
+// Step 9: the WIRING. Two things no type protects.
+//
+// `boot` hands the policy three values and returns two URLs, and every one of them
+// is a string. A string that compiles and points at the wrong place is exactly the
+// failure this spec's third revision shipped — it moved `handle.url` and lost the
+// one line that fed the permission hook, and nothing caught it because both sides
+// were `string`.
+//
+// `makeServer` is the seam, documented in boot.ts as "a seam, and the only one".
+// Capturing `deps.origin` through it is also what makes the `listen.interface` case
+// testable at all: binding to a tailnet address really does give EADDRNOTAVAIL, so
+// the socket is stubbed and only the composition is under test.
+// ---------------------------------------------------------------------------
+
+/** Captures the policy `boot` composed, and pretends the bind succeeded. */
+function captureOrigin(boundTo: string, port: number) {
+  const seen: { policy?: OriginPolicy } = {}
+  const makeServer = (deps: Parameters<typeof createServer>[0]) => {
+    seen.policy = deps.origin
+    const server = createServer(deps)
+    Object.defineProperty(server, 'listen', {
+      value: (_port: number, _address: string, cb?: () => void) => {
+        cb?.()
+        return server
+      },
+    })
+    Object.defineProperty(server, 'address', {
+      value: () => ({ address: boundTo, port, family: 'IPv4' }),
+    })
+    return server
+  }
+  return { seen, makeServer }
+}
+
+test('step 9 gets the public origin from the config, never composed from the bind', async () => {
+  const port = takePort()
+  const paths = await withConfig({}, port)
+  const { seen, makeServer } = captureOrigin('127.0.0.1', port)
+
+  const handle = await bootWith(paths, [], { makeServer })
+  try {
+    assert.equal(seen.policy?.publicOrigin, 'https://mimac.tail1234.ts.net')
+    // THE TWIN OF THE v3 BUG: both of these are strings, both compile either way.
+    assert.equal(handle.url, 'https://mimac.tail1234.ts.net')
+    assert.equal(handle.localUrl, `http://127.0.0.1:${port}`)
+    assert.notEqual(handle.url, handle.localUrl)
+  } finally {
+    await handle.stop()
+  }
+})
+
+test('step 9 composes the rescue route from the loopback bind', async () => {
+  const port = takePort()
+  const paths = await withConfig({}, port)
+  const { seen, makeServer } = captureOrigin('127.0.0.1', port)
+
+  const handle = await bootWith(paths, [], { makeServer })
+  try {
+    assert.equal(seen.policy?.localOrigin, `http://127.0.0.1:${port}`)
+    assert.deepEqual(seen.policy?.extra, [])
+  } finally {
+    await handle.stop()
+  }
+})
+
+test('step 9 uses the RESOLVED address, so listen.interface gets no rescue route', async () => {
+  // The case §0.25 of the requirements called unwritable. It is unwritable against a
+  // real socket — `server.listen(port, '100.87.1.2')` gives EADDRNOTAVAIL, measured —
+  // but the policy is composed before step 10, so the seam reaches it.
+  //
+  // There is no `listen.address` in this config at all, so a `localOrigin` here could
+  // only have come from the resolved address. It must be undefined: composing one
+  // would hand the policy the tailnet IP as an accepted origin and quietly undo the
+  // loopback bind.
+  const port = takePort()
+  const paths = await withConfig({ listen: { interface: 'tailscale0', port } }, port)
+  const { seen, makeServer } = captureOrigin('100.87.1.2', port)
+
+  const handle = await bootWith(paths, [], {
+    makeServer,
+    interfaces: (() => ({ tailscale0: [{ address: '100.87.1.2', internal: false }] })) as never,
+  })
+  try {
+    assert.equal(seen.policy?.localOrigin, undefined)
+    assert.equal(seen.policy?.publicOrigin, 'https://mimac.tail1234.ts.net')
+    // `localUrl` on the handle is NOT the policy's rescue route: it says where the
+    // socket is, which is a different question. See the comment on BootHandle.
+    assert.equal(handle.localUrl, `http://100.87.1.2:${port}`)
+  } finally {
+    await handle.stop()
+  }
+})
+
+test('extraOrigins reach the policy, which is how dev survives the vite proxy', async () => {
+  const port = takePort()
+  const paths = await withConfig(
+    { listen: { address: '127.0.0.1', port, extraOrigins: ['http://localhost:5173'] } },
+    port,
+  )
+  const { seen, makeServer } = captureOrigin('127.0.0.1', port)
+
+  const handle = await bootWith(paths, [], { makeServer })
+  try {
+    assert.deepEqual(seen.policy?.extra, ['http://localhost:5173'])
+  } finally {
+    await handle.stop()
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -181,7 +297,7 @@ test('a page from the internet is refused, and told what the policy is', async (
   const paths = await withConfig({ modules: { example: { enabled: true } } })
   const handle = await bootWith(paths, [example])
   try {
-    const response = await fetch(`${handle.url}/modules/example/ping`, {
+    const response = await fetch(`${handle.localUrl}/modules/example/ping`, {
       headers: { origin: 'https://evil.com' },
     })
     assert.equal(response.status, 403)
@@ -202,6 +318,32 @@ test('the client loaded from this host is allowed', async () => {
       headers: { origin: `http://127.0.0.1:${chosen}` },
     })
     assert.equal(response.status, 200)
+  } finally {
+    await handle.stop()
+  }
+})
+
+test('the client loaded from the PUBLIC origin is allowed, through a real socket', async () => {
+  // The whole chain the spec exists for, end to end: config → policyFor → the guard.
+  // The unit tests prove each link; nothing else proves they are joined up, and the
+  // request arrives at a loopback socket carrying an origin that is not loopback —
+  // which is exactly the shape `tailscale serve` produces.
+  const chosen = takePort()
+  const paths = await withConfig({ modules: { example: { enabled: true } } }, chosen)
+  const handle = await bootWith(paths, [example])
+  try {
+    const allowed = await fetch(`http://127.0.0.1:${chosen}/modules/example/ping`, {
+      headers: { origin: 'https://mimac.tail1234.ts.net' },
+    })
+    assert.equal(allowed.status, 200)
+
+    // And the trailing-dot form of the very same name is refused, because the
+    // comparison is raw. This is what a config validated without the second half of
+    // the guard would have produced on every single request.
+    const dotted = await fetch(`http://127.0.0.1:${chosen}/modules/example/ping`, {
+      headers: { origin: 'https://mimac.tail1234.ts.net.' },
+    })
+    assert.equal(dotted.status, 403)
   } finally {
     await handle.stop()
   }
@@ -238,13 +380,13 @@ test('a module with a broken fragment is disabled and the daemon still serves', 
   const paths = await withConfig({ modules: { strict: { enabled: true } } })
   const handle = await bootWith(paths, [strict])
   try {
-    const response = await fetch(`${handle.url}/modules/strict/x`)
+    const response = await fetch(`${handle.localUrl}/modules/strict/x`)
     assert.equal(response.status, 501)
     const body = await json<{ error: { message: string } }>(response)
     assert.match(body.error.message, /apiKeyPath/)
 
     // The whole point of degrading rather than aborting.
-    assert.equal((await fetch(`${handle.url}/health`)).status, 200)
+    assert.equal((await fetch(`${handle.localUrl}/health`)).status, 200)
   } finally {
     await handle.stop()
   }
@@ -254,7 +396,7 @@ test('a path that tries to climb out of a module prefix does not exist', async (
   const paths = await withConfig({ modules: { example: { enabled: true } } })
   const handle = await bootWith(paths, [example])
   try {
-    const response = await fetch(`${handle.url}/modules/example/../../health`, { redirect: 'manual' })
+    const response = await fetch(`${handle.localUrl}/modules/example/../../health`, { redirect: 'manual' })
     // Normalised to /health, which is a real route — the point is that it never
     // reached the module dispatcher with a traversing path.
     assert.notEqual(response.status, 500)

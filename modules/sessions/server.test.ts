@@ -60,13 +60,13 @@ async function call(table: RouteTable, key: string, req: ModuleRequest): Promise
 }
 
 /** Builds the module with a given engine and walks it through steps 8 and 12. */
-async function started(engine: SessionEngine, baseUrl: () => string = () => 'http://host:7778') {
+async function started(engine: SessionEngine, hookUrl: () => string = () => 'http://host:7778') {
   let setup: EngineSetup | undefined
   const create: CreateEngine = async (given) => {
     setup = given
     return engine
   }
-  const module = sessionsModule(create, baseUrl)
+  const module = sessionsModule(create, hookUrl)
   const table = module.routes!(context(EMPTY))
   const handle = await module.start!(context(EMPTY))
   return { module, table, handle, setup: setup! }
@@ -103,8 +103,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
   const { setup } = await started(engine)
 
   assert.deepEqual(Object.keys(setup).sort(), [
-    'baseUrl',
     'catalog',
+    'hookUrl',
     'log',
     'now',
     'sites',
@@ -115,7 +115,7 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
   assert.equal(reconciled, 1)
 })
 
-test('the baseUrl crosses as a THUNK, unevaluated, because at step 12 there is no answer yet', async () => {
+test('the hookUrl crosses as a THUNK, unevaluated, because at step 12 there is no answer yet', async () => {
   let asked = 0
   await started(fakeEngine(), () => {
     asked += 1

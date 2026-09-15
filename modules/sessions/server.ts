@@ -181,7 +181,7 @@ export function sessionsModule(
    * returning and this being filled in fails with a message that says so, rather than
    * starting an agent whose gate is unreachable.
    */
-  baseUrl: () => string,
+  hookUrl: () => string,
 ): FactotumModule<SessionsConfig> {
   const holder: EngineHolder = {}
 
@@ -206,7 +206,7 @@ export function sessionsModule(
         log: ctx.log,
         now: ctx.now,
         timers: ctx.timers,
-        baseUrl,
+        hookUrl,
       })
       await engine.reconcile()
       holder.engine = engine

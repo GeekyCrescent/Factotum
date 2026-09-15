@@ -76,7 +76,7 @@ export interface EngineSetup {
    * exist yet: `boot` composes it at step 13 and the composition root fills it in on
    * the next statement.
    */
-  readonly baseUrl: () => string
+  readonly hookUrl: () => string
 }
 
 // --- What the engine does --------------------------------------------------

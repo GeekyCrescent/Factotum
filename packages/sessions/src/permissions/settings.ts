@@ -41,7 +41,7 @@ export interface HookSettings {
  * pattern. The cost is one request to this same host per tool call; the cost of the
  * alternative is a permanent hole.
  */
-export function hookSettings(baseUrl: string): HookSettings {
+export function hookSettings(hookUrl: string): HookSettings {
   return {
     hooks: {
       PreToolUse: [
@@ -50,7 +50,7 @@ export function hookSettings(baseUrl: string): HookSettings {
           hooks: [
             {
               type: 'http',
-              url: `${baseUrl.replace(/\/+$/, '')}/modules/sessions/${HOOK_PATH}`,
+              url: `${hookUrl.replace(/\/+$/, '')}/modules/sessions/${HOOK_PATH}`,
               timeout: HOOK_TIMEOUT_SECONDS,
             },
           ],

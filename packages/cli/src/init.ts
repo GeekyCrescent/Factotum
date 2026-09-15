@@ -8,7 +8,7 @@
 
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
-import { baseUrl, ensureStateRoots, statePaths } from '@factotum/kernel'
+import { ensureStateRoots, localUrl, statePaths } from '@factotum/kernel'
 import type { Environment } from '@factotum/core'
 import { detect, type Found } from './detect.ts'
 import { printQr } from './qr.ts'
@@ -70,7 +70,7 @@ export async function init(deps: InitDeps): Promise<number> {
   await writeFile(paths.config, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
   await ensureStateRoots(paths)
 
-  const url = baseUrl(chosen.address, config.listen.port)
+  const url = localUrl(chosen.address, config.listen.port)
 
   out('')
   out(`Wrote ${paths.config}`)

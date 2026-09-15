@@ -21,7 +21,8 @@ async function tempHome(config?: unknown): Promise<string> {
 
 const valid = {
   environment: 'prod',
-  listen: { address: '100.87.1.2', port: 7777 },
+  listen: { address: '127.0.0.1', port: 7777 },
+  publicOrigin: 'https://mimac.tail1234.ts.net',
   modules: { example: { enabled: true, greeting: 'hi' } },
 }
 

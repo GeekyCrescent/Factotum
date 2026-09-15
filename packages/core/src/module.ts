@@ -114,8 +114,28 @@ export interface Timers {
  * in-process instead of by spawning a subprocess.
  */
 export interface BootHandle {
-  /** Base URL, already composed — bracketed if IPv6. This is what goes in the QR. */
+  /**
+   * THE PUBLIC ORIGIN: where a browser reaches this daemon, through whatever is
+   * terminating TLS in front. Taken from the config, not composed from the bind.
+   * This is what goes in the QR and what `start` prints.
+   */
   readonly url: string
+  /**
+   * Where the process ACTUALLY listens, canonical and checked against the socket in
+   * step 11.
+   *
+   * These two names are similar and the values are not, so: `url` is for anything
+   * that has to travel to another device, `localUrl` is for anything on this machine
+   * that must keep working when the proxy does not. The permission hook is the second
+   * kind — it runs beside the daemon, and a gate decision that depends on
+   * `tailscale serve` being alive is a gate that fails at the worst moment.
+   *
+   * Note this is NOT the same thing as `OriginPolicy.localOrigin`, which is
+   * `undefined` when the bind is not loopback. This one is always defined: it
+   * describes where the socket is, not what the policy accepts. Deriving either from
+   * the other re-opens the hole `net/policy.ts` exists to close.
+   */
+  readonly localUrl: string
   /** Stops modules in reverse order, disposes their timers, closes the server. */
   readonly stop: () => Promise<void>
 }

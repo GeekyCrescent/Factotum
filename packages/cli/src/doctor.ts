@@ -12,9 +12,9 @@ import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { version as nodeVersion } from 'node:process'
 import {
-  baseUrl,
   describePolicy,
-  originPolicy,
+  localUrl,
+  policyFor,
   statePaths,
   type StatePaths,
 } from '@factotum/kernel'
@@ -76,7 +76,7 @@ async function reportEnvironment(
     return
   }
 
-  const { listen, modules } = parsed.data
+  const { listen, modules, publicOrigin } = parsed.data
   const address = listen.address ?? `(from interface ${listen.interface ?? '?'})`
   out(`  config      ${paths.config}`)
   out(`  listen      ${address}:${listen.port}`)
@@ -84,10 +84,19 @@ async function reportEnvironment(
   const enabled = Object.entries(modules).filter(([, entry]) => entry.enabled).map(([id]) => id)
   out(`  enabled     ${enabled.length === 0 ? '(none)' : enabled.join(', ')}`)
 
+  out(`  public      ${publicOrigin}`)
+
   if (listen.address !== undefined) {
-    const policy = originPolicy(listen.address, listen.port, listen.extraOrigins)
+    // `policyFor`, never a local copy of the isLoopback rule: doctor printing a
+    // rescue route that `boot` leaves undefined is doctor lying about the daemon.
+    const policy = policyFor({
+      publicOrigin,
+      address: listen.address,
+      port: listen.port,
+      extraOrigins: listen.extraOrigins,
+    })
     out('  origins     ' + describePolicy(policy).join('\n              '))
-    await reportLive(baseUrl(listen.address, listen.port), out, doFetch)
+    await reportLive(localUrl(listen.address, listen.port), out, doFetch)
   }
 
   out('')
