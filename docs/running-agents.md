@@ -27,7 +27,21 @@ write here" means, and — at more length — what this does **not** protect you
 }
 ```
 
-Add a site, restart the daemon. No rebuild, no code.
+Add a site, restart the daemon. No rebuild, no code — and you do not have to edit that
+file by hand:
+
+```sh
+factotum site add ~/projects/thing      # id derived from the directory name
+factotum site add ~/notes --shared      # writable from every site instead
+factotum site list                      # or --json, for something reading it
+factotum site rm thing
+```
+
+It validates the result against the real schema before writing, writes atomically, and
+restarts the daemon for you when this environment is installed as a service. **It asks
+first**, every time: this is the command that widens what an agent may write, and
+`--yes` is how a script says it meant to. Without a terminal and without `--yes` it
+writes nothing.
 
 **Nothing is authorised by being inside a folder.** There is no `projectRoots` setting
 and no discovery of git repositories underneath something. A site is allowed because

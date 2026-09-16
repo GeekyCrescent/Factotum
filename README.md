@@ -125,9 +125,13 @@ to let an agent write in — and a **catalog** of things to launch:
 }
 ```
 
+Declare them with `factotum site add <path>` rather than by hand: it validates against
+the real schema before writing, writes atomically, restarts the daemon, and **asks
+first** — this is the command that widens what an agent may write.
+
 A write whose destination lands inside the site is allowed; outside it is denied, with
-the reason in the log and on the screen. Reading is never asked about. Sessions
-persist to an append-only log, so you can close the tab and come back.
+the reason in the log and on the screen. Reading is never asked about. Sessions persist
+to an append-only log, so you can close the tab and come back.
 
 **One site, one lock, one session at a time** — which is what lets you run an agent per
 project at once. A session belongs to exactly one site, so if several of them need to

@@ -20,14 +20,22 @@ import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
 import { init, terminalAsk } from './init.ts'
 import { install, uninstall } from './install.ts'
+import { qrCommand } from './qr-command.ts'
+import { siteCommand, stripEnvFlag } from './site-command.ts'
 
 const USAGE = `factotum ${VERSION}
 
   factotum init [--env dev|prod]       write a config, show a QR
   factotum start [--env dev|prod]      run the daemon in the foreground
   factotum doctor                      report what is set up, without starting anything
+  factotum qr [--env dev|prod]         show the QR again, without touching the config
+  factotum site <add|list|rm>          declare where agents may write, and restart
   factotum install [--env dev|prod]    keep it running across logins (launchd)
   factotum uninstall [--env dev|prod]  stop doing that
+
+  factotum site add <path> [--id <id>] [--shared] [--yes] [--no-restart]
+  factotum site list [--json]
+  factotum site rm <id|path>
 
 Environment resolves as --env, then FACTOTUM_ENV, then prod.
 `
@@ -61,6 +69,15 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
     case 'doctor':
       return await doctor()
+    case 'qr':
+      return await qrCommand({ env })
+    case 'site': {
+      // `--env` is consumed above and must not reach the subcommand parser, which
+      // treats the first non-flag argument as the path.
+      const argv = stripEnvFlag(rest)
+      const ask = terminalAsk()
+      return await siteCommand(ask === undefined ? { env, argv } : { env, argv, ask })
+    }
     case 'start':
       return await start(env)
     case 'install':
