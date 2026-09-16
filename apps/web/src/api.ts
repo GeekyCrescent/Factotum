@@ -73,7 +73,49 @@ export function moduleApi(id: string): ModuleApi {
 
   return {
     get: (path) => request(path, { method: 'GET' }),
+    // The body is ADDED, not set to `undefined`. With `exactOptionalPropertyTypes` a
+    // `body: undefined` is not assignable to `RequestInit` — which had been a type error here
+    // for as long as nothing type-checked `apps/web` (the root tsconfig does not reference it).
     post: (path, body) =>
-      request(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }),
+      request(path, body === undefined ? { method: 'POST' } : { method: 'POST', body: JSON.stringify(body) }),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Push: the daemon's own two routes, like `/modules` above — not a module's
+// ---------------------------------------------------------------------------
+
+/**
+ * Two kernel-level calls, and `ModuleApi` does NOT grow: no module gains a new way to reach the
+ * kernel. They exist because the subscription is the shell's, not any screen's (ADR-0008).
+ */
+export async function fetchPushPublicKey(): Promise<
+  { readonly ok: true; readonly publicKey: string } | { readonly ok: false; readonly message: string }
+> {
+  try {
+    const response = await fetch('/push/public-key')
+    const body = (await response.json()) as { publicKey?: string; error?: { message: string } }
+    if (response.ok && typeof body.publicKey === 'string') return { ok: true, publicKey: body.publicKey }
+    return { ok: false, message: body.error?.message ?? `the daemon answered ${response.status}` }
+  } catch {
+    return { ok: false, message: 'could not reach the daemon' }
+  }
+}
+
+export async function postPushSubscription(
+  subscription: unknown,
+): Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly status: number; readonly message: string }> {
+  try {
+    const response = await fetch('/push/subscriptions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(subscription),
+    })
+    const body = (await response.json()) as { count?: number; error?: { message: string } }
+    if (response.ok && typeof body.count === 'number') return { ok: true, count: body.count }
+    // The daemon's message travels as-is: for a full cap it names `factotum push reset`.
+    return { ok: false, status: response.status, message: body.error?.message ?? `the daemon answered ${response.status}` }
+  } catch {
+    return { ok: false, status: 0, message: 'could not reach the daemon' }
   }
 }

@@ -14,6 +14,19 @@ import { sessionsClient } from '../../../modules/sessions/client.tsx'
 
 export interface ModuleViewProps {
   readonly api: ModuleApi
+  /**
+   * What followed `/m/<id>/` in the path, `''` at the module's root. So a notification can land
+   * IN the session it is about rather than on the list.
+   *
+   * This is NOT the open client edge of ADR-0005 — "a screen calling another module" — and does
+   * not touch it: it tells a screen where it was opened from.
+   */
+  readonly rest: string
+  /**
+   * `window.location.search` as it was (`''` or `'?…'`). A SEPARATE field because the shell
+   * keeps `pathname`, which has no query: a token in `?ask=` could never have reached `rest`.
+   */
+  readonly search: string
 }
 
 export interface ModuleClient {
