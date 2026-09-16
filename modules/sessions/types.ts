@@ -70,6 +70,8 @@ export interface CatalogEntry {
 export interface EngineSetup {
   readonly stateDir: string
   readonly sites: readonly SiteConfig[]
+  /** Writable from every site, locked by nothing. Declared once in the fragment. */
+  readonly sharedPaths?: readonly string[]
   readonly catalog: readonly CatalogEntry[]
   readonly log: Logger
   readonly now: () => Date

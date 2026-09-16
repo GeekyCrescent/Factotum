@@ -27,7 +27,21 @@ write here" means, and — at more length — what this does **not** protect you
 }
 ```
 
-Add a site, restart the daemon. No rebuild, no code.
+Add a site, restart the daemon. No rebuild, no code — and you do not have to edit that
+file by hand:
+
+```sh
+factotum site add ~/projects/thing      # id derived from the directory name
+factotum site add ~/notes --shared      # writable from every site instead
+factotum site list                      # or --json, for something reading it
+factotum site rm thing
+```
+
+It validates the result against the real schema before writing, writes atomically, and
+restarts the daemon for you when this environment is installed as a service. **It asks
+first**, every time: this is the command that widens what an agent may write, and
+`--yes` is how a script says it meant to. Without a terminal and without `--yes` it
+writes nothing.
 
 **Nothing is authorised by being inside a folder.** There is no `projectRoots` setting
 and no discovery of git repositories underneath something. A site is allowed because
@@ -40,6 +54,31 @@ first check cannot touch the disk and the second must not run any earlier.
 
 If a site is wrong, **the module is disabled with the reason** and the rest of factotum
 keeps running. `factotum doctor` will tell you which and why.
+
+### Shared paths, and what they cost
+
+A session belongs to **one** site, and a site holds **one** lock — that pairing is what
+lets you run an agent per project at the same time, and it is also why several agents
+cannot write one shared directory by declaring it in each of them.
+
+For that, declare it once, beside `sites`:
+
+```json
+"sharedPaths": ["/Users/you/notes/inbox"]
+```
+
+Every session may write there, in addition to its own site. Same rules as a site path:
+absolute, no `..`, and it must exist or the module is disabled with the reason. The
+denial message then names the whole boundary, site and shared paths together.
+
+**What it is not:** nothing launches into a shared path, and **nothing locks it**. Two
+agents writing the same file there at the same time is not prevented by anything —
+last write wins, silently. Give agents separate files if you can (one note each, not a
+shared index).
+
+The alternative, if that trade is wrong for you, is one site containing everything.
+That keeps a single lock over the whole tree, which means one agent at a time. Both
+are legitimate; pick the one that matches how you work.
 
 ### The catalog
 

@@ -86,6 +86,14 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     sites.set(site.id, site)
   }
 
+  // Inspected exactly like a site — existence, directory, and the symlink spelling —
+  // because containment is checked the same way and `/tmp` is a symlink on macOS. The
+  // id is not a site id: nothing launches here and nothing locks it.
+  const shared: Site[] = []
+  for (const path of setup.sharedPaths ?? []) {
+    shared.push(await inspectSite({ id: 'shared', path }))
+  }
+
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
   for (const entry of catalog) {
     if (entry.disabledReason !== undefined) {
@@ -430,6 +438,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       toolInput: body.tool_input,
       cwd: body.cwd,
       site,
+      shared,
     })
 
     if (result.decision === 'deny') {

@@ -30,6 +30,12 @@
     "written here. A write outside its site is denied; reading is never asked about; and",
     "Bash is NOT checked against the boundary. Read docs/running-agents.md first.",
     "",
+    "sessions.sharedPaths: directories writable from EVERY site, declared once — a notes",
+    "vault is the case. A session belongs to one site and a site holds one lock, which is",
+    "what lets one agent per project run at the same time; a shared path is how they can",
+    "all write one place anyway. NOTHING LOCKS a shared path: two agents can write the",
+    "same file there at once. Same form rules as a site path, and it must exist.",
+    "",
     "sessions.catalog: what you can launch. kind is one of none, command or subagent. An",
     "entry naming something that cannot be invoked is disabled with its reason and the",
     "rest of the catalog keeps working."

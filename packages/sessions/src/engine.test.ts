@@ -286,6 +286,71 @@ test('TWO live sessions in TWO different sites are not confused with each other'
   await engine.stop()
 })
 
+test('TWO live sessions in two sites can BOTH write a shared path', async () => {
+  // The reason sharedPaths exist: one agent per project, at the same time, all of them
+  // writing notes into one vault. Expressing that with sites alone needs a single site
+  // containing everything — and a site is one lock, so that is one agent.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-shared-'))
+  const a = join(home, 'a')
+  const b = join(home, 'b')
+  const vault = join(home, 'vault')
+  for (const dir of [a, b, vault]) await mkdir(dir, { recursive: true })
+
+  const setup: EngineSetup = {
+    stateDir: join(home, 'state'),
+    sites: [{ id: 'a', path: a }, { id: 'b', path: b }],
+    sharedPaths: [vault],
+    catalog: CATALOG,
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    now: () => new Date(),
+    timers,
+    hookUrl: () => BASE,
+  }
+  await mkdir(setup.stateDir, { recursive: true })
+  const engine = await createEngine(setup, { bin: FAKE })
+
+  const one = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  const two = await engine.launch({ siteId: 'b', entryId: 'free', text: 'linger', force: false })
+  const idA = one.outcome === 'started' ? one.sessionId : ''
+  const idB = two.outcome === 'started' ? two.sessionId : ''
+
+  // Both sessions, both allowed in the vault — simultaneously, each holding its own lock.
+  assert.equal((await engine.decide(payload(idA, join(vault, 'n.md'), a))).hookSpecificOutput.permissionDecision, 'allow')
+  assert.equal((await engine.decide(payload(idB, join(vault, 'n.md'), b))).hookSpecificOutput.permissionDecision, 'allow')
+  // And the sites still do not leak into each other: shared is shared, not "everything".
+  assert.equal((await engine.decide(payload(idA, join(b, 'x'), a))).hookSpecificOutput.permissionDecision, 'deny')
+  // A shared path that is not declared is still outside, and the reason names the vault.
+  const denied = await engine.decide(payload(idA, join(home, 'elsewhere', 'x'), a))
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(denied.hookSpecificOutput.permissionDecisionReason, /vault/)
+
+  await engine.cancel(idA)
+  await engine.cancel(idB)
+  await engine.stop()
+})
+
+test('a sharedPath that does not exist disables the module, like a site that does not', async () => {
+  // Same rule as a site, for the same reason: a boundary the owner declared and that is
+  // not there is a configuration error about permissions, not something to skip quietly.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-shared-missing-'))
+  const a = join(home, 'a')
+  await mkdir(a, { recursive: true })
+
+  const setup: EngineSetup = {
+    stateDir: join(home, 'state'),
+    sites: [{ id: 'a', path: a }],
+    sharedPaths: [join(home, 'no-such-vault')],
+    catalog: CATALOG,
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    now: () => new Date(),
+    timers,
+    hookUrl: () => BASE,
+  }
+  await mkdir(setup.stateDir, { recursive: true })
+
+  await assert.rejects(() => createEngine(setup, { bin: FAKE }), /no-such-vault/)
+})
+
 // ---------------------------------------------------------------------------
 // Criterion 4 — fail closed, in the three places factotum controls
 // ---------------------------------------------------------------------------

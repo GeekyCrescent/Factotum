@@ -9,6 +9,64 @@ const CWD = '/work/site'
 const ask = (toolName: string, toolInput: unknown, cwd = CWD) => decide({ toolName, toolInput, cwd, site: SITE })
 
 // ---------------------------------------------------------------------------
+// Shared paths: the same directory reachable from EVERY site
+//
+// The case they exist for: one agent per project, running at the same time, all of
+// them writing notes into one vault. A session has exactly one site, so without this
+// the only way to express it is one huge site — which is one lock, so one agent.
+// ---------------------------------------------------------------------------
+
+const VAULT: Site = { id: 'shared', path: '/home/vault', realPath: '/home/vault', isRepo: false }
+const askShared = (toolInput: unknown) =>
+  decide({ toolName: 'Write', toolInput, cwd: CWD, site: SITE, shared: [VAULT] })
+
+test('a shared path is writable from a session whose site is somewhere else', () => {
+  assert.deepEqual(askShared({ file_path: '/home/vault/notas/hoy.md' }), {
+    decision: 'allow',
+    reason: 'writes into a shared path',
+  })
+})
+
+test('the site still works when shared paths are declared', () => {
+  assert.equal(askShared({ file_path: '/work/site/a.ts' }).decision, 'allow')
+})
+
+test('outside BOTH is still denied, and the reason names what was allowed', () => {
+  // The old message named only the site. With shared paths declared it would send
+  // someone to check a boundary that was not the whole boundary.
+  const result = askShared({ file_path: '/etc/passwd' })
+  assert.equal(result.decision, 'deny')
+  assert.match(result.reason, /writes outside work/)
+  assert.match(result.reason, /\/home\/vault/)
+  assert.match(result.reason, /\/etc\/passwd/)
+})
+
+test('a sibling of a shared path is NOT inside it', () => {
+  // The separator, again: `/home/vaultX` is not `/home/vault`.
+  assert.equal(askShared({ file_path: '/home/vaultX/a.md' }).decision, 'deny')
+})
+
+test('with no shared paths the message is exactly what it was', () => {
+  // The live-verified string. Changing it for everyone to serve the new feature would
+  // be making the common case pay for the rare one.
+  const result = ask('Write', { file_path: '/etc/passwd' })
+  assert.equal(result.reason, 'writes outside work: /etc/passwd')
+})
+
+test('a shared path is matched by its REAL spelling too, like a site', () => {
+  // macOS: /tmp is a symlink to /private/tmp, and the CLI reports resolved paths.
+  const tmp: Site = { id: 'shared', path: '/tmp/vault', realPath: '/private/tmp/vault', isRepo: false }
+  const result = decide({
+    toolName: 'Write',
+    toolInput: { file_path: '/private/tmp/vault/a.md' },
+    cwd: CWD,
+    site: SITE,
+    shared: [tmp],
+  })
+  assert.equal(result.decision, 'allow')
+})
+
+// ---------------------------------------------------------------------------
 // The boundary
 // ---------------------------------------------------------------------------
 

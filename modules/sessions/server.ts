@@ -202,6 +202,7 @@ export function sessionsModule(
       const engine = await createEngine({
         stateDir: ctx.stateDir,
         sites: ctx.config.sites,
+        sharedPaths: ctx.config.sharedPaths,
         catalog: ctx.config.catalog,
         log: ctx.log,
         now: ctx.now,

@@ -107,6 +107,9 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'hookUrl',
     'log',
     'now',
+    // The permission boundary is `sites` AND `sharedPaths`, so half of it arriving is
+    // half a boundary. This list is what catches that, which is why it is spelled out.
+    'sharedPaths',
     'sites',
     'stateDir',
     'timers',
@@ -341,7 +344,7 @@ test('a decision the engine made travels through untouched', async () => {
 // ---------------------------------------------------------------------------
 
 test('an empty fragment is valid: a module that needs configuring to start is badly designed', () => {
-  assert.deepEqual(sessionsConfigSchema.parse({}), { sites: [], catalog: [] })
+  assert.deepEqual(sessionsConfigSchema.parse({}), { sites: [], catalog: [], sharedPaths: [] })
 })
 
 test('a well-formed fragment parses', () => {
@@ -371,6 +374,20 @@ test('two sites with one id are refused — two directories cannot share one loc
   })
   assert.equal(result.success, false)
   assert.match(result.error?.issues[0]?.message ?? '', /same id/)
+})
+
+test('sharedPaths default to none, and hold the same shape rules as a site path', () => {
+  // Same two refusals as `sites[].path`, from the same schema: a relative path would
+  // be resolved against wherever the daemon was started, and `..` makes a boundary
+  // nobody can read at a glance. A shared path is still a boundary.
+  assert.deepEqual(sessionsConfigSchema.parse({}).sharedPaths, [])
+
+  const ok = sessionsConfigSchema.parse({ sharedPaths: ['/Users/x/vault'] })
+  assert.deepEqual(ok.sharedPaths, ['/Users/x/vault'])
+
+  for (const bad of ['relative/vault', '/a/../b', '']) {
+    assert.equal(sessionsConfigSchema.safeParse({ sharedPaths: [bad] }).success, false, bad)
+  }
 })
 
 test('a site id shaped like a path is refused, because it names a lock FILE', () => {

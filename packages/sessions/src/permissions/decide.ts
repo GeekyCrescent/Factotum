@@ -23,6 +23,20 @@ export interface DecideInput {
   /** The session's working directory, as the CLI reports it. Not the daemon's. */
   readonly cwd: string
   readonly site: Site
+  /**
+   * Directories writable from EVERY site, declared once in the config.
+   *
+   * A session has exactly one site, and that is what makes the boundary readable. But
+   * one directory is legitimately shared — a notes vault is the case this was built
+   * for — and without this the only way to express "three agents, all writing there"
+   * is one site big enough to contain everything, which is ONE lock and therefore one
+   * agent at a time.
+   *
+   * THEY ARE NOT SITES. Nothing launches into them, nothing locks them, and two agents
+   * writing the same file in one is not prevented by anything. That is the trade the
+   * owner makes by declaring one.
+   */
+  readonly shared?: readonly Site[]
 }
 
 export interface DecisionResult {
@@ -75,9 +89,18 @@ export function decide(input: DecideInput): DecisionResult {
     return { decision: 'allow', reason: 'no destination path' }
   }
 
-  if (!insideSite(input.site, target)) {
-    return { decision: 'deny', reason: `writes outside ${input.site.id}: ${target}` }
+  if (insideSite(input.site, target)) {
+    return { decision: 'allow', reason: 'writes where it belongs' }
   }
 
-  return { decision: 'allow', reason: 'writes where it belongs' }
+  const shared = input.shared ?? []
+  if (shared.some((path) => insideSite(path, target))) {
+    return { decision: 'allow', reason: 'writes into a shared path' }
+  }
+
+  // The message names the WHOLE boundary, or it sends someone to check half of it.
+  // With none declared it is byte for byte what it always was: the common case does
+  // not pay for the rare one.
+  const also = shared.length === 0 ? '' : ` or ${shared.map((path) => path.path).join(', ')}`
+  return { decision: 'deny', reason: `writes outside ${input.site.id}${also}: ${target}` }
 }
