@@ -187,6 +187,21 @@ Your machine has one MagicDNS name, and `serve` fronts one backend — but `dev`
 
 The secure context is for the phone, and the phone talks to prod.
 
+### What the secure context buys, and the one thing that nearly took it away
+
+Over HTTPS the client registers a service worker and Android offers to **install** it:
+its own icon, its own window, no address bar. That needs three things, and the third is
+the one that cost an afternoon — all of it measured on Chrome 153 / Android:
+
+- **Icons.** With `"icons": []` the install is never offered, service worker or not.
+- **A service worker.** It does *not* need a `fetch` handler; `apps/web/public/sw.js`
+  has `install` and `activate` and nothing else, on purpose.
+- **The manifest served as `application/manifest+json`.** The daemon types static files
+  by extension, so the file is `manifest.webmanifest` rather than `manifest.json`. With
+  `application/json` everything looks right — secure context, worker registered, icons
+  fetched, manifest parsed — and Chrome quietly downgrades the install to a **home
+  screen shortcut** that opens in a tab. No 404, no console error, no warning.
+
 ## When it refuses to start
 
 Every failure names three things: what it looked for, what it found, and what to do.

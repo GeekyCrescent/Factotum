@@ -146,6 +146,29 @@ factotum start --env dev     # 7778 by default, while prod keeps 7777
 
 State lives in `~/.factotum/<env>/`. Nothing about one environment touches the other.
 
+## Keeping it up
+
+`factotum start` runs in the foreground and dies with your terminal. To have it come
+back by itself — **macOS only; it registers a LaunchAgent**:
+
+```sh
+factotum install --env prod     # starts now, and at every login
+factotum uninstall --env prod
+```
+
+It starts at login and relaunches if it crashes, but **a config it refuses to start on
+leaves it down, on purpose** — the error is in `~/.factotum/<env>/daemon.err.log`, and
+`launchctl list | grep factotum` tells you whether it is loaded.
+
+Two things it deliberately does **not** do:
+
+- **It does not start `tailscale serve`.** That is a decision about who can reach your
+  machine, and it is yours to make. `factotum doctor` prints the exact command for your
+  config — including the right port, and a refusal to hand you one that would replace
+  another service's handler.
+- **It does not exist on Linux.** There is no systemd unit yet; run `factotum start`
+  under whatever supervisor you already have.
+
 ## Layout
 
 ```

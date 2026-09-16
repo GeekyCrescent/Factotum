@@ -20,7 +20,8 @@ const readPublic = (name: string) => readFile(join(WEB, 'public', name))
  * `.webmanifest`, NOT `.json`, and the extension is the whole point.
  *
  * The daemon's static server picks the content type from the extension
- * (`kernel/src/http/static.ts`), so `manifest.json` goes out as `application/json`.
+ * (`kernel/src/http/static.ts`), so the old name — `manifest.json` — went out as
+ * `application/json`.
  * MEASURED on Android: with that type Chrome parses the manifest, registers the
  * service worker, reports a secure context — and then offers a plain HOME SCREEN
  * SHORTCUT instead of installing, which opens in a tab with the address bar. The
