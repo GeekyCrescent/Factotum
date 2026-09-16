@@ -75,7 +75,7 @@ export interface EngineSetup {
   readonly now: () => Date
   readonly timers: Timers
   /** A thunk: at step 12 the answer does not exist yet. */
-  readonly baseUrl: () => string
+  readonly hookUrl: () => string
 }
 
 // --- what the engine does --------------------------------------------------

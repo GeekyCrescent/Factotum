@@ -34,27 +34,45 @@ factotum init      # or: node packages/cli/dist/main.js init
 factotum start
 ```
 
-`init` finds your Tailscale address, writes `~/.factotum/prod/config.json`, and prints
-a **QR code**. Scan it with your phone. That is the whole setup — you never type an IP.
+`init` reads your machine's MagicDNS name, writes `~/.factotum/prod/config.json` with
+a loopback bind, and prints a **QR code**. One more command puts HTTPS in front —
+`init` prints it for you, usually:
+
+```sh
+tailscale serve --bg --https=443 http://127.0.0.1:7777
+```
+
+If 443 already serves something else on this machine, `init` picks 8443 and prints
+that instead: `serve` on a taken port replaces the other service rather than failing.
+
+Scan the QR with your phone. You never type an address, and the client arrives over
+**HTTPS** — which is what lets it install as an app.
+
+**factotum requires Tailscale**, with MagicDNS and HTTPS enabled for your tailnet.
 
 If something is not right, `factotum doctor` reports what it can see without starting
 anything.
 
 ## There is no password, and that is a decision
 
-factotum listens **only on a private network address** — your Tailscale address, or a
-LAN one. It has no login, no token, no TLS. Being on the tailnet is the authorisation.
+factotum listens **only on loopback**, with `tailscale serve` terminating HTTPS in
+front of it on a name only your tailnet can resolve. It has no login and no token:
+being on the tailnet is the authorisation.
 
 That is defensible for one person on their own machines, and it is why:
 
-- **It refuses to listen on `0.0.0.0`.** There is no flag for it. If you genuinely
-  want to expose it, put a proxy in front — that should be a visible decision of
-  yours, not a switch of ours.
+- **It refuses to listen on `0.0.0.0`.** There is no flag for it.
+- **Nothing on your tailnet can reach the daemon directly.** The bind is loopback, so
+  the only way in is through the proxy you put there on purpose. Publishing it to the
+  internet with `tailscale funnel` is possible and is entirely your decision;
+  `factotum doctor` warns you when it is on.
 - **It refuses to start** if it cannot confirm where it is listening, rather than
   falling back to something that works but is wrong.
-- **It checks `Origin`.** The bind decides where you can reach it *from*; it says
-  nothing about who is talking once inside. Any page you open in a browser on your
-  tailnet could otherwise POST to it. See [docs/networking.md](docs/networking.md).
+- **It checks `Origin`** against two exact origins: the one it is served on, and the
+  loopback bind. Nothing is matched by shape or suffix. The bind decides where you can
+  reach it *from*; it says nothing about who is talking once inside, and any page you
+  open in a browser could otherwise POST to it. See
+  [docs/networking.md](docs/networking.md).
 
 **What this does not protect against:** anyone else on your tailnet. If you share it,
 they can do everything you can. Read [docs/networking.md](docs/networking.md) before
@@ -127,6 +145,29 @@ factotum start --env dev     # 7778 by default, while prod keeps 7777
 ```
 
 State lives in `~/.factotum/<env>/`. Nothing about one environment touches the other.
+
+## Keeping it up
+
+`factotum start` runs in the foreground and dies with your terminal. To have it come
+back by itself — **macOS only; it registers a LaunchAgent**:
+
+```sh
+factotum install --env prod     # starts now, and at every login
+factotum uninstall --env prod
+```
+
+It starts at login and relaunches if it crashes, but **a config it refuses to start on
+leaves it down, on purpose** — the error is in `~/.factotum/<env>/daemon.err.log`, and
+`launchctl list | grep factotum` tells you whether it is loaded.
+
+Two things it deliberately does **not** do:
+
+- **It does not start `tailscale serve`.** That is a decision about who can reach your
+  machine, and it is yours to make. `factotum doctor` prints the exact command for your
+  config — including the right port, and a refusal to hand you one that would replace
+  another service's handler.
+- **It does not exist on Linux.** There is no systemd unit yet; run `factotum start`
+  under whatever supervisor you already have.
 
 ## Layout
 

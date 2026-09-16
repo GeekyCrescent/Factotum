@@ -19,12 +19,15 @@ import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
 import { init, terminalAsk } from './init.ts'
+import { install, uninstall } from './install.ts'
 
 const USAGE = `factotum ${VERSION}
 
-  factotum init [--env dev|prod]    find an address, write a config, show a QR
-  factotum start [--env dev|prod]   run the daemon in the foreground
-  factotum doctor                   report what is set up, without starting anything
+  factotum init [--env dev|prod]       write a config, show a QR
+  factotum start [--env dev|prod]      run the daemon in the foreground
+  factotum doctor                      report what is set up, without starting anything
+  factotum install [--env dev|prod]    keep it running across logins (launchd)
+  factotum uninstall [--env dev|prod]  stop doing that
 
 Environment resolves as --env, then FACTOTUM_ENV, then prod.
 `
@@ -60,6 +63,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       return await doctor()
     case 'start':
       return await start(env)
+    case 'install':
+      return await install({ env })
+    case 'uninstall':
+      return await uninstall({ env })
     default:
       console.error(`unknown command "${command}"\n`)
       process.stdout.write(USAGE)
@@ -108,7 +115,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
    * is over and this is not a startup failure.
    */
   let verifiedUrl: string | undefined
-  const baseUrl = (): string => {
+  const hookUrl = (): string => {
     if (verifiedUrl === undefined) {
       throw new Error('factotum is still composing itself; try again in a moment')
     }
@@ -119,7 +126,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   try {
     handle = await boot({
       env,
-      modules: [...ALL_MODULES, sessionsModule(engineFactory, baseUrl)],
+      modules: [...ALL_MODULES, sessionsModule(engineFactory, hookUrl)],
       version: VERSION,
       site: createStaticSite(siteRoot()),
     })
@@ -135,8 +142,14 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
     throw error
   }
 
-  verifiedUrl = handle.url
+  // THE LOCAL URL, NOT THE PUBLIC ONE. This is the single line that decides which URL
+  // ends up in the hook's settings.json, and the hook runs beside the daemon on this
+  // machine: pointing it at the public origin would route every permission decision
+  // out through `tailscale serve` and back, so the gate would fail whenever the proxy
+  // was down — which is precisely when a session is most likely to be running.
+  verifiedUrl = handle.localUrl
 
+  // The PUBLIC one here: this is the line a human reads and opens on their phone.
   console.log(`factotum ${VERSION} [${env}] ready at ${handle.url}`)
 
   const shutdown = (signal: string) => {

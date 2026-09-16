@@ -1,0 +1,17 @@
+- generic [ref=e2]:
+  - navigation [ref=e3]:
+    - link "factotum" [ref=e4] [cursor=pointer]:
+      - /url: /
+    - link "Sessions" [ref=e5] [cursor=pointer]:
+      - /url: /m/sessions
+    - link "Example" [ref=e6] [cursor=pointer]:
+      - /url: /m/example
+  - main [ref=e7]:
+    - heading "Modules" [level=1] [ref=e8]
+    - list [ref=e9]:
+      - listitem [ref=e10]:
+        - link "Sessions" [ref=e11] [cursor=pointer]:
+          - /url: /m/sessions
+      - listitem [ref=e12]:
+        - link "Example" [ref=e13] [cursor=pointer]:
+          - /url: /m/example

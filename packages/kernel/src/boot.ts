@@ -17,8 +17,8 @@ import { loadRootConfig, composeModules } from './config/load.ts'
 import { ensureStateRoots, statePaths, type StatePaths } from './config/paths.ts'
 import { resolveListen, type Interfaces } from './net/resolve.ts'
 import { verifyBound } from './net/verify.ts'
-import { baseUrl } from './net/url.ts'
-import { originPolicy } from './net/origin.ts'
+import { localUrl } from './net/url.ts'
+import { policyFor } from './net/policy.ts'
 import { Registry } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
 
@@ -70,7 +70,15 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
   const make = options.makeServer ?? createServer
   const server = make({
     registry,
-    origin: originPolicy(listen.address, listen.port, config.listen.extraOrigins),
+    // `listen.address` is the RESOLVED address from step 4, not what the config
+    // declared — with `listen.interface` those differ, and passing the declared one
+    // would decide the rescue route from a value that was never bound.
+    origin: policyFor({
+      publicOrigin: config.publicOrigin,
+      address: listen.address,
+      port: listen.port,
+      extraOrigins: config.listen.extraOrigins,
+    }),
     env: options.env,
     version: options.version,
     startedAt,
@@ -104,7 +112,11 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
   ready = true
 
   return {
-    url: baseUrl(listen.address, listen.port),
+    // Declared, not composed. The daemon cannot know the name the certificate in
+    // front of it covers, and a URL guessed from the bind would be a loopback
+    // address in the QR.
+    url: config.publicOrigin,
+    localUrl: localUrl(listen.address, listen.port),
     stop: async () => {
       ready = false
       await registry.stopAll()

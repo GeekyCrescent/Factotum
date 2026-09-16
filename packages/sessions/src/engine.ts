@@ -102,10 +102,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   async function writeSettings(sessionId: string): Promise<string> {
     await store.ensureDir(sessionId)
     const path = store.settingsFile(sessionId)
-    // `baseUrl()` throws while the composition root has not filled the thunk in. That
+    // `hookUrl()` throws while the composition root has not filled the thunk in. That
     // is on purpose and it is the last thing that can go wrong before a subprocess
     // exists: a session launched with an unreachable hook is a session with no gate.
-    await writeFile(path, serializeSettings(hookSettings(setup.baseUrl())), 'utf8')
+    await writeFile(path, serializeSettings(hookSettings(setup.hookUrl())), 'utf8')
     return path
   }
 

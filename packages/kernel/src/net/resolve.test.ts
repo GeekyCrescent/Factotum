@@ -5,7 +5,6 @@ import type { ListenConfig } from '@factotum/core'
 import type { BootError } from '../errors.ts'
 import { resolveListen } from './resolve.ts'
 import { verifyBound } from './verify.ts'
-import { baseUrl } from './url.ts'
 
 type Interfaces = typeof networkInterfaces
 
@@ -148,17 +147,4 @@ test('a socket that reports nothing is a failure, not a pass', () => {
   const verdict = verifyBound({ address: '100.87.1.2', port: 7777 }, null)
   assert.equal(verdict.ok, false)
   assert.match(verdict.ok === false ? verdict.actual : '', /nothing/)
-})
-
-// ---------------------------------------------------------------------------
-// url
-// ---------------------------------------------------------------------------
-
-test('an IPv6 address is bracketed so the QR carries a URL a phone can open', () => {
-  assert.equal(baseUrl('fd7a:115c:a1e0::1', 7777), 'http://[fd7a:115c:a1e0::1]:7777')
-  assert.equal(baseUrl('fe80::1%utun4', 7777), 'http://[fe80::1]:7777')
-})
-
-test('an IPv4 address is left alone', () => {
-  assert.equal(baseUrl('100.87.1.2', 7777), 'http://100.87.1.2:7777')
 })

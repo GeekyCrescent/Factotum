@@ -45,7 +45,7 @@ interface World {
   readonly warnings: string[]
 }
 
-async function world(options: { sites?: readonly SiteConfig[]; baseUrl?: () => string } = {}): Promise<World> {
+async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => string } = {}): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
   const stateDir = join(home, 'state')
   const siteDir = join(home, 'site')
@@ -60,7 +60,7 @@ async function world(options: { sites?: readonly SiteConfig[]; baseUrl?: () => s
     log: { info: () => undefined, warn: (m: string) => void warnings.push(m), error: () => undefined },
     now: () => new Date(),
     timers,
-    baseUrl: options.baseUrl ?? (() => BASE),
+    hookUrl: options.hookUrl ?? (() => BASE),
   }
 
   const engine = await createEngine(setup, { bin: FAKE })
@@ -190,7 +190,7 @@ test('a launch that fails after taking the lock RELEASES IT', async () => {
   // statement. Without the try/finally the site would stay locked until the next
   // restart, and the 409 after it would hand the screen a session id with no session.
   const { engine, locks } = await world({
-    baseUrl: () => {
+    hookUrl: () => {
       throw new Error('factotum is still composing itself; try again in a moment')
     },
   })
@@ -202,7 +202,7 @@ test('a launch that fails after taking the lock RELEASES IT', async () => {
 test('and the site is usable immediately afterwards', async () => {
   let ready = false
   const { engine } = await world({
-    baseUrl: () => {
+    hookUrl: () => {
       if (!ready) throw new Error('not yet')
       return BASE
     },
@@ -264,7 +264,7 @@ test('TWO live sessions in TWO different sites are not confused with each other'
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
     timers,
-    baseUrl: () => BASE,
+    hookUrl: () => BASE,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
@@ -600,7 +600,7 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
     timers,
-    baseUrl: () => BASE,
+    hookUrl: () => BASE,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
@@ -636,7 +636,7 @@ test('a refused stale launch does not keep the lock', async () => {
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
     timers,
-    baseUrl: () => BASE,
+    hookUrl: () => BASE,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })

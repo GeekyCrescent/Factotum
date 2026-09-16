@@ -39,8 +39,16 @@ export const listenSchema = z
     interface: z.string().min(1).optional(),
     port: z.number().int().min(1024).max(65535),
     /**
-     * Extra allowed origins, for anyone putting a reverse proxy in front. Everything
-     * else about the origin policy is decided by shape — see `net/origin.ts`.
+     * Extra allowed origins, for anyone putting a proxy in front that is not
+     * `tailscale serve`. The two origins factotum accepts by default are exact and
+     * declared — `publicOrigin` below, and the bind itself when it is loopback — so
+     * this is an operator's hatch and not the mechanism. See `net/origin.ts`.
+     *
+     * The one place it is the right answer is `pnpm dev`: Vite serves the client on
+     * `http://localhost:5173` and proxies the API, so the browser sends that origin
+     * on every POST. It is worth knowing what it costs — `localhost:5173` is
+     * literally "another service on this machine", the thing the policy exists to
+     * refuse — so it belongs in a dev config and never in `config.template.json`.
      */
     extraOrigins: z.array(z.string()).default([]),
   })
@@ -78,6 +86,40 @@ export const moduleEntrySchema = z
 
 export type ModuleEntry = z.infer<typeof moduleEntrySchema>
 
+/**
+ * The origin the client is actually served on.
+ *
+ * Declared, never derived: with `tailscale serve` terminating TLS in front, the
+ * daemon has no way to know the name the certificate covers, and guessing it is the
+ * kind of thing that works on the author's machine.
+ *
+ * IT MUST BE CANONICAL, AND THE GUARD IS DOUBLE ON PURPOSE.
+ *
+ * The origin policy compares raw strings, so anything not canonical here means 403 on
+ * every request with `doctor` printing two values that look identical. `v === u.origin`
+ * catches a trailing slash, upper case, credentials and an explicit `:443`.
+ *
+ * It does NOT catch a trailing dot, and that is the one that would actually have
+ * happened: `new URL('https://x.ts.net.').origin` is byte-identical to its input, and
+ * `tailscale status --json` returns `Self.DNSName` WITH the trailing dot — measured on
+ * a real tailnet, it comes back `'juans-macbook-pro.tailbd0167.ts.net.'`. That is the
+ * exact string `init` composes from, while the browser sends the name without the dot.
+ * So the second half of this guard is not defensive programming; it is the failure the
+ * fourth revision of this design shipped.
+ */
+const publicOriginSchema = z.string().refine(
+  (v) => {
+    try {
+      const u = new URL(v)
+      if (v !== u.origin) return false
+      return !u.hostname.endsWith('.')
+    } catch {
+      return false
+    }
+  },
+  { message: 'publicOrigin must be a bare canonical origin with no trailing dot, e.g. https://host.tailnet.ts.net' },
+)
+
 export const rootConfigSchema = z.object({
   /**
    * Cross-checked against the resolved environment. Without this, copying
@@ -87,6 +129,7 @@ export const rootConfigSchema = z.object({
    */
   environment: environmentSchema,
   listen: listenSchema,
+  publicOrigin: publicOriginSchema,
   modules: z.record(z.string(), moduleEntrySchema).default({}),
 })
 

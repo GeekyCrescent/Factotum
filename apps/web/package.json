@@ -10,7 +10,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "echo 'no unit tests: the shell is covered by the kernel integration tests' "
+    "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": { "preact": "^10.25.4" },
   "devDependencies": {
