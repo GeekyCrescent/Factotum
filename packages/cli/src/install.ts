@@ -34,6 +34,30 @@ export interface InstallDeps {
   /** Overridable so a test does not have to live next to the built CLI. */
   readonly mainPath?: string
   readonly path?: string
+  /** Injected so the refusal below is testable on the machine that ships it. */
+  readonly platform?: NodeJS.Platform
+}
+
+/**
+ * launchd is macOS, and everything here is launchd: a plist, `~/Library/LaunchAgents`,
+ * and `launchctl`. Running it anywhere else used to write a plist into a directory
+ * that means nothing there and then fail on a missing binary, leaving the file behind.
+ *
+ * Refusing is not a limitation being hidden — it is the limitation being said out
+ * loud, in the place where someone hits it.
+ */
+function refuseOffDarwin(platform: NodeJS.Platform, out: (line: string) => void): boolean {
+  if (platform === 'darwin') return false
+  out(`\`factotum install\` is macOS only: it registers a LaunchAgent, and this is ${platform}.`)
+  out('')
+  out('Nothing was written. Use whatever supervisor this machine already has —')
+  out('a systemd user unit around `factotum start --env <env>` is the usual answer:')
+  out('')
+  out('    ExecStart=/usr/bin/node /path/to/Factotum/packages/cli/dist/main.js start --env prod')
+  out('')
+  out('Give it a PATH that contains `claude`, or the daemon comes up healthy and every')
+  out('session dies with ENOENT. See the README.')
+  return true
 }
 
 function defaultMainPath(): string {
@@ -42,6 +66,8 @@ function defaultMainPath(): string {
 
 export async function install(deps: InstallDeps): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line))
+  if (refuseOffDarwin(deps.platform ?? process.platform, out)) return 1
+
   const run = deps.run ?? execRunner
   const home = deps.home ?? homedir()
   const uid = deps.uid ?? process.getuid?.() ?? 0
@@ -98,6 +124,8 @@ export async function install(deps: InstallDeps): Promise<number> {
 
 export async function uninstall(deps: InstallDeps): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line))
+  if (refuseOffDarwin(deps.platform ?? process.platform, out)) return 1
+
   const run = deps.run ?? execRunner
   const home = deps.home ?? homedir()
   const uid = deps.uid ?? process.getuid?.() ?? 0

@@ -160,14 +160,57 @@ It starts at login and relaunches if it crashes, but **a config it refuses to st
 leaves it down, on purpose** — the error is in `~/.factotum/<env>/daemon.err.log`, and
 `launchctl list | grep factotum` tells you whether it is loaded.
 
-Two things it deliberately does **not** do:
+**It does not start `tailscale serve`**, and that is deliberate: who can reach your
+machine is a decision, and it is yours. `factotum doctor` prints the exact command for
+your config — with the right port, and a refusal to hand you one that would replace
+another service's handler.
 
-- **It does not start `tailscale serve`.** That is a decision about who can reach your
-  machine, and it is yours to make. `factotum doctor` prints the exact command for your
-  config — including the right port, and a refusal to hand you one that would replace
-  another service's handler.
-- **It does not exist on Linux.** There is no systemd unit yet; run `factotum start`
-  under whatever supervisor you already have.
+### Linux and Windows
+
+The daemon, the origin policy and the client are plain Node and work anywhere Node and
+Tailscale do. **The supervisor does not**: `factotum install` writes a macOS LaunchAgent,
+and on any other platform it refuses and writes nothing.
+
+Everything up to and including `factotum start` is the same — `pnpm build`, `factotum
+init`, the `tailscale serve` command it prints. Only step 7, keeping it up, changes.
+
+**Linux.** `tailscale serve` needs to run without `sudo`, so after `tailscale up`:
+
+```sh
+sudo tailscale set --operator=$USER
+```
+
+Then a systemd **user** unit, `~/.config/systemd/user/factotum.service`:
+
+```ini
+[Unit]
+Description=factotum (prod)
+
+[Service]
+ExecStart=/usr/bin/node /path/to/Factotum/packages/cli/dist/main.js start --env prod
+Restart=on-failure
+Environment=PATH=/home/you/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now factotum
+loginctl enable-linger $USER    # or it stops when you log out
+```
+
+**That `PATH` line is the whole trick.** A service does not inherit your shell's
+environment, and the session engine launches `claude` by name: get it wrong and the
+daemon is perfectly healthy, `/health` answers, and every session dies with ENOENT.
+`factotum install` captures the PATH for exactly this reason.
+
+**Windows.** Untested. Tailscale, Node and the daemon should all work; there is no
+supervisor integration, so `factotum start` under whatever you already use.
+
+> **Only macOS is verified end to end** — bind, TLS, the installed PWA on a phone, and
+> sessions under the supervisor. Linux and Windows are "should work, nobody has run the
+> spec's checks there".
 
 ## Layout
 
