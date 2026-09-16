@@ -10,7 +10,7 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
+import { chmod, mkdir } from 'node:fs/promises'
 import { DEFAULT_ENVIRONMENT, isEnvironment, type Environment } from '@factotum/core'
 
 export interface StatePaths {
@@ -18,6 +18,14 @@ export interface StatePaths {
   readonly config: string
   /** `<root>/modules/`; each module gets `<root>/modules/<id>/`. */
   readonly modules: string
+  /**
+   * `<root>/push/`: the VAPID pair and the subscriptions.
+   *
+   * THE DAEMON'S, NOT A MODULE'S. The keys identify the daemon as a sender — a module is not
+   * a sender — and `ModuleContext` promises a module sees no path outside its own
+   * `stateDir`, so a key the kernel also reads cannot live under `modules/`.
+   */
+  readonly push: string
 }
 
 export function statePaths(env: Environment, home: string = homedir()): StatePaths {
@@ -26,6 +34,7 @@ export function statePaths(env: Environment, home: string = homedir()): StatePat
     root,
     config: join(root, 'config.json'),
     modules: join(root, 'modules'),
+    push: join(root, 'push'),
   }
 }
 
@@ -36,7 +45,16 @@ export function moduleStateDir(paths: StatePaths, id: string): string {
 /** Idempotent; called at boot so the first write is not the first failure. */
 export async function ensureStateRoots(paths: StatePaths): Promise<void> {
   await mkdir(paths.modules, { recursive: true })
+  await mkdir(paths.push, { recursive: true, mode: PUSH_DIR_MODE })
+  // `mode` on mkdir is masked by the umask AND ignored when the directory already exists,
+  // so neither is a guarantee. The chmod is. It is not a defence against the agent — an
+  // agent runs as the owner and reads what the owner reads (spec §0.29) — it is so that
+  // nobody ELSE on the machine does.
+  await chmod(paths.push, PUSH_DIR_MODE)
 }
+
+/** Owner-only. The keys and the subscription endpoints are both capabilities. */
+const PUSH_DIR_MODE = 0o700
 
 /**
  * `--env` beats `FACTOTUM_ENV` beats `prod`.
