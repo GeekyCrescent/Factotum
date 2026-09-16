@@ -208,9 +208,9 @@ daemon is perfectly healthy, `/health` answers, and every session dies with ENOE
 **Windows.** Untested. Tailscale, Node and the daemon should all work; there is no
 supervisor integration, so `factotum start` under whatever you already use.
 
-> **Only macOS is verified end to end** — bind, TLS, the installed PWA on a phone, and
-> sessions under the supervisor. Linux and Windows are "should work, nobody has run the
-> spec's checks there".
+> **Verified:** macOS end to end — bind, TLS, the installed PWA on a phone, and sessions
+> under launchd. **Linux** up to and including a real session under the systemd unit
+> above, following these instructions as written. **Windows:** nobody has tried.
 
 ## Layout
 
