@@ -20,19 +20,26 @@
 
 import { z } from 'zod'
 
+/**
+ * Every declared directory goes through this, sites and shared paths alike: both are
+ * halves of the same boundary, and a rule that applied to one of them would be a rule
+ * with a way around it.
+ */
+const boundaryPath = z
+  .string()
+  .min(1)
+  // Absolute, because a relative path would be resolved against whatever directory
+  // the daemon happens to have been started from — which is not a boundary anybody
+  // declared.
+  .refine((value) => value.startsWith('/'), 'a site path must be absolute')
+  // No `..`, because the boundary is checked against this string and a path that
+  // climbs is a boundary that is hard to read and easy to get wrong.
+  .refine((value) => !value.split('/').includes('..'), 'a site path must not contain ".."')
+
 const siteSchema = z.object({
   /** Same shape as a module id: it names a lock file, so it cannot contain a slash. */
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'a site id must match /^[a-z0-9][a-z0-9-]*$/'),
-  path: z
-    .string()
-    .min(1)
-    // Absolute, because a relative path would be resolved against whatever directory
-    // the daemon happens to have been started from — which is not a boundary anybody
-    // declared.
-    .refine((value) => value.startsWith('/'), 'a site path must be absolute')
-    // No `..`, because the boundary is checked against this string and a path that
-    // climbs is a boundary that is hard to read and easy to get wrong.
-    .refine((value) => !value.split('/').includes('..'), 'a site path must not contain ".."'),
+  path: boundaryPath,
 })
 
 /**
@@ -57,6 +64,18 @@ export const sessionsConfigSchema = z
   .object({
     sites: z.array(siteSchema).default([]),
     catalog: z.array(catalogEntrySchema).default([]),
+    /**
+     * Directories writable from EVERY site — a notes vault is the case this exists for.
+     *
+     * A session has exactly one site, which is what keeps the boundary readable, so
+     * without this the only way to let three agents share a vault is one site big
+     * enough to contain everything: one lock, one agent at a time.
+     *
+     * NOTHING LAUNCHES INTO THEM AND NOTHING LOCKS THEM. Two agents writing the same
+     * file in a shared path is not prevented, and that is the trade being made here
+     * rather than a gap to close later.
+     */
+    sharedPaths: z.array(boundaryPath).default([]),
   })
   // Duplicate ids are refused here rather than resolved somewhere later: two sites
   // with one id means two directories sharing one lock, which is the one thing the

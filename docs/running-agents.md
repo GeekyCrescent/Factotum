@@ -41,6 +41,31 @@ first check cannot touch the disk and the second must not run any earlier.
 If a site is wrong, **the module is disabled with the reason** and the rest of factotum
 keeps running. `factotum doctor` will tell you which and why.
 
+### Shared paths, and what they cost
+
+A session belongs to **one** site, and a site holds **one** lock — that pairing is what
+lets you run an agent per project at the same time, and it is also why several agents
+cannot write one shared directory by declaring it in each of them.
+
+For that, declare it once, beside `sites`:
+
+```json
+"sharedPaths": ["/Users/you/notes/inbox"]
+```
+
+Every session may write there, in addition to its own site. Same rules as a site path:
+absolute, no `..`, and it must exist or the module is disabled with the reason. The
+denial message then names the whole boundary, site and shared paths together.
+
+**What it is not:** nothing launches into a shared path, and **nothing locks it**. Two
+agents writing the same file there at the same time is not prevented by anything —
+last write wins, silently. Give agents separate files if you can (one note each, not a
+shared index).
+
+The alternative, if that trade is wrong for you, is one site containing everything.
+That keeps a single lock over the whole tree, which means one agent at a time. Both
+are legitimate; pick the one that matches how you work.
+
 ### The catalog
 
 | `kind` | What happens |

@@ -66,6 +66,12 @@ export interface CatalogEntry {
 export interface EngineSetup {
   readonly stateDir: string
   readonly sites: readonly SiteConfig[]
+  /**
+   * Directories writable from every site. Declared once, locked by nothing — see the
+   * comment on `DecideInput.shared`. Optional because a setup without one is the
+   * normal case, not a setup missing something.
+   */
+  readonly sharedPaths?: readonly string[]
   readonly catalog: readonly CatalogEntry[]
   readonly log: Logger
   /** `ctx.now` and `ctx.timers`, as handed over. The kernel owns both. */

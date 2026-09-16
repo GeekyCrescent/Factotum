@@ -129,6 +129,19 @@ A write whose destination lands inside the site is allowed; outside it is denied
 the reason in the log and on the screen. Reading is never asked about. Sessions
 persist to an append-only log, so you can close the tab and come back.
 
+**One site, one lock, one session at a time** — which is what lets you run an agent per
+project at once. A session belongs to exactly one site, so if several of them need to
+write the same place (a notes vault is the usual case), declare it once:
+
+```json
+"sharedPaths": ["/Users/you/notes/inbox"]
+```
+
+Every session may write there, on top of its own site. **Nothing launches into a shared
+path and nothing locks it**: two agents can touch the same file at the same time. That
+is the trade for having them run in parallel — the alternative is one site big enough to
+contain everything, which is one lock and therefore one agent.
+
 **`Bash` is not checked against that boundary, and this is not containment.**
 [docs/running-agents.md](docs/running-agents.md) lists all ten limits, and it is worth
 reading before you declare your first site.
