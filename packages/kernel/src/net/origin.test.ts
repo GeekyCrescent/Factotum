@@ -85,6 +85,12 @@ test('a suffix trap is refused', () => {
   // `endsWith` or any substring test would admit these: the attacker owns the name.
   assert.equal(originAllowed('https://mimac.tail1234.ts.net.attacker.com', policy), false)
   assert.equal(originAllowed('http://127.0.0.1.attacker.com:7777', policy), false)
+  // Carried over from the rule this spec DELETED, and kept for the reason the header
+  // gives: `evilts.net` is what an `endsWith('ts.net')` written without the dot lets
+  // in, and the tailnet-IP trap is what the `sameAddress` branch had to defend.
+  // Neither rule exists now; both attacks are recorded here rather than in a diff.
+  assert.equal(originAllowed('http://evilts.net:7777', policy), false)
+  assert.equal(originAllowed('http://100.87.1.2.attacker.com:7777', policy), false)
   const withProxy = originPolicy(PUBLIC, undefined, ['https://a.com'])
   assert.equal(originAllowed('https://a.com.evil.net', withProxy), false)
 })
