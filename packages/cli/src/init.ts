@@ -14,7 +14,7 @@
 
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
-import { ensureStateRoots, localUrl, statePaths } from '@factotum/kernel'
+import { ensureStateRoots, loadOrCreateKeys, localUrl, statePaths } from '@factotum/kernel'
 import { rootConfigSchema, type Environment } from '@factotum/core'
 import {
   execRunner,
@@ -115,6 +115,12 @@ export async function init(deps: InitDeps): Promise<number> {
   await mkdir(paths.root, { recursive: true })
   await writeFile(paths.config, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
   await ensureStateRoots(paths)
+  // The push key pair, here so it exists before the first start. NEVER regenerated: re-running
+  // init over an existing config keeps the pair, because a new one silently invalidates every
+  // subscription (spec A6). The daemon also creates it on start if it is missing — that is what
+  // covers installations older than this code, which init will not touch unless told to.
+  const keys = await loadOrCreateKeys({ dir: paths.push })
+  if (keys.kind === 'unavailable') out(`push notifications are off until this is fixed: ${keys.reason}`)
 
   out('')
   out(`Wrote ${paths.config}`)

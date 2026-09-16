@@ -70,8 +70,12 @@ module that cannot reach the socket cannot decide the network surface, and the w
 security model depends on that being one decision in one place.
 
 Before you add a field to `ModuleContext`, find the consumer that needs it **today**.
-Two things are known not to fit and are deliberately left out — notifications, and
-binary request/response bodies. Both are written down in the spec's design §9.
+Binary request/response bodies are known not to fit and are deliberately left out.
+
+Notifications were the other one, and they are the example of how a field gets in: they
+found a consumer (the permission gate asking the owner), and arrived as **one** narrow field,
+`notify`, with the module's id bound by the registry so a module cannot speak as another.
+That is ADR-0008, and it is the precedent to follow — not the precedent to widen.
 
 ---
 

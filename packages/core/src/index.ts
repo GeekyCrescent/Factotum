@@ -5,6 +5,9 @@ export type {
   ModuleContext,
   ModuleHandle,
   ModuleStatus,
+  NotificationMessage,
+  Notifier,
+  PushEnvelope,
   Timers,
 } from './module.ts'
 export type { Logger } from './log.ts'

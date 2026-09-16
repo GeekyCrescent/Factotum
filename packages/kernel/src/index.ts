@@ -19,3 +19,15 @@ export { Registry, MODULE_START_TIMEOUT_MS, type ModuleSummary } from './modules
 export { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
 export { createStaticSite } from './http/static.ts'
 export { boot, type BootOptions } from './boot.ts'
+// `doctor`, `init` and `push reset` live in packages/cli and reach push only through here.
+export {
+  createPushService,
+  inspectPush,
+  resetSubscriptions,
+  MAX_SUBSCRIPTIONS,
+  type PushInspection,
+  type PushService,
+  type PushStatus,
+  type SubscribeResult,
+} from './push/service.ts'
+export { loadOrCreateKeys } from './push/keys.ts'

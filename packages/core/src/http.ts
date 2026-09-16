@@ -79,6 +79,12 @@ export const ERROR_CODES = [
   'unknown-origin',
   /** Requests that arrive before boot reaches READY. */
   'starting',
+  /**
+   * The request is valid and cannot be honoured in the current state — today, a new push
+   * subscription when the machine already holds the most it accepts. It earns a code because
+   * the client has something useful to say: the message names the command that clears it.
+   */
+  'conflict',
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

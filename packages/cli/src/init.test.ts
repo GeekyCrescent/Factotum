@@ -316,3 +316,46 @@ test('a refusal leaves an existing config untouched, rather than half-replacing 
   )
   assert.equal(await readFile(configPath(h), 'utf8'), '{"mine":true}')
 })
+
+// ---------------------------------------------------------------------------
+// The push key pair (criteria 1 and 2)
+// ---------------------------------------------------------------------------
+
+test('init creates the push key pair, owner-only, inside the state directory (criterion 1)', async () => {
+  const { stat, readFile } = await import('node:fs/promises')
+  const { statePaths } = await import('@factotum/kernel')
+  const h = await home()
+  await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined })
+
+  const file = join(statePaths('prod', h).push, 'keys.json')
+  const keys = JSON.parse(await readFile(file, 'utf8')) as { publicKey: string; privateKey: string }
+  assert.equal(keys.publicKey.length, 87)
+  assert.equal((await stat(file)).mode & 0o777, 0o600)
+})
+
+test('re-running init over an existing config does NOT regenerate the pair (criterion 2)', async () => {
+  // A new pair answers 403 to every existing subscription (spec A6) and nothing tells the owner.
+  const { readFile } = await import('node:fs/promises')
+  const { statePaths } = await import('@factotum/kernel')
+  const h = await home()
+  await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined })
+  const file = join(statePaths('prod', h).push, 'keys.json')
+  const before = await readFile(file, 'utf8')
+
+  await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined, ask: async () => 'y' })
+
+  assert.equal(await readFile(file, 'utf8'), before)
+})
+
+test('init never prints a key', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { statePaths } = await import('@factotum/kernel')
+  const h = await home()
+  const lines: string[] = []
+  await init({ env: 'prod', home: h, run: withTailscale, out: (l) => void lines.push(l) })
+
+  const keys = JSON.parse(await readFile(join(statePaths('prod', h).push, 'keys.json'), 'utf8')) as { publicKey: string; privateKey: string }
+  const printed = lines.join('\n')
+  assert.equal(printed.includes(keys.privateKey), false)
+  assert.equal(printed.includes(keys.publicKey), false)
+})
