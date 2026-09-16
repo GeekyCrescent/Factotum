@@ -133,6 +133,7 @@ test('install writes the plist and bootstraps it', async () => {
     home,
     run,
     uid: 501,
+    platform: 'darwin',
     mainPath: '/somewhere/main.js',
     path: '/usr/bin',
     out: () => undefined,
@@ -159,6 +160,7 @@ test('install creates the LOG DIRECTORY, because launchd will not', async () => 
     home,
     run,
     uid: 501,
+    platform: 'darwin',
     mainPath: '/somewhere/main.js',
     path: '/usr/bin',
     out: () => undefined,
@@ -183,6 +185,7 @@ test('install reports a launchctl refusal instead of claiming success', async ()
     home,
     run,
     uid: 501,
+    platform: 'darwin',
     mainPath: '/somewhere/main.js',
     path: '/usr/bin',
     out: (l) => lines.push(l),
@@ -195,20 +198,60 @@ test('install reports a launchctl refusal instead of claiming success', async ()
 test('uninstall boots the service out and removes the plist', async () => {
   const home = await mkdtemp(join(tmpdir(), 'factotum-sup-'))
   const { calls, run } = recorder()
-  await install({ env: 'prod', home, run, uid: 501, mainPath: '/m.js', path: '/usr/bin', out: () => undefined })
+  await install({ env: 'prod', home, run, uid: 501,
+    platform: 'darwin', mainPath: '/m.js', path: '/usr/bin', out: () => undefined })
   calls.length = 0
 
-  const code = await uninstall({ env: 'prod', home, run, uid: 501, out: () => undefined })
+  const code = await uninstall({ env: 'prod', home, run, uid: 501, platform: 'darwin', out: () => undefined })
 
   assert.equal(code, 0)
   assert.deepEqual(calls[0], ['launchctl', 'bootout', 'gui/501/com.factotum.prod'])
   await assert.rejects(() => readFile(plistPath(home, 'prod'), 'utf8'))
 })
 
+test('on Linux it refuses instead of writing a plist nothing will ever read', async () => {
+  // Without this, `install` on Linux writes `~/Library/LaunchAgents/…` — a directory
+  // that means nothing there — and then fails on a `launchctl` that does not exist,
+  // with ENOENT. The plist stays behind. This is the first thing anyone trying
+  // factotum on a second machine hits, so it says what to do instead.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-sup-'))
+  const { calls, run } = recorder()
+  const lines: string[] = []
+
+  const code = await install({
+    env: 'prod',
+    home,
+    run,
+    uid: 1000,
+    mainPath: '/m.js',
+    path: '/usr/bin',
+    platform: 'linux',
+    out: (line) => lines.push(line),
+  })
+
+  assert.equal(code, 1)
+  assert.deepEqual(calls, [], 'launchctl must not be called')
+  await assert.rejects(() => readFile(plistPath(home, 'prod'), 'utf8'), 'no plist left behind')
+  const text = lines.join('\n')
+  assert.match(text, /macOS/)
+  assert.match(text, /systemd/)
+  assert.match(text, /factotum start/)
+})
+
+test('uninstall refuses on Linux too, rather than removing a file it never wrote', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-sup-'))
+  const { calls, run } = recorder()
+
+  const code = await uninstall({ env: 'prod', home, run, uid: 1000, platform: 'linux', out: () => undefined })
+
+  assert.equal(code, 1)
+  assert.deepEqual(calls, [])
+})
+
 test('uninstalling something that was never loaded is quiet and still exits 0', async () => {
   const home = await mkdtemp(join(tmpdir(), 'factotum-sup-'))
   const run: Runner = async () => fails
 
-  const code = await uninstall({ env: 'prod', home, run, uid: 501, out: () => undefined })
+  const code = await uninstall({ env: 'prod', home, run, uid: 501, platform: 'darwin', out: () => undefined })
   assert.equal(code, 0)
 })
