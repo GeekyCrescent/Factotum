@@ -49,6 +49,13 @@ export interface ReconcileDeps {
   readonly killGroup?: (pid: number) => void
   /** Injected for the same reason. */
   readonly alive?: (pid: number) => boolean
+  /**
+   * Tells the owner a session died with the daemon — the gap the TLS spec left written: nobody
+   * told the client its session ended in a restart. FIRE AND FORGET: this runs inside `start()`,
+   * bounded by MODULE_START_TIMEOUT_MS, and a slow push service must not disable the module.
+   * Optional like its neighbours; the engine always passes it.
+   */
+  readonly announce?: (sessionId: string, siteId: string, state: SessionState, reason: string | undefined) => void
 }
 
 export const ORPHAN_REASON =
@@ -146,6 +153,11 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
       agentPid: undefined,
     }))
     await deps.store.append(info.sessionId, { kind: 'state', state: 'failed', reason })
+
+    // ONLY ROWS 2 AND 3 announce. Row 4 — a session already terminal — is one `stop()` closed
+    // and, since the notice there comes after its patchMeta, already announced. Announcing again
+    // here would be the second buzz for one end (criterion 45).
+    deps.announce?.(info.sessionId, siteId, 'failed', reason)
 
     // LAST. Always last.
     await deps.locks.release(siteId)

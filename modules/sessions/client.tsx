@@ -21,6 +21,13 @@ interface Props {
   readonly api: Api
 }
 
+/** What the shell hands the screen. Declared structurally, like `Api`. */
+interface ViewProps extends Props {
+  /** What followed `/m/sessions/` — a session id when a notification opened this. */
+  readonly rest: string
+  readonly search: string
+}
+
 /** How often the cursor asks again while a session is running. Criterion 8 allows 2s. */
 const POLL_MS = 1_000
 
@@ -77,8 +84,10 @@ function describe(report: Freshness): string {
 
 type View = { readonly at: 'home' } | { readonly at: 'session'; readonly id: string }
 
-function SessionsView({ api }: Props) {
-  const [view, setView] = useState<View>({ at: 'home' })
+function SessionsView({ api, rest }: ViewProps) {
+  // Read ONCE, at mount: a notification that opened `/m/sessions/<id>` lands in that session.
+  // Not kept in sync with the URL afterwards — that would be a router, which is another spec.
+  const [view, setView] = useState<View>(() => (rest === '' ? { at: 'home' } : { at: 'session', id: rest }))
   return view.at === 'home' ? (
     <Home api={api} open={(id) => setView({ at: 'session', id })} />
   ) : (
@@ -301,6 +310,8 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
   const [error, setError] = useState<string | undefined>(undefined)
   const [text, setText] = useState('')
   const [conflict, setConflict] = useState<Conflict | undefined>(undefined)
+  /** A reply refused because the repo changed since the last turn (criterion 31). */
+  const [stale, setStale] = useState<Freshness | undefined>(undefined)
   /** Bumped by a reply, which is what restarts the polling a finished session stopped. */
   const [generation, setGeneration] = useState(0)
   const cursor = useRef(0)
@@ -339,18 +350,23 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
     }
   }, [api, id, generation])
 
-  const reply = async () => {
+  const reply = async (force: boolean) => {
     setConflict(undefined)
+    setStale(undefined)
     setError(undefined)
     try {
-      await api.post(`sessions/${id}/reply`, { text })
+      await api.post(`sessions/${id}/reply`, { text, force })
       setText('')
       setState('running')
       // Re-runs the effect above, rather than a second copy of the same loop.
       setGeneration((n) => n + 1)
     } catch (cause: unknown) {
+      // Resuming is as careful as launching: a repo that changed between turns is reported, and
+      // going over it is the owner's call, exactly as it is for a launch.
       const busySite = conflictOf(cause)
+      const notFresh = freshnessOf(cause)
       if (busySite !== undefined) setConflict(busySite)
+      else if (notFresh !== undefined) setStale(notFresh)
       else setError(messageOf(cause))
     }
   }
@@ -397,7 +413,7 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
             />
           </p>
           <p>
-            <button disabled={text.trim() === ''} onClick={() => void reply()}>
+            <button disabled={text.trim() === ''} onClick={() => void reply(false)}>
               Reply
             </button>
           </p>
@@ -408,6 +424,14 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
         <p class="notice">
           That site is busy with session {conflict.sessionId.slice(0, 8)}. Cancel it first.
         </p>
+      ) : null}
+      {stale !== undefined ? (
+        <div class="notice">
+          <p>The site changed since the last turn: {describe(stale)}</p>
+          <p>
+            <button onClick={() => void reply(true)}>Reply anyway</button>
+          </p>
+        </div>
       ) : null}
       {error !== undefined ? <p class="notice">{error}</p> : null}
     </>

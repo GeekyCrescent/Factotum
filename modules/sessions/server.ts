@@ -129,7 +129,10 @@ function routeTable(holder: EngineHolder): RouteTable {
     'POST /sessions/:id/reply': withEngine(async (engine, req) => {
       const message = text(req.body, 'text')
       if (message === undefined || message === '') return invalid('a reply needs some text')
-      return fromLaunch(await engine.reply(req.params['id'] ?? '', message))
+      // `force` exactly as `POST /sessions` reads it: resuming onto a dirty or stale repo is
+      // refused with the report, and the owner can choose to go over it (criteria 31, 32).
+      const body = req.body as { force?: unknown } | null | undefined
+      return fromLaunch(await engine.reply(req.params['id'] ?? '', message, body?.force === true))
     }),
 
     // POST and not DELETE: adding a verb to the contract for one action is exactly the
@@ -208,6 +211,7 @@ export function sessionsModule(
         now: ctx.now,
         timers: ctx.timers,
         hookUrl,
+        notify: ctx.notify,
       })
       await engine.reconcile()
       holder.engine = engine

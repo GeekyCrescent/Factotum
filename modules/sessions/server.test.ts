@@ -44,6 +44,7 @@ function context(config: { sites: never[]; catalog: never[] }): ModuleContext<ne
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date('2026-09-15T00:00:00.000Z'),
     timers,
+    notify: { canReach: () => false, send: async () => undefined },
   }
 }
 
@@ -106,6 +107,9 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'catalog',
     'hookUrl',
     'log',
+    // How the engine tells the owner a turn ended. Half a wiring here is a turn that ends in
+    // silence, and tsc would not say so: this list is what does.
+    'notify',
     'now',
     // The permission boundary is `sites` AND `sharedPaths`, so half of it arriving is
     // half a boundary. This list is what catches that, which is why it is spelled out.

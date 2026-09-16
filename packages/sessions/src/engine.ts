@@ -15,7 +15,8 @@ import type { Logger } from '@factotum/core'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
 import { uuidv7 } from './id.ts'
-import { reconcile as reconcileLocks } from './lifecycle.ts'
+import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './lifecycle.ts'
+import { noticeFor } from './notices.ts'
 import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { decide as decidePure } from './permissions/decide.ts'
@@ -43,6 +44,12 @@ export const PAGE_SIZE = 25
 const STOPPED = 'engine stopped'
 const CANCELLED_REASON = 'cancelled by the owner'
 const SHUTDOWN_REASON = 'the daemon was shutting down'
+
+/**
+ * The reasons a notice may carry, because this package wrote them word for word. A failed turn's
+ * reason is the agent's stderr and is NOT here: it can hold paths, and a notice leaves the tailnet.
+ */
+const NOTICEABLE_REASONS: ReadonlySet<string> = new Set([SHUTDOWN_REASON, CRASH_REASON, ORPHAN_REASON])
 
 /**
  * A seam, and the only one, for exactly the reason the kernel's `makeServer` is one:
@@ -105,6 +112,27 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const finalized = new Set<string>()
   let stopped = false
 
+  /**
+   * Tells the owner a turn ended. FIRE AND FORGET, from all three places that write a terminal
+   * state, and never awaited here:
+   *
+   * - in `finalize`, `cancel()` awaits `settled` and is an HTTP route, so an await here would be
+   *   paid by the phone that cancelled (criterion 44);
+   * - in `stop`, awaiting would need a bound, and `stop` arms no timer (see its header). The
+   *   kernel drains every notice in flight AFTER stopping the modules, each bounded by its own
+   *   AbortSignal — that is where the wait belongs (criteria 27, 48, 50).
+   *
+   * THE .catch IS NOT OPTIONAL. `send` promises not to reject, but it writes subscriptions.json
+   * when it removes a dead device, and in Node 22+ an unhandled rejection ends the process
+   * (criterion 47).
+   */
+  function announce(sessionId: string, siteId: string, state: SessionState, reason: string | undefined): void {
+    const message = noticeFor(sessionId, siteId, state, reason, NOTICEABLE_REASONS)
+    void Promise.resolve()
+      .then(() => setup.notify.send(message))
+      .catch((error: unknown) => log.warn(`a notice for session ${sessionId} could not be sent: ${error instanceof Error ? error.name : 'error'}`))
+  }
+
   // --- the pieces launch and reply share ----------------------------------
 
   async function writeSettings(sessionId: string): Promise<string> {
@@ -129,6 +157,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     siteId: string,
     state: SessionState,
     reason: string | undefined,
+    /** EXPLICIT, not deduced from `state`: `stop` also ends in `cancelled` and does notify. */
+    notify: boolean,
   ): Promise<void> {
     if (finalized.has(sessionId)) return
     finalized.add(sessionId)
@@ -145,6 +175,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       reason: reason ?? current.reason,
       agentPid: undefined,
     }))
+    // AFTER the meta: a crash from here on leaves a terminal meta, so reconcile does not announce
+    // the same end again. Before the lock: `turnOver` in the tests waits on the lock.
+    if (notify) announce(sessionId, siteId, state, reason)
     await locks.release(siteId)
     live.delete(sessionId)
   }
@@ -214,7 +247,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         const { state, reason } = entry.cancelled
           ? ({ state: 'cancelled' as SessionState, reason: CANCELLED_REASON })
           : stateOf(exit, reported)
-        await finalize(sessionId, site.id, state, reason)
+        // THE LIVE CANCEL PATH ENDS HERE, not in `cancel()`: `cancel` marks the flag, kills, and
+        // awaits this promise. So "the owner cancelled from the phone, do not buzz it back" is
+        // decided here, from the same flag that picks the state (criterion 51).
+        await finalize(sessionId, site.id, state, reason, !entry.cancelled)
       }),
     })
 
@@ -264,6 +300,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         siteId: site.id,
         entryId: input.entryId,
         startedAt: setup.now().toISOString(),
+        // So resuming can tell the site moved under the same id (criterion 33).
+        sitePath: site.path,
       })
 
       if (site.isRepo && input.force) {
@@ -290,7 +328,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   // --- reply ---------------------------------------------------------------
 
-  async function reply(id: string, text: string): Promise<LaunchResult> {
+  async function reply(id: string, text: string, force: boolean): Promise<LaunchResult> {
     if (stopped) throw new Error(STOPPED)
 
     const meta = await store.readMeta(id)
@@ -299,6 +337,18 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
     const site = sites.get(meta.siteId)
     if (site === undefined) return { outcome: 'rejected', reason: `site "${meta.siteId}" is no longer declared` }
+
+    // THE ID STILL RESOLVES, BUT TO WHERE? A config can move an id to another directory, and
+    // `--resume` would carry on a thread whose context describes the old tree inside the new one.
+    // Both paths in the message: "it moved" alone sends someone to read the config by hand.
+    if (meta.sitePath !== undefined && meta.sitePath !== site.path) {
+      return {
+        outcome: 'rejected',
+        reason:
+          `site "${meta.siteId}" moved from ${meta.sitePath} to ${site.path} since this session started; ` +
+          'resuming would continue its thread in a different directory. Launch a new session there instead.',
+      }
+    }
 
     const entry = findInvokable(catalog, meta.entryId)
     if (!entry.ok) return { outcome: 'rejected', reason: entry.reason }
@@ -317,6 +367,21 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
     let handedOver = false
     try {
+      // FRESHNESS, AFTER THE LOCK AND BEFORE ANYTHING IS WRITTEN — and the second half is the one
+      // that matters. After the lock, like `launch`: checking a repository another agent may be
+      // changing measures nothing. Before `patchMeta`, UNLIKE where "the same as launch" would put
+      // it: in `launch` nothing is written yet at this point, but here the next statement sets
+      // `running` and bumps `turns`, and a refusal after it would strand a running session with no
+      // process and a turn that never happened (criterion 49).
+      let forcedOver: string | undefined
+      if (site.isRepo) {
+        const report = await checkFreshness({ cwd: site.path, timers: setup.timers })
+        if (!isFresh(report)) {
+          if (!force) return { outcome: 'stale', freshness: report }
+          forcedOver = describeFreshness(report)
+        }
+      }
+
       const settingsPath = await writeSettings(id)
       finalized.delete(id)
       await store.patchMeta(id, (current) => ({
@@ -326,6 +391,18 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         reason: undefined,
         turns: current.turns + 1,
       }))
+      // Written into the log so "I resumed over a warning" is recoverable later, like launch does.
+      if (forcedOver !== undefined) {
+        await store.append(id, { kind: 'message', role: 'user', text: `resumed over a freshness warning: ${forcedOver}` })
+      }
+      // A session from before `sitePath` existed: said, not assumed (criterion 35).
+      if (meta.sitePath === undefined) {
+        await store.append(id, {
+          kind: 'message',
+          role: 'user',
+          text: `the site's path could not be compared: this session predates the check. Resumed in ${site.path}.`,
+        })
+      }
       await store.append(id, { kind: 'message', role: 'user', text })
 
       const running = spawnFor(id, site, entry.invoke, text, settingsPath, true)
@@ -357,7 +434,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // in which case reconciliation owns it and has already closed it.
       const meta = await store.readMeta(id)
       if (meta?.state === 'running') {
-        await finalize(id, meta.siteId, 'cancelled', 'cancelled while nothing was running')
+        await finalize(id, meta.siteId, 'cancelled', 'cancelled while nothing was running', false)
       }
       return
     }
@@ -459,7 +536,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   // --- lifecycle -----------------------------------------------------------
 
   async function reconcile(): Promise<void> {
-    await reconcileLocks({ store, locks, log, now: setup.now })
+    // Runs inside `start()`, which the registry bounds with MODULE_START_TIMEOUT_MS. So the
+    // notices reconcile raises are NOT awaited — `announce` never is — or a slow push service
+    // could get the whole module disabled at boot (spec D7).
+    await reconcileLocks({ store, locks, log, now: setup.now, announce })
   }
 
   function view(): EngineSetupView {
@@ -501,6 +581,12 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         endedAt: setup.now().toISOString(),
         reason: SHUTDOWN_REASON,
       }))
+      // AFTER patchMeta, never after the append alone: dying between the two used to leave the
+      // meta `running`, and the next boot's reconcile would announce this end a second time
+      // (criterion 45). NOT awaited — see `announce`: the kernel drains notices in flight after
+      // this returns, each bounded by its own signal, so this arms no timer (criterion 50) and
+      // N live sessions cost one bound, not N (criterion 48).
+      announce(sessionId, entry.siteId, 'cancelled', SHUTDOWN_REASON)
     }
     live.clear()
   }

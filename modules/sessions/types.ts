@@ -34,7 +34,7 @@
  * typecheck fail both times.
  */
 
-import type { Logger, Timers } from '@factotum/core'
+import type { Logger, Notifier, Timers } from '@factotum/core'
 
 // --- configuration, already parsed by config.ts ----------------------------
 
@@ -78,6 +78,12 @@ export interface EngineSetup {
   readonly timers: Timers
   /** A thunk: at step 12 the answer does not exist yet. */
   readonly hookUrl: () => string
+  /**
+   * Telling the owner a turn ended. `ctx.notify`, handed over whole — the engine never learns
+   * the transport. REQUIRED: an optional capability that silently does nothing is a degradation
+   * nobody sees. When push is off, `canReach` says so and `send` does nothing.
+   */
+  readonly notify: Notifier
 }
 
 // --- what the engine does --------------------------------------------------
@@ -159,7 +165,13 @@ export interface EngineSetupView {
 
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
-  readonly reply: (id: string, text: string) => Promise<LaunchResult>
+  /**
+   * `force` REQUIRED, not optional — the same rule as `LaunchInput.force`, and here it is about the
+   * compiler link in main.ts: `(id, text, force?) => X` IS assignable to `(id, text) => X`, so an
+   * optional one would let a stale copy of this file compile. Three required parameters are not
+   * assignable to two, and that is what keeps the two declarations honest (ADR-0005).
+   */
+  readonly reply: (id: string, text: string, force: boolean) => Promise<LaunchResult>
   readonly cancel: (id: string) => Promise<void>
   readonly list: (page: Page) => Promise<SessionPage>
   readonly read: (id: string, fromSeq: number) => Promise<EventPage>
