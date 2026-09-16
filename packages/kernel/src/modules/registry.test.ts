@@ -222,7 +222,7 @@ test('a module with no start is left alone', async () => {
 test('ModuleContext has EXACTLY seven keys, spelled out by hand (criterion 36)', async () => {
   // A diff saying "only that block changed" discriminates nothing. A count does: an eighth
   // field turns this red, and so does one quietly dropped. Same mechanism, and the same
-  // reason, as the EngineSetup key list in modules/sessions/server.test.ts.
+  // reason, as the EngineSetup key list in the session module's own server test.
   let seen: ModuleContext | undefined
   await Registry.create(
     [enabled({ id: 'probe', routes: (ctx) => ((seen = ctx), {}) })],
@@ -235,13 +235,13 @@ test('ModuleContext has EXACTLY seven keys, spelled out by hand (criterion 36)',
 test('a module notifies AS ITSELF: the registry binds the id, the module cannot pass one', async () => {
   const push = fakePush(true)
   let seen: ModuleContext | undefined
-  await Registry.create([enabled({ id: 'sessions', routes: (ctx) => ((seen = ctx), {}) })], await deps(50, push))
+  await Registry.create([enabled({ id: 'probe', routes: (ctx) => ((seen = ctx), {}) })], await deps(50, push))
 
   const message = { title: 't', body: 'b', path: '/', tag: 'x' }
   // Even a module that tries to smuggle an id in has no parameter to put it in.
   await (seen?.notify.send as unknown as (m: unknown, id: string) => Promise<void>)(message, 'someone-else')
 
-  assert.deepEqual(push.sent, [{ message, moduleId: 'sessions' }])
+  assert.deepEqual(push.sent, [{ message, moduleId: 'probe' }])
 })
 
 test('two modules get two distinct identities from the same push service', async () => {

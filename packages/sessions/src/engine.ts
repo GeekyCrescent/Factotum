@@ -11,7 +11,8 @@
  */
 
 import { writeFile } from 'node:fs/promises'
-import type { Logger } from '@factotum/core'
+import { basename } from 'node:path'
+import type { Logger, NotificationMessage } from '@factotum/core'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
 import { uuidv7 } from './id.ts'
@@ -19,9 +20,10 @@ import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './life
 import { noticeFor } from './notices.ts'
 import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
-import { decide as decidePure } from './permissions/decide.ts'
+import { createAskTable, type AnswerResult as TableAnswer } from './permissions/asks.ts'
+import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
 import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
-import { hookSettings, serializeSettings } from './permissions/settings.ts'
+import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { inspectSite, type Site } from './sites.ts'
 import { SessionStore, type SessionMeta } from './store.ts'
@@ -57,6 +59,8 @@ const NOTICEABLE_REASONS: ReadonlySet<string> = new Set([SHUTDOWN_REASON, CRASH_
  */
 export interface EngineDeps {
   readonly bin?: string
+  /** How long an ask waits for the owner. A seam for the same reason: a test cannot wait an hour. */
+  readonly askTimeoutMs?: number
 }
 
 interface Live {
@@ -111,6 +115,11 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const live = new Map<string, Live>()
   const finalized = new Set<string>()
   let stopped = false
+  const asks = createAskTable({
+    now: setup.now,
+    timers: setup.timers,
+    timeoutMs: deps.askTimeoutMs ?? ASK_TIMEOUT_SECONDS * 1000,
+  })
 
   /**
    * Tells the owner a turn ended. FIRE AND FORGET, from all three places that write a terminal
@@ -516,7 +525,14 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       cwd: body.cwd,
       site,
       shared,
+      // Asked HERE and handed in as data, so `decide` stays pure. Synchronous by contract: no
+      // I/O happens before the gate knows whether it may ask (ADR-0008).
+      canAsk: setup.notify.canReach(),
     })
+
+    if (result.decision === 'ask') {
+      return await askTheOwner(body.session_id, meta.siteId, body.tool_name, resolveTarget(body.tool_input, body.cwd), result.reason)
+    }
 
     if (result.decision === 'deny') {
       // The reason goes into the log as well as back to the agent, so the owner finds
@@ -531,6 +547,71 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     }
 
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: result.decision, permissionDecisionReason: result.reason } }
+  }
+
+  /**
+   * THE HELD REPLY. The CLI is waiting on this HTTP response, and it will wait up to
+   * HOOK_TIMEOUT_SECONDS (measured, spec §0.32); this gives up ASK_ANSWER_MARGIN_SECONDS before
+   * that, so the log can say nobody answered instead of inheriting the CLI's silence.
+   *
+   * No new session state. The session is `running`, and truly: its process is alive, blocked on
+   * this reply. The screen knows something is waiting because the stream already carries the
+   * `tool` event — measured to arrive BEFORE the hook is even called (spec §0.32, A10) — with no
+   * `result` yet. The outcome is written as that `result`.
+   *
+   * THE ORDER IS THE DESIGN: the ask is OPEN before the notice goes out, or an owner quick
+   * enough would answer an id that does not exist yet. And the reply sent to the CLI is only ever
+   * allow or deny: `ask` is this engine's word, never the CLI's.
+   */
+  async function askTheOwner(
+    sessionId: string,
+    siteId: string,
+    toolName: string,
+    target: string | undefined,
+    boundaryReason: string,
+  ): Promise<HookDecision> {
+    const { id, outcome } = asks.open({ sessionId, toolName, target: target ?? '' })
+
+    const notice: NotificationMessage = {
+      title: 'approval',
+      // The FILE NAME, never the path: this leaves the tailnet (spec §5). The full path is on the
+      // screen, which does not.
+      body: `${siteId} · ${toolName} · ${target === undefined ? 'a file' : basename(target)}`,
+      // The SESSION, not the token: a tag reaches OS surfaces nothing here controls.
+      tag: `ask:${sessionId}`,
+      // The token in the URL is what makes answering possible without notification buttons: the
+      // screen reads it from `search` and strips it (criteria 55, 58). It exists nowhere on disk.
+      path: `/m/sessions/${sessionId}?ask=${id}`,
+      data: { askId: id, sessionId },
+    }
+    void Promise.resolve()
+      .then(() => setup.notify.send(notice))
+      .catch((error: unknown) => log.warn(`an ask notice for session ${sessionId} could not be sent: ${error instanceof Error ? error.name : 'error'}`))
+
+    const settled = await outcome
+
+    const [decision, reason, ok, summary] = ((): ['allow' | 'deny', string, boolean, string] => {
+      switch (settled.kind) {
+        case 'answered':
+          return settled.decision === 'allow'
+            ? ['allow', 'approved by the owner', true, 'approved by the owner']
+            : ['deny', `denied by the owner: ${boundaryReason}`, false, `denied by the owner: ${boundaryReason}`]
+        case 'expired': {
+          const said = `nobody answered in time; not granted: ${boundaryReason}`
+          return ['deny', said, false, said]
+        }
+        case 'shutdown':
+          return ['deny', settled.reason, false, `not granted: ${settled.reason}`]
+      }
+    })()
+
+    await store.append(sessionId, { kind: 'result', name: toolName, ok, summary })
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }
+  }
+
+  /** The owner's answer. The id is the only authorisation there is (spec §5). */
+  async function answer(askId: string, decision: 'allow' | 'deny'): Promise<TableAnswer> {
+    return asks.answer(askId, decision)
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -566,6 +647,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
    */
   async function stop(): Promise<void> {
     stopped = true
+    // FIRST: every held reply resolves as a deny now, before anything is killed. An ask must not
+    // outlive the engine as a promise nobody will ever settle (criterion 22).
+    asks.closeAll(SHUTDOWN_REASON)
 
     for (const [sessionId, entry] of live) {
       try {
@@ -591,5 +675,5 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     live.clear()
   }
 
-  return { launch, reply, cancel, list, read, decide, reconcile, view, stop }
+  return { launch, reply, cancel, answer, list, read, decide, reconcile, view, stop }
 }

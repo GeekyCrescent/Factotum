@@ -79,7 +79,7 @@ test('the SPA fallback still works for what it is for — and not for /push (cri
   // Both in one test: the only way to show the exclusion is surgical rather than a new hole.
   const { base, close } = await start()
   try {
-    const deep = await fetch(`${base}/m/sessions/019a-some-id`)
+    const deep = await fetch(`${base}/m/probe/019a-some-id`)
     assert.equal(deep.status, 200)
     assert.match(await deep.text(), /<title>factotum/)
 

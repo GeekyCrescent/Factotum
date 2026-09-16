@@ -135,6 +135,33 @@ function routeTable(holder: EngineHolder): RouteTable {
       return fromLaunch(await engine.reply(req.params['id'] ?? '', message, body?.force === true))
     }),
 
+    /**
+     * The owner's answer to an ask. The TOKEN IS THE AUTHORISATION (spec §5): the kernel's origin
+     * check stops someone else's browser, not a process on this machine, and the token is what a
+     * process on this machine does not have — it lives in memory and in the encrypted push.
+     *
+     * Answered twice is 200: a service worker may retry on a bad network, and a notice tapped twice
+     * must not paint an error.
+     */
+    'POST /asks/:askId/answer': withEngine(async (engine, req) => {
+      const decision = text(req.body, 'decision')
+      if (decision !== 'allow' && decision !== 'deny') return invalid('an answer is `allow` or `deny`')
+
+      const result = await engine.answer(req.params['askId'] ?? '', decision)
+      switch (result.kind) {
+        case 'answered':
+        case 'already':
+          return { status: 200, body: { answered: true } }
+        case 'expired':
+          return {
+            status: 409,
+            body: { error: { code: 'invalid-request', message: 'too late: that ask expired, and the agent was already told no' } },
+          }
+        case 'unknown':
+          return { status: 404, body: { error: { code: 'not-found', message: 'there is no ask with that token' } } }
+      }
+    }),
+
     // POST and not DELETE: adding a verb to the contract for one action is exactly the
     // growth it exists to avoid, and cancelling deletes nothing.
     'POST /sessions/:id/cancel': withEngine(async (engine, req) => {

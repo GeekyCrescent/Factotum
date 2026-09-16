@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { askTokenFrom, withoutAskToken } from './ask-token.ts'
 import type { EngineSetupView, EventPage, SessionEvent, SessionPage, SessionSummary } from './types.ts'
 
 interface Api {
@@ -84,14 +85,20 @@ function describe(report: Freshness): string {
 
 type View = { readonly at: 'home' } | { readonly at: 'session'; readonly id: string }
 
-function SessionsView({ api, rest }: ViewProps) {
+function SessionsView({ api, rest, search }: ViewProps) {
   // Read ONCE, at mount: a notification that opened `/m/sessions/<id>` lands in that session.
   // Not kept in sync with the URL afterwards — that would be a router, which is another spec.
   const [view, setView] = useState<View>(() => (rest === '' ? { at: 'home' } : { at: 'session', id: rest }))
+  // The ask token a notification carried, if any — read once, then taken OUT of the address bar
+  // (criterion 58). Held in memory for this screen and nowhere else.
+  const [askToken] = useState(() => askTokenFrom(search))
+  useEffect(() => {
+    if (askToken !== undefined) window.history.replaceState(null, '', withoutAskToken(window.location.pathname, search))
+  }, [askToken, search])
   return view.at === 'home' ? (
     <Home api={api} open={(id) => setView({ at: 'session', id })} />
   ) : (
-    <Session api={api} id={view.id} back={() => setView({ at: 'home' })} />
+    <Session api={api} id={view.id} askToken={askToken} back={() => setView({ at: 'home' })} />
   )
 }
 
@@ -304,7 +311,9 @@ function short(session: SessionSummary): string {
 // G4 — one session, followed with a cursor
 // ---------------------------------------------------------------------------
 
-function Session({ api, id, back }: Props & { id: string; back: () => void }) {
+function Session({ api, id, askToken, back }: Props & { id: string; askToken: string | undefined; back: () => void }) {
+  /** What happened to the ask this screen was opened for. `undefined` until answered. */
+  const [asked, setAsked] = useState<string | undefined>(undefined)
   const [events, setEvents] = useState<readonly SessionEvent[]>([])
   const [state, setState] = useState<SessionSummary['state']>('running')
   const [error, setError] = useState<string | undefined>(undefined)
@@ -371,6 +380,28 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
     }
   }
 
+  /**
+   * Answering the ask a notification opened this screen for — the route that works with or
+   * without notification buttons (criterion 55). The token came from the URL and was already
+   * taken out of it; it goes back to the daemon and nowhere else.
+   */
+  const answerAsk = async (decision: 'allow' | 'deny') => {
+    if (askToken === undefined) return
+    try {
+      await api.post(`asks/${askToken}/answer`, { decision })
+      setAsked(decision === 'allow' ? 'Allowed. The agent carries on.' : 'Denied. The agent was told no.')
+    } catch (cause: unknown) {
+      const status = (cause as { status?: number }).status
+      setAsked(
+        status === 409
+          ? 'Too late: nobody answered in time, and the agent was already told no.'
+          : status === 404
+            ? 'That request is no longer waiting.'
+            : messageOf(cause),
+      )
+    }
+  }
+
   const cancel = async () => {
     try {
       await api.post(`sessions/${id}/cancel`)
@@ -419,6 +450,25 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
           </p>
         </>
       )}
+
+      {askToken !== undefined ? (
+        <div class="notice">
+          {asked === undefined ? (
+            <>
+              <p>
+                The agent is asking to write outside its site — the last tool call above, still
+                waiting for its result.
+              </p>
+              <p>
+                <button onClick={() => void answerAsk('allow')}>Allow this once</button>{' '}
+                <button onClick={() => void answerAsk('deny')}>Deny</button>
+              </p>
+            </>
+          ) : (
+            <p>{asked}</p>
+          )}
+        </div>
+      ) : null}
 
       {conflict !== undefined ? (
         <p class="notice">

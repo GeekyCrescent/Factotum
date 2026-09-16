@@ -17,8 +17,8 @@ const keys: VapidKeys = (() => {
 })()
 
 const envelope: PushEnvelope = {
-  message: { title: 'fin', body: 'proyecto-a · finished', path: '/m/sessions/x', tag: 'x' },
-  moduleId: 'sessions',
+  message: { title: 'fin', body: 'proyecto-a · finished', path: '/m/probe/x', tag: 'x' },
+  moduleId: 'probe',
   machine: 'mimac',
 }
 

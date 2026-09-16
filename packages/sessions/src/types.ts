@@ -174,7 +174,15 @@ export interface EventPage {
   readonly state: SessionState
 }
 
-/** The CLI's own type. It accepts three; this project produces two (ADR-0006). */
+/** What answering an ask came to. Discriminated by `kind`: a boolean cannot tell four apart. */
+export type AnswerResult =
+  | { readonly kind: 'answered' }
+  /** Answered before. Idempotent, not an error: a service worker may retry. */
+  | { readonly kind: 'already' }
+  | { readonly kind: 'expired' }
+  | { readonly kind: 'unknown' }
+
+/** The CLI's own type, all three members. `decide` produces `ask` when someone can be reached (ADR-0009) — but the HOOK REPLY is only ever allow or deny: the engine holds it and answers with what the owner said. */
 export type Decision = 'allow' | 'deny' | 'ask'
 
 /** The body of the 200 that IS the decision. Shape measured in requirements §0.8. */
@@ -209,6 +217,12 @@ export interface SessionEngine {
   readonly list: (page: Page) => Promise<SessionPage>
   readonly read: (id: string, fromSeq: number) => Promise<EventPage>
   readonly decide: (payload: unknown) => Promise<HookDecision>
+  /**
+   * The owner's answer to an ask. The id is a capability — it authorises the answer — and lives
+   * only in memory and in the encrypted push (spec §5). A PROPERTY OF FUNCTION TYPE, never method
+   * syntax, like every member here.
+   */
+  readonly answer: (askId: string, decision: 'allow' | 'deny') => Promise<AnswerResult>
   readonly reconcile: () => Promise<void>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>

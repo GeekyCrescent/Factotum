@@ -15,6 +15,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     launch: async () => ({ outcome: 'started', sessionId: 'sid-1' }),
     reply: async () => ({ outcome: 'started', sessionId: 'sid-1' }),
     cancel: async () => undefined,
+    answer: async () => ({ kind: 'unknown' }),
     list: async (page) => ({ sessions: [], page: page.page, hasMore: false }),
     read: async () => ({ events: [], nextSeq: 0, state: 'finished' }),
     decide: async () => ({
@@ -419,4 +420,52 @@ test('the schema never THROWS, whatever it is given — safeParse does not catch
   for (const input of [undefined, null, 42, 'text', [], { sites: 'no' }, { catalog: 7 }]) {
     assert.doesNotThrow(() => sessionsConfigSchema.safeParse(input))
   }
+})
+
+// ---------------------------------------------------------------------------
+// Answering an ask (spec criteria 20, 21, 46)
+// ---------------------------------------------------------------------------
+
+const answerRoute = 'POST /asks/:askId/answer'
+const answering = (askId: string, body: unknown) =>
+  request('POST', `/asks/${askId}/answer`, { params: { askId }, body })
+
+test('an answer reaches the engine with the token and the decision, and says it was taken', async () => {
+  const seen: [string, string][] = []
+  const { table } = await started(
+    fakeEngine({ answer: async (id, decision) => (seen.push([id, decision]), { kind: 'answered' }) }),
+  )
+
+  const response = await call(table, answerRoute, answering('tok', { decision: 'allow' }))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(seen, [['tok', 'allow']])
+})
+
+test('answering twice is 200, not an error — a service worker may retry (criterion 20)', async () => {
+  const { table } = await started(fakeEngine({ answer: async () => ({ kind: 'already' }) }))
+  assert.equal((await call(table, answerRoute, answering('tok', { decision: 'deny' }))).status, 200)
+})
+
+test('answering an ask that already expired is 409 with a reason a person can read (criterion 21)', async () => {
+  const { table } = await started(fakeEngine({ answer: async () => ({ kind: 'expired' }) }))
+  const response = await call(table, answerRoute, answering('tok', { decision: 'allow' }))
+
+  assert.equal(response.status, 409)
+  assert.match(JSON.stringify(response.body), /expired|too late/i)
+})
+
+test('an unknown token is 404 — there is no default ask (criterion 46)', async () => {
+  const { table } = await started(fakeEngine({ answer: async () => ({ kind: 'unknown' }) }))
+  assert.equal((await call(table, answerRoute, answering('made-up', { decision: 'allow' }))).status, 404)
+})
+
+test('a decision that is neither allow nor deny is refused BEFORE reaching the engine', async () => {
+  let called = 0
+  const { table } = await started(fakeEngine({ answer: async () => (called++, { kind: 'answered' }) }))
+
+  for (const body of [{ decision: 'yes' }, { decision: 'ask' }, {}, undefined]) {
+    assert.equal((await call(table, answerRoute, answering('tok', body))).status, 400)
+  }
+  assert.equal(called, 0)
 })

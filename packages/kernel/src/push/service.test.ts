@@ -11,7 +11,7 @@ import type { VapidKeys } from './keys.ts'
 
 const FAKE_KEYS: VapidKeys = { publicKey: 'B'.repeat(87), privateKey: 'p'.repeat(43) }
 const quiet: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined }
-const message: NotificationMessage = { title: 'finished', body: 'proyecto-a', path: '/m/sessions/x', tag: 'x' }
+const message: NotificationMessage = { title: 'finished', body: 'proyecto-a', path: '/m/probe/x', tag: 'x' }
 
 const device = (name: string): Subscription => ({
   endpoint: `https://fcm.googleapis.com/fcm/send/device-${name}`,
@@ -59,7 +59,7 @@ test('once a device subscribes, canReach is true and a send reaches it', async (
   await push.subscribe(device('phone'))
 
   assert.equal(push.canReach(), true)
-  await push.send(message, 'sessions')
+  await push.send(message, 'probe')
   assert.equal(sent.length, 1)
 })
 
@@ -68,9 +68,9 @@ test('the kernel stamps machine and moduleId; the module cannot', async () => {
   const push = await service({ deliver })
   await push.subscribe(device('phone'))
 
-  await push.send(message, 'sessions')
+  await push.send(message, 'probe')
 
-  assert.deepEqual(sent[0]?.envelope, { message, moduleId: 'sessions', machine: 'mimac' })
+  assert.deepEqual(sent[0]?.envelope, { message, moduleId: 'probe', machine: 'mimac' })
 })
 
 test('the FIRST device on a fresh daemon is not announced — there is nobody to tell — but the count says so (criterion 54)', async () => {
@@ -170,7 +170,7 @@ test('NO KEYS: push is off, nothing throws, and the reason is available for doct
   assert.equal(push.canReach(), false)
   assert.equal(push.publicKey(), undefined)
   assert.equal(push.status().kind, 'off')
-  await push.send(message, 'sessions') // must resolve
+  await push.send(message, 'probe') // must resolve
   const result = await push.subscribe(device('phone'))
   assert.equal(result.kind, 'off')
 })
@@ -178,7 +178,7 @@ test('NO KEYS: push is off, nothing throws, and the reason is available for doct
 test('send never rejects, whatever deliver does', async () => {
   const push = await service({ deliver: async () => { throw new Error('boom') } })
   await push.subscribe(device('phone'))
-  await push.send(message, 'sessions')
+  await push.send(message, 'probe')
 })
 
 test('the public key is exposed; the private one has no accessor at all', async () => {
@@ -264,7 +264,7 @@ test('settled() waits for a notice fired WITHOUT await — what boot.stop relies
   })
   await push.subscribe(device('phone'))
 
-  void push.send(message, 'sessions')
+  void push.send(message, 'probe')
   let drainedEarly = false
   const drained = push.settled().then(() => void (drainedEarly = !delivered))
   // A real turn of the event loop with the delivery still held. Without tracking, settled() has

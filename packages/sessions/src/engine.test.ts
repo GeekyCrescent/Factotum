@@ -50,7 +50,9 @@ interface World {
 /** For the setups that are not about notices. */
 const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
 
-async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => string; notify?: Notifier } = {}): Promise<World> {
+async function world(
+  options: { sites?: readonly SiteConfig[]; hookUrl?: () => string; notify?: Notifier; askTimeoutMs?: number } = {},
+): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
   const stateDir = join(home, 'state')
   const siteDir = join(home, 'site')
@@ -67,10 +69,12 @@ async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => s
     now: () => new Date(),
     timers,
     hookUrl: options.hookUrl ?? (() => BASE),
-    notify: options.notify ?? { canReach: () => true, send: async (message) => void notices.push(message) },
+    // canReach FALSE by default: nobody subscribed, so the gate DENIES as it always did. Only the
+    // tests about asking opt in, or every existing deny test would turn into a wait.
+    notify: options.notify ?? { canReach: () => false, send: async (message) => void notices.push(message) },
   }
 
-  const engine = await createEngine(setup, { bin: FAKE })
+  const engine = await createEngine(setup, { bin: FAKE, ...(options.askTimeoutMs !== undefined ? { askTimeoutMs: options.askTimeoutMs } : {}) })
   const paths = sessionPaths(stateDir)
   return { engine, stateDir, siteDir, store: new SessionStore(paths, () => new Date()), locks: new SiteLocks(paths), warnings, notices }
 }
@@ -1119,4 +1123,226 @@ test('`force` resumes over the warning, and the warning is written to the log (c
   const texts = (await engine.read(id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
   assert.equal(texts.some((t) => /resumed over a freshness warning/.test(t)), true)
   await settle(engine, id)
+})
+
+// ---------------------------------------------------------------------------
+// ASK — the gate asks the owner, and waits (spec block E)
+// ---------------------------------------------------------------------------
+
+/** A reachable owner: records notices, so a test can read the ask's token from one. */
+function reachable() {
+  const notices: NotificationMessage[] = []
+  const notify: Notifier = { canReach: () => true, send: async (m) => void notices.push(m) }
+  return { notices, notify }
+}
+
+/** The token travels in the notice's data — the only place outside memory it ever goes. */
+async function askIdFrom(notices: NotificationMessage[]): Promise<string> {
+  const deadline = Date.now() + 5_000
+  for (;;) {
+    const ask = notices.find((n) => typeof n.data?.['askId'] === 'string')
+    if (ask !== undefined) return ask.data?.['askId'] as string
+    if (Date.now() > deadline) throw new Error('no ask notice was sent')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+async function liveSession(engine: SessionEngine): Promise<string> {
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  return result.outcome === 'started' ? result.sessionId : ''
+}
+
+test('ALLOWED FROM THE PHONE: the held reply becomes allow, and the log says who granted it (criteria 11, 15)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  assert.deepEqual(await engine.answer(askId, 'allow'), { kind: 'answered' })
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'allow')
+  const last = (await engine.read(id, 0)).events.at(-1)
+  assert.equal(last?.kind === 'result' && last.ok, true)
+  assert.match(last?.kind === 'result' ? last.summary : '', /approved by the owner/)
+  await engine.cancel(id)
+})
+
+test('DENIED FROM THE PHONE: deny, with the boundary reason, and the log says so (criterion 16)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  await engine.answer(await askIdFrom(notices), 'deny')
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(decision.hookSpecificOutput.permissionDecisionReason, /writes outside work/)
+  const last = (await engine.read(id, 0)).events.at(-1)
+  assert.match(last?.kind === 'result' ? last.summary : '', /denied by the owner/)
+  await engine.cancel(id)
+})
+
+test('NOBODY ANSWERS: deny, the session stays alive, and the log says nobody answered (criterion 17)', async () => {
+  const { notify } = reachable()
+  const { engine } = await world({ notify, askTimeoutMs: 50 })
+  const id = await liveSession(engine)
+
+  const decision = await engine.decide(payload(id, '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  const page = await engine.read(id, 0)
+  assert.equal(page.state, 'running', 'a deny does not end the session — measured against the CLI too')
+  const last = page.events.at(-1)
+  assert.match(last?.kind === 'result' ? last.summary : '', /nobody answered/)
+  await engine.cancel(id)
+})
+
+test('NOBODY SUBSCRIBED: deny AT ONCE, no notice, no wait (criterion 13)', async () => {
+  const { notices } = reachable()
+  const unreachable: Notifier = { canReach: () => false, send: async (m) => void notices.push(m) }
+  const { engine } = await world({ notify: unreachable, askTimeoutMs: 60_000 })
+  const id = await liveSession(engine)
+
+  const started = Date.now()
+  const decision = await engine.decide(payload(id, '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.ok(Date.now() - started < 1_000, 'did not wait for a timeout')
+  assert.equal(notices.length, 0)
+  await engine.cancel(id)
+})
+
+test('the deny that is NOT a question stays a deny and asks nobody — unknown session (criterion 14)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+
+  const decision = await engine.decide(payload('01990000-0000-7000-8000-00000000dead', '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.equal(notices.length, 0)
+})
+
+test('TWO ASKS, TWO SESSIONS: answering one leaves the other waiting, and each notice names its own (criterion 19)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-two-asks-'))
+  const a = join(home, 'a')
+  const b = join(home, 'b')
+  await mkdir(a, { recursive: true })
+  await mkdir(b, { recursive: true })
+  const { notices, notify } = reachable()
+  const { engine } = await world({ sites: [{ id: 'a', path: a }, { id: 'b', path: b }], notify })
+  const one = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  const two = await engine.launch({ siteId: 'b', entryId: 'free', text: 'linger', force: false })
+  const idA = one.outcome === 'started' ? one.sessionId : ''
+  const idB = two.outcome === 'started' ? two.sessionId : ''
+
+  const pendingA = engine.decide(payload(idA, '/etc/hosts', a))
+  const pendingB = engine.decide(payload(idB, '/etc/passwd', b))
+  const deadline = Date.now() + 5_000
+  while (notices.filter((n) => n.data?.['askId'] !== undefined).length < 2) {
+    if (Date.now() > deadline) throw new Error('two ask notices never arrived')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  const forA = notices.find((n) => n.tag === `ask:${idA}`)
+  const forB = notices.find((n) => n.tag === `ask:${idB}`)
+  assert.notEqual(forA, undefined)
+  assert.notEqual(forB, undefined)
+
+  await engine.answer(forA?.data?.['askId'] as string, 'allow')
+  assert.equal((await pendingA).hookSpecificOutput.permissionDecision, 'allow')
+
+  let bSettled = false
+  void pendingB.then(() => (bSettled = true))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(bSettled, false, 'answering A must not answer B')
+
+  await engine.answer(forB?.data?.['askId'] as string, 'deny')
+  assert.equal((await pendingB).hookSpecificOutput.permissionDecision, 'deny')
+  await engine.cancel(idA)
+  await engine.cancel(idB)
+})
+
+test('A SHUTDOWN WITH AN ASK HANGING resolves it as a deny — no promise outlives the engine (criterion 22)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  await askIdFrom(notices)
+  await engine.stop()
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('THE TOKEN NEVER TOUCHES DISK: not in the log, not in meta.json, not in the warnings (criterion 46)', async () => {
+  // The gated agent can read any file on this machine. An id written anywhere it can read is an
+  // id handed to it.
+  const { notices, notify } = reachable()
+  const { engine, stateDir, warnings } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  await engine.answer(askId, 'allow')
+  await pending
+  await engine.cancel(id)
+
+  const { readdir } = await import('node:fs/promises')
+  const walk = async (dir: string): Promise<string[]> => {
+    const out: string[] = []
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) out.push(...(await walk(path)))
+      else out.push(await readFile(path, 'utf8'))
+    }
+    return out
+  }
+  for (const content of await walk(stateDir)) assert.equal(content.includes(askId), false, 'the token is on disk')
+  assert.equal(warnings.join('\n').includes(askId), false)
+})
+
+test('an invented token answers nothing, and the real ask keeps waiting (criterion 46)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  assert.deepEqual(await engine.answer('A'.repeat(43), 'allow'), { kind: 'unknown' })
+
+  let settled = false
+  void pending.then(() => (settled = true))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(settled, false)
+
+  await engine.answer(askId, 'deny')
+  await pending
+  await engine.cancel(id)
+})
+
+test('THE ASK NOTICE carries the site, the tool and the FILE NAME — never the full path (criterion 29)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/Users/someone/secret-project/plans/q3.md', '/work/site'))
+  const askId = await askIdFrom(notices)
+  const notice = notices.find((n) => n.data?.['askId'] === askId)
+
+  assert.match(notice?.body ?? '', /work/)
+  assert.match(notice?.body ?? '', /Write/)
+  assert.match(notice?.body ?? '', /q3\.md/)
+  assert.doesNotMatch(JSON.stringify(notice?.body), /secret-project|\/Users\//)
+  // The tag names the SESSION, not the token: a tag reaches OS surfaces we do not control.
+  assert.equal(notice?.tag, `ask:${id}`)
+  assert.equal(notice?.tag?.includes(askId), false)
+  // And the path lands in that session WITH the token, for the no-buttons route (criterion 55).
+  assert.equal(notice?.path, `/m/sessions/${id}?ask=${askId}`)
+
+  await engine.answer(askId, 'deny')
+  await pending
+  await engine.cancel(id)
 })
