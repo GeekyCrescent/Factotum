@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
+import type { ErrorBody, ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
 import { sessionsConfigSchema } from './config.ts'
 import { sessionsModule } from './server.ts'
 import type { CreateEngine, EngineSetup, LaunchResult, SessionEngine } from './types.ts'
@@ -171,6 +171,7 @@ test('a busy site answers 409 WITH the id of the session that has it', async () 
   // Without the id the screen can say "busy" and nothing else — it cannot offer to go
   // there or to cancel it, which is the whole of the criterion.
   assert.deepEqual((response.body as { conflict: unknown }).conflict, { sessionId: 'the-live-one' })
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
 })
 
 test('a stale site answers 409 with the freshness report, not a bare refusal', async () => {
@@ -183,6 +184,7 @@ test('a stale site answers 409 with the freshness report, not a bare refusal', a
   )
   assert.equal(response.status, 409)
   assert.deepEqual((response.body as { freshness: unknown }).freshness, freshness)
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
 })
 
 test('a refusal the owner has to read comes back as 400 WITH its reason', async () => {
@@ -453,6 +455,10 @@ test('answering an ask that already expired is 409 with a reason a person can re
 
   assert.equal(response.status, 409)
   assert.match(JSON.stringify(response.body), /expired|too late/i)
+  // THE CODE IS THE ONE THE KERNEL ADDED FOR 409s. `invalid-request` says "you called it
+  // wrong", and the caller did not: the ask was valid and the clock ran out. A client that
+  // branches on the code cannot tell a malformed body from a lost race otherwise.
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
 })
 
 test('an unknown token is 404 — there is no default ask (criterion 46)', async () => {

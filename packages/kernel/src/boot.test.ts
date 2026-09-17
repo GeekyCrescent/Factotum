@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createHttpServer } from 'node:http'
@@ -400,6 +400,44 @@ test('a path that tries to climb out of a module prefix does not exist', async (
     // Normalised to /health, which is a real route — the point is that it never
     // reached the module dispatcher with a traversing path.
     assert.notEqual(response.status, 500)
+  } finally {
+    await handle.stop()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Push off — criterion 5 of the web-push spec, at the level it is decided
+// ---------------------------------------------------------------------------
+
+test('a keys.json it cannot use leaves push OFF and the daemon serving (criterion 5)', async () => {
+  // The task (C3) asked for this test and the spec closed without it: every other test of
+  // criterion 5 covers `createPushService` or `doctor` in isolation, and the decision that push
+  // is a capability and not the network surface (ADR-0004) is taken HERE, in step 7 bis. A boot
+  // that threw on an unreadable key file would take the whole daemon down with it, and nothing
+  // would have caught that.
+  const paths = await withConfig({ modules: { example: { enabled: true }, probe: { enabled: true } } })
+  await mkdir(paths.push, { recursive: true })
+  await writeFile(join(paths.push, 'keys.json'), 'not json at all', 'utf8')
+
+  let reachable: boolean | undefined
+  const probe: AnyModule = {
+    id: 'probe',
+    routes: (ctx) => ((reachable = ctx.notify.canReach()), {}),
+  }
+
+  const handle = await bootWith(paths, [example, probe], {})
+  try {
+    // READY, and the rest of the daemon does not know anything happened.
+    assert.equal((await fetch(`${handle.localUrl}/health`)).status, 200)
+    assert.equal((await fetch(`${handle.localUrl}/modules/example/ping`)).status, 200)
+
+    // The push routes are gone rather than broken, and the module is told it cannot reach anyone,
+    // which is what makes the permission gate deny instead of hanging on an ask nobody sees.
+    assert.equal((await fetch(`${handle.localUrl}/push/public-key`)).status, 404)
+    assert.equal(reachable, false)
+
+    // And the file it could not parse is still there, unread and unreplaced.
+    assert.equal(await readFile(join(paths.push, 'keys.json'), 'utf8'), 'not json at all')
   } finally {
     await handle.stop()
   }

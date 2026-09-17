@@ -55,7 +55,7 @@ function fromLaunch(result: LaunchResult): ModuleResponse {
       return {
         status: 409,
         body: {
-          error: { code: 'invalid-request', message: 'that site already has a live session' },
+          error: { code: 'conflict', message: 'that site already has a live session' },
           conflict: { sessionId: result.sessionId },
         },
       }
@@ -63,7 +63,7 @@ function fromLaunch(result: LaunchResult): ModuleResponse {
       return {
         status: 409,
         body: {
-          error: { code: 'invalid-request', message: 'that site is not clean or not up to date' },
+          error: { code: 'conflict', message: 'that site is not clean or not up to date' },
           freshness: result.freshness,
         },
       }
@@ -155,7 +155,7 @@ function routeTable(holder: EngineHolder): RouteTable {
         case 'expired':
           return {
             status: 409,
-            body: { error: { code: 'invalid-request', message: 'too late: that ask expired, and the agent was already told no' } },
+            body: { error: { code: 'conflict', message: 'too late: that ask expired, and the agent was already told no' } },
           }
         case 'unknown':
           return { status: 404, body: { error: { code: 'not-found', message: 'there is no ask with that token' } } }
