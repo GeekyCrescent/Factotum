@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'preact/hooks'
 import { fetchModules, moduleApi, type ModuleSummary, type ModulesResult } from './api.ts'
 import { clientFor } from './modules.ts'
+import { PushControl } from './push-control.tsx'
+import { restOf } from './route.ts'
 
 const STARTING_RETRY_MS = 500
 
@@ -74,7 +76,16 @@ export function Shell() {
           </a>
         ))}
       </nav>
-      <main>{current === undefined ? <Home modules={running} /> : <ModuleScreen id={current} modules={running} />}</main>
+      <main>
+        {current === undefined ? (
+          <>
+            <Home modules={running} />
+            <PushControl />
+          </>
+        ) : (
+          <ModuleScreen id={current} modules={running} path={path} />
+        )}
+      </main>
     </>
   )
 }
@@ -109,7 +120,7 @@ function Home({ modules }: { modules: readonly ModuleSummary[] }) {
   )
 }
 
-function ModuleScreen({ id, modules }: { id: string; modules: readonly ModuleSummary[] }) {
+function ModuleScreen({ id, modules, path }: { id: string; modules: readonly ModuleSummary[]; path: string }) {
   const summary = modules.find((module) => module.id === id)
 
   if (summary === undefined) {
@@ -137,7 +148,10 @@ function ModuleScreen({ id, modules }: { id: string; modules: readonly ModuleSum
     )
   }
 
-  return <client.View api={moduleApi(id)} />
+  // `rest` is what followed `/m/<id>/`; `search` is the query, read in render with no state of
+  // its own. Both are read ONCE by a screen, at mount: synchronising navigation both ways would
+  // be a router, and a router is the client-design spec, not this one.
+  return <client.View api={moduleApi(id)} rest={restOf(path, id)} search={window.location.search} />
 }
 
 function Notice({ title, children }: { title: string; children: unknown }) {

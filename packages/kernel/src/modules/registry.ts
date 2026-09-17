@@ -8,9 +8,10 @@
  */
 
 import { mkdir } from 'node:fs/promises'
-import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type Timers } from '@factotum/core'
+import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type NotificationMessage, type Timers } from '@factotum/core'
 import type { ComposedModule } from '../config/load.ts'
 import { moduleStateDir, type StatePaths } from '../config/paths.ts'
+import type { PushService } from '../push/service.ts'
 import { compileRoutes, buildRequest, matchRoute, type CompiledRoute } from './mount.ts'
 
 /**
@@ -26,6 +27,17 @@ export interface RegistryDeps {
   readonly env: Environment
   readonly now?: () => Date
   readonly startTimeoutMs?: number
+  /**
+   * The daemon's push capability, ALREADY BUILT — `boot` builds it, because only `boot` knows
+   * `publicOrigin` and therefore the machine's name. The registry is given the capability and
+   * never the config: a registry that knew `publicOrigin` could start deciding the network
+   * surface, which lives in one place on purpose.
+   *
+   * REQUIRED, not optional. An optional capability that silently does nothing is a degradation
+   * nobody sees; ADR-0004 degrades CONFIG, not wiring. When push is off, what arrives here is a
+   * service whose `canReach` says so.
+   */
+  readonly push: Pick<PushService, 'canReach' | 'send'>
 }
 
 export interface ModuleSummary {
@@ -147,6 +159,7 @@ export class Registry {
       const stateDir = moduleStateDir(deps.paths, module.id)
       await mkdir(stateDir, { recursive: true })
 
+      const moduleId = module.id
       const ctx = {
         config,
         stateDir,
@@ -154,6 +167,12 @@ export class Registry {
         log: prefixed(module.id),
         now,
         timers: timers.timers,
+        // THE ID IS BOUND HERE, not passed by the module. Same move as the route prefix and the
+        // log prefix: a module cannot claim to be another module, or the daemon (`null`).
+        notify: {
+          canReach: () => deps.push.canReach(),
+          send: (message: NotificationMessage) => deps.push.send(message, moduleId),
+        },
       }
 
       entries.push({

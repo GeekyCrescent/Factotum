@@ -11,7 +11,8 @@
 
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { AnyModule, BootHandle, Environment } from '@factotum/core'
+import { prefixed, type AnyModule, type BootHandle, type Environment } from '@factotum/core'
+import { createPushService } from './push/service.ts'
 import { BootError } from './errors.ts'
 import { loadRootConfig, composeModules } from './config/load.ts'
 import { ensureStateRoots, statePaths, type StatePaths } from './config/paths.ts'
@@ -57,10 +58,26 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
   // 7. State roots.
   await ensureStateRoots(paths)
 
+  // 7 bis. Push, BETWEEN 7 AND 8 and not later. Step 8 builds every module's context, and a
+  // context carries `notify`; there is nothing to hand over if this has not happened. It reads
+  // and — on a first start — creates the VAPID pair, and it sends NOTHING: a boot that needed
+  // the internet would be a boot that fails on a plane. Never throws: push off is a degraded
+  // capability, not an abort (ADR-0004).
+  const push = await createPushService({
+    dir: paths.push,
+    machine: machineName(config.publicOrigin),
+    // The VAPID `sub` claim wants an https: URL or a mailto:. `publicOrigin` is the https:
+    // name this daemon answers on. In dev it is a loopback http: origin — and dev cannot
+    // subscribe (no secure context), so nothing is ever sent there to object to it.
+    subject: config.publicOrigin,
+    log: prefixed('push'),
+  })
+
   // 8. Contexts and route tables. Still nothing running.
   const registryDeps = {
     paths,
     env: options.env,
+    push,
     ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   }
   const registry = await Registry.create(composed, registryDeps)
@@ -82,6 +99,7 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     env: options.env,
     version: options.version,
     startedAt,
+    push,
     ...(options.site !== undefined ? { site: options.site } : {}),
     isReady: () => ready,
   })
@@ -120,9 +138,21 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     stop: async () => {
       ready = false
       await registry.stopAll()
+      // Notices already on their way — a module's "stopped" among them — are let finish. Each
+      // is bounded by its own AbortSignal, so this cannot hang the shutdown.
+      await push.settled()
       await close(server)
     },
   }
+}
+
+/**
+ * The first label of the public hostname: `juans-macbook-pro`, not the whole
+ * `juans-macbook-pro.tailbd0167.ts.net`. It is what tells two machines' notices apart on a
+ * phone, and a notification title has no room for a tailnet suffix.
+ */
+function machineName(publicOrigin: string): string {
+  return new URL(publicOrigin).hostname.split('.')[0] ?? publicOrigin
 }
 
 function listenOrExplain(

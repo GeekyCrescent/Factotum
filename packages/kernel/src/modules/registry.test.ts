@@ -3,14 +3,31 @@ import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AnyModule, ModuleContext } from '@factotum/core'
+import type { AnyModule, ModuleContext, NotificationMessage } from '@factotum/core'
 import type { ComposedModule } from '../config/load.ts'
 import { statePaths } from '../config/paths.ts'
 import { Registry } from './registry.ts'
 
-async function deps(startTimeoutMs = 50) {
+/** What the registry was asked to send, and on behalf of whom. */
+interface SentNotice {
+  readonly message: NotificationMessage
+  readonly moduleId: string | null
+}
+
+function fakePush(reachable = false) {
+  const sent: SentNotice[] = []
+  return {
+    sent,
+    canReach: () => reachable,
+    send: async (message: NotificationMessage, moduleId: string | null) => {
+      sent.push({ message, moduleId })
+    },
+  }
+}
+
+async function deps(startTimeoutMs = 50, push = fakePush()) {
   const home = await mkdtemp(join(tmpdir(), 'factotum-'))
-  return { paths: statePaths('prod', home), env: 'prod' as const, startTimeoutMs }
+  return { paths: statePaths('prod', home), env: 'prod' as const, startTimeoutMs, push }
 }
 
 const enabled = (module: AnyModule, config: unknown = undefined): ComposedModule => ({
@@ -196,4 +213,62 @@ test('a module with no start is left alone', async () => {
   await registry.startAll()
   assert.equal(registry.list()[0]?.status.kind, 'enabled')
   await registry.stopAll()
+})
+
+// ---------------------------------------------------------------------------
+// notify — the seventh field
+// ---------------------------------------------------------------------------
+
+test('ModuleContext has EXACTLY seven keys, spelled out by hand (criterion 36)', async () => {
+  // A diff saying "only that block changed" discriminates nothing. A count does: an eighth
+  // field turns this red, and so does one quietly dropped. Same mechanism, and the same
+  // reason, as the EngineSetup key list in the session module's own server test.
+  let seen: ModuleContext | undefined
+  await Registry.create(
+    [enabled({ id: 'probe', routes: (ctx) => ((seen = ctx), {}) })],
+    await deps(),
+  )
+
+  assert.deepEqual(Object.keys(seen ?? {}).sort(), ['config', 'env', 'log', 'notify', 'now', 'stateDir', 'timers'])
+})
+
+test('a module notifies AS ITSELF: the registry binds the id, the module cannot pass one', async () => {
+  const push = fakePush(true)
+  let seen: ModuleContext | undefined
+  await Registry.create([enabled({ id: 'probe', routes: (ctx) => ((seen = ctx), {}) })], await deps(50, push))
+
+  const message = { title: 't', body: 'b', path: '/', tag: 'x' }
+  // Even a module that tries to smuggle an id in has no parameter to put it in.
+  await (seen?.notify.send as unknown as (m: unknown, id: string) => Promise<void>)(message, 'someone-else')
+
+  assert.deepEqual(push.sent, [{ message, moduleId: 'probe' }])
+})
+
+test('two modules get two distinct identities from the same push service', async () => {
+  const push = fakePush(true)
+  const seen = new Map<string, ModuleContext>()
+  await Registry.create(
+    [
+      enabled({ id: 'one', routes: (ctx) => (seen.set('one', ctx), {}) }),
+      enabled({ id: 'two', routes: (ctx) => (seen.set('two', ctx), {}) }),
+    ],
+    await deps(50, push),
+  )
+
+  const message = { title: 't', body: 'b', path: '/', tag: 'x' }
+  await seen.get('two')?.notify.send(message)
+  await seen.get('one')?.notify.send(message)
+
+  assert.deepEqual(push.sent.map((s) => s.moduleId), ['two', 'one'])
+})
+
+test('canReach is the push service answering, not a value frozen at composition', async () => {
+  let reachable = false
+  const push = { ...fakePush(), canReach: () => reachable }
+  let seen: ModuleContext | undefined
+  await Registry.create([enabled({ id: 'probe', routes: (ctx) => ((seen = ctx), {}) })], await deps(50, push))
+
+  assert.equal(seen?.notify.canReach(), false)
+  reachable = true // a device subscribed after boot
+  assert.equal(seen?.notify.canReach(), true)
 })

@@ -3,8 +3,11 @@
  * kernel knows how to do is generic, and everything specific arrives through here.
  *
  * Five fields, and no more. A sixth needs a consumer that exists TODAY — see the
- * spec's risk 6. Two things already known not to fit are recorded in the spec's
- * design §9: notifications, and binary request/response bodies.
+ * spec's risk 6. Binary request/response bodies are still known not to fit.
+ *
+ * Notifications used to be the other one. They fit now, because they got a consumer — the
+ * permission gate asking the owner — and they arrived as a field of `ModuleContext`, not of
+ * this interface: `notify` below. See ADR-0008.
  */
 
 import type { Logger } from './log.ts'
@@ -101,11 +104,76 @@ export interface ModuleContext<C = unknown> {
    * because `Disposable` hides the underlying handle and a module could not do it.
    */
   readonly timers: Timers
+
+  /**
+   * Reaching the owner's devices. THE SEVENTH FIELD, and it has exactly one consumer today:
+   * the permission gate asking before it denies (ADR-0008).
+   *
+   * Named for what it does, not for how: a module does not know the transport is Web Push, so
+   * the day there is another one, the kernel changes and no module does.
+   *
+   * The module's id and the machine's name are stamped by the kernel. A module cannot forge a
+   * notice that looks like another module's, or like the daemon's own.
+   */
+  readonly notify: Notifier
+}
+
+/**
+ * Two members, and the first exists so the second is never called in vain.
+ *
+ * `canReach` is SYNCHRONOUS on purpose. The permission gate asks it before deciding whether it
+ * may ask at all, and that decision is pure: a promise here would push I/O into the one path in
+ * the project that must not do any. Without it, the only way to know nobody is subscribed would
+ * be to send and wait for the failure — freezing a session for a whole timeout in exactly the
+ * case where nobody will answer.
+ */
+export interface Notifier {
+  readonly canReach: () => boolean
+  /** Never rejects. A notice that cannot be delivered is logged, not thrown at the caller. */
+  readonly send: (message: NotificationMessage) => Promise<void>
 }
 
 export interface Timers {
   setInterval: (fn: () => void, ms: number) => Disposable
   setTimeout: (fn: () => void, ms: number) => Disposable
+}
+
+/**
+ * What a MODULE builds to notify the owner. It does not know which machine it runs on, nor
+ * its own id: the kernel adds both (see `PushEnvelope`), so a module cannot forge either.
+ *
+ * Everything here leaves the private network — it travels through the browser's push
+ * service. Carry the least that is enough to decide, never a full path (spec §5).
+ */
+export interface NotificationMessage {
+  readonly title: string
+  readonly body: string
+  /** Where a tap lands. Relative; the client resolves it against its own origin. */
+  readonly path: string
+  /** Collapses earlier notifications with the same tag. One per session is the intended use. */
+  readonly tag: string
+  /** Buttons, where the platform supports them. Absent means tap-to-open only. */
+  readonly actions?: readonly { readonly action: string; readonly label: string }[]
+  /** Opaque to the kernel. Handed to the service worker so an action knows what it answers. */
+  readonly data?: Readonly<Record<string, unknown>>
+}
+
+/**
+ * What the KERNEL serialises into the push payload. A module never builds one.
+ *
+ * The service worker composes the visible title from `machine` and `message.title`, so
+ * neither the kernel nor a module rewrites text it does not own.
+ */
+export interface PushEnvelope {
+  readonly message: NotificationMessage
+  /**
+   * `null` IS THE DAEMON ITSELF — used by exactly one notice, a new subscription, which is
+   * raised by a kernel route with no module behind it. Not a reserved string: `moduleIdSchema`
+   * would accept one as a real module id, and a module so named could forge daemon notices.
+   */
+  readonly moduleId: string | null
+  /** From the hostname of `publicOrigin`, which only `boot` knows. */
+  readonly machine: string
 }
 
 /**

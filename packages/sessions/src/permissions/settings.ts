@@ -11,18 +11,38 @@
 export const HOOK_PATH = 'hooks/pre-tool-use'
 
 /**
- * How long the CLI waits for a decision, in seconds.
+ * How long the CLI waits for a decision, in seconds — and so THE WINDOW A PERSON HAS TO ANSWER
+ * AN ASK FROM THEIR POCKET.
  *
- * A NAMED CONSTANT WITH ITS REASONING, NOT A 30 SOMEBODY TYPED. In the predecessor
- * this was derived from the approval timeout, because there the hook's timeout WAS the
- * window a human had to answer in. Here ADR-0006 removes approval entirely, so there
- * is nothing to derive it from: it is an upper bound on how long a decision that does
- * no network I/O can possibly take, and `decide` is pure, so the real figure is
- * microseconds. Ten seconds is three orders of magnitude of headroom for a loaded
- * machine, and it is deliberately not generous beyond that — a hook that hangs is a
- * session that hangs.
+ * It used to be ten, reasoned for a gate that could only allow or deny: `decide` is pure, the
+ * real figure was microseconds. With `ask` (ADR-0009) that reasoning expired, and this is the
+ * same role the predecessor gave its hook timeout.
+ *
+ * AN HOUR, the owner's choice (2026-09-16), and the predecessor's default. Measured, not
+ * assumed: the CLI held a hook's reply for 700 s under `timeout: 3600` and answered in time
+ * (spec §0.32), and the predecessor verified the setting accepts 3600. When it expires the
+ * tool is blocked and the session carries on — measured too: it is a deny, not a dead session.
+ *
+ * The cost is written, not hidden: an ask nobody sees freezes that agent for up to an hour.
+ * Most asks in the predecessor were agents asking to do what they were told — a wide site
+ * makes fewer of them.
  */
-export const HOOK_TIMEOUT_SECONDS = 10
+export const HOOK_TIMEOUT_SECONDS = 3600
+
+/**
+ * What factotum needs, after it gives up on an ask, to write why into the log and answer before
+ * the CLI's own timeout fires. The work is milliseconds — an append and a response. Thirty
+ * seconds also absorbs the gap between when the CLI starts its clock and when the request
+ * reaches the daemon, three orders of magnitude over.
+ */
+export const ASK_ANSWER_MARGIN_SECONDS = 30
+
+/**
+ * How long factotum waits for the owner. A SUBTRACTION, not a second literal: two numbers drift
+ * the day someone changes one, and this cannot. The test asserts the inequality anyway, because
+ * a negative margin would still compile.
+ */
+export const ASK_TIMEOUT_SECONDS = HOOK_TIMEOUT_SECONDS - ASK_ANSWER_MARGIN_SECONDS
 
 export interface HookSettings {
   readonly hooks: {

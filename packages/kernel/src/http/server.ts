@@ -16,6 +16,8 @@ import {
 } from '@factotum/core'
 import { describePolicy, originAllowed, type OriginPolicy } from '../net/origin.ts'
 import type { Registry } from '../modules/registry.ts'
+import type { PushService } from '../push/service.ts'
+import { subscriptionSchema } from '../push/schema.ts'
 
 export interface StaticSite {
   /** `undefined` when the path is not part of the site. */
@@ -35,6 +37,20 @@ export interface ServerDeps {
    * HTML and a supervisor can still tell "starting" from "wedged".
    */
   readonly isReady: () => boolean
+  /** The two push routes below. Never a module: the kernel knows no module by name. */
+  readonly push: Pick<PushService, 'publicKey' | 'subscribe'>
+}
+
+/**
+ * THE API OWNS THIS PREFIX, and the static site must not answer under it.
+ *
+ * The static branch runs BEFORE the origin check and falls back to `index.html` for anything
+ * it does not own (`static.ts:31`) — which is right for `/m/<id>` and would make every GET here
+ * answer 200 text/html, unreachable and above the 403. Exact prefix, so `/pushup` stays the
+ * client's.
+ */
+function isPushPath(path: string): boolean {
+  return path === '/push' || path.startsWith('/push/')
 }
 
 export function createServer(deps: ServerDeps): Server {
@@ -65,7 +81,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
     })
   }
 
-  if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules')) {
+  if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules') && !isPushPath(path)) {
     const file = await deps.site.serve(path)
     if (file !== undefined) {
       res.writeHead(200, { 'content-type': file.type })
@@ -95,20 +111,48 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
     return sendJson(res, 200, { modules: deps.registry.list() })
   }
 
+  // --- Push: the daemon's own, behind the origin check AND the 503 ------------
+  // Behind the origin check because a subscription is exactly what a hostile page would want to
+  // plant. Behind the 503 because boot step 13 exists so nothing is served half-built. Neither
+  // stops a process on this machine — see push/service.ts for what does instead.
+
+  if (isPushPath(path)) {
+    if (method === 'GET' && path === '/push/public-key') {
+      const publicKey = deps.push.publicKey()
+      // Off answers 404 WITHOUT the reason: it names the key file's path, and a path does not
+      // reach a client (`module-error` below exists for the same reason). `doctor` says why.
+      if (publicKey === undefined) return sendError(res, 404, 'not-found', 'push is off on this machine; run `factotum doctor` for the reason')
+      return sendJson(res, 200, { publicKey })
+    }
+
+    if (method === 'POST' && path === '/push/subscriptions') {
+      const read = await readBodyOrAnswer(req, res)
+      if (!read.ok) return
+
+      const parsed = subscriptionSchema.safeParse(read.body)
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0]
+        return sendError(res, 400, 'invalid-request', `${issue?.path.join('.') || 'body'}: ${issue?.message ?? 'invalid'}`)
+      }
+
+      const result = await deps.push.subscribe(parsed.data)
+      if (result.kind === 'off') return sendError(res, 404, 'not-found', 'push is off on this machine; run `factotum doctor` for the reason')
+      if (result.kind === 'full') return sendError(res, 409, 'conflict', result.reason)
+      // A COUNT, never the list: every endpoint is a capability (criterion 10). The count is
+      // what lets the first device on a fresh daemon notice a second one it did not add.
+      return sendJson(res, 200, { count: result.count })
+    }
+
+    return sendError(res, 404, 'not-found', `no route ${method} ${path}`)
+  }
+
   const moduleRoute = /^\/modules\/([^/]+)(\/.*)?$/.exec(path)
   if (moduleRoute !== null) {
     const [, id, rest] = moduleRoute as unknown as [string, string, string | undefined]
 
-    let body: unknown
-    try {
-      body = await readJsonBody(req)
-    } catch (error) {
-      if ((error as Error).message === 'too-large') {
-        await drain(req)
-        return sendError(res, 413, 'body-too-large', `bodies are capped at ${MAX_BODY_BYTES} bytes`)
-      }
-      return sendError(res, 400, 'invalid-request', 'the body is not valid JSON')
-    }
+    const read = await readBodyOrAnswer(req, res)
+    if (!read.ok) return
+    const body = read.body
 
     let response: ModuleResponse | undefined
     try {
@@ -145,6 +189,31 @@ function normalizePath(pathname: string): string {
     out.push(part)
   }
   return `/${out.join('/')}`
+}
+
+/**
+ * Reads the body, or answers 413 / 400 itself. THE BODY CAP LIVES HERE, ONCE.
+ *
+ * `readJsonBody` only throws `'too-large'`; the 413 with its drain and the 400 used to live
+ * inline in the module branch. A second branch that read bodies would have had to copy them —
+ * and the header of this file says the body cap is one of the three things that must not be
+ * decided in two places.
+ */
+async function readBodyOrAnswer(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<{ readonly ok: true; readonly body: unknown } | { readonly ok: false }> {
+  try {
+    return { ok: true, body: await readJsonBody(req) }
+  } catch (error) {
+    if ((error as Error).message === 'too-large') {
+      await drain(req)
+      sendError(res, 413, 'body-too-large', `bodies are capped at ${MAX_BODY_BYTES} bytes`)
+      return { ok: false }
+    }
+    sendError(res, 400, 'invalid-request', 'the body is not valid JSON')
+    return { ok: false }
+  }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {

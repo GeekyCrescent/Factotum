@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Timers } from '@factotum/core'
+import type { NotificationMessage, Notifier, Timers } from '@factotum/core'
 import { createEngine } from './engine.ts'
 import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
@@ -43,9 +43,16 @@ interface World {
   readonly store: SessionStore
   readonly locks: SiteLocks
   readonly warnings: string[]
+  /** Every notice the engine asked to send, in order. The push service itself is not here. */
+  readonly notices: NotificationMessage[]
 }
 
-async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => string } = {}): Promise<World> {
+/** For the setups that are not about notices. */
+const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
+
+async function world(
+  options: { sites?: readonly SiteConfig[]; hookUrl?: () => string; notify?: Notifier; askTimeoutMs?: number } = {},
+): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
   const stateDir = join(home, 'state')
   const siteDir = join(home, 'site')
@@ -53,6 +60,7 @@ async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => s
   await mkdir(siteDir, { recursive: true })
 
   const warnings: string[] = []
+  const notices: NotificationMessage[] = []
   const setup: EngineSetup = {
     stateDir,
     sites: options.sites ?? [{ id: 'work', path: siteDir }],
@@ -61,11 +69,14 @@ async function world(options: { sites?: readonly SiteConfig[]; hookUrl?: () => s
     now: () => new Date(),
     timers,
     hookUrl: options.hookUrl ?? (() => BASE),
+    // canReach FALSE by default: nobody subscribed, so the gate DENIES as it always did. Only the
+    // tests about asking opt in, or every existing deny test would turn into a wait.
+    notify: options.notify ?? { canReach: () => false, send: async (message) => void notices.push(message) },
   }
 
-  const engine = await createEngine(setup, { bin: FAKE })
+  const engine = await createEngine(setup, { bin: FAKE, ...(options.askTimeoutMs !== undefined ? { askTimeoutMs: options.askTimeoutMs } : {}) })
   const paths = sessionPaths(stateDir)
-  return { engine, stateDir, siteDir, store: new SessionStore(paths, () => new Date()), locks: new SiteLocks(paths), warnings }
+  return { engine, stateDir, siteDir, store: new SessionStore(paths, () => new Date()), locks: new SiteLocks(paths), warnings, notices }
 }
 
 /** The fake CLI chooses what to do from the prompt. */
@@ -265,6 +276,7 @@ test('TWO live sessions in TWO different sites are not confused with each other'
     now: () => new Date(),
     timers,
     hookUrl: () => BASE,
+    notify: silentNotify,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
@@ -305,6 +317,7 @@ test('TWO live sessions in two sites can BOTH write a shared path', async () => 
     now: () => new Date(),
     timers,
     hookUrl: () => BASE,
+    notify: silentNotify,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
@@ -345,6 +358,7 @@ test('a sharedPath that does not exist disables the module, like a site that doe
     now: () => new Date(),
     timers,
     hookUrl: () => BASE,
+    notify: silentNotify,
   }
   await mkdir(setup.stateDir, { recursive: true })
 
@@ -419,7 +433,7 @@ test('after stop(), launch, reply and decide all REJECT — no session exists wi
   await engine.stop()
 
   await assert.rejects(() => engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false }), /engine stopped/)
-  await assert.rejects(() => engine.reply('whatever', 'hi'), /engine stopped/)
+  await assert.rejects(() => engine.reply('whatever', 'hi', false), /engine stopped/)
   await assert.rejects(() => engine.decide(payload('x', '/a', '/b')), /engine stopped/)
 })
 
@@ -440,7 +454,7 @@ test('a reply reopens a finished session, bumps its turns and asks for the lock 
   await settle(engine, id)
   assert.equal(await locks.heldBy('work'), undefined)
 
-  const second = await engine.reply(id, QUICK)
+  const second = await engine.reply(id, QUICK, false)
   assert.equal(second.outcome, 'started')
   assert.equal(second.outcome === 'started' ? second.sessionId : '', id)
   assert.equal((await locks.heldBy('work'))?.sessionId, id)
@@ -454,14 +468,14 @@ test('replying to a session that is still running is refused', async () => {
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
 
-  const result = await engine.reply(id, 'more')
+  const result = await engine.reply(id, 'more', false)
   assert.match(result.outcome === 'rejected' ? result.reason : '', /still running/)
   await engine.cancel(id)
 })
 
 test('replying to a session nobody has heard of is refused', async () => {
   const { engine } = await world()
-  const result = await engine.reply('019965aa-0000-7000-8000-00000000dead', 'hi')
+  const result = await engine.reply('019965aa-0000-7000-8000-00000000dead', 'hi', false)
   assert.match(result.outcome === 'rejected' ? result.reason : '', /no session/)
 })
 
@@ -478,7 +492,7 @@ test('resuming onto a site another session holds is refused, with that session�
   // Somebody else takes the site in between.
   await locks.acquire('work', 'some-other-session', new Date().toISOString())
 
-  const result = await engine.reply(id, QUICK)
+  const result = await engine.reply(id, QUICK, false)
   assert.equal(result.outcome, 'busy')
   assert.equal(result.outcome === 'busy' ? result.sessionId : '', 'some-other-session')
 })
@@ -563,6 +577,7 @@ test('cancelling a session that a dead daemon left behind closes it anyway', asy
     siteId: 'work',
     entryId: 'free',
     startedAt: new Date().toISOString(),
+    sitePath: undefined,
   })
 
   await engine.cancel(orphan)
@@ -632,7 +647,7 @@ test('reconcile through the facade releases a lock left by a dead daemon', async
   const { engine, stateDir, locks } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const stale = '019965aa-0000-7000-8000-0000000000bb'
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString() })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   await engine.reconcile()
@@ -666,6 +681,7 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
     now: () => new Date(),
     timers,
     hookUrl: () => BASE,
+    notify: silentNotify,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
@@ -702,10 +718,631 @@ test('a refused stale launch does not keep the lock', async () => {
     now: () => new Date(),
     timers,
     hookUrl: () => BASE,
+    notify: silentNotify,
   }
   await mkdir(setup.stateDir, { recursive: true })
   const engine = await createEngine(setup, { bin: FAKE })
   await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
 
   assert.equal(await new SiteLocks(sessionPaths(setup.stateDir)).heldBy('repo'), undefined)
+})
+
+// ---------------------------------------------------------------------------
+// Notices: one per END OF TURN (spec criteria 25-28, 44, 47, 48, 50, 51)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settle` returns once the LOG stops saying running, which is before `finalize` has finished —
+ * the notice goes out after the meta is written. The lock is the last thing `finalize` touches,
+ * so "the lock is back" is "the turn is fully over".
+ */
+async function turnOver(locks: SiteLocks, siteId: string): Promise<void> {
+  const deadline = Date.now() + 15_000
+  while ((await locks.heldBy(siteId)) !== undefined) {
+    if (Date.now() > deadline) throw new Error(`site ${siteId} never came back`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+test('a turn that ends produces EXACTLY ONE notice, naming the session and the site (criterion 25)', async () => {
+  const { engine, locks, notices } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0]?.title, 'finished')
+  assert.equal(notices[0]?.tag, id, 'the session id collapses duplicates on the phone')
+  assert.equal(notices[0]?.path, `/m/sessions/${id}`)
+  assert.match(notices[0]?.body ?? '', /work/)
+})
+
+test('a session of two turns notifies TWICE — one per end of turn, which is the point (criterion 25, §0.28)', async () => {
+  const { engine, locks, notices } = await world()
+  const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = first.outcome === 'started' ? first.sessionId : ''
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  await engine.reply(id, QUICK, false)
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  assert.equal(notices.length, 2)
+})
+
+test('CANCELLING A LIVE SESSION FROM THE PHONE sends nothing back to it (criterion 51)', async () => {
+  // The owner just asked for it and is looking at the screen. And the live path does not go
+  // through `cancel`'s own `finalize` call: it goes through `spawnFor`'s settle, which is where
+  // the "do not notify" has to be decided.
+  const { engine, locks, notices } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  await engine.cancel(id)
+  await turnOver(locks, 'work')
+
+  assert.equal(notices.length, 0)
+})
+
+test('cancelling a session a dead daemon left behind sends nothing either', async () => {
+  const { engine, store, notices } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await engine.stop() // the engine that owned it is gone
+  notices.length = 0
+
+  const { engine: second } = await world()
+  void store
+  await second.cancel(id) // not live in `second`: goes through cancel's own finalize
+
+  assert.equal(notices.length, 0)
+})
+
+test('cancel does not wait for the notice — a push service that hangs does not slow the phone down (criterion 44)', async () => {
+  // Not about cancel's own path (it sends nothing), but about finalize in general: the send is
+  // fire-and-forget, so nothing awaiting `settled` pays for it.
+  const hanging: Notifier = { canReach: () => true, send: () => new Promise(() => undefined) }
+  const { engine, locks } = await world({ notify: hanging })
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  const started = Date.now()
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  assert.ok(Date.now() - started < 5_000, 'finalize did not wait on a send that never resolves')
+})
+
+test('A NOTICE THAT REJECTS DOES NOT KILL THE DAEMON (criterion 47)', async () => {
+  // `send` promises never to reject, but it writes subscriptions.json when it removes a dead
+  // device, and that can fail. In Node 22+ an unhandled rejection ends the process.
+  const unhandled: unknown[] = []
+  const listener = (reason: unknown) => void unhandled.push(reason)
+  process.on('unhandledRejection', listener)
+  try {
+    const rejecting: Notifier = { canReach: () => true, send: () => Promise.reject(new Error('EACCES')) }
+    const { engine, locks } = await world({ notify: rejecting })
+    const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+    await settle(engine, result.outcome === 'started' ? result.sessionId : '')
+    await turnOver(locks, 'work')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    assert.deepEqual(unhandled, [])
+  } finally {
+    process.off('unhandledRejection', listener)
+  }
+})
+
+test('a FAILED turn notifies — but stderr never leaves the tailnet (spec §5)', async () => {
+  // The failure reason of a crashed agent is its stderr, which can carry paths and anything else
+  // the process printed. The screen shows it; the notice does not.
+  const { engine, locks, notices } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'boom', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0]?.title, 'failed')
+  assert.doesNotMatch(JSON.stringify(notices[0]), /something went wrong|fake-claude/)
+})
+
+test('stop notifies each live session ONCE, concurrently, and after the meta says so (criteria 27, 45, 48)', async () => {
+  const sent: { at: number; title: string }[] = []
+  const order: string[] = []
+  const slow: Notifier = {
+    canReach: () => true,
+    send: async (message) => {
+      order.push('send')
+      sent.push({ at: Date.now(), title: message.title })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    },
+  }
+  const { engine, store } = await world({
+    sites: [{ id: 'work', path: join(tmpdir()) }],
+    notify: slow,
+  })
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  await engine.stop()
+
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.title, 'cancelled')
+  // After patchMeta: by the time the notice went out, the meta already said terminal — so a
+  // crash after it cannot make reconcile announce the same end a second time.
+  assert.equal((await store.readMeta(id))?.state, 'cancelled')
+})
+
+test('stop does not hang on a notice that never resolves, and arms no timer of its own (criterion 50)', async () => {
+  // The bound is the push service's AbortSignal, not a timer here: engine.ts documents that
+  // stop() arms none, because registry.stopAll() disposes timers AFTER calling it. With a
+  // notifier that never resolves, what bounds stop in production is that signal — so here, with
+  // a double that has none, stop must not WAIT on the send at all past a settle.
+  const hanging: Notifier = { canReach: () => true, send: () => new Promise(() => undefined) }
+  const { engine } = await world({ notify: hanging })
+  await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+
+  const started = Date.now()
+  await Promise.race([engine.stop(), new Promise((_, reject) => setTimeout(() => reject(new Error('stop hung')), 3_000))])
+  assert.ok(Date.now() - started < 3_000)
+})
+
+test('a session that died WITH THE DAEMON is announced on the way back up, with why (criterion 26)', async () => {
+  // The gap the TLS spec left written: "nobody tells the client its session was cancelled by a
+  // restart". The reason already sat in meta.json; this is what carries it to the phone.
+  const { engine, stateDir, notices } = await world()
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  const crashed = '019965aa-0000-7000-8000-0000000000cc'
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
+
+  await engine.reconcile()
+
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0]?.title, 'failed')
+  assert.equal(notices[0]?.tag, crashed)
+  // A reason this package wrote word for word, so it may leave the tailnet.
+  assert.match(notices[0]?.body ?? '', /the daemon stopped while this session was running/)
+})
+
+test('a session stop() already closed is NOT announced a second time by reconcile (criterion 45)', async () => {
+  const { engine, stateDir, notices } = await world()
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  const closed = '019965aa-0000-7000-8000-0000000000dd'
+  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  // What stop() leaves: a terminal meta over a lock it deliberately did not release.
+  await store.patchMeta(closed, (m) => ({ ...m, state: 'cancelled', reason: 'the daemon was shutting down' }))
+  await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', closed, new Date().toISOString())
+
+  await engine.reconcile()
+
+  assert.equal(notices.length, 0)
+})
+
+test('reconcile does not wait on a notice — a hanging push service cannot disable the module at boot', async () => {
+  const hanging: Notifier = { canReach: () => true, send: () => new Promise(() => undefined) }
+  const { engine, stateDir } = await world({ notify: hanging })
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  const crashed = '019965aa-0000-7000-8000-0000000000ee'
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
+
+  await Promise.race([engine.reconcile(), new Promise((_, reject) => setTimeout(() => reject(new Error('reconcile waited')), 2_000))])
+})
+
+test('A FULL RUN COUNTS EXACTLY THE NOTICES IT SHOULD, AND NOT ONE MORE (criterion 28)', async () => {
+  // The test that protects the feature from itself. Someone adding a "useful" notice — on a
+  // deny, on a launch, on a tool — turns this red, and nothing else would. The owner's own words
+  // when this spec started: if it tells me about everything, I will mute it within a week.
+  //
+  // `canReach: false` on purpose: the gate must DENY here, not ask, so this keeps measuring the
+  // same thing once `ask` exists. The engine's own end-of-turn notices do not consult canReach —
+  // whether anyone is subscribed is the push service's business.
+  const notices: NotificationMessage[] = []
+  const recorder: Notifier = { canReach: () => false, send: async (m) => void notices.push(m) }
+  const { engine, locks } = await world({ notify: recorder })
+
+  const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = first.outcome === 'started' ? first.sessionId : ''
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  await engine.reply(id, 'linger', false)
+  await engine.decide(payload(id, '/etc/passwd', '/work/site')) // a deny: no notice
+  await engine.decide(payload(id, '/etc/passwd', '/work/site', 'Read')) // an allow: no notice
+  await engine.cancel(id) // cancelled from the phone: no notice
+  await turnOver(locks, 'work')
+
+  await engine.reply(id, QUICK, false)
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  assert.deepEqual(
+    notices.map((n) => n.title),
+    ['finished', 'finished'],
+    'one per turn that ENDED on its own; nothing for launch, deny, allow or a cancel',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Resuming is as careful as launching (spec block G, criteria 31-35, 49, 52)
+// ---------------------------------------------------------------------------
+
+/** An engine over `sites`, on a state directory that can be shared between two engines. */
+async function engineOver(stateDir: string, sites: readonly SiteConfig[]): Promise<SessionEngine> {
+  await mkdir(stateDir, { recursive: true })
+  return await createEngine(
+    {
+      stateDir,
+      sites,
+      catalog: CATALOG,
+      log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      now: () => new Date(),
+      timers,
+      hookUrl: () => BASE,
+      notify: silentNotify,
+    },
+    { bin: FAKE },
+  )
+}
+
+test('a new session records the site path it launched in (criterion 52)', async () => {
+  // With the field optional, `store.create` would compile without it and it would never be
+  // written — leaving criteria 33 and 34 satisfiable only by a hand-made meta.json.
+  const { engine, store, siteDir } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await settle(engine, id)
+
+  assert.equal((await store.readMeta(id))?.sitePath, siteDir)
+})
+
+test('resuming with the site path intact still works, and turns go up (criterion 34)', async () => {
+  const { engine, store, locks } = await world()
+  const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = first.outcome === 'started' ? first.sessionId : ''
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+
+  const again = await engine.reply(id, QUICK, false)
+  assert.equal(again.outcome, 'started')
+  await settle(engine, id)
+  assert.equal((await store.readMeta(id))?.turns, 2)
+})
+
+test('a site that MOVED under the same id is refused, naming both paths, and nothing is touched (criterion 33)', async () => {
+  // Without this, `--resume` continues a thread whose context talks about one tree, in another.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-moved-'))
+  const before = join(home, 'before')
+  const after = join(home, 'after')
+  await mkdir(before, { recursive: true })
+  await mkdir(after, { recursive: true })
+  const stateDir = join(home, 'state')
+
+  const original = await engineOver(stateDir, [{ id: 'work', path: before }])
+  const launched = await original.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  await settle(original, id)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
+  await original.stop()
+
+  const moved = await engineOver(stateDir, [{ id: 'work', path: after }])
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  const metaBefore = await store.readMeta(id)
+
+  const result = await moved.reply(id, QUICK, false)
+
+  assert.equal(result.outcome, 'rejected')
+  const reason = result.outcome === 'rejected' ? result.reason : ''
+  assert.match(reason, new RegExp(before.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.match(reason, new RegExp(after.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.deepEqual(await store.readMeta(id), metaBefore)
+  assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('work'), undefined)
+})
+
+test('a meta.json from BEFORE the path was recorded still resumes, and the log says why it was not compared (criterion 35)', async () => {
+  const { engine, store, locks } = await world()
+  const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = first.outcome === 'started' ? first.sessionId : ''
+  await settle(engine, id)
+  await turnOver(locks, 'work')
+  // What a session written by the previous version looks like on disk: no `sitePath` at all.
+  await store.patchMeta(id, (meta) => {
+    const { sitePath: _dropped, ...older } = meta
+    return older as typeof meta
+  })
+
+  const result = await engine.reply(id, QUICK, false)
+
+  assert.equal(result.outcome, 'started')
+  const texts = (await engine.read(id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
+  assert.equal(texts.some((t) => /could not be compared/.test(t)), true)
+  await settle(engine, id)
+})
+
+async function repoSite(): Promise<{ stateDir: string; siteDir: string }> {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-resume-fresh-'))
+  const siteDir = join(home, 'repo')
+  await initRepo(siteDir)
+  return { stateDir: join(home, 'state'), siteDir }
+}
+
+test('resuming onto a DIRTY repo is refused with the report, like a launch (criterion 31)', async () => {
+  const { stateDir, siteDir } = await repoSite()
+  const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
+  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  await settle(engine, id)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
+
+  await writeFile(join(siteDir, 'dirty-since.txt'), 'someone changed it between turns')
+  const result = await engine.reply(id, QUICK, false)
+
+  assert.equal(result.outcome, 'stale')
+  assert.equal(result.outcome === 'stale' && result.freshness.dirtyFiles.includes('dirty-since.txt'), true)
+})
+
+test('A STALE REPLY LEAVES NO TRACE: meta.json exactly as it was, lock back (criterion 49)', async () => {
+  // In `launch` freshness runs before anything is written. In `reply` the old code had already
+  // set `running` and bumped `turns` by the point a check would go — so a refusal there would
+  // strand a `running` session with no process, and a turn that never happened.
+  const { stateDir, siteDir } = await repoSite()
+  const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  await settle(engine, id)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
+  await writeFile(join(siteDir, 'dirty-since.txt'), 'x')
+  const before = await store.readMeta(id)
+  const eventsBefore = (await engine.read(id, 0)).events.length
+
+  await engine.reply(id, QUICK, false)
+
+  assert.deepEqual(await store.readMeta(id), before)
+  assert.equal((await engine.read(id, 0)).events.length, eventsBefore)
+  assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('repo'), undefined)
+})
+
+test('`force` resumes over the warning, and the warning is written to the log (criterion 32)', async () => {
+  const { stateDir, siteDir } = await repoSite()
+  const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
+  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  await settle(engine, id)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
+  await writeFile(join(siteDir, 'dirty-since.txt'), 'x')
+
+  const result = await engine.reply(id, QUICK, true)
+
+  assert.equal(result.outcome, 'started')
+  const texts = (await engine.read(id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
+  assert.equal(texts.some((t) => /resumed over a freshness warning/.test(t)), true)
+  await settle(engine, id)
+})
+
+// ---------------------------------------------------------------------------
+// ASK — the gate asks the owner, and waits (spec block E)
+// ---------------------------------------------------------------------------
+
+/** A reachable owner: records notices, so a test can read the ask's token from one. */
+function reachable() {
+  const notices: NotificationMessage[] = []
+  const notify: Notifier = { canReach: () => true, send: async (m) => void notices.push(m) }
+  return { notices, notify }
+}
+
+/** The token travels in the notice's data — the only place outside memory it ever goes. */
+async function askIdFrom(notices: NotificationMessage[]): Promise<string> {
+  const deadline = Date.now() + 5_000
+  for (;;) {
+    const ask = notices.find((n) => typeof n.data?.['askId'] === 'string')
+    if (ask !== undefined) return ask.data?.['askId'] as string
+    if (Date.now() > deadline) throw new Error('no ask notice was sent')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+async function liveSession(engine: SessionEngine): Promise<string> {
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  return result.outcome === 'started' ? result.sessionId : ''
+}
+
+test('ALLOWED FROM THE PHONE: the held reply becomes allow, and the log says who granted it (criteria 11, 15)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  assert.deepEqual(await engine.answer(askId, 'allow'), { kind: 'answered' })
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'allow')
+  const last = (await engine.read(id, 0)).events.at(-1)
+  assert.equal(last?.kind === 'result' && last.ok, true)
+  assert.match(last?.kind === 'result' ? last.summary : '', /approved by the owner/)
+  await engine.cancel(id)
+})
+
+test('DENIED FROM THE PHONE: deny, with the boundary reason, and the log says so (criterion 16)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  await engine.answer(await askIdFrom(notices), 'deny')
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.match(decision.hookSpecificOutput.permissionDecisionReason, /writes outside work/)
+  const last = (await engine.read(id, 0)).events.at(-1)
+  assert.match(last?.kind === 'result' ? last.summary : '', /denied by the owner/)
+  await engine.cancel(id)
+})
+
+test('NOBODY ANSWERS: deny, the session stays alive, and the log says nobody answered (criterion 17)', async () => {
+  const { notify } = reachable()
+  const { engine } = await world({ notify, askTimeoutMs: 50 })
+  const id = await liveSession(engine)
+
+  const decision = await engine.decide(payload(id, '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  const page = await engine.read(id, 0)
+  assert.equal(page.state, 'running', 'a deny does not end the session — measured against the CLI too')
+  const last = page.events.at(-1)
+  assert.match(last?.kind === 'result' ? last.summary : '', /nobody answered/)
+  await engine.cancel(id)
+})
+
+test('NOBODY SUBSCRIBED: deny AT ONCE, no notice, no wait (criterion 13)', async () => {
+  const { notices } = reachable()
+  const unreachable: Notifier = { canReach: () => false, send: async (m) => void notices.push(m) }
+  const { engine } = await world({ notify: unreachable, askTimeoutMs: 60_000 })
+  const id = await liveSession(engine)
+
+  const started = Date.now()
+  const decision = await engine.decide(payload(id, '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.ok(Date.now() - started < 1_000, 'did not wait for a timeout')
+  assert.equal(notices.length, 0)
+  await engine.cancel(id)
+})
+
+test('the deny that is NOT a question stays a deny and asks nobody — unknown session (criterion 14)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+
+  const decision = await engine.decide(payload('01990000-0000-7000-8000-00000000dead', '/etc/hosts', '/work/site'))
+
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+  assert.equal(notices.length, 0)
+})
+
+test('TWO ASKS, TWO SESSIONS: answering one leaves the other waiting, and each notice names its own (criterion 19)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-two-asks-'))
+  const a = join(home, 'a')
+  const b = join(home, 'b')
+  await mkdir(a, { recursive: true })
+  await mkdir(b, { recursive: true })
+  const { notices, notify } = reachable()
+  const { engine } = await world({ sites: [{ id: 'a', path: a }, { id: 'b', path: b }], notify })
+  const one = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  const two = await engine.launch({ siteId: 'b', entryId: 'free', text: 'linger', force: false })
+  const idA = one.outcome === 'started' ? one.sessionId : ''
+  const idB = two.outcome === 'started' ? two.sessionId : ''
+
+  const pendingA = engine.decide(payload(idA, '/etc/hosts', a))
+  const pendingB = engine.decide(payload(idB, '/etc/passwd', b))
+  const deadline = Date.now() + 5_000
+  while (notices.filter((n) => n.data?.['askId'] !== undefined).length < 2) {
+    if (Date.now() > deadline) throw new Error('two ask notices never arrived')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  const forA = notices.find((n) => n.tag === `ask:${idA}`)
+  const forB = notices.find((n) => n.tag === `ask:${idB}`)
+  assert.notEqual(forA, undefined)
+  assert.notEqual(forB, undefined)
+
+  await engine.answer(forA?.data?.['askId'] as string, 'allow')
+  assert.equal((await pendingA).hookSpecificOutput.permissionDecision, 'allow')
+
+  let bSettled = false
+  void pendingB.then(() => (bSettled = true))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(bSettled, false, 'answering A must not answer B')
+
+  await engine.answer(forB?.data?.['askId'] as string, 'deny')
+  assert.equal((await pendingB).hookSpecificOutput.permissionDecision, 'deny')
+  await engine.cancel(idA)
+  await engine.cancel(idB)
+})
+
+test('A SHUTDOWN WITH AN ASK HANGING resolves it as a deny — no promise outlives the engine (criterion 22)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  await askIdFrom(notices)
+  await engine.stop()
+
+  const decision = await pending
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('THE TOKEN NEVER TOUCHES DISK: not in the log, not in meta.json, not in the warnings (criterion 46)', async () => {
+  // The gated agent can read any file on this machine. An id written anywhere it can read is an
+  // id handed to it.
+  const { notices, notify } = reachable()
+  const { engine, stateDir, warnings } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  await engine.answer(askId, 'allow')
+  await pending
+  await engine.cancel(id)
+
+  const { readdir } = await import('node:fs/promises')
+  const walk = async (dir: string): Promise<string[]> => {
+    const out: string[] = []
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) out.push(...(await walk(path)))
+      else out.push(await readFile(path, 'utf8'))
+    }
+    return out
+  }
+  for (const content of await walk(stateDir)) assert.equal(content.includes(askId), false, 'the token is on disk')
+  assert.equal(warnings.join('\n').includes(askId), false)
+})
+
+test('an invented token answers nothing, and the real ask keeps waiting (criterion 46)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/etc/hosts', '/work/site'))
+  const askId = await askIdFrom(notices)
+  assert.deepEqual(await engine.answer('A'.repeat(43), 'allow'), { kind: 'unknown' })
+
+  let settled = false
+  void pending.then(() => (settled = true))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(settled, false)
+
+  await engine.answer(askId, 'deny')
+  await pending
+  await engine.cancel(id)
+})
+
+test('THE ASK NOTICE carries the site, the tool and the FILE NAME — never the full path (criterion 29)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide(payload(id, '/Users/someone/secret-project/plans/q3.md', '/work/site'))
+  const askId = await askIdFrom(notices)
+  const notice = notices.find((n) => n.data?.['askId'] === askId)
+
+  assert.match(notice?.body ?? '', /work/)
+  assert.match(notice?.body ?? '', /Write/)
+  assert.match(notice?.body ?? '', /q3\.md/)
+  assert.doesNotMatch(JSON.stringify(notice?.body), /secret-project|\/Users\//)
+  // The tag names the SESSION, not the token: a tag reaches OS surfaces we do not control.
+  assert.equal(notice?.tag, `ask:${id}`)
+  assert.equal(notice?.tag?.includes(askId), false)
+  // And the path lands in that session WITH the token, for the no-buttons route (criterion 55).
+  assert.equal(notice?.path, `/m/sessions/${id}?ask=${askId}`)
+
+  await engine.answer(askId, 'deny')
+  await pending
+  await engine.cancel(id)
 })

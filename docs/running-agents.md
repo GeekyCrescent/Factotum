@@ -101,14 +101,27 @@ agent will run it with the previous turn's context.
 ## What "may write here" means, precisely
 
 > A **writing** tool whose destination path resolves inside the site's path is
-> allowed. Outside, it is denied, with the path in the reason.
+> allowed. Outside, **you are asked** — when a device is subscribed to notifications —
+> and refused when nobody can be asked.
 >
 > **Reading is never asked about**, anywhere. What needs permission is propagating
 > outside the site, and reading does not propagate.
 
-Denied means denied: the agent is told no with the reason, that reason appears in the
-session log and on the screen, and the agent carries on. **There is no way to say "yes,
-just this once"** — see [ADR-0006](adr/0006-deny-instead-of-ask.md).
+**Asking.** A write outside the boundary sends a notification — the site, the tool and the
+file name, never the full path — and the agent **waits** on the answer. Allow, and that one
+call goes through: an answer covers one call, never the next. Deny, and the agent is told
+no with the reason. Nobody answers within an hour, and it is refused the same way, with a
+line in the log saying nobody answered. The session stays alive through all of it. See
+[ADR-0009](adr/0009-ask-with-push.md).
+
+**Refusing.** With no device subscribed, nothing waits: the call is refused at once, with
+the reason in the session log and on the screen, and the agent carries on — which is what
+the gate always did ([ADR-0006](adr/0006-deny-instead-of-ask.md)).
+
+**What asking is not.** It is not containment. The `Bash` hole below still lets an agent
+write anywhere without asking, and anything on this machine can subscribe a device of its
+own. Asking makes an honest out-of-site write something you can approve instead of a blind
+refusal; it does not stop a hostile one.
 
 When everything is fine you see nothing. The gate is silent on success on purpose: an
 alarm that sounds when nothing is wrong gets silenced rather than read.

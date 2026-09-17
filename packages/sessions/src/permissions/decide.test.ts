@@ -6,7 +6,9 @@ import type { Site } from '../sites.ts'
 const SITE: Site = { id: 'work', path: '/work/site', realPath: '/work/site', isRepo: true }
 const CWD = '/work/site'
 
-const ask = (toolName: string, toolInput: unknown, cwd = CWD) => decide({ toolName, toolInput, cwd, site: SITE })
+// `canAsk: false` everywhere below this line: these are the gate as it was before `ask` existed,
+// and they must keep meaning exactly that.
+const ask = (toolName: string, toolInput: unknown, cwd = CWD) => decide({ toolName, toolInput, cwd, site: SITE, canAsk: false })
 
 // ---------------------------------------------------------------------------
 // Shared paths: the same directory reachable from EVERY site
@@ -18,7 +20,7 @@ const ask = (toolName: string, toolInput: unknown, cwd = CWD) => decide({ toolNa
 
 const VAULT: Site = { id: 'shared', path: '/home/vault', realPath: '/home/vault', isRepo: false }
 const askShared = (toolInput: unknown) =>
-  decide({ toolName: 'Write', toolInput, cwd: CWD, site: SITE, shared: [VAULT] })
+  decide({ toolName: 'Write', toolInput, cwd: CWD, site: SITE, shared: [VAULT], canAsk: false })
 
 test('a shared path is writable from a session whose site is somewhere else', () => {
   assert.deepEqual(askShared({ file_path: '/home/vault/notas/hoy.md' }), {
@@ -62,6 +64,7 @@ test('a shared path is matched by its REAL spelling too, like a site', () => {
     cwd: CWD,
     site: SITE,
     shared: [tmp],
+    canAsk: false,
   })
   assert.equal(result.decision, 'allow')
 })
@@ -198,8 +201,50 @@ test('a site reached by a symlinked spelling is inside under both', () => {
   // The macOS case: the owner declares /tmp/x, the CLI reports /private/tmp/x.
   const site: Site = { id: 'work', path: '/tmp/x', realPath: '/private/tmp/x', isRepo: false }
   const both = (target: string) =>
-    decide({ toolName: 'Write', toolInput: { file_path: target }, cwd: '/tmp/x', site }).decision
+    decide({ toolName: 'Write', toolInput: { file_path: target }, cwd: '/tmp/x', site, canAsk: false }).decision
   assert.equal(both('/tmp/x/a.txt'), 'allow')
   assert.equal(both('/private/tmp/x/a.txt'), 'allow')
   assert.equal(both('/private/tmp/y/a.txt'), 'deny')
+})
+
+// ---------------------------------------------------------------------------
+// canAsk — the gate may ASK, and stays pure doing it (spec criteria 11, 12, 14)
+// ---------------------------------------------------------------------------
+
+const decideWith = (canAsk: boolean, toolName: string, toolInput: unknown, shared: readonly Site[] = []) =>
+  decide({ toolName, toolInput, cwd: CWD, site: SITE, shared, canAsk })
+
+test('a write outside the boundary is ASK when someone can be reached, DENY when nobody can (criteria 11, 13)', () => {
+  const input = { file_path: '/etc/hosts' }
+  assert.equal(decideWith(true, 'Write', input).decision, 'ask')
+  assert.equal(decideWith(false, 'Write', input).decision, 'deny')
+})
+
+test('ask and deny carry THE SAME reason — an ask that times out reads exactly like a deny today', () => {
+  const input = { file_path: '/etc/hosts' }
+  assert.equal(decideWith(true, 'Write', input).reason, decideWith(false, 'Write', input).reason)
+})
+
+test('ALL FOUR allows are untouched by canAsk — reading, no path, inside the site, and a shared path', () => {
+  // Four, not three: the fourth is the one that guarantees there is never an ask about a shared
+  // path. The v2 of the spec protected "the three early allows" and left it out.
+  const cases: [string, unknown, readonly Site[]][] = [
+    ['Read', { file_path: '/etc/hosts' }, []],
+    ['Write', { content: 'no path at all' }, []],
+    ['Write', { file_path: '/work/site/a.txt' }, []],
+    ['Write', { file_path: '/home/vault/note.md' }, [VAULT]],
+  ]
+  for (const [tool, input, shared] of cases) {
+    assert.equal(decideWith(true, tool, input, shared).decision, 'allow', `${tool} ${JSON.stringify(input)}`)
+  }
+})
+
+test('Bash is still not checked, with or without canAsk — the declared hole does not become a question', () => {
+  assert.equal(decideWith(true, 'Bash', { command: 'echo x > /outside' }).decision, 'allow')
+})
+
+test('SAME INPUT, SAME ANSWER: canAsk is data, not a call (criterion 12)', () => {
+  const input = { file_path: '/etc/hosts' }
+  const first = decideWith(true, 'Write', input)
+  for (let i = 0; i < 50; i++) assert.deepEqual(decideWith(true, 'Write', input), first)
 })

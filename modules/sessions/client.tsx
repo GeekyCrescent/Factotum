@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { askTokenFrom, withoutAskToken } from './ask-token.ts'
 import type { EngineSetupView, EventPage, SessionEvent, SessionPage, SessionSummary } from './types.ts'
 
 interface Api {
@@ -19,6 +20,13 @@ interface Api {
 
 interface Props {
   readonly api: Api
+}
+
+/** What the shell hands the screen. Declared structurally, like `Api`. */
+interface ViewProps extends Props {
+  /** What followed `/m/sessions/` — a session id when a notification opened this. */
+  readonly rest: string
+  readonly search: string
 }
 
 /** How often the cursor asks again while a session is running. Criterion 8 allows 2s. */
@@ -77,12 +85,20 @@ function describe(report: Freshness): string {
 
 type View = { readonly at: 'home' } | { readonly at: 'session'; readonly id: string }
 
-function SessionsView({ api }: Props) {
-  const [view, setView] = useState<View>({ at: 'home' })
+function SessionsView({ api, rest, search }: ViewProps) {
+  // Read ONCE, at mount: a notification that opened `/m/sessions/<id>` lands in that session.
+  // Not kept in sync with the URL afterwards — that would be a router, which is another spec.
+  const [view, setView] = useState<View>(() => (rest === '' ? { at: 'home' } : { at: 'session', id: rest }))
+  // The ask token a notification carried, if any — read once, then taken OUT of the address bar
+  // (criterion 58). Held in memory for this screen and nowhere else.
+  const [askToken] = useState(() => askTokenFrom(search))
+  useEffect(() => {
+    if (askToken !== undefined) window.history.replaceState(null, '', withoutAskToken(window.location.pathname, search))
+  }, [askToken, search])
   return view.at === 'home' ? (
     <Home api={api} open={(id) => setView({ at: 'session', id })} />
   ) : (
-    <Session api={api} id={view.id} back={() => setView({ at: 'home' })} />
+    <Session api={api} id={view.id} askToken={askToken} back={() => setView({ at: 'home' })} />
   )
 }
 
@@ -295,12 +311,16 @@ function short(session: SessionSummary): string {
 // G4 — one session, followed with a cursor
 // ---------------------------------------------------------------------------
 
-function Session({ api, id, back }: Props & { id: string; back: () => void }) {
+function Session({ api, id, askToken, back }: Props & { id: string; askToken: string | undefined; back: () => void }) {
+  /** What happened to the ask this screen was opened for. `undefined` until answered. */
+  const [asked, setAsked] = useState<string | undefined>(undefined)
   const [events, setEvents] = useState<readonly SessionEvent[]>([])
   const [state, setState] = useState<SessionSummary['state']>('running')
   const [error, setError] = useState<string | undefined>(undefined)
   const [text, setText] = useState('')
   const [conflict, setConflict] = useState<Conflict | undefined>(undefined)
+  /** A reply refused because the repo changed since the last turn (criterion 31). */
+  const [stale, setStale] = useState<Freshness | undefined>(undefined)
   /** Bumped by a reply, which is what restarts the polling a finished session stopped. */
   const [generation, setGeneration] = useState(0)
   const cursor = useRef(0)
@@ -339,19 +359,46 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
     }
   }, [api, id, generation])
 
-  const reply = async () => {
+  const reply = async (force: boolean) => {
     setConflict(undefined)
+    setStale(undefined)
     setError(undefined)
     try {
-      await api.post(`sessions/${id}/reply`, { text })
+      await api.post(`sessions/${id}/reply`, { text, force })
       setText('')
       setState('running')
       // Re-runs the effect above, rather than a second copy of the same loop.
       setGeneration((n) => n + 1)
     } catch (cause: unknown) {
+      // Resuming is as careful as launching: a repo that changed between turns is reported, and
+      // going over it is the owner's call, exactly as it is for a launch.
       const busySite = conflictOf(cause)
+      const notFresh = freshnessOf(cause)
       if (busySite !== undefined) setConflict(busySite)
+      else if (notFresh !== undefined) setStale(notFresh)
       else setError(messageOf(cause))
+    }
+  }
+
+  /**
+   * Answering the ask a notification opened this screen for — the route that works with or
+   * without notification buttons (criterion 55). The token came from the URL and was already
+   * taken out of it; it goes back to the daemon and nowhere else.
+   */
+  const answerAsk = async (decision: 'allow' | 'deny') => {
+    if (askToken === undefined) return
+    try {
+      await api.post(`asks/${askToken}/answer`, { decision })
+      setAsked(decision === 'allow' ? 'Allowed. The agent carries on.' : 'Denied. The agent was told no.')
+    } catch (cause: unknown) {
+      const status = (cause as { status?: number }).status
+      setAsked(
+        status === 409
+          ? 'Too late: nobody answered in time, and the agent was already told no.'
+          : status === 404
+            ? 'That request is no longer waiting.'
+            : messageOf(cause),
+      )
     }
   }
 
@@ -397,17 +444,44 @@ function Session({ api, id, back }: Props & { id: string; back: () => void }) {
             />
           </p>
           <p>
-            <button disabled={text.trim() === ''} onClick={() => void reply()}>
+            <button disabled={text.trim() === ''} onClick={() => void reply(false)}>
               Reply
             </button>
           </p>
         </>
       )}
 
+      {askToken !== undefined ? (
+        <div class="notice">
+          {asked === undefined ? (
+            <>
+              <p>
+                The agent is asking to write outside its site — the last tool call above, still
+                waiting for its result.
+              </p>
+              <p>
+                <button onClick={() => void answerAsk('allow')}>Allow this once</button>{' '}
+                <button onClick={() => void answerAsk('deny')}>Deny</button>
+              </p>
+            </>
+          ) : (
+            <p>{asked}</p>
+          )}
+        </div>
+      ) : null}
+
       {conflict !== undefined ? (
         <p class="notice">
           That site is busy with session {conflict.sessionId.slice(0, 8)}. Cancel it first.
         </p>
+      ) : null}
+      {stale !== undefined ? (
+        <div class="notice">
+          <p>The site changed since the last turn: {describe(stale)}</p>
+          <p>
+            <button onClick={() => void reply(true)}>Reply anyway</button>
+          </p>
+        </div>
       ) : null}
       {error !== undefined ? <p class="notice">{error}</p> : null}
     </>

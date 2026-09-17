@@ -1,6 +1,12 @@
 # 6. The permission gate denies; it never asks
 
-**Status:** accepted
+**Status:** accepted — **amended by [ADR-0009](0009-ask-with-push.md) in its part about `ask`.**
+
+> **Amendment, 2026-09-16.** Push exists now (ADR-0008), which is the condition this record
+> named for producing `ask`. The gate asks when a device is subscribed and still denies,
+> exactly as written below, when none is. What this ADR says about why a blind `ask` is worse
+> than a clear refusal stays true, and is why the deny path is kept. It is left as it was
+> decided; ADR-0009 says what changed.
 
 ## Context
 

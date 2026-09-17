@@ -369,3 +369,77 @@ test('no config at all points at init rather than reporting a failure', async ()
   assert.match(output, /no config at .*prod.*run `factotum init --env prod`/s)
   assert.match(output, /no config at .*dev.*run `factotum init --env dev`/s)
 })
+
+// ---------------------------------------------------------------------------
+// push — three states, and never a key or an endpoint (criterion 3)
+// ---------------------------------------------------------------------------
+
+async function withPushState(home: string, devices: number, keys: 'none' | 'good' | 'garbage'): Promise<void> {
+  const { createPushService } = await import('@factotum/kernel')
+  const { writeFile: write } = await import('node:fs/promises')
+  const paths = statePaths('prod', home)
+  if (keys === 'none') return
+  await mkdir(paths.push, { recursive: true })
+  if (keys === 'garbage') {
+    await write(join(paths.push, 'keys.json'), 'garbage', 'utf8')
+    return
+  }
+  const push = await createPushService({
+    dir: paths.push,
+    machine: 'mimac',
+    subject: PUBLIC,
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    deliver: async () => ({ statusCode: 201 }),
+  })
+  for (let i = 0; i < devices; i++) {
+    await push.subscribe({ endpoint: `https://fcm.googleapis.com/fcm/send/SECRET-${i}`, keys: { p256dh: 'BP', auth: 'au' } })
+  }
+  await push.settled()
+}
+
+test('push, no key pair yet: says the daemon creates one — and doctor itself creates NOTHING', async () => {
+  const { readdir } = await import('node:fs/promises')
+  const home = await withConfig('prod', goodProd)
+  const output = await report(home)
+
+  assert.match(output, /push {8}not set up yet/)
+  await assert.rejects(readdir(statePaths('prod', home).push), 'a diagnostic must not create the thing it reports on')
+})
+
+test('push, keys but no devices: the normal state before the app is installed, said as such', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 0, 'good')
+  const output = await report(home)
+
+  assert.match(output, /push {8}ready, no devices subscribed/)
+})
+
+test('push, with devices: the count and the cap', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 2, 'good')
+  const output = await report(home)
+
+  assert.match(output, /push {8}ready, 2 devices subscribed \(at most 5\)/)
+})
+
+test('push, unusable key file: OFF with the reason, which names the remedy', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 0, 'garbage')
+  const output = await report(home)
+
+  assert.match(output, /push {8}OFF/)
+  assert.match(output, /delete/i)
+})
+
+test('push output never carries a key or an endpoint (criterion 3)', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 3, 'good')
+  const { readFile: read } = await import('node:fs/promises')
+  const keys = JSON.parse(await read(join(statePaths('prod', home).push, 'keys.json'), 'utf8')) as { publicKey: string; privateKey: string }
+
+  const output = await report(home)
+
+  assert.doesNotMatch(output, /SECRET-|fcm\.googleapis/)
+  assert.equal(output.includes(keys.privateKey), false)
+  assert.equal(output.includes(keys.publicKey), false)
+})

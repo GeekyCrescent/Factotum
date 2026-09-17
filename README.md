@@ -129,9 +129,11 @@ Declare them with `factotum site add <path>` rather than by hand: it validates a
 the real schema before writing, writes atomically, restarts the daemon, and **asks
 first** — this is the command that widens what an agent may write.
 
-A write whose destination lands inside the site is allowed; outside it is denied, with
-the reason in the log and on the screen. Reading is never asked about. Sessions persist
-to an append-only log, so you can close the tab and come back.
+A write whose destination lands inside the site is allowed. A write outside it **asks
+you** — a notification on your phone, with allow and deny — if a device is subscribed;
+otherwise, or if nobody answers within the hour, it is refused with the reason in the log
+and on the screen. Reading is never asked about. Sessions persist to an append-only log,
+so you can close the tab and come back.
 
 **One site, one lock, one session at a time** — which is what lets you run an agent per
 project at once. A session belongs to exactly one site, so if several of them need to

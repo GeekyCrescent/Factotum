@@ -22,6 +22,7 @@ import { init, terminalAsk } from './init.ts'
 import { install, uninstall } from './install.ts'
 import { qrCommand } from './qr-command.ts'
 import { siteCommand, stripEnvFlag } from './site-command.ts'
+import { pushCommand } from './push-command.ts'
 
 const USAGE = `factotum ${VERSION}
 
@@ -30,6 +31,7 @@ const USAGE = `factotum ${VERSION}
   factotum doctor                      report what is set up, without starting anything
   factotum qr [--env dev|prod]         show the QR again, without touching the config
   factotum site <add|list|rm>          declare where agents may write, and restart
+  factotum push reset [--env dev|prod] forget every device subscribed to notifications
   factotum install [--env dev|prod]    keep it running across logins (launchd)
   factotum uninstall [--env dev|prod]  stop doing that
 
@@ -78,6 +80,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       const ask = terminalAsk()
       return await siteCommand(ask === undefined ? { env, argv } : { env, argv, ask })
     }
+    case 'push':
+      // Same reason as `site`: `--env` must not reach the subcommand parser.
+      return await pushCommand({ env, argv: stripEnvFlag(rest) })
     case 'start':
       return await start(env)
     case 'install':

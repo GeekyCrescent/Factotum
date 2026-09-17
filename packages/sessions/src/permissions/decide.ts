@@ -5,13 +5,18 @@
  * every time it is asked, and because a decision that could fail in the middle is a
  * decision that has to have a fallback, and the fallback is the hole.
  *
- * IT NEVER RETURNS `ask`. The type carries three members because that is the CLI's
- * contract, not this project's. `ask` means "freeze the session and wait for a human",
- * and making that usable needs a push notification with buttons, a waiting state, and
- * a timeout that cancels — none of which exist without TLS. So a call that would be
- * `ask` elsewhere is a `deny` WITH ITS REASON here: the agent is told no, says so in
- * its output, and carries on. The day push exists, `ask` starts being produced and
- * this type does not change. (ADR-0006.)
+ * IT RETURNS `ask` ONLY WHEN `canAsk` SAYS SOMEONE CAN BE REACHED. `ask` means "freeze the
+ * session and wait for a human", and ADR-0006 refused to produce it until push existed —
+ * because an ask nobody can see is a state a session only leaves by timing out. Push exists
+ * now (ADR-0008, ADR-0009), and this is the day that ADR described: the type did not change,
+ * only which of its members get produced.
+ *
+ * `canAsk` IS A BOOLEAN, AND THAT IS WHAT KEEPS THIS PURE. The caller has already asked whether
+ * anyone is subscribed; here it is input, like `cwd`. The WAIT for the human lives in the
+ * engine, never here — the same input still gives the same answer, with no clock and no I/O.
+ *
+ * Ask and deny carry the same reason, so an ask that nobody answers reads exactly like the deny
+ * this gate gave before.
  */
 
 import { insideSite, resolveAgainst, type Site } from '../sites.ts'
@@ -37,6 +42,11 @@ export interface DecideInput {
    * owner makes by declaring one.
    */
   readonly shared?: readonly Site[]
+  /**
+   * Whether anyone can be asked — `notify.canReach()`, resolved by the caller. REQUIRED: the gate
+   * must never ask by omission.
+   */
+  readonly canAsk: boolean
 }
 
 export interface DecisionResult {
@@ -102,5 +112,5 @@ export function decide(input: DecideInput): DecisionResult {
   // With none declared it is byte for byte what it always was: the common case does
   // not pay for the rare one.
   const also = shared.length === 0 ? '' : ` or ${shared.map((path) => path.path).join(', ')}`
-  return { decision: 'deny', reason: `writes outside ${input.site.id}${also}: ${target}` }
+  return { decision: input.canAsk ? 'ask' : 'deny', reason: `writes outside ${input.site.id}${also}: ${target}` }
 }

@@ -145,6 +145,33 @@ not being on 443 — which is exactly what changed.
 - **`Host` is not checked**, so **DNS rebinding is not covered.** Declared, not
   forgotten.
 - **There is no rate limit.**
+- **It does not stop a process on this machine from subscribing a device of its own** to
+  push notifications (`POST /push/subscriptions` with no `Origin`). See *What leaves the
+  tailnet* below for what is done instead.
+
+### What leaves the tailnet
+
+**Push notifications are the first thing factotum sends past the private network.**
+Everything else — the client, the API, the permission hook — stays on the tailnet or on
+loopback. A notice travels from the daemon to the browser vendor's push service (Google's
+FCM for Chrome) and from there to the phone.
+
+- **The content is end-to-end encrypted** with the keys the browser handed over when it
+  subscribed. The push service cannot read it. **The fact, the timing and the size are not
+  hidden**, so a notice carries the least that is enough to decide — a site, a tool, a file
+  name — and never a full path.
+- **The daemon needs outbound HTTPS** for this, and only for this. Without it, everything
+  else keeps working and notices are simply not delivered.
+- **The key pair and the subscriptions live in `~/.factotum/<env>/push/`**, owner-only. The
+  daemon creates the pair on its first start if `init` has not. It is **never regenerated**
+  over an existing file: a new pair makes the push service answer 403 to every device, and
+  the phones go quiet with no explanation. To start over, delete `keys.json`, restart, and
+  subscribe again from each device.
+- **Anything on this machine can subscribe a device**, including an agent with a shell —
+  the route has no credential, like every route here. It is detected rather than prevented:
+  a new device is **announced to the ones already subscribed**, the list is capped at five,
+  and `factotum doctor` shows the count. `factotum push reset` forgets them all; it refuses
+  while the daemon runs, because the daemon would write the list back.
 
 ### Tailscale Funnel
 

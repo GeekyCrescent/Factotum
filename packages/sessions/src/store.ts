@@ -44,6 +44,19 @@ export interface SessionMeta {
    * NOT to be confused with the pid in `locks/<siteId>.json`, which is the DAEMON's.
    */
   readonly agentPid: number | undefined
+  /**
+   * The site's path WHEN THIS SESSION LAUNCHED.
+   *
+   * A site is looked up by id, and a config can move an id to another directory. Without this,
+   * resuming would continue a thread whose context describes one tree, inside another — and pass
+   * every check, because the id still resolves.
+   *
+   * `string | undefined` AND REQUIRED, not `?:`. `NewSession` is an `Omit` that does not exclude
+   * it, so `create` must be handed it and the compiler says so where it is forgotten; with `?:`
+   * it would compile unset and never be written. `undefined` is what a meta.json from before this
+   * field reads as — it is parsed without a schema — and it means "cannot be compared".
+   */
+  readonly sitePath: string | undefined
 }
 
 /** Everything but the parts the store owns. */
@@ -116,6 +129,11 @@ export class SessionStore {
         reason: json.reason ?? undefined,
         turns: typeof json.turns === 'number' ? json.turns : 1,
         agentPid: typeof json.agentPid === 'number' ? json.agentPid : undefined,
+        // EVERY FIELD IS LISTED BY HAND, and a field left out of this list is not just unread: it
+        // is ERASED, because `patchMeta` reads through here and writes the result back. It is
+        // the zod-strips-unknown-keys trap of CLAUDE.md §2 in handwritten form — and `sitePath`
+        // would have fallen into it if the type had allowed it to be optional (TS2741 caught it).
+        sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
       }
     } catch {
       return undefined

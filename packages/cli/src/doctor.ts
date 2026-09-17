@@ -17,7 +17,9 @@ import { version as nodeVersion } from 'node:process'
 import {
   BootError,
   describePolicy,
+  inspectPush,
   localUrl,
+  MAX_SUBSCRIPTIONS,
   policyFor,
   resolveListen,
   statePaths,
@@ -156,6 +158,7 @@ async function reportEnvironment(
 
   await reportServe(env, publicOrigin, localUrl(resolved.address, resolved.port), out, run)
   await reportLive(localUrl(resolved.address, resolved.port), out, doFetch)
+  await reportPush(publicOrigin, paths, out)
 
   out('')
 }
@@ -248,5 +251,40 @@ async function reportLive(
     for (const module of broken) out(`  DISABLED    ${module.id}: ${module.status.reason ?? ''}`)
   } catch {
     out(`  daemon      not running (so which modules are disabled cannot be known)`)
+  }
+}
+
+/**
+ * Three states, and the middle one is NOT a problem: keys and no devices is how every machine
+ * looks before the app is opened on a phone. Saying it as a warning would teach the owner to
+ * ignore this line.
+ *
+ * READ-ONLY. `inspectPush` creates nothing — a diagnostic that generated a key pair would change
+ * the thing it reports on. And it prints a count, never a key or an endpoint (criterion 3).
+ */
+async function reportPush(publicOrigin: string, paths: StatePaths, out: (line: string) => void): Promise<void> {
+  if (!publicOrigin.startsWith('https:')) {
+    out('  push        unavailable: no secure context here, so no browser can subscribe')
+    return
+  }
+
+  const inspection = await inspectPush(paths.push)
+  switch (inspection.kind) {
+    case 'no-keys':
+      out('  push        not set up yet — the daemon creates a key pair on its next start')
+      break
+    case 'unusable':
+      out(`  push        OFF — ${inspection.reason}`)
+      break
+    case 'ready': {
+      const n = inspection.subscriptions
+      out(
+        n === 0
+          ? '  push        ready, no devices subscribed — open the app on a phone and turn notifications on'
+          : `  push        ready, ${n} device${n === 1 ? '' : 's'} subscribed (at most ${MAX_SUBSCRIPTIONS})`,
+      )
+      if (inspection.warning !== undefined) out(`              ${inspection.warning}`)
+      break
+    }
   }
 }
