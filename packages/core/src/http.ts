@@ -80,9 +80,14 @@ export const ERROR_CODES = [
   /** Requests that arrive before boot reaches READY. */
   'starting',
   /**
-   * The request is valid and cannot be honoured in the current state — today, a new push
-   * subscription when the machine already holds the most it accepts. It earns a code because
-   * the client has something useful to say: the message names the command that clears it.
+   * The request is valid and cannot be honoured in the current state: a new push subscription
+   * when the machine already holds the most it accepts, a site that already has a live session,
+   * an ask whose clock ran out. It earns a code because the client has something useful to say
+   * — the message names the command that clears it, or the body carries the session in the way.
+   *
+   * EVERY 409 CARRIES THIS CODE. `invalid-request` means the caller called it wrong; losing a
+   * race is not calling it wrong, and a client that branches on the code cannot tell the two
+   * apart if they share one.
    */
   'conflict',
 ] as const

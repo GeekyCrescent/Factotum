@@ -801,9 +801,17 @@ test('cancelling a session a dead daemon left behind sends nothing either', asyn
   assert.equal(notices.length, 0)
 })
 
-test('cancel does not wait for the notice — a push service that hangs does not slow the phone down (criterion 44)', async () => {
-  // Not about cancel's own path (it sends nothing), but about finalize in general: the send is
-  // fire-and-forget, so nothing awaiting `settled` pays for it.
+test('a turn that ends does not wait for the notice — nothing awaiting settled pays for the phone (criterion 44)', async () => {
+  // WHAT THIS DOES AND DOES NOT MEASURE, because the name used to promise more than it kept.
+  // The criterion is "cancelling from the phone does not pay for a slow push", and `cancel`
+  // itself CANNOT pay for one: it awaits `entry.settled`, and a cancelled session is finalized
+  // with `notify: false` (criterion 51), so no send is ever started on that path. A test that
+  // called `cancel` with a notifier that never resolves was written here and deleted: mutating
+  // `announce` to `await` left it green, so it discriminated nothing.
+  //
+  // What CAN pay is anything else awaiting `settled` — a reply, a second turn, reconcile — for a
+  // session that does notify. That is what this measures, and mutating `announce` to `await`
+  // turns it red.
   const hanging: Notifier = { canReach: () => true, send: () => new Promise(() => undefined) }
   const { engine, locks } = await world({ notify: hanging })
   const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
@@ -850,31 +858,50 @@ test('a FAILED turn notifies — but stderr never leaves the tailnet (spec §5)'
   assert.doesNotMatch(JSON.stringify(notices[0]), /something went wrong|fake-claude/)
 })
 
-test('stop notifies each live session ONCE, concurrently, and after the meta says so (criteria 27, 45, 48)', async () => {
-  const sent: { at: number; title: string }[] = []
-  const order: string[] = []
+test('stop notifies THREE live sessions once each, all in flight at the same time (criteria 27, 45, 48)', async () => {
+  // THREE, because the criterion is about N sessions paying ONE bound and not N. The earlier
+  // version of this test launched a single session, so it could not tell a concurrent shutdown
+  // from a serial one — with `sharedPaths` there can be several live at once, and in serial the
+  // shutdown costs N × the bound.
+  const started: string[] = []
+  const finished: string[] = []
+  const sent: string[] = []
   const slow: Notifier = {
     canReach: () => true,
     send: async (message) => {
-      order.push('send')
-      sent.push({ at: Date.now(), title: message.title })
+      started.push(message.tag)
+      sent.push(message.title)
       await new Promise((resolve) => setTimeout(resolve, 200))
+      finished.push(message.tag)
     },
   }
-  const { engine, store } = await world({
-    sites: [{ id: 'work', path: join(tmpdir()) }],
-    notify: slow,
-  })
-  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
-  const id = result.outcome === 'started' ? result.sessionId : ''
+
+  const sites = await Promise.all(
+    ['one', 'two', 'three'].map(async (id) => ({ id, path: await mkdtemp(join(tmpdir(), `factotum-site-${id}-`)) })),
+  )
+  const { engine, store } = await world({ sites, notify: slow })
+
+  const ids: string[] = []
+  for (const site of sites) {
+    const result = await engine.launch({ siteId: site.id, entryId: 'free', text: 'linger', force: false })
+    ids.push(result.outcome === 'started' ? result.sessionId : '')
+  }
 
   await engine.stop()
 
-  assert.equal(sent.length, 1)
-  assert.equal(sent[0]?.title, 'cancelled')
+  // The sends are fire-and-forget, so wait for the three to be under way — then check that NONE
+  // of them has finished. In serial, the third could only start after two 200ms waits had
+  // completed, so `finished` would not be empty here.
+  const deadline = Date.now() + 5_000
+  while (started.length < 3 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+
+  assert.equal(started.length, 3, 'every live session was announced')
+  assert.deepEqual(finished, [], 'the three notices were in flight together, not one after another')
+  assert.deepEqual(sent, ['cancelled', 'cancelled', 'cancelled'])
+
   // After patchMeta: by the time the notice went out, the meta already said terminal — so a
   // crash after it cannot make reconcile announce the same end a second time.
-  assert.equal((await store.readMeta(id))?.state, 'cancelled')
+  for (const id of ids) assert.equal((await store.readMeta(id))?.state, 'cancelled')
 })
 
 test('stop does not hang on a notice that never resolves, and arms no timer of its own (criterion 50)', async () => {
