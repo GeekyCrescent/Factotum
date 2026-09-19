@@ -10,7 +10,8 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "node --test 'src/**/*.test.ts'"
+    "test": "node --test 'src/**/*.test.ts'",
+    "test:build": "node --test src/build.check.ts"
   },
   "dependencies": { "preact": "^10.25.4" },
   "devDependencies": {

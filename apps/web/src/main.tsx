@@ -1,6 +1,10 @@
 import { render } from 'preact'
 import { Shell } from './shell.tsx'
-import './style.css'
+import './styles/tokens.css'
+import './styles/fonts.css'
+import './styles/base.css'
+import './styles/components.css'
+import './styles/shell.css'
 
 const root = document.getElementById('app')
 if (root !== null) render(<Shell />, root)

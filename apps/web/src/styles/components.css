@@ -1,0 +1,423 @@
+/*
+ * THE SHARED VOCABULARY (spec 2026-09-18, design D1). A module cannot import from the shell, so
+ * this is how it gets buttons, sheets and notices: by CLASS NAME, never by import. The list is
+ * closed — what design/direccion-visual.md §Componentes names, and nothing else. A module that
+ * needs something more adds it to its own client.css with its own prefix; if a second module needs
+ * it too, it moves here. A module never redefines a class from this file.
+ */
+
+/* --- Type helpers -------------------------------------------------------- */
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-ligatures: none;
+}
+
+.dim-2 {
+  color: var(--text-2);
+}
+
+.dim-3 {
+  color: var(--text-3);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.icon {
+  flex: none;
+  display: block;
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+.btn {
+  min-height: var(--hit);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-10);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-body);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  transition-property: transform, background-color, border-color;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.btn.quiet {
+  background: none;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.btn.sm {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-small);
+}
+
+.btn.decide {
+  min-height: var(--hit-decide);
+  font-size: var(--text-input);
+}
+
+.icon-btn {
+  width: var(--hit);
+  height: var(--hit);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text-2);
+  position: relative;
+  transition-property: transform, background-color;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
+}
+
+.badge {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--ask);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Chips --------------------------------------------------------------- */
+
+.chip {
+  min-height: 36px;
+  padding: 0 var(--space-2h);
+  border-radius: var(--radius-10);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-small);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  white-space: nowrap;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--chip-on);
+}
+
+/* --- Notices (stale, conflict, error) ----------------------------------- */
+
+.notice {
+  border-radius: var(--radius-10);
+  padding: var(--space-2h) var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.notice.ask {
+  border-color: var(--ask-border);
+  background: var(--ask-bg);
+}
+
+.notice.err {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+
+.notice .head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+  font-size: var(--text-small);
+}
+
+.notice.ask .head .icon {
+  color: var(--ask);
+}
+
+.notice.err .head {
+  color: var(--err);
+}
+
+.notice .acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* --- Top bar ------------------------------------------------------------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  min-height: 56px;
+  padding: var(--space-1h) var(--space-2) var(--space-1h) var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar .title {
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar .title h1 {
+  font-size: var(--text-title);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar .title p {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Sheet and scrim ----------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  transition-property: opacity;
+  transition-duration: var(--dur-sheet-in);
+  transition-timing-function: var(--ease-out);
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom));
+  display: grid;
+  gap: var(--space-3);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: var(--radius-16) var(--radius-16) 0 0;
+  transition-property: transform, opacity;
+  transition-duration: var(--dur-sheet-in);
+  transition-timing-function: var(--ease-drawer);
+}
+
+@starting-style {
+  .sheet {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+
+  .scrim {
+    opacity: 0;
+  }
+}
+
+.sheet .grab {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  margin: 0 auto var(--space-1);
+  opacity: 0.6;
+}
+
+/* --- Composer ------------------------------------------------------------ */
+
+.composer {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: var(--radius-16);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+  transition-property: border-color, box-shadow;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 24px;
+  max-height: 40dvh;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: none;
+  font-size: var(--text-title);
+  line-height: 1.5;
+  field-sizing: content;
+}
+
+.composer:focus-within textarea {
+  font-size: var(--text-input);
+}
+
+.composer textarea::placeholder {
+  color: var(--text-3);
+}
+
+.composer .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.composer .send {
+  margin-left: auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  border: 0;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--on-accent);
+  transition-property: transform, background-color;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.composer .send:disabled {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.composer .send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* --- Loading, empty, error ---------------------------------------------- */
+
+.skel {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: var(--space-2h);
+  padding: var(--space-3) var(--space-4);
+  min-height: 64px;
+}
+
+.skel + .skel {
+  border-top: 1px solid var(--line);
+}
+
+.skel span {
+  display: block;
+  background: var(--surface-2);
+  border-radius: var(--radius-6);
+  height: 12px;
+}
+
+.skel .dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+}
+
+.skel .lines {
+  display: grid;
+  gap: var(--space-2);
+  background: none;
+  height: auto;
+}
+
+.skel .lines span:first-child {
+  width: 40%;
+}
+
+.skel .lines span:last-child {
+  width: 75%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skel span:not(.lines) {
+    animation: skel-breathe 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes skel-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.center-state {
+  flex: 1;
+  min-height: 60dvh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2h);
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.center-state > .icon {
+  color: var(--text-3);
+}
+
+.center-state h2 {
+  font-size: 17px;
+}
+
+.center-state p {
+  color: var(--text-2);
+  font-size: var(--text-small);
+  max-width: 32ch;
+}

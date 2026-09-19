@@ -1,0 +1,49 @@
+/*
+ * Geist and Geist Mono, SIL OFL 1.1 (../fonts/OFL.txt), from the npm package `geist` 1.7.2.
+ * Cut to the Latin subset and to the weight axis 400-600 — all the direction uses — which takes the
+ * two from 141 KB to 33 KB (spec 2026-09-18, tasks M2). Versioned rather than installed: a package
+ * to copy two files is the dependency this project avoids.
+ *
+ * The files are referenced relatively so Vite emits them, hashed, under assets/. Vite does NOT fail
+ * the build when one is missing; `build.check.ts` does (criterion 5).
+ */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../fonts/Geist-Variable.latin.woff2') format('woff2');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../fonts/GeistMono-Variable.latin.woff2') format('woff2');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Metric-matched fallbacks, so the swap does not move the layout. Measured in Chrome on the Mac
+ * against Arial and Menlo (M2); on Android the local face is Roboto and these are recalibrated at
+ * the first verification window. `ui-monospace` is NOT used: Chrome does not have it and falls to a
+ * proportional default.
+ */
+@font-face {
+  font-family: 'Geist Fallback';
+  src: local('Roboto'), local('Arial');
+  size-adjust: 102.3%;
+  ascent-override: 98.2%;
+  descent-override: 28.8%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Geist Mono Fallback';
+  src: local('Menlo'), local('Roboto Mono'), local('Droid Sans Mono');
+  size-adjust: 99.7%;
+  ascent-override: 100.8%;
+  descent-override: 29.6%;
+  line-gap-override: 0%;
+}

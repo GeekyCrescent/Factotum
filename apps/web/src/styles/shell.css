@@ -1,0 +1,188 @@
+/*
+ * The shell's own layout: the frame, the drawer, the fallback bar and the pages the shell owns
+ * (Device and the states). Nothing a module draws lives here.
+ */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app > .content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- The drawer ---------------------------------------------------------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  width: min(86vw, 360px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+  transition-property: transform;
+  transition-duration: var(--dur-sheet-in);
+  transition-timing-function: var(--ease-drawer);
+}
+
+.drawer[data-open='false'] {
+  transform: translateX(-100%);
+  transition-duration: var(--dur-sheet-out);
+  visibility: hidden;
+}
+
+.drawer-scrim {
+  z-index: 55;
+}
+
+.drawer .head {
+  min-height: 56px;
+  padding: var(--space-2) var(--space-1) var(--space-1) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer .brand {
+  font-weight: 600;
+  font-size: var(--text-title);
+  letter-spacing: -0.01em;
+}
+
+.drawer .sections {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space-2);
+}
+
+.drawer .foot {
+  border-top: 1px solid var(--line);
+  padding: var(--space-1h) var(--space-2);
+  display: grid;
+}
+
+.drawer .foot a {
+  min-height: var(--hit);
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-10);
+  color: var(--text-2);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.drawer .foot a[aria-current='page'] {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.drawer .foot a[aria-disabled='true'] {
+  opacity: 0.55;
+}
+
+.drawer .foot .aside {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+/* --- Wide screens: the drawer stays ------------------------------------- */
+
+@media (min-width: 1024px) {
+  .app {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+  }
+
+  .drawer,
+  .drawer[data-open='false'] {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    width: auto;
+    transform: none;
+    visibility: visible;
+  }
+
+  .drawer .close,
+  .drawer-scrim,
+  .menu-button {
+    display: none;
+  }
+
+  .app > .content {
+    width: 100%;
+    max-width: 40rem;
+    margin: 0 auto;
+  }
+}
+
+/* --- Device -------------------------------------------------------------- */
+
+.page {
+  padding: var(--space-2) var(--space-4) var(--space-6);
+  display: grid;
+  gap: var(--space-5);
+  align-content: start;
+}
+
+.group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  overflow: hidden;
+}
+
+.cell {
+  min-height: 56px;
+  padding: var(--space-3) var(--space-3);
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 2px var(--space-2h);
+  align-items: center;
+}
+
+.cell + .cell {
+  border-top: 1px solid var(--line);
+}
+
+.cell > .icon {
+  color: var(--text-2);
+}
+
+.cell .k {
+  font-weight: 500;
+}
+
+.cell .v {
+  grid-column: 2 / 4;
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+.cell .big {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell .ok {
+  color: var(--ok);
+  font-size: var(--text-small);
+}
+
+.cell .warn {
+  color: var(--ask);
+}
