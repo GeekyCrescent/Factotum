@@ -124,7 +124,7 @@
 /* --- Chips --------------------------------------------------------------- */
 
 .chip {
-  min-height: 36px;
+  min-height: var(--hit);
   padding: 0 var(--space-2h);
   border-radius: var(--radius-10);
   border: 1px solid var(--line);
@@ -321,9 +321,9 @@
 
 .composer .send {
   margin-left: auto;
-  width: 40px;
-  height: 40px;
-  border-radius: 20px;
+  width: var(--hit);
+  height: var(--hit);
+  border-radius: 50%;
   border: 0;
   display: grid;
   place-items: center;

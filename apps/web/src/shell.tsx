@@ -12,13 +12,13 @@
  */
 
 import type { ComponentChildren } from 'preact'
-import { useCallback, useEffect, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
 import { fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
 import { CenterState, FallbackBar } from './bar.tsx'
 import { Device, PUSH_API, rememberPush } from './device.tsx'
 import { Drawer } from './drawer.tsx'
 import type { ShellIcon } from './icons.ts'
-import { apiFor, clientFor } from './modules.ts'
+import { apiFor, clientFor, type ModuleClient } from './modules.ts'
 import { landing, ordered } from './nav.ts'
 import { forModule } from './pending.ts'
 import { resubscribe, type EnableResult } from './push.ts'
@@ -148,19 +148,59 @@ function Screens({
     )
   }
 
-  const id = screen.id
+  return (
+    <ModuleView client={client} id={screen.id} rest={screen.rest} label={label} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
+  )
+}
+
+/**
+ * One module's screen. Every function and list it hands over is STABLE across the shell's renders:
+ * a module keys effects on them, and a new function each time would re-run them all.
+ */
+function ModuleView({
+  client,
+  id,
+  rest,
+  label,
+  route,
+  pendings,
+  bar,
+  openDrawer,
+}: {
+  readonly client: ModuleClient
+  readonly id: string
+  readonly rest: string
+  readonly label: string
+  readonly route: Route
+  readonly pendings: Pendings
+  readonly bar: (title: string) => ComponentChildren
+  readonly openDrawer: () => void
+}) {
+  const { go, openOverlay, closeOverlay } = route
+  const { all, resolve } = pendings
+  const own = useMemo(() => forModule(all, id), [all, id])
+  const navigate = useCallback(
+    (next: string, options?: { readonly replace?: boolean }) => go(pathOf({ kind: 'module', id, rest: next }), options),
+    [go, id],
+  )
+  const setOverlay = useCallback(
+    (name: string | undefined) => (name === undefined ? closeOverlay() : openOverlay(name)),
+    [openOverlay, closeOverlay],
+  )
+  const resolvePending = useCallback((tag: string) => resolve(id, tag), [resolve, id])
+
   const view = (
     <client.View
       api={apiFor(id)}
-      rest={screen.rest}
+      rest={rest}
       search={route.search}
-      navigate={(rest, options) => route.go(pathOf({ kind: 'module', id, rest }), options)}
+      navigate={navigate}
       openDrawer={openDrawer}
       overlay={route.overlay === DRAWER ? undefined : route.overlay}
-      setOverlay={(name) => (name === undefined ? route.closeOverlay() : route.openOverlay(name))}
-      pending={forModule(pendings.all, id)}
-      pendingTotal={pendings.all.length}
-      resolvePending={(tag) => pendings.resolve(id, tag)}
+      setOverlay={setOverlay}
+      pending={own}
+      pendingTotal={all.length}
+      resolvePending={resolvePending}
     />
   )
   if (client.ownsTopBar === true) return view

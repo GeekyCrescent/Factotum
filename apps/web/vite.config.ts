@@ -7,5 +7,7 @@ import preact from '@preact/preset-vite'
 // feeding its `dist/` — a loopback origin, so a secure context with a worker and notifications.
 export default defineConfig({
   plugins: [preact()],
-  build: { outDir: 'dist', emptyOutDir: true },
+  // No modulepreload polyfill: there is one entry chunk and nothing to preload, and every browser
+  // this serves (Chrome on Android and the Mac) has it natively. It was weight against criterion 30.
+  build: { outDir: 'dist', emptyOutDir: true, modulePreload: { polyfill: false } },
 })

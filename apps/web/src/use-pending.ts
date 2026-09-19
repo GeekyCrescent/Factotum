@@ -37,7 +37,8 @@ export function usePending(): Pendings {
     }
     const resolve = (moduleId: string, tag: string) => {
       const key = keyOf(moduleId, tag)
-      setAll((current) => current.filter((record) => record.key !== key))
+      // Unchanged when it is not there, so a module that resolves on every render does not loop.
+      setAll((current) => (current.some((record) => record.key === key) ? current.filter((record) => record.key !== key) : current))
       void removePending([key])
     }
     return { refresh, resolve }

@@ -1,0 +1,427 @@
+/*
+ * The sessions module's own classes, all prefixed `s-` (spec 2026-09-18, design D1). Colors,
+ * sizes and motion are the shell's tokens, by name; nothing here declares a color value
+ * (criterion 36), and every transition names its properties (criterion 3).
+ */
+
+/* --- The screen ---------------------------------------------------------- */
+
+.s-screen {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.s-body {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) 0 var(--space-4);
+  display: flex;
+  flex-direction: column;
+}
+
+.s-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom));
+  display: grid;
+  gap: var(--space-2);
+  background: var(--bg);
+}
+
+.s-dock:empty {
+  display: none;
+}
+
+.s-quiet {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-small);
+}
+
+.s-state-running {
+  color: var(--accent-text);
+}
+
+.s-state-finished {
+  color: var(--ok);
+}
+
+.s-state-failed {
+  color: var(--err);
+}
+
+/* --- The strip: another session is waiting ------------------------------ */
+
+.s-strip {
+  width: 100%;
+  min-height: var(--hit);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  border: 0;
+  border-bottom: 1px solid var(--ask-border);
+  background: var(--ask-bg);
+  color: var(--text);
+  font-size: var(--text-small);
+  text-align: left;
+}
+
+.s-strip > .icon {
+  color: var(--ask);
+}
+
+.s-strip b {
+  font-weight: 500;
+}
+
+.s-strip-go {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+/* --- The log ------------------------------------------------------------- */
+
+.s-log {
+  list-style: none;
+  padding: 0;
+}
+
+.s-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+  padding: var(--space-1h) var(--space-4) var(--space-1h) var(--space-2);
+}
+
+.s-gut {
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.s-msg {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.s-user .s-msg {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.s-tool {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.s-name {
+  flex: none;
+  font-weight: 500;
+}
+
+.s-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.s-res {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
+/* A failure: its own background, and the message on its own line (criterion 17). */
+.s-fail {
+  background: var(--err-bg);
+}
+
+.s-fail .s-tool {
+  flex-wrap: wrap;
+}
+
+.s-fail .s-res {
+  flex-basis: 100%;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.s-fail .s-gut,
+.s-fail .s-res {
+  color: var(--err);
+}
+
+.s-pend .s-gut {
+  color: var(--accent-text);
+}
+
+.s-fold {
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  text-align: left;
+}
+
+.s-fold .s-gut {
+  color: var(--ok);
+}
+
+.s-count {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.s-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-end::before,
+.s-end::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* --- The composer's pickers --------------------------------------------- */
+
+.s-pick {
+  position: relative;
+  min-height: var(--hit);
+}
+
+.s-pick select {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.s-pick select:focus-visible {
+  outline: 0;
+}
+
+.s-pick:focus-within {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-pick > .icon:last-child {
+  color: var(--text-3);
+}
+
+.s-ctx {
+  padding-left: var(--space-1);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-detail {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* --- The approval sheet -------------------------------------------------- */
+
+.s-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ask);
+  font-weight: 500;
+  font-size: var(--text-small);
+}
+
+.s-deadline {
+  margin-left: auto;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.sheet h2:focus {
+  outline: 0;
+  box-shadow: none;
+}
+
+.s-facts {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: var(--space-1h) var(--space-3);
+  font-size: var(--text-small);
+}
+
+.s-facts dt {
+  color: var(--text-3);
+}
+
+.s-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.s-preview-wrap {
+  display: grid;
+  gap: var(--space-1h);
+  min-width: 0;
+}
+
+/* The preview scrolls inside itself, so the buttons stay on screen (criterion 20). */
+.s-preview {
+  max-height: 30dvh;
+  overflow: auto;
+  padding: var(--space-2h) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.s-gap {
+  display: block;
+  color: var(--text-3);
+}
+
+.s-note {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2h);
+}
+
+.s-outcome {
+  min-height: var(--hit-decide);
+  display: grid;
+  place-items: center;
+  font-weight: 500;
+}
+
+.s-error {
+  color: var(--err);
+  font-size: var(--text-small);
+}
+
+/* --- The drawer's sections ---------------------------------------------- */
+
+.s-new {
+  width: calc(100% - var(--space-2));
+  min-height: var(--hit);
+  margin: var(--space-1) var(--space-1) var(--space-2);
+  padding: 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  font-weight: 500;
+}
+
+.s-sect {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.s-item {
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-2);
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--space-2h);
+  align-items: start;
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  text-align: left;
+}
+
+.s-item[aria-current='page'] {
+  background: var(--surface-2);
+}
+
+.s-asking {
+  background: var(--ask-bg);
+}
+
+.s-g {
+  padding-top: 2px;
+  color: var(--text-3);
+}
+
+.s-g-running {
+  color: var(--accent-text);
+}
+
+.s-g-ask {
+  color: var(--ask);
+}
+
+.s-g-finished {
+  color: var(--ok);
+}
+
+.s-g-failed {
+  color: var(--err);
+}
+
+.s-item-text {
+  min-width: 0;
+}
+
+.s-item-text b {
+  display: block;
+  font-weight: 500;
+}
+
+.s-item-text small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
