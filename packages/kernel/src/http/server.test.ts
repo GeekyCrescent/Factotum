@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -34,6 +34,8 @@ const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key:
 async function start(opts: { push?: FakePush; ready?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
+  await mkdir(join(root, 'assets'), { recursive: true })
+  await writeFile(join(root, 'assets', 'index-abc123.js'), 'console.log(1)')
   const home = await mkdtemp(join(tmpdir(), 'factotum-home-'))
   const registry = await Registry.create([], {
     paths: statePaths('prod', home),
@@ -245,6 +247,21 @@ test('/health and /modules never carry subscription data (criterion 10)', async 
     for (const path of ['/health', '/modules']) {
       assert.doesNotMatch(await (await fetch(`${base}${path}`)).text(), /SECRET-CAPABILITY|fcm\.googleapis|p256dh/)
     }
+  } finally {
+    await close()
+  }
+})
+
+test('hashed assets are cached for good; the page a notification opens is NEVER stored (criterion 42)', async () => {
+  const { base, close } = await start()
+  try {
+    const asset = await fetch(`${base}/assets/index-abc123.js`)
+    assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable')
+
+    // The URL a notification opens carries the ask token. no-cache would still let it be kept.
+    const page = await fetch(`${base}/m/sessions/abc?ask=${'T'.repeat(43)}`)
+    assert.match(page.headers.get('content-type') ?? '', /text\/html/)
+    assert.equal(page.headers.get('cache-control'), 'no-store')
   } finally {
     await close()
   }

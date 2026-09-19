@@ -22,6 +22,7 @@ import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { createAskTable, type AnswerResult as TableAnswer } from './permissions/asks.ts'
 import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
+import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
@@ -32,6 +33,7 @@ import type {
   EngineSetupView,
   EventPage,
   HookDecision,
+  InspectResult,
   LaunchInput,
   LaunchResult,
   Page,
@@ -42,6 +44,9 @@ import type {
 } from './types.ts'
 
 export const PAGE_SIZE = 25
+
+/** How much of the first prompt a session summary keeps (spec D8d). */
+export const PROMPT_CHARS = 140
 
 const STOPPED = 'engine stopped'
 const CANCELLED_REASON = 'cancelled by the owner'
@@ -311,6 +316,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         startedAt: setup.now().toISOString(),
         // So resuming can tell the site moved under the same id (criterion 33).
         sitePath: site.path,
+        // So the drawer can tell sessions apart without reading their logs (spec D8d).
+        prompt: input.text.slice(0, PROMPT_CHARS),
       })
 
       if (site.isRepo && input.force) {
@@ -469,6 +476,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       endedAt: meta.endedAt,
       reason: meta.reason,
       turns: meta.turns,
+      prompt: meta.prompt,
     }
   }
 
@@ -531,7 +539,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     })
 
     if (result.decision === 'ask') {
-      return await askTheOwner(body.session_id, meta.siteId, body.tool_name, resolveTarget(body.tool_input, body.cwd), result.reason)
+      const target = resolveTarget(body.tool_input, body.cwd)
+      const preview = previewOf(body.tool_name, body.tool_input)
+      return await askTheOwner(body.session_id, meta.siteId, body.tool_name, target, preview, result.reason)
     }
 
     if (result.decision === 'deny') {
@@ -568,21 +578,28 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     siteId: string,
     toolName: string,
     target: string | undefined,
+    preview: AskPreview | null,
     boundaryReason: string,
   ): Promise<HookDecision> {
-    const { id, outcome } = asks.open({ sessionId, toolName, target: target ?? '' })
+    const { id, outcome, deadlineAt } = asks.open({ sessionId, toolName, target: target ?? '', preview })
+    const file = target === undefined ? 'a file' : basename(target)
 
     const notice: NotificationMessage = {
       title: 'approval',
       // The FILE NAME, never the path: this leaves the tailnet (spec §5). The full path is on the
       // screen, which does not.
-      body: `${siteId} · ${toolName} · ${target === undefined ? 'a file' : basename(target)}`,
+      body: `${siteId} · ${toolName} · ${file}`,
       // The SESSION, not the token: a tag reaches OS surfaces nothing here controls.
       tag: `ask:${sessionId}`,
       // The token in the URL is what makes answering possible without notification buttons: the
-      // screen reads it from `search` and strips it (criteria 55, 58). It exists nowhere on disk.
+      // shell hands `search` to the screen once and strips it before the first render (criteria
+      // 55, 58). The daemon keeps it in memory only; the device keeps it while pending (ADR-0010).
       path: `/m/sessions/${sessionId}?ask=${id}`,
-      data: { askId: id, sessionId },
+      // What the client's drawer shows without parsing `body`. The file NAME again, never the
+      // path, and never the preview: all of this leaves the tailnet.
+      data: { askId: id, sessionId, siteId, toolName, file },
+      // Pending until then: the client counts it and can answer it without the notification.
+      until: deadlineAt,
     }
     void Promise.resolve()
       .then(() => setup.notify.send(notice))
@@ -612,6 +629,20 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   /** The owner's answer. The id is the only authorisation there is (spec §5). */
   async function answer(askId: string, decision: 'allow' | 'deny'): Promise<TableAnswer> {
     return asks.answer(askId, decision)
+  }
+
+  async function inspect(askId: string): Promise<InspectResult> {
+    const found = asks.get(askId)
+    if (found === undefined) return { kind: 'unknown' }
+    if (found === 'settled') return { kind: 'settled' }
+    return {
+      kind: 'pending',
+      sessionId: found.sessionId,
+      toolName: found.toolName,
+      target: found.target,
+      preview: found.preview,
+      deadlineAt: found.deadlineAt,
+    }
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -675,5 +706,5 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     live.clear()
   }
 
-  return { launch, reply, cancel, answer, list, read, decide, reconcile, view, stop }
+  return { launch, reply, cancel, answer, inspect, list, read, decide, reconcile, view, stop }
 }

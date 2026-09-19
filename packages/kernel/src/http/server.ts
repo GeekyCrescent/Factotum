@@ -20,8 +20,11 @@ import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
 
 export interface StaticSite {
-  /** `undefined` when the path is not part of the site. */
-  serve: (path: string) => Promise<{ body: Buffer; type: string } | undefined>
+  /**
+   * `undefined` when the path is not part of the site. `immutable` when the file is one Vite
+   * emitted with a hash in its name, and so can be cached for good.
+   */
+  serve: (path: string) => Promise<{ body: Buffer; type: string; immutable: boolean } | undefined>
 }
 
 export interface ServerDeps {
@@ -84,7 +87,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
   if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules') && !isPushPath(path)) {
     const file = await deps.site.serve(path)
     if (file !== undefined) {
-      res.writeHead(200, { 'content-type': file.type })
+      res.writeHead(200, {
+        'content-type': file.type,
+        // NO-STORE, not no-cache, for everything without a hash. no-cache still lets the browser
+        // KEEP the response — and the page a notification opens is requested with `?ask=<token>`
+        // in its URL: measured, Chrome stored it in its HTTP cache, token and all (spec
+        // 2026-09-18, M4). The hashed assets change name when they change, so they are forever.
+        'cache-control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+      })
       return void res.end(file.body)
     }
   }

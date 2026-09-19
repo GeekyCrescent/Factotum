@@ -16,7 +16,9 @@ export type {
   EventInput,
   EventPage,
   FreshnessReport,
+  AskPreview,
   HookDecision,
+  InspectResult,
   InvokeConfig,
   LaunchInput,
   LaunchResult,
@@ -40,6 +42,7 @@ export type { LockInfo, LockResult } from './locks.ts'
 export { clip, redactInput, StreamTranslator } from './parse.ts'
 export { decide, isWritingTool, resolveTarget } from './permissions/decide.ts'
 export type { DecideInput, DecisionResult } from './permissions/decide.ts'
+export { HEAD_CHARS, previewOf, TAIL_CHARS } from './permissions/preview.ts'
 export { allowBody, decisionBody, denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 export type { PreToolUsePayload } from './permissions/payload.ts'
 export { HOOK_PATH, HOOK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'

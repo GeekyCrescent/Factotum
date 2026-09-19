@@ -22,7 +22,7 @@ function manualTimers() {
   return { timers, fireAll, armed: () => pending.size }
 }
 
-const request = { sessionId: 's1', toolName: 'Write', target: '/etc/hosts' }
+const request = { sessionId: 's1', toolName: 'Write', target: '/etc/hosts', preview: null }
 
 test('an ask the owner ALLOWS resolves as allowed, and disarms its timer', async () => {
   const t = manualTimers()
@@ -117,4 +117,45 @@ test('list() carries the deadline, and never the id — it is for screens and lo
   const [listed] = table.list()
   assert.equal(listed?.deadlineAt, '2026-09-16T12:01:00.000Z')
   assert.equal(JSON.stringify(table.list()).includes(id), false)
+})
+
+test('open returns the deadline it set, the same one the pending ask carries', () => {
+  const t = manualTimers()
+  const now = new Date('2026-09-19T10:00:00.000Z')
+  const table = createAskTable({ now: () => now, timers: t.timers, timeoutMs: 60_000 })
+  const { id, deadlineAt } = table.open(request)
+
+  assert.equal(deadlineAt, '2026-09-19T10:01:00.000Z')
+  const got = table.get(id)
+  assert.ok(got !== undefined && got !== 'settled')
+  assert.equal(got.deadlineAt, deadlineAt)
+})
+
+test('get: a pending ask, with its target and preview; then settled once answered or expired; unknown otherwise', () => {
+  const t = manualTimers()
+  const table = createAskTable({ now: () => new Date(), timers: t.timers, timeoutMs: 1000 })
+  const preview = { head: 'hi', tail: '', total: 2, edits: null }
+  const answered = table.open({ ...request, preview })
+  const expiring = table.open(request)
+
+  assert.deepEqual(table.get(answered.id), { ...request, preview, deadlineAt: answered.deadlineAt })
+  table.answer(answered.id, 'deny')
+  assert.equal(table.get(answered.id), 'settled')
+
+  t.fireAll()
+  assert.equal(table.get(expiring.id), 'settled')
+
+  assert.equal(table.get('not-an-id'), undefined)
+})
+
+test('get forgets a settled ask once it is pruned, like answer does', () => {
+  const t = manualTimers()
+  let clock = 0
+  const table = createAskTable({ now: () => new Date(clock), timers: t.timers, timeoutMs: 1000 })
+  const { id } = table.open(request)
+  table.answer(id, 'allow')
+
+  clock = 2001
+  table.open(request) // open() prunes
+  assert.equal(table.get(id), undefined)
 })

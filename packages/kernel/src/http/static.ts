@@ -19,7 +19,15 @@ const TYPES: Readonly<Record<string, string>> = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
 }
+
+/**
+ * What Vite emits with a content hash in the name. Only these can be cached for good: the hash
+ * changes when the bytes do. Everything else — `index.html`, `sw.js`, the manifest, the icons, and
+ * the SPA fallback for any route — must be fetched again, or the PWA cannot update.
+ */
+const HASHED_DIR = 'assets'
 
 export function createStaticSite(root: string): StaticSite {
   const base = resolve(root)
@@ -39,7 +47,8 @@ export function createStaticSite(root: string): StaticSite {
 
         try {
           const body = await readFile(full)
-          return { body, type: TYPES[extname(full)] ?? 'application/octet-stream' }
+          const immutable = full.startsWith(join(base, HASHED_DIR) + sep)
+          return { body, type: TYPES[extname(full)] ?? 'application/octet-stream', immutable }
         } catch {
           continue
         }

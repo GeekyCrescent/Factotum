@@ -149,9 +149,12 @@ function routeTable(holder: EngineHolder): RouteTable {
 
       const result = await engine.answer(req.params['askId'] ?? '', decision)
       switch (result.kind) {
+        // Both 200 — a service worker may retry — but the body says which, so a screen that
+        // answers an ask already answered elsewhere does not report "Allowed" (criterion 24).
         case 'answered':
+          return { status: 200, body: { answered: true, first: true } }
         case 'already':
-          return { status: 200, body: { answered: true } }
+          return { status: 200, body: { answered: true, first: false } }
         case 'expired':
           return {
             status: 409,
@@ -159,6 +162,37 @@ function routeTable(holder: EngineHolder): RouteTable {
           }
         case 'unknown':
           return { status: 404, body: { error: { code: 'not-found', message: 'there is no ask with that token' } } }
+      }
+    }),
+
+    // One ask BY ITS TOKEN, for the approval panel: the full path and the preview, which the
+    // push never carries (spec D8). Authorised exactly like the answer — whoever can read it could
+    // already answer it — and never a list. NEVER CACHED: the token is in the URL, and a stored
+    // response would keep it, with the path and the preview, on the device's disk.
+    'GET /asks/:askId': withEngine(async (engine, req) => {
+      const headers = { 'cache-control': 'no-store' }
+      const found = await engine.inspect(req.params['askId'] ?? '')
+      switch (found.kind) {
+        case 'pending':
+          return {
+            status: 200,
+            headers,
+            body: {
+              sessionId: found.sessionId,
+              toolName: found.toolName,
+              target: found.target,
+              preview: found.preview,
+              deadlineAt: found.deadlineAt,
+            },
+          }
+        case 'settled':
+          return {
+            status: 409,
+            headers,
+            body: { error: { code: 'conflict', message: 'that ask was already answered, or it expired' } },
+          }
+        case 'unknown':
+          return { status: 404, headers, body: { error: { code: 'not-found', message: 'there is no ask with that token' } } }
       }
     }),
 
