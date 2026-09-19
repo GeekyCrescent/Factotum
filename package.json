@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "node scripts/gen-version.mjs && tsc -b && pnpm --filter @factotum/web build",
-    "typecheck": "node scripts/gen-version.mjs && tsc -b",
+    "typecheck": "node scripts/gen-version.mjs && tsc -b && tsc -p apps/web",
     "clean": "tsc -b --clean && rm -rf packages/*/dist modules/dist apps/web/dist",
     "test": "pnpm -r --no-bail run test"
   },
