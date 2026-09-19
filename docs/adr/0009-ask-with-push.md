@@ -75,3 +75,5 @@ So this is a boundary of hygiene. What `ask` buys is that an honest write outsid
 common case, an agent doing its job — becomes something the owner can approve, instead of a blind
 refusal the agent improvises around. Containing a hostile agent is still the job of real isolation
 (a container, `sandbox-exec`), and factotum still does not have it.
+
+Amended by ADR-0010: the token is now kept on the subscribed device while pending.

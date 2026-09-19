@@ -9,8 +9,8 @@ you want.
 
 > **Status: it launches agents.** You can clone this, run it, declare a directory you
 > are willing to let an agent write in, and launch Claude Code in it from your phone —
-> watching its messages arrive, replying, and cancelling. The client is deliberately
-> plain; its design is a separate piece of work.
+> watching its messages arrive, replying, cancelling, and approving a write outside
+> the site from a notification or, once it is gone, from the drawer.
 
 ---
 
