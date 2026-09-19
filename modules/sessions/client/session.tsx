@@ -87,7 +87,7 @@ export function Session({
       </header>
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
-        <Log events={events} running={running} />
+        <Log events={events} running={running} asking={ask !== undefined} />
         {running && events.length === 0 ? <p class="s-quiet dim-3">Starting the agent.</p> : null}
         <div ref={end} />
       </div>

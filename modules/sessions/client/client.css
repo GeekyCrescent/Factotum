@@ -127,6 +127,14 @@
   gap: var(--space-2);
 }
 
+.s-name,
+.s-res,
+.s-arg {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-ligatures: none;
+}
+
 .s-name {
   flex: none;
   font-weight: 500;
@@ -148,7 +156,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
-  font-size: var(--text-small);
 }
 
 /* A failure: its own background, and the message on its own line (criterion 17). */
@@ -176,6 +183,24 @@
   color: var(--accent-text);
 }
 
+.s-ok .s-gut {
+  color: var(--ok);
+}
+
+.s-asked .s-gut,
+.s-asked .s-res {
+  color: var(--ask);
+}
+
+/* An assistant's message: a small ring in the gutter, drawn, not a glyph. */
+.s-said .s-gut::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--text-3);
+  border-radius: 50%;
+}
+
 .s-fold {
   width: 100%;
   min-height: var(--hit);
@@ -191,6 +216,13 @@
 
 .s-fold .s-gut {
   color: var(--ok);
+}
+
+.s-fold-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-3);
 }
 
 .s-count {

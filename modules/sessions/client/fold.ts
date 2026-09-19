@@ -25,7 +25,7 @@ export type Row =
   | { readonly kind: 'message'; readonly seq: number; readonly role: 'user' | 'assistant'; readonly text: string }
   | Call
   | { readonly kind: 'fold'; readonly seq: number; readonly calls: readonly Call[]; readonly names: readonly string[] }
-  | { readonly kind: 'state'; readonly seq: number; readonly state: SessionState; readonly reason: string | undefined }
+  | { readonly kind: 'state'; readonly seq: number; readonly at: string; readonly state: SessionState; readonly reason: string | undefined }
 
 export function fold(events: readonly SessionEvent[]): readonly Row[] {
   const rows: Row[] = []
@@ -61,7 +61,7 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
         rows.push({ kind: 'message', seq: event.seq, role: event.role, text: event.text })
         break
       case 'state':
-        rows.push({ kind: 'state', seq: event.seq, state: event.state, reason: event.reason })
+        rows.push({ kind: 'state', seq: event.seq, at: event.at, state: event.state, reason: event.reason })
         break
       case 'tool':
         open.set(event.name, [...(open.get(event.name) ?? []), rows.length])

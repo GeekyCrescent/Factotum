@@ -305,6 +305,11 @@
   field-sizing: content;
 }
 
+.composer textarea:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
 .composer:focus-within textarea {
   font-size: var(--text-input);
 }
