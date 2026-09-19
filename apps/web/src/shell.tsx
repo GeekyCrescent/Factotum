@@ -1,166 +1,244 @@
 /**
- * The shell. Navigation, routing, and the three states that are not a module screen.
+ * The shell: the frame, the drawer, routing, what is pending, and the pages that are not a module.
  *
- * IT KNOWS NO MODULE BY NAME. It asks the server which are running, looks each one up
- * in the client barrel, and renders what it finds. If the server declares one this
- * build of the client does not carry, it says so rather than showing a blank page —
- * which is exactly what happens when the daemon is newer than the page in a phone's
+ * IT KNOWS NO MODULE BY NAME. It asks the server which are running, looks each one up in the client
+ * barrel, and renders what it finds. `/` lands on the first enabled one by `nav.order`. If the
+ * server declares one this build of the client does not carry, it says so rather than showing a
+ * blank page, which is exactly what happens when the daemon is newer than the page in a phone's
  * cache.
+ *
+ * EVERY SCREEN HAS A ☰ (criterion 15): a module that draws its own bar gets `openDrawer`; for every
+ * other screen the shell draws the fallback bar.
  */
 
-import { useEffect, useState } from 'preact/hooks'
-import { fetchModules, moduleApi, type ModuleSummary, type ModulesResult } from './api.ts'
-import { clientFor } from './modules.ts'
-import { PushControl } from './push-control.tsx'
-import { restOf } from './route.ts'
+import type { ComponentChildren } from 'preact'
+import { useCallback, useEffect, useState } from 'preact/hooks'
+import { fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
+import { CenterState, FallbackBar } from './bar.tsx'
+import { Device, PUSH_API, rememberPush } from './device.tsx'
+import { Drawer } from './drawer.tsx'
+import type { ShellIcon } from './icons.ts'
+import { apiFor, clientFor } from './modules.ts'
+import { landing, ordered } from './nav.ts'
+import { forModule } from './pending.ts'
+import { resubscribe, type EnableResult } from './push.ts'
+import { pathOf, type Screen } from './router.ts'
+import { usePending, type Pendings } from './use-pending.ts'
+import { useRoute, type Route } from './use-route.ts'
 
 const STARTING_RETRY_MS = 500
+const DRAWER = 'drawer'
 
-export function Shell() {
+export function Shell({ initialSearch }: { readonly initialSearch: string }) {
+  const route = useRoute(initialSearch)
+  const pendings = usePending()
+  const { result, retry } = useModules()
+  const push = usePushAtStart()
+
+  const modules = result.state === 'ready' ? ordered(result.modules) : []
+  const target = route.screen.kind === 'root' ? landing(modules)?.id : undefined
+  const { land, openOverlay, closeOverlay } = route
+
+  useEffect(() => {
+    if (target !== undefined) land(pathOf({ kind: 'module', id: target, rest: '' }))
+  }, [target, land])
+
+  const openDrawer = useCallback(() => openOverlay(DRAWER), [openOverlay])
+  const bar = (title: string) => <FallbackBar title={title} pendingTotal={pendings.all.length} onMenu={openDrawer} />
+
+  return (
+    <div class="app">
+      <Drawer
+        open={route.overlay === DRAWER}
+        modules={modules}
+        screen={route.screen}
+        pending={pendings.all}
+        onClose={closeOverlay}
+        select={route.go}
+      />
+      <main class="content">
+        {result.state === 'starting' ? (
+          <Page bar={bar('factotum')} icon="arrow-clockwise" title="Starting">
+            <p>factotum is still booting. This page will retry on its own.</p>
+          </Page>
+        ) : result.state === 'error' ? (
+          <Page bar={bar('factotum')} icon="plugs" title="Not reachable">
+            <p>{result.message}</p>
+            <button type="button" class="btn" onClick={retry}>
+              Try again
+            </button>
+          </Page>
+        ) : route.screen.kind === 'device' ? (
+          <Device push={push.result} onPush={push.set} pendingTotal={pendings.all.length} openDrawer={openDrawer} />
+        ) : (
+          <Screens screen={route.screen} modules={modules} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
+        )}
+      </main>
+    </div>
+  )
+}
+
+function Screens({
+  screen,
+  modules,
+  route,
+  pendings,
+  bar,
+  openDrawer,
+}: {
+  readonly screen: Exclude<Screen, { kind: 'device' }>
+  readonly modules: readonly ModuleSummary[]
+  readonly route: Route
+  readonly pendings: Pendings
+  readonly bar: (title: string) => ComponentChildren
+  readonly openDrawer: () => void
+}) {
+  if (screen.kind === 'root') {
+    // With a module to land on, the shell's effect replaces this entry right after this render.
+    if (landing(modules) !== undefined) return null
+    return (
+      <Page bar={bar('factotum')} icon="plugs" title="No modules">
+        <p>
+          Nothing is switched on. Enable one in <code class="mono">~/.factotum/&lt;env&gt;/config.json</code> under{' '}
+          <code class="mono">modules</code>, then restart.
+        </p>
+      </Page>
+    )
+  }
+  if (screen.kind === 'unknown') {
+    return (
+      <Page bar={bar('factotum')} icon="circle" title="Nothing here">
+        <p>
+          There is no page at <span class="mono">{screen.path}</span>.
+        </p>
+      </Page>
+    )
+  }
+
+  const summary = modules.find((module) => module.id === screen.id)
+  if (summary === undefined) {
+    return (
+      <Page bar={bar('factotum')} icon="plugs" title="Not running">
+        <p>No module “{screen.id}” is switched on.</p>
+      </Page>
+    )
+  }
+  const label = summary.nav?.label ?? summary.id
+  if (summary.status.kind === 'disabled') {
+    return (
+      <Page bar={bar(label)} icon="plugs" title={`${label} is disabled`}>
+        <p>
+          <code class="mono">{summary.status.reason}</code>
+        </p>
+        <p>Fix that in the config and restart factotum.</p>
+      </Page>
+    )
+  }
+
+  const client = clientFor(screen.id)
+  if (client === undefined) {
+    // The daemon is ahead of this page: the usual cause is a phone holding an older build.
+    return (
+      <Page bar={bar(label)} icon="arrow-clockwise" title="Not in this build">
+        <p>
+          The daemon is running “{screen.id}”, but this copy of the client does not include its screen. Rebuild the client,
+          or reload this page.
+        </p>
+      </Page>
+    )
+  }
+
+  const id = screen.id
+  const view = (
+    <client.View
+      api={apiFor(id)}
+      rest={screen.rest}
+      search={route.search}
+      navigate={(rest, options) => route.go(pathOf({ kind: 'module', id, rest }), options)}
+      openDrawer={openDrawer}
+      overlay={route.overlay === DRAWER ? undefined : route.overlay}
+      setOverlay={(name) => (name === undefined ? route.closeOverlay() : route.openOverlay(name))}
+      pending={forModule(pendings.all, id)}
+      pendingTotal={pendings.all.length}
+      resolvePending={(tag) => pendings.resolve(id, tag)}
+    />
+  )
+  if (client.ownsTopBar === true) return view
+  // A module under the fallback bar draws no frame of its own: the shell gives it the page margin.
+  return (
+    <>
+      {bar(label)}
+      <div class="module-body">{view}</div>
+    </>
+  )
+}
+
+function Page({
+  bar,
+  icon,
+  title,
+  children,
+}: {
+  readonly bar: ComponentChildren
+  readonly icon: ShellIcon
+  readonly title: string
+  readonly children: ComponentChildren
+}) {
+  return (
+    <>
+      {bar}
+      <CenterState icon={icon} title={title}>
+        {children}
+      </CenterState>
+    </>
+  )
+}
+
+/** `/modules`, retried while the daemon is starting: a state it leaves on its own, unlike an error. */
+function useModules(): { readonly result: ModulesResult; readonly retry: () => void } {
   const [result, setResult] = useState<ModulesResult>({ state: 'starting' })
-  const [path, setPath] = useState(window.location.pathname)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
-
     const poll = async () => {
       const next = await fetchModules()
       if (!live) return
       setResult(next)
-      // Only "starting" is worth retrying: it is a state the daemon leaves on its own.
       if (next.state === 'starting') timer = setTimeout(() => void poll(), STARTING_RETRY_MS)
     }
-
     void poll()
-    const onPop = () => setPath(window.location.pathname)
-    window.addEventListener('popstate', onPop)
-
     return () => {
       live = false
       if (timer !== undefined) clearTimeout(timer)
-      window.removeEventListener('popstate', onPop)
     }
+  }, [attempt])
+
+  const retry = useCallback(() => {
+    setResult({ state: 'starting' })
+    setAttempt((n) => n + 1)
+  }, [])
+  return { result, retry }
+}
+
+/**
+ * The silent re-post at start (design D12): only when notifications were already on, never a
+ * prompt. It tells the worker whether this is the daemon's machine before the first push, and
+ * gives Device its count without a tap.
+ */
+function usePushAtStart(): { readonly result: EnableResult | undefined; readonly set: (result: EnableResult) => void } {
+  const [result, setResult] = useState<EnableResult | undefined>(undefined)
+  const set = useCallback((next: EnableResult) => {
+    rememberPush(next)
+    setResult(next)
   }, [])
 
-  const go = (to: string) => (event: Event) => {
-    event.preventDefault()
-    window.history.pushState(null, '', to)
-    setPath(to)
-  }
+  useEffect(() => {
+    void resubscribe(PUSH_API).then((next) => {
+      if (next !== undefined) set(next)
+    })
+  }, [set])
 
-  if (result.state === 'starting') {
-    return <Notice title="Starting">factotum is still booting. This page will retry on its own.</Notice>
-  }
-  if (result.state === 'error') {
-    return <Notice title="Not reachable">{result.message}</Notice>
-  }
-
-  const running = [...result.modules].sort(byOrder)
-  const current = /^\/m\/([^/]+)/.exec(path)?.[1]
-
-  return (
-    <>
-      <nav>
-        <a href="/" onClick={go('/')} aria-current={current === undefined ? 'page' : undefined}>
-          factotum
-        </a>
-        {running.map((module) => (
-          <a
-            key={module.id}
-            href={`/m/${module.id}`}
-            onClick={go(`/m/${module.id}`)}
-            aria-current={current === module.id ? 'page' : undefined}
-          >
-            {module.nav?.label ?? module.id}
-          </a>
-        ))}
-      </nav>
-      <main>
-        {current === undefined ? (
-          <>
-            <Home modules={running} />
-            <PushControl />
-          </>
-        ) : (
-          <ModuleScreen id={current} modules={running} path={path} />
-        )}
-      </main>
-    </>
-  )
-}
-
-function byOrder(a: ModuleSummary, b: ModuleSummary): number {
-  const left = a.nav?.order ?? Number.MAX_SAFE_INTEGER
-  const right = b.nav?.order ?? Number.MAX_SAFE_INTEGER
-  return left === right ? a.id.localeCompare(b.id) : left - right
-}
-
-function Home({ modules }: { modules: readonly ModuleSummary[] }) {
-  if (modules.length === 0) {
-    return (
-      <Notice title="No modules">
-        Nothing is switched on. Enable one in <code>~/.factotum/&lt;env&gt;/config.json</code> under{' '}
-        <code>modules</code>, then restart.
-      </Notice>
-    )
-  }
-  return (
-    <>
-      <h1>Modules</h1>
-      <ul>
-        {modules.map((module) => (
-          <li key={module.id}>
-            <a href={`/m/${module.id}`}>{module.nav?.label ?? module.id}</a>
-            {module.status.kind === 'disabled' ? ` — disabled: ${module.status.reason}` : null}
-          </li>
-        ))}
-      </ul>
-    </>
-  )
-}
-
-function ModuleScreen({ id, modules, path }: { id: string; modules: readonly ModuleSummary[]; path: string }) {
-  const summary = modules.find((module) => module.id === id)
-
-  if (summary === undefined) {
-    return <Notice title="Not running">No module “{id}” is switched on.</Notice>
-  }
-
-  if (summary.status.kind === 'disabled') {
-    return (
-      <Notice title={`${summary.nav?.label ?? id} is disabled`}>
-        <code>{summary.status.reason}</code>
-        <p>Fix that in the config and restart factotum.</p>
-      </Notice>
-    )
-  }
-
-  const client = clientFor(id)
-  if (client === undefined) {
-    // The daemon is ahead of this page — the usual cause is a phone holding an older
-    // build. Saying so beats a blank screen.
-    return (
-      <Notice title="Not in this build">
-        The daemon is running “{id}”, but this copy of the client does not include its screen.
-        Rebuild the client, or reload this page.
-      </Notice>
-    )
-  }
-
-  // `rest` is what followed `/m/<id>/`; `search` is the query, read in render with no state of
-  // its own. Both are read ONCE by a screen, at mount: synchronising navigation both ways would
-  // be a router, and a router is the client-design spec, not this one.
-  return <client.View api={moduleApi(id)} rest={restOf(path, id)} search={window.location.search} />
-}
-
-function Notice({ title, children }: { title: string; children: unknown }) {
-  return (
-    <main>
-      <div class="notice">
-        <h1>{title}</h1>
-        {children}
-      </div>
-    </main>
-  )
+  return { result, set }
 }

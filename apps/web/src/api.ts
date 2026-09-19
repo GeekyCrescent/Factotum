@@ -104,15 +104,24 @@ export async function fetchPushPublicKey(): Promise<
 
 export async function postPushSubscription(
   subscription: unknown,
-): Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly status: number; readonly message: string }> {
+): Promise<
+  | { readonly ok: true; readonly count: number; readonly sameMachine?: boolean }
+  | { readonly ok: false; readonly status: number; readonly message: string }
+> {
   try {
     const response = await fetch('/push/subscriptions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(subscription),
     })
-    const body = (await response.json()) as { count?: number; error?: { message: string } }
-    if (response.ok && typeof body.count === 'number') return { ok: true, count: body.count }
+    const body = (await response.json()) as { count?: number; sameMachine?: unknown; error?: { message: string } }
+    if (response.ok && typeof body.count === 'number') {
+      // Only a boolean counts. A daemon from before this field existed says nothing, and
+      // "nothing" stays unknown — which the worker treats as the safe case (design D12).
+      return typeof body.sameMachine === 'boolean'
+        ? { ok: true, count: body.count, sameMachine: body.sameMachine }
+        : { ok: true, count: body.count }
+    }
     // The daemon's message travels as-is: for a full cap it names `factotum push reset`.
     return { ok: false, status: response.status, message: body.error?.message ?? `the daemon answered ${response.status}` }
   } catch {

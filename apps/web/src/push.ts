@@ -22,6 +22,8 @@ export interface EnableResult {
   readonly state: PushState
   /** How many devices this machine now has — the screen shows it (spec criterion 54). */
   readonly count?: number
+  /** Whether THIS browser runs on the daemon's machine, when the daemon can tell (design D12). */
+  readonly sameMachine?: boolean
   /** What went wrong, in words the daemon chose where it chose them. */
   readonly error?: string
 }
@@ -31,7 +33,10 @@ export interface PushApi {
   readonly publicKey: () => Promise<{ readonly ok: true; readonly publicKey: string } | { readonly ok: false; readonly message: string }>
   readonly subscribe: (
     subscription: unknown,
-  ) => Promise<{ readonly ok: true; readonly count: number } | { readonly ok: false; readonly status: number; readonly message: string }>
+  ) => Promise<
+    | { readonly ok: true; readonly count: number; readonly sameMachine?: boolean }
+    | { readonly ok: false; readonly status: number; readonly message: string }
+  >
 }
 
 interface MinimalPushSubscription {
@@ -79,7 +84,7 @@ export function base64urlToBytes(value: string): Uint8Array {
 }
 
 function unsupported(env: PushEnvironment): PushState | undefined {
-  if (!env.secure) return { kind: 'unsupported', why: 'this page is not a secure context — notifications need the https:// address' }
+  if (!env.secure) return { kind: 'unsupported', why: 'this page is not a secure context, and notifications need the https:// address' }
   if (env.serviceWorkerReady === undefined) return { kind: 'unsupported', why: 'this browser has no service workers' }
   if (!env.pushSupported) return { kind: 'unsupported', why: 'this browser does not support Web Push' }
   return undefined
@@ -125,10 +130,36 @@ export async function enablePush(api: PushApi, env: PushEnvironment = browserPus
     // Posted even when it already existed: the daemon may have been reset since.
     const stored = await api.subscribe(subscription.toJSON())
     if (!stored.ok) return { state: { kind: 'off' }, error: stored.message }
-    return { state: { kind: 'on' }, count: stored.count }
+    return withMachine({ state: { kind: 'on' }, count: stored.count }, stored.sameMachine)
   } catch (error) {
     return { state: { kind: 'off' }, error: error instanceof Error ? error.message : 'notifications could not be turned on' }
   }
+}
+
+/**
+ * SILENT, AT START (design D12). Posts the subscription this browser ALREADY has, so the daemon
+ * can say whether this is its own machine — and so a subscription from before that answer existed
+ * finds out before the first push. It never asks for permission and never creates a subscription:
+ * `undefined` whenever there is nothing to re-post. Posting the same endpoint again announces
+ * nothing to the other devices (the daemon only announces a NEW endpoint).
+ */
+export async function resubscribe(api: PushApi, env: PushEnvironment = browserPushEnvironment()): Promise<EnableResult | undefined> {
+  if (unsupported(env) !== undefined || env.permission() !== 'granted') return undefined
+  try {
+    const { pushManager } = await env.serviceWorkerReady!()
+    const subscription = await pushManager.getSubscription()
+    if (subscription === null) return undefined
+    const stored = await api.subscribe(subscription.toJSON())
+    if (!stored.ok) return { state: { kind: 'on' }, error: stored.message }
+    return withMachine({ state: { kind: 'on' }, count: stored.count }, stored.sameMachine)
+  } catch {
+    return undefined
+  }
+}
+
+/** `exactOptionalPropertyTypes`: the field is added only when the daemon said. */
+function withMachine(result: EnableResult, sameMachine: boolean | undefined): EnableResult {
+  return sameMachine === undefined ? result : { ...result, sameMachine }
 }
 
 function sameKey(existing: ArrayBuffer | null, wanted: Uint8Array): boolean {

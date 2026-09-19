@@ -1,13 +1,17 @@
 import { render } from 'preact'
 import { Shell } from './shell.tsx'
+import { takeLoad } from './use-route.ts'
 import './styles/tokens.css'
 import './styles/fonts.css'
 import './styles/base.css'
 import './styles/components.css'
 import './styles/shell.css'
 
+// The query leaves the address bar BEFORE the first render (spec 2026-09-18, §0.17): a screen that
+// pushes a history entry later copies a URL that is already clean.
+const initialSearch = takeLoad()
 const root = document.getElementById('app')
-if (root !== null) render(<Shell />, root)
+if (root !== null) render(<Shell initialSearch={initialSearch} />, root)
 
 /**
  * The service worker, and the two guards around it.

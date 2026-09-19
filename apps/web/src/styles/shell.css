@@ -16,6 +16,11 @@
   flex-direction: column;
 }
 
+/* A module under the shell's fallback bar: the page margin it would otherwise not have. */
+.module-body {
+  padding: var(--space-3) var(--space-4) var(--space-6);
+}
+
 /* --- The drawer ---------------------------------------------------------- */
 
 .drawer {
@@ -94,6 +99,10 @@
 
 .drawer .foot .aside {
   margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-3);
   font-size: var(--text-caption);
   font-weight: 400;
