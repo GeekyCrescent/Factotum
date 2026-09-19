@@ -25,9 +25,30 @@ interface FakeWindow {
   navigatedTo: string | undefined
   focus: () => Promise<FakeWindow>
   navigate: (url: string) => Promise<FakeWindow>
+  readonly messages: unknown[]
+  readonly postMessage: (message: unknown) => void
 }
 
-async function worker(opts: { windows?: string[] } = {}) {
+interface StoredPending {
+  readonly key: string
+  readonly moduleId: string
+  readonly tag: string
+  readonly path: string
+  readonly data: Record<string, unknown>
+  readonly until: string
+}
+
+/** The store `sw.js` writes pendings to, faked in memory (design D7: `self.pendingStore`). */
+function memoryStore(settings: { sameMachine?: boolean } = {}) {
+  const rows = new Map<string, StoredPending>()
+  return {
+    rows,
+    put: async (record: StoredPending) => void rows.set(record.key, record),
+    settings: async () => settings,
+  }
+}
+
+async function worker(opts: { windows?: string[]; store?: ReturnType<typeof memoryStore> } = {}) {
   const handlers = new Map<string, (event: unknown) => void>()
   const shown: Shown[] = []
   const opened: string[] = []
@@ -36,13 +57,17 @@ async function worker(opts: { windows?: string[] } = {}) {
       url,
       focused: false,
       navigatedTo: undefined,
+      messages: [],
+      postMessage: (message) => void w.messages.push(message),
       focus: async () => ((w.focused = true), w),
       navigate: async (to) => ((w.navigatedTo = to), w),
     }
     return w
   })
 
+  const store = opts.store ?? memoryStore()
   const self = {
+    pendingStore: store,
     location: { origin: ORIGIN },
     addEventListener: (type: string, handler: (event: unknown) => void) => handlers.set(type, handler),
     skipWaiting: () => undefined,
@@ -62,7 +87,7 @@ async function worker(opts: { windows?: string[] } = {}) {
     await Promise.all(pending)
     return pending.length
   }
-  return { handlers, shown, opened, windows, dispatch }
+  return { handlers, shown, opened, windows, dispatch, store }
 }
 
 const envelope = (message: Record<string, unknown>, machine = 'juans-macbook-pro', moduleId: string | null = 'sessions') => ({
@@ -117,6 +142,86 @@ test('actions are passed through only when the message carries them', async () =
 
   assert.equal(w.shown[0]?.options.actions, undefined)
   assert.deepEqual(w.shown[1]?.options.actions, [{ action: 'allow', label: 'Allow' }])
+})
+
+// ---------------------------------------------------------------------------
+// pendings (design D7, criterion 26)
+// ---------------------------------------------------------------------------
+
+const FUTURE = '2099-01-01T00:00:00.000Z'
+const PAST = '2000-01-01T00:00:00.000Z'
+const ask = (extra: Record<string, unknown> = {}) =>
+  envelope({
+    title: 'wants to write',
+    path: '/m/sessions/019a?ask=TOKEN',
+    tag: 'ask:TOKEN',
+    data: { askId: 'TOKEN', sessionId: '019a', toolName: 'Write', file: 'a.txt' },
+    until: FUTURE,
+    ...extra,
+  })
+
+test('a notice with a future deadline is KEPT as pending, keyed by module and tag, with its path stripped of the query', async () => {
+  const w = await worker({ store: memoryStore({ sameMachine: false }) })
+  await w.dispatch('push', pushEvent(ask()))
+
+  assert.equal(w.shown.length, 1, 'the notification is still drawn')
+  // Through JSON: objects made inside the sandbox have the sandbox's prototypes.
+  assert.deepEqual(JSON.parse(JSON.stringify([...w.store.rows.values()])), [
+    {
+      key: 'sessions:ask:TOKEN',
+      moduleId: 'sessions',
+      tag: 'ask:TOKEN',
+      path: '/m/sessions/019a',
+      data: { askId: 'TOKEN', sessionId: '019a', toolName: 'Write', file: 'a.txt' },
+      until: FUTURE,
+    },
+  ])
+})
+
+test('without a deadline, or with one already past, nothing is kept', async () => {
+  const w = await worker({ store: memoryStore({ sameMachine: false }) })
+  await w.dispatch('push', pushEvent(envelope({})))
+  await w.dispatch('push', pushEvent(ask({ until: PAST })))
+  await w.dispatch('push', pushEvent(ask({ until: 'not a date' })))
+  assert.equal(w.store.rows.size, 0)
+})
+
+test('the same tag REPLACES the pending instead of adding another', async () => {
+  const w = await worker({ store: memoryStore({ sameMachine: false }) })
+  await w.dispatch('push', pushEvent(ask({ body: 'first' })))
+  await w.dispatch('push', pushEvent(ask({ data: { askId: 'TOKEN', sessionId: '019a', file: 'b.txt' } })))
+  assert.equal(w.store.rows.size, 1)
+  assert.equal(w.store.rows.get('sessions:ask:TOKEN')?.data['file'], 'b.txt')
+})
+
+test('THE TOKEN IS KEPT ONLY WHEN THE DAEMON SAID THIS IS NOT ITS MACHINE: unknown counts as its machine (design D12)', async () => {
+  for (const settings of [{ sameMachine: true }, {}]) {
+    const w = await worker({ store: memoryStore(settings) })
+    await w.dispatch('push', pushEvent(ask()))
+    const row = w.store.rows.get('sessions:ask:TOKEN')
+    assert.ok(row, `still pending with ${JSON.stringify(settings)}`)
+    assert.equal('askId' in row.data, false, `no token with ${JSON.stringify(settings)}`)
+    assert.equal(row.data['sessionId'], '019a')
+  }
+})
+
+test('open windows are told a pending arrived, by key', async () => {
+  const w = await worker({ windows: [`${ORIGIN}/m/example`], store: memoryStore({ sameMachine: false }) })
+  await w.dispatch('push', pushEvent(ask()))
+  assert.deepEqual(JSON.parse(JSON.stringify(w.windows[0]?.messages)), [{ type: 'pending', key: 'sessions:ask:TOKEN' }])
+})
+
+test('a notice without a module (the daemon’s own) is never a pending', async () => {
+  const w = await worker({ store: memoryStore({ sameMachine: false }) })
+  await w.dispatch('push', pushEvent(envelope({ until: FUTURE }, 'mimac', null)))
+  assert.equal(w.store.rows.size, 0)
+})
+
+test('a store that fails still leaves the notification drawn', async () => {
+  const broken = { ...memoryStore({ sameMachine: false }), put: async () => { throw new Error('quota') } }
+  const w = await worker({ store: broken })
+  await w.dispatch('push', pushEvent(ask()))
+  assert.equal(w.shown.length, 1)
 })
 
 // ---------------------------------------------------------------------------
