@@ -25,8 +25,8 @@ const BACKGROUND = [13, 14, 17] // --bg
 const FOREGROUND = [239, 240, 242] // --text
 const ACCENT = [71, 103, 211] // --accent: the one indigo detail the direction allows
 
-/** Which candidate `public/` gets. Until the owner picks, the lowercase `f` it always had. */
-const CHOSEN = 'f'
+/** Which candidate `public/` gets: the owner picked the prompt on 2026-09-19. */
+const CHOSEN = 'prompt'
 
 /** Samples per side of each pixel: 4×4 is enough for edges that do not look stepped at 192 px. */
 const SAMPLES = 4
