@@ -374,7 +374,8 @@ test('no config at all points at init rather than reporting a failure', async ()
 // push — three states, and never a key or an endpoint (criterion 3)
 // ---------------------------------------------------------------------------
 
-async function withPushState(home: string, devices: number, keys: 'none' | 'good' | 'garbage'): Promise<void> {
+/** `fromThisMachine`: how many of the devices the kernel read as a browser on the daemon's machine. */
+async function withPushState(home: string, devices: number, keys: 'none' | 'good' | 'garbage', fromThisMachine = 0): Promise<void> {
   const { createPushService } = await import('@factotum/kernel')
   const { writeFile: write } = await import('node:fs/promises')
   const paths = statePaths('prod', home)
@@ -392,7 +393,7 @@ async function withPushState(home: string, devices: number, keys: 'none' | 'good
     deliver: async () => ({ statusCode: 201 }),
   })
   for (let i = 0; i < devices; i++) {
-    await push.subscribe({ endpoint: `https://fcm.googleapis.com/fcm/send/SECRET-${i}`, keys: { p256dh: 'BP', auth: 'au' } })
+    await push.subscribe({ endpoint: `https://fcm.googleapis.com/fcm/send/SECRET-${i}`, keys: { p256dh: 'BP', auth: 'au' } }, { sameMachine: i < fromThisMachine })
   }
   await push.settled()
 }
@@ -420,6 +421,31 @@ test('push, with devices: the count and the cap', async () => {
   const output = await report(home)
 
   assert.match(output, /push {8}ready, 2 devices subscribed \(at most 5\)/)
+  assert.doesNotMatch(output, /one of them is this machine/)
+})
+
+test('push, with devices: ALWAYS the warning that a browser here should not subscribe (spec 2026-09-18, design D12)', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 1, 'good')
+  const output = await report(home)
+
+  assert.match(output, /A browser on this machine should not subscribe/)
+})
+
+test('push, one device from this machine: doctor says so (criterion 38)', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 2, 'good', 1)
+  const output = await report(home)
+
+  assert.match(output, /one of them is this machine/)
+})
+
+test('push, no devices: no warning, there is nothing to warn about', async () => {
+  const home = await withConfig('prod', goodProd)
+  await withPushState(home, 0, 'good')
+  const output = await report(home)
+
+  assert.doesNotMatch(output, /should not subscribe/)
 })
 
 test('push, unusable key file: OFF with the reason, which names the remedy', async () => {

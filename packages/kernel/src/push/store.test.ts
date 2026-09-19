@@ -36,6 +36,20 @@ test('an upsert survives a restart, and the file is owner-only', async () => {
   assert.equal((await stat(join(push, SUBSCRIPTIONS_FILE))).mode & 0o777, 0o600)
 })
 
+test('sameMachine survives a restart, and a file where it is not a boolean drops the entry', async () => {
+  const push = await dir()
+  const { store } = await SubscriptionStore.open(push)
+  await store.upsert({ ...sub('https://fcm.googleapis.com/fcm/send/mac'), sameMachine: true })
+  await store.upsert(sub('https://fcm.googleapis.com/fcm/send/old'))
+
+  const { store: reopened } = await SubscriptionStore.open(push)
+  assert.deepEqual(reopened.all().map((s) => s.sameMachine), [true, undefined], 'an old one reads as unknown')
+
+  await writeFile(join(push, SUBSCRIPTIONS_FILE), JSON.stringify([{ ...sub('https://x/y'), sameMachine: 'yes' }]))
+  const { store: strict } = await SubscriptionStore.open(push)
+  assert.equal(strict.count(), 0)
+})
+
 test('the same endpoint twice UPDATES instead of duplicating (criterion 6)', async () => {
   const { store } = await SubscriptionStore.open(await dir())
   await store.upsert(sub('https://push.example/a', 'old'))

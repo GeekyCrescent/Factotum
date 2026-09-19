@@ -10,6 +10,7 @@
  */
 
 import type { Server } from 'node:http'
+import { networkInterfaces } from 'node:os'
 import type { AddressInfo } from 'node:net'
 import { prefixed, type AnyModule, type BootHandle, type Environment } from '@factotum/core'
 import { createPushService } from './push/service.ts'
@@ -100,6 +101,8 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     version: options.version,
     startedAt,
     push,
+    // `main.ts` injects none: without the default, prod would compare against nothing.
+    interfaces: options.interfaces ?? networkInterfaces,
     ...(options.site !== undefined ? { site: options.site } : {}),
     isReady: () => ready,
   })

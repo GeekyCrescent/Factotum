@@ -24,6 +24,12 @@ export interface Subscription {
   /** Compared as the exact string the push service gave. Never normalised. */
   readonly endpoint: string
   readonly keys: { readonly p256dh: string; readonly auth: string }
+  /**
+   * Whether it came from a browser on the daemon's own machine (spec 2026-09-18, design D12).
+   * Computed by the kernel from the request, never read from the body. Absent on a subscription
+   * from before the field existed.
+   */
+  readonly sameMachine?: boolean
 }
 
 export interface OpenResult {
@@ -138,8 +144,9 @@ export class SubscriptionStore {
 
 function isSubscription(value: unknown): value is Subscription {
   if (value === null || typeof value !== 'object') return false
-  const { endpoint, keys } = value as Record<string, unknown>
+  const { endpoint, keys, sameMachine } = value as Record<string, unknown>
   if (typeof endpoint !== 'string' || keys === null || typeof keys !== 'object') return false
+  if (sameMachine !== undefined && typeof sameMachine !== 'boolean') return false
   const { p256dh, auth } = keys as Record<string, unknown>
   return typeof p256dh === 'string' && typeof auth === 'string'
 }

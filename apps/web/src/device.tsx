@@ -90,6 +90,7 @@ export function Device({
                 <span class="big">{count}</span>
               )}
               <span class="v">
+                {push?.sameMachine === true ? 'One of them is this machine. ' : ''}
                 The count this machine holds. If it is more than you set up, run <span class="mono">factotum push reset</span> there.
               </span>
             </div>

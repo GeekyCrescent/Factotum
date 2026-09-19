@@ -11,6 +11,7 @@ import { policyFor } from '../net/policy.ts'
 import { Registry } from '../modules/registry.ts'
 import { statePaths } from '../config/paths.ts'
 import type { PushService, SubscribeResult } from '../push/service.ts'
+import type { Interfaces } from '../net/resolve.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -31,7 +32,11 @@ const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key:
   subscribe: async () => result,
 })
 
-async function start(opts: { push?: FakePush; ready?: boolean } = {}) {
+/** The daemon's machine, faked: loopback and its tailnet address (spec 2026-09-18, A6). */
+const MAC_IP = '100.71.174.49'
+const MAC = (() => ({ lo0: [{ address: '127.0.0.1', internal: true }], utun4: [{ address: MAC_IP, internal: false }] })) as unknown as Interfaces
+
+async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
   await mkdir(join(root, 'assets'), { recursive: true })
@@ -51,6 +56,7 @@ async function start(opts: { push?: FakePush; ready?: boolean } = {}) {
     startedAt: Date.now(),
     site: createStaticSite(root),
     push: opts.push ?? onPush(),
+    interfaces: opts.interfaces ?? MAC,
     isReady: () => opts.ready ?? true,
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -153,8 +159,28 @@ test('a valid subscription answers the COUNT, and nothing in the answer is an en
     const response = await fetch(`${base}/push/subscriptions`, { method: 'POST', body: JSON.stringify(subscription) })
     const text = await response.text()
     assert.equal(response.status, 200)
-    assert.deepEqual(JSON.parse(text), { count: 2 })
+    assert.deepEqual(JSON.parse(text), { count: 2, sameMachine: false })
     assert.doesNotMatch(text, /SECRET-CAPABILITY/)
+  } finally {
+    await close()
+  }
+})
+
+test('the answer says whether the browser is on THIS machine, and the service is told the same (design D12)', async () => {
+  const seen: boolean[] = []
+  const push: FakePush = { ...onPush(), subscribe: async (_s, origin) => (seen.push(origin.sameMachine), { kind: 'subscribed', count: 1 }) }
+  const { base, close } = await start({ push })
+  const post = async (headers: Record<string, string>) => {
+    const response = await fetch(`${base}/push/subscriptions`, { method: 'POST', headers, body: JSON.stringify(subscription) })
+    return ((await response.json()) as { sameMachine: boolean }).sameMachine
+  }
+  try {
+    assert.equal(await post({ origin: 'http://127.0.0.1:7777' }), true, 'loaded from the loopback origin')
+    assert.equal(await post({ origin: PUBLIC, 'x-forwarded-for': MAC_IP, 'tailscale-headers-info': 'x' }), true, 'serve, from the Mac')
+    assert.equal(await post({ origin: PUBLIC, 'x-forwarded-for': '100.88.12.7', 'tailscale-headers-info': 'x' }), false, 'serve, from the phone')
+    assert.equal(await post({ origin: PUBLIC, 'x-forwarded-for': MAC_IP }), false, 'a forwarded IP serve did not vouch for')
+    assert.equal(await post({ origin: PUBLIC }), false, 'no IP at all')
+    assert.deepEqual(seen, [true, true, false, false, false])
   } finally {
     await close()
   }
