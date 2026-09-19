@@ -16,7 +16,7 @@ import type { ComponentType } from 'preact'
 import { moduleApi, type ModuleApi } from './api.ts'
 import type { Pending } from './pending.ts'
 import { exampleClient } from '../../../modules/example/client.tsx'
-import { sessionsClient } from '../../../modules/sessions/client.tsx'
+import { sessionsClient } from '../../../modules/sessions/client/index.tsx'
 
 export interface ModuleViewProps {
   readonly api: ModuleApi

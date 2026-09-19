@@ -11,6 +11,8 @@
  * history entry. The shell does not know what `ask` is; it removes the whole query.
  */
 
+import { restOf } from './route.ts'
+
 export type Screen =
   | { readonly kind: 'root' }
   | { readonly kind: 'device' }
@@ -35,8 +37,8 @@ export function screenOf(pathname: string): Screen {
   if (pathname === '/' || pathname === '') return { kind: 'root' }
   if (RESERVED.test(pathname)) return { kind: 'unknown', path: pathname }
   if (pathname === '/device' || pathname === '/device/') return { kind: 'device' }
-  const m = /^\/m\/([^/]+)(?:\/(.*))?$/.exec(pathname)
-  if (m !== null) return { kind: 'module', id: decodeURIComponent(m[1] ?? ''), rest: m[2] ?? '' }
+  const m = /^\/m\/([^/]+)(?:\/|$)/.exec(pathname)
+  if (m !== null) return { kind: 'module', id: decodeURIComponent(m[1] ?? ''), rest: restOf(pathname, m[1] ?? '') }
   return { kind: 'unknown', path: pathname }
 }
 

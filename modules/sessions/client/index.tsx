@@ -10,8 +10,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import { askTokenFrom, withoutAskToken } from './ask-token.ts'
-import type { EngineSetupView, EventPage, SessionEvent, SessionPage, SessionSummary } from './types.ts'
+import { askTokenFrom } from '../ask-token.ts'
+import type { EngineSetupView, EventPage, SessionEvent, SessionPage, SessionSummary } from '../types.ts'
+import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 
 interface Api {
   get: <T>(path: string) => Promise<T>
@@ -33,53 +34,6 @@ interface ViewProps extends Props {
 const POLL_MS = 1_000
 
 // ---------------------------------------------------------------------------
-// Reading a failure structurally
-// ---------------------------------------------------------------------------
-
-interface Conflict {
-  readonly sessionId: string
-}
-
-interface Freshness {
-  readonly clean: boolean
-  readonly behind: number
-  readonly dirtyFiles: readonly string[]
-  readonly remoteWarning?: string
-}
-
-/**
- * The 409 body, read WITHOUT importing anything.
- *
- * The client shell hangs `status` and `body` on an ordinary `Error` rather than
- * exporting a class, precisely so that this can be a cast instead of an import — a
- * class is a value at runtime, and reading one with `instanceof` would mean importing
- * from outside this module's one permitted dependency.
- */
-function conflictOf(cause: unknown): Conflict | undefined {
-  const error = cause as { status?: number; body?: { conflict?: { sessionId?: string } } }
-  return error?.status === 409 && typeof error.body?.conflict?.sessionId === 'string'
-    ? { sessionId: error.body.conflict.sessionId }
-    : undefined
-}
-
-function freshnessOf(cause: unknown): Freshness | undefined {
-  const error = cause as { status?: number; body?: { freshness?: Freshness } }
-  return error?.status === 409 && error.body?.freshness !== undefined ? error.body.freshness : undefined
-}
-
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
-
-function describe(report: Freshness): string {
-  const parts: string[] = []
-  if (report.behind > 0) parts.push(`${report.behind} commit${report.behind === 1 ? '' : 's'} behind`)
-  if (!report.clean) parts.push(`uncommitted: ${report.dirtyFiles.join(', ')}`)
-  if (report.remoteWarning !== undefined) parts.push(report.remoteWarning)
-  return parts.join(' · ')
-}
-
-// ---------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------
 
@@ -89,12 +43,10 @@ function SessionsView({ api, rest, search }: ViewProps) {
   // Read ONCE, at mount: a notification that opened `/m/sessions/<id>` lands in that session.
   // Not kept in sync with the URL afterwards — that would be a router, which is another spec.
   const [view, setView] = useState<View>(() => (rest === '' ? { at: 'home' } : { at: 'session', id: rest }))
-  // The ask token a notification carried, if any — read once, then taken OUT of the address bar
-  // (criterion 58). Held in memory for this screen and nowhere else.
+  // The ask token a notification carried, if any, read once. The shell already took it out of the
+  // address bar, before the first render (spec 2026-09-18, design D4). Held in memory for this
+  // screen and nowhere else.
   const [askToken] = useState(() => askTokenFrom(search))
-  useEffect(() => {
-    if (askToken !== undefined) window.history.replaceState(null, '', withoutAskToken(window.location.pathname, search))
-  }, [askToken, search])
   return view.at === 'home' ? (
     <Home api={api} open={(id) => setView({ at: 'session', id })} />
   ) : (
@@ -518,4 +470,4 @@ function Line({ event }: { event: SessionEvent }) {
   }
 }
 
-export const sessionsClient = { id: 'sessions', View: SessionsView }
+export const sessionsClient = { id: 'sessions', View: SessionsView, ownsTopBar: false }
