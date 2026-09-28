@@ -38,6 +38,19 @@ export function clock(iso: string): string {
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const
+
+/** A conversation's date in a list: "07:05" today, "Yesterday", "15 Sep", "31 Dec 2025". */
+export function day(iso: string, now: number): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+  if (isToday(iso, now)) return clock(iso)
+  const today = new Date(now)
+  if (isToday(iso, new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1).getTime())) return 'Yesterday'
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]}`
+  return at.getFullYear() === today.getFullYear() ? date : `${date} ${at.getFullYear()}`
+}
+
 export function isToday(iso: string, now: number): boolean {
   const at = new Date(iso)
   const today = new Date(now)

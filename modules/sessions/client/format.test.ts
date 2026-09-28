@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ago, clip, clock, duration, fileName, isToday, previewText, stateLabel, toolArg } from './format.ts'
+import { ago, clip, clock, day, duration, fileName, isToday, previewText, stateLabel, toolArg } from './format.ts'
 
 const NOW = Date.parse('2026-09-19T10:00:00.000Z')
 const before = (ms: number) => new Date(NOW - ms).toISOString()
@@ -60,4 +60,21 @@ test('a tool call shows its most telling argument, and JSON only when there is n
 
 test('states read as words', () => {
   assert.deepEqual(['running', 'finished', 'failed', 'cancelled'].map((s) => stateLabel(s as never)), ['Running', 'Finished', 'Failed', 'Cancelled'])
+})
+
+test('day: the time today, Yesterday, the day and month this year, and the year before that', () => {
+  const now = new Date(2026, 8, 29, 9, 30).getTime()
+  assert.equal(day(new Date(2026, 8, 29, 7, 5).toISOString(), now), '07:05')
+  assert.equal(day(new Date(2026, 8, 28, 23, 59).toISOString(), now), 'Yesterday')
+  assert.equal(day(new Date(2026, 8, 15, 12, 0).toISOString(), now), '15 Sep')
+  assert.equal(day(new Date(2025, 11, 31, 12, 0).toISOString(), now), '31 Dec 2025')
+})
+
+test('day: yesterday across a month and a year boundary', () => {
+  assert.equal(day(new Date(2026, 8, 30, 20, 0).toISOString(), new Date(2026, 9, 1, 8, 0).getTime()), 'Yesterday')
+  assert.equal(day(new Date(2025, 11, 31, 20, 0).toISOString(), new Date(2026, 0, 1, 8, 0).getTime()), 'Yesterday')
+})
+
+test('day: a date that cannot be read says nothing', () => {
+  assert.equal(day('nope', Date.now()), '')
 })

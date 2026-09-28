@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { SessionPage, SessionState, SessionSummary } from '../types.ts'
 import type { DrawerProps } from './contract.ts'
-import { ago } from './format.ts'
+import { ago, day } from './format.ts'
 import { history, type Group, type Waiting } from './history.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
@@ -92,6 +92,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
             onToggle={() => toggle(group.label)}
             rest={rest}
             navigate={navigate}
+            now={now}
           />
         ) : (
           <section key={group.key}>
@@ -126,7 +127,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
 
 /**
  * One project, the way a chat app lists them: its folder in its colour and its name, a tap to fold
- * it, and under it one line per conversation. Only what went wrong gets a mark; the rest is a title.
+ * it, and under it one line per conversation: its title and its date, and a mark only when it failed.
  */
 function Project({
   group,
@@ -134,12 +135,14 @@ function Project({
   onToggle,
   rest,
   navigate,
+  now,
 }: {
   readonly group: Group
   readonly folded: boolean
   readonly onToggle: () => void
   readonly rest: string
   readonly navigate: (rest: string) => void
+  readonly now: number
 }) {
   return (
     <section class={`s-project ${toneClass(group.label)}`}>
@@ -160,6 +163,7 @@ function Project({
             >
               <span class="s-conv-title">{entry.title}</span>
               {entry.state === 'failed' ? <Icon name="x-circle" size={14} /> : null}
+              {entry.startedAt === undefined ? null : <span class="s-conv-date num">{day(entry.startedAt, now)}</span>}
             </button>
           ))}
     </section>

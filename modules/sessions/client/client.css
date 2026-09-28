@@ -741,6 +741,13 @@
   white-space: nowrap;
 }
 
+.s-conv-date {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
 .s-conv > .icon {
   flex: none;
   color: var(--err);
