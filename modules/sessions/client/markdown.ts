@@ -8,8 +8,7 @@
  *
  * SMALL, ON PURPOSE. The subset the agent actually writes: headings, paragraphs, fenced code,
  * lists (nested by indent), quotes, rules, tables, and code, bold, italic and links inline. A
- * library that does all of CommonMark weighs more than half of what the build has left
- * (spec 2026-09-18, criterion 30).
+ * library that does all of CommonMark would weigh about half of the rest of the client.
  */
 
 export type Inline =
