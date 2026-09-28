@@ -68,7 +68,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
   return (
     <div class="s-drawer" ref={root}>
       <button type="button" class="s-new" onClick={() => navigate('new')}>
-        <Icon name="note-pencil" size={18} />
+        <Icon name="plus" size={16} />
         New session
       </button>
       <label class="s-search">

@@ -53,7 +53,10 @@ export function Drawer({ open, modules, screen, pending, onClose, onFold, select
       {open ? <div class="scrim drawer-scrim" onClick={onClose} /> : null}
       <aside class="drawer" data-open={open ? 'true' : 'false'} aria-label="Navigation">
         <div class="head">
-          <span class="brand">factotum</span>
+          <span class="brand">
+            <Mark />
+            factotum
+          </span>
           {/* Wide screens only (CSS): fold the sidebar away. On a phone it is ✕, which closes it. */}
           <button type="button" class="icon-btn fold" aria-label="Collapse sidebar" onClick={onFold}>
             <Icon name="sidebar-simple" />
@@ -92,6 +95,17 @@ export function Drawer({ open, modules, screen, pending, onClose, onFold, select
         </nav>
       </aside>
     </>
+  )
+}
+
+/** The app's icon, small: the prompt, `>_`, on the accent. Drawn, not an image, so it follows the tokens. */
+function Mark() {
+  return (
+    <svg class="mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">
+      <rect width="32" height="32" rx="9" />
+      <path d="M10 10.5 15.5 16 10 21.5" />
+      <rect class="cursor" x="17.5" y="19.5" width="6.5" height="2.6" rx="1.3" />
+    </svg>
   )
 }
 

@@ -63,9 +63,33 @@
 }
 
 .drawer .brand {
-  font-weight: 600;
-  font-size: var(--text-title);
-  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2h);
+  font-weight: 650;
+  font-size: var(--text-heading);
+  letter-spacing: -0.03em;
+}
+
+/* The app's icon, small: a tile of the accent with the prompt in its label colour. */
+.drawer .mark {
+  flex: none;
+}
+
+.drawer .mark rect:first-child {
+  fill: var(--accent);
+}
+
+.drawer .mark path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.drawer .mark .cursor {
+  fill: var(--on-accent);
 }
 
 .drawer .sections {

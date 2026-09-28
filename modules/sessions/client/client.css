@@ -641,6 +641,7 @@
   font-size: var(--text-small);
 }
 
+/* The drawer's one primary action: filled with the accent, the label in its colour. */
 .s-new {
   width: calc(100% - var(--space-2));
   min-height: var(--hit);
@@ -648,11 +649,23 @@
   padding: 0 var(--space-3);
   display: flex;
   align-items: center;
-  gap: var(--space-2h);
-  border: 1px solid var(--line-strong);
+  gap: var(--space-2);
+  border: 0;
   border-radius: var(--radius-10);
-  background: var(--bg);
-  font-weight: 500;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  transition-property: transform, filter;
+  transition-duration: var(--dur-press);
+  transition-timing-function: var(--ease-out);
+}
+
+.s-new:hover {
+  filter: brightness(1.08);
+}
+
+.s-new:active {
+  transform: scale(0.98);
 }
 
 .s-sect {
