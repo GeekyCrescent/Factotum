@@ -34,6 +34,19 @@
   display: none;
 }
 
+/* Wide screens: the dock spans the pane like the bar above; the log keeps to the shell's column. */
+@media (min-width: 1024px) {
+  .s-body > * {
+    width: 100%;
+    max-width: var(--column, 40rem);
+    margin-inline: auto;
+  }
+
+  .s-dock {
+    padding-inline: var(--space-4);
+  }
+}
+
 /* The session is working: at the end of the log, where the next line will land. */
 .s-working {
   display: grid;

@@ -132,10 +132,22 @@
     display: none;
   }
 
+  /* The bars span the pane; what is read keeps to a column (--column), so lines stay short. */
   .app > .content {
+    --column: 40rem;
     width: 100%;
-    max-width: 40rem;
-    margin: 0 auto;
+    min-width: 0;
+  }
+
+  .app > .content .topbar {
+    padding-inline: var(--space-4);
+  }
+
+  .app > .content .page,
+  .app > .content .skel {
+    width: 100%;
+    max-width: var(--column);
+    margin-inline: auto;
   }
 }
 
