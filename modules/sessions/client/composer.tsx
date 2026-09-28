@@ -13,6 +13,7 @@ import type { EngineSetupView } from '../types.ts'
 import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
+import { toneClass } from './tone.ts'
 
 /** The same question whether it starts a session or carries one on. */
 const ASK_WHAT = 'What do you want to do in this project?'
@@ -125,6 +126,7 @@ export function LaunchComposer({
         canSend={!s.busy && s.text.trim() !== '' && entryId !== ''}
         send={() => void s.go(false)}
         autoFocus
+        tone={siteId === '' ? undefined : toneClass(siteId)}
       >
         <label class="chip s-pick">
           <Icon name="folder-simple" size={16} />
@@ -201,6 +203,7 @@ function Box({
   canSend,
   send,
   autoFocus,
+  tone,
   children,
 }: {
   readonly text: string
@@ -210,11 +213,13 @@ function Box({
   readonly canSend: boolean
   readonly send: () => void
   readonly autoFocus: boolean
+  /** The project's colour class, where the screen around it does not already set one (launching). */
+  readonly tone?: string | undefined
   readonly children?: ComponentChildren
 }) {
   return (
     <form
-      class="composer"
+      class={tone === undefined ? 'composer' : `composer ${tone}`}
       onSubmit={(event) => {
         event.preventDefault()
         if (canSend) send()

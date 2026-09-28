@@ -91,6 +91,16 @@
 .s-p5 { --project: var(--p5); --project-soft: var(--p5-soft); }
 .s-p6 { --project: var(--p6); --project-soft: var(--p6-soft); }
 
+/* What sits ON a project colour (send's arrow): the page's own background, per mode. */
+.s-p1,
+.s-p2,
+.s-p3,
+.s-p4,
+.s-p5,
+.s-p6 {
+  --project-on: var(--bg);
+}
+
 /* --- The bar: the project, its state as a quiet tag, and the details under it -- */
 
 .s-title {
