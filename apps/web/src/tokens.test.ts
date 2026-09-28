@@ -72,3 +72,24 @@ test('reduced motion takes every transform away (criterion 4)', async () => {
   assert.match(block[1] ?? '', /transform:\s*none\s*!important/)
   assert.match(block[1] ?? '', /transition-property:\s*opacity\s*!important/)
 })
+
+/** The project colours: one per site, read as text on the page, so held to the same 4.5 as text. */
+const PROJECT_TOKENS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6']
+
+test('every project colour reads as text on bg and on surface, in both modes', async () => {
+  const modes = modesOf(await tokensCss())
+  const failing: string[] = []
+  for (const mode of ['light', 'dark'] as const) {
+    const tokens = modes[mode]
+    for (const name of PROJECT_TOKENS) {
+      for (const ground of ['bg', 'surface']) {
+        const fg = tokens.get(name)
+        const bg = tokens.get(ground)
+        assert.ok(fg !== undefined && bg !== undefined, `${mode}: --${name} or --${ground} is not oklch(L C H)`)
+        const r = ratio(fg, bg)
+        if (r < 4.5) failing.push(`${mode} --${name} on --${ground}: ${r.toFixed(2)}`)
+      }
+    }
+  }
+  assert.deepEqual(failing, [])
+})

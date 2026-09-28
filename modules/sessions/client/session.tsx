@@ -21,6 +21,7 @@ import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
 import { MenuButton, Strip } from './bars.tsx'
 import { askFor, sessionOf, type AskRef } from './relevance.ts'
+import { toneClass } from './tone.ts'
 
 /** How often the cursor asks again while a session is running. */
 const POLL_MS = 1_000
@@ -65,7 +66,8 @@ export function Session({
   }
 
   return (
-    <div class="s-screen">
+    // The project's colour, for everything in the screen that says whose it is (its dot, the bubbles).
+    <div class={summary === undefined ? 's-screen' : `s-screen ${toneClass(summary.siteId)}`}>
       <header class="topbar">
         <MenuButton pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
         <div class="title s-title">

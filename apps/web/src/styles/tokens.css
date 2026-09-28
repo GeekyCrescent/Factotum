@@ -31,6 +31,13 @@
   --err: oklch(0.52 0.18 27);
   --err-bg: oklch(0.96 0.02 27);
   --scrim: oklch(0.2 0.01 265 / 0.35);
+  /* Projects: violet, blue, teal, lime, orange, pink. Never the red, green or amber of err, ok, ask. */
+  --p1: oklch(0.50 0.17 300);
+  --p2: oklch(0.50 0.15 250);
+  --p3: oklch(0.50 0.10 190);
+  --p4: oklch(0.50 0.13 130);
+  --p5: oklch(0.52 0.15 50);
+  --p6: oklch(0.52 0.17 350);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -54,6 +61,12 @@
     --err: oklch(0.72 0.16 27);
     --err-bg: oklch(0.25 0.04 27);
     --scrim: oklch(0.05 0 0 / 0.6);
+    --p1: oklch(0.76 0.13 300);
+    --p2: oklch(0.76 0.12 250);
+    --p3: oklch(0.78 0.10 190);
+    --p4: oklch(0.80 0.14 130);
+    --p5: oklch(0.78 0.13 55);
+    --p6: oklch(0.76 0.13 350);
   }
 }
 
@@ -63,6 +76,12 @@
   --ask-border: color-mix(in oklch, var(--ask) 45%, transparent);
   --err-border: color-mix(in oklch, var(--err) 45%, transparent);
   --chip-on: color-mix(in oklch, var(--accent) 16%, transparent);
+  --p1-soft: color-mix(in oklch, var(--p1) 16%, transparent);
+  --p2-soft: color-mix(in oklch, var(--p2) 16%, transparent);
+  --p3-soft: color-mix(in oklch, var(--p3) 16%, transparent);
+  --p4-soft: color-mix(in oklch, var(--p4) 16%, transparent);
+  --p5-soft: color-mix(in oklch, var(--p5) 16%, transparent);
+  --p6-soft: color-mix(in oklch, var(--p6) 16%, transparent);
 
   /* Type: a fixed pixel scale, ~1.125 (direccion-visual §Tipografía). */
   --font-sans: 'Geist', 'Geist Fallback', system-ui, sans-serif;

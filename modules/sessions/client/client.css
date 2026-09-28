@@ -82,6 +82,15 @@
   color: var(--err);
 }
 
+/* --- Project colours: `s-p<n>` (tone.ts) sets them for everything inside ---- */
+
+.s-p1 { --project: var(--p1); --project-soft: var(--p1-soft); }
+.s-p2 { --project: var(--p2); --project-soft: var(--p2-soft); }
+.s-p3 { --project: var(--p3); --project-soft: var(--p3-soft); }
+.s-p4 { --project: var(--p4); --project-soft: var(--p4-soft); }
+.s-p5 { --project: var(--p5); --project-soft: var(--p5-soft); }
+.s-p6 { --project: var(--p6); --project-soft: var(--p6-soft); }
+
 /* --- The bar: the project, its state as a quiet tag, and the details under it -- */
 
 .s-title {
@@ -92,6 +101,19 @@
 
 .s-title h1 {
   min-width: 0;
+}
+
+/* The project's dot, before its name. Without a colour (no summary yet), no dot. */
+.s-title h1::before,
+.s-proj::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--project, transparent);
+  vertical-align: 0.1em;
 }
 
 .s-badge {
@@ -206,7 +228,7 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line);
   border-radius: var(--radius-16) var(--radius-16) var(--radius-6) var(--radius-16);
-  background: var(--chip-on);
+  background: var(--project-soft, var(--chip-on));
 }
 
 /* --- The agent's Markdown (markdown.tsx) -------------------------------- */
@@ -647,7 +669,12 @@
 }
 
 .s-item[aria-current='page'] {
-  background: var(--surface-2);
+  background: var(--project-soft, var(--surface-2));
+}
+
+.s-sect.s-proj {
+  color: var(--project);
+  font-weight: 600;
 }
 
 .s-asking {

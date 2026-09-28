@@ -17,6 +17,7 @@ import { history, type Waiting } from './history.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { sessionOf, type Pending } from './relevance.ts'
+import { toneClass } from './tone.ts'
 
 const REFRESH_MS = 5_000
 const TICK_MS = 1_000
@@ -81,7 +82,8 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
       {groups.length === 0 && query.trim() !== '' ? <p class="s-none">Nothing matches “{query.trim()}”.</p> : null}
       {groups.map((group) => (
         <section key={group.key}>
-          <h2 class="s-sect">{group.label}</h2>
+          {/* A project's name in its own colour, with its dot: the one place the list says whose it is. */}
+          <h2 class={group.key.startsWith('site:') ? `s-sect s-proj ${toneClass(group.label)}` : 's-sect'}>{group.label}</h2>
           {group.entries.map((entry) => {
             const asking = entry.detail !== undefined
             // Under its project the site would repeat; under Needs you and Running it says where.
@@ -91,7 +93,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
               <button
                 type="button"
                 key={entry.id}
-                class={`s-item${asking ? ' s-asking' : ''}`}
+                class={`s-item ${toneClass(entry.site)}${asking ? ' s-asking' : ''}`}
                 aria-current={rest === entry.id ? 'page' : undefined}
                 onClick={() => navigate(entry.id)}
               >
