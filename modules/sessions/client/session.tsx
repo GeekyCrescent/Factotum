@@ -88,7 +88,13 @@ export function Session({
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
         <Log events={events} running={running} asking={ask !== undefined} />
-        {running && events.length === 0 ? <p class="s-quiet dim-3">Starting the agent.</p> : null}
+        {/* Where the next line will appear, so the eye is already there. Not while it waits on the owner. */}
+        {running && ask === undefined ? (
+          <p class="s-working" role="status">
+            <Icon name="circle-notch" size={16} />
+            {events.length === 0 ? 'Starting the agent…' : 'Working…'}
+          </p>
+        ) : null}
         <div ref={end} />
       </div>
       <div class="s-dock">

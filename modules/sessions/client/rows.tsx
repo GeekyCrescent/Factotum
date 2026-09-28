@@ -12,6 +12,7 @@ import { fold, type Call, type Row } from './fold.ts'
 import { clock, stateLabel, toolArg } from './format.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
+import { Markdown } from './markdown.tsx'
 
 const GLYPHS: Readonly<Record<string, SessionIcon>> = {
   Read: 'file-text',
@@ -35,11 +36,14 @@ export function Log({
   readonly running: boolean
   readonly asking: boolean
 }) {
+  const rows = fold(events)
+  // The prompt comes before it, so "first" is the first state, not the first row.
+  const start = rows.findIndex((row) => row.kind === 'state')
   return (
     <ol class="s-log">
-      {fold(events).map((row, index) =>
+      {rows.map((row, index) =>
         // A session starts running: saying so first is noise. Running again later is a resume.
-        row.kind === 'state' && row.state === 'running' && index === 0 ? null : (
+        row.kind === 'state' && row.state === 'running' && index === start ? null : (
           <LogRow key={row.seq} row={row} running={running} asking={asking} />
         ),
       )}
@@ -53,7 +57,14 @@ function LogRow({ row, running, asking }: { readonly row: Row; readonly running:
       return (
         <li class={row.role === 'user' ? 's-row s-user' : 's-row s-said'}>
           <span class="s-gut" />
-          <div class="s-msg">{row.text}</div>
+          {/* The owner's words are shown as typed; the agent's are Markdown. */}
+          {row.role === 'user' ? (
+            <div class="s-msg">{row.text}</div>
+          ) : (
+            <div class="s-msg s-md">
+              <Markdown text={row.text} />
+            </div>
+          )}
         </li>
       )
     case 'call':

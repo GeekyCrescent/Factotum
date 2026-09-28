@@ -330,6 +330,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
           text: `launched over a freshness warning: ${describeFreshness(report)}`,
         })
       }
+      // The prompt goes into the log the same way a reply does, or the thread opens on an answer.
+      // A catalog entry can launch with no text, and an empty bubble says nothing.
+      if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })
 
       const running = spawnFor(sessionId, site, entry.invoke, input.text, settingsPath, false)
       await store.patchMeta(sessionId, (current) => ({ ...current, agentPid: running.run.pid }))

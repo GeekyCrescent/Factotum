@@ -34,9 +34,30 @@
   display: none;
 }
 
-.s-quiet {
-  padding: var(--space-3) var(--space-4);
+/* The session is working: at the end of the log, where the next line will land. */
+.s-working {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  padding: var(--space-1h) var(--space-4) var(--space-1h) var(--space-2);
+  color: var(--accent-text);
   font-size: var(--text-small);
+}
+
+.s-working svg {
+  justify-self: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .s-working svg {
+    animation: s-spin 0.9s linear infinite;
+  }
+}
+
+@keyframes s-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .s-state-running {
@@ -118,6 +139,105 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-10);
   background: var(--surface);
+}
+
+/* --- The agent's Markdown (markdown.tsx) -------------------------------- */
+
+.s-md {
+  white-space: normal;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.s-md > *,
+.s-md li > ul,
+.s-md li > ol {
+  margin: 0;
+}
+
+.s-md p,
+.s-md li {
+  white-space: pre-line;
+}
+
+.s-md :is(h3, h4, h5, h6) {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.s-md h3 {
+  font-size: var(--text-heading);
+}
+
+.s-md :is(ul, ol) {
+  padding-left: var(--space-5);
+}
+
+.s-md li + li {
+  margin-top: var(--space-1);
+}
+
+.s-md code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-6);
+  background: var(--surface-2);
+  font-size: var(--text-mono);
+  overflow-wrap: anywhere;
+}
+
+.s-md pre {
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  white-space: pre;
+}
+
+.s-md pre code {
+  padding: 0;
+  background: none;
+  overflow-wrap: normal;
+}
+
+.s-md blockquote {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+}
+
+.s-md hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.s-md a {
+  color: var(--accent-text);
+  text-underline-offset: 2px;
+}
+
+.s-md-table {
+  overflow-x: auto;
+}
+
+.s-md table {
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+
+.s-md :is(th, td) {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.s-md th {
+  background: var(--surface);
+  font-weight: 600;
 }
 
 .s-tool {

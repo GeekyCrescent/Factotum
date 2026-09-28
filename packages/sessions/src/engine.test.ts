@@ -133,6 +133,26 @@ test('a launch starts a session, writes its meta and records the agent process g
   assert.equal((await engine.read(id, 0)).state, 'finished')
 })
 
+test('the prompt that launched a session is the first thing in its log, like a reply is', async () => {
+  const { engine } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await settle(engine, id)
+
+  const first = (await engine.read(id, 0)).events[0]
+  assert.deepEqual(first?.kind === 'message' ? [first.role, first.text] : [], ['user', QUICK])
+})
+
+test('a launch with no text writes no empty message', async () => {
+  const { engine } = await world()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: '  ', force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await settle(engine, id)
+
+  const said = (await engine.read(id, 0)).events.filter((e) => e.kind === 'message' && e.role === 'user')
+  assert.deepEqual(said, [])
+})
+
 async function settle(engine: SessionEngine, id: string): Promise<void> {
   const deadline = Date.now() + 15_000
   for (;;) {
@@ -712,9 +732,10 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
   const id = forced.outcome === 'started' ? forced.sessionId : ''
   await settle(engine, id)
 
-  // And the report is the first thing in the log, so the decision is recoverable.
-  const first = (await engine.read(id, 0)).events[0]
+  // And the report is the first thing in the log, so the decision is recoverable; the prompt follows.
+  const [first, second] = (await engine.read(id, 0)).events
   assert.match(first?.kind === 'message' ? first.text : '', /launched over a freshness warning/)
+  assert.equal(second?.kind === 'message' ? second.text : '', QUICK)
 })
 
 test('a refused stale launch does not keep the lock', async () => {
