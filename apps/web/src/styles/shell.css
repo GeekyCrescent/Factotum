@@ -71,25 +71,25 @@
   letter-spacing: -0.03em;
 }
 
-/* The app's icon, small: a tile of the accent with the prompt in its label colour. */
+/* The app's icon, small: an ink tile (black by day, white by night), the prompt in the page's colour, the cursor in the accent. */
 .drawer .mark {
   flex: none;
 }
 
 .drawer .mark rect:first-child {
-  fill: var(--accent);
+  fill: var(--text);
 }
 
 .drawer .mark path {
   fill: none;
-  stroke: var(--on-accent);
+  stroke: var(--bg);
   stroke-width: 2.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .drawer .mark .cursor {
-  fill: var(--on-accent);
+  fill: var(--accent-text);
 }
 
 .drawer .sections {

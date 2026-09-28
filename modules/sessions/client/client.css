@@ -641,7 +641,7 @@
   font-size: var(--text-small);
 }
 
-/* The drawer's one primary action: filled with the accent, the label in its colour. */
+/* The drawer's one primary action, in ink: black with white by day, white with black by night. */
 .s-new {
   width: calc(100% - var(--space-2));
   min-height: var(--hit);
@@ -652,8 +652,8 @@
   gap: var(--space-2);
   border: 0;
   border-radius: var(--radius-10);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--text);
+  color: var(--bg);
   font-weight: 600;
   transition-property: transform, filter;
   transition-duration: var(--dur-press);
@@ -661,7 +661,7 @@
 }
 
 .s-new:hover {
-  filter: brightness(1.08);
+  filter: opacity(0.88);
 }
 
 .s-new:active {
