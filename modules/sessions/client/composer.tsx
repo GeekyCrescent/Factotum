@@ -14,6 +14,9 @@ import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 
+/** The same question whether it starts a session or carries one on. */
+const ASK_WHAT = 'What do you want to do in this project?'
+
 type Problem =
   | { readonly kind: 'conflict'; readonly conflict: Conflict }
   | { readonly kind: 'stale'; readonly freshness: Freshness }
@@ -117,7 +120,7 @@ export function LaunchComposer({
       <Box
         text={s.text}
         setText={s.setText}
-        placeholder="What should it do?"
+        placeholder={ASK_WHAT}
         label="Launch"
         canSend={!s.busy && s.text.trim() !== '' && entryId !== ''}
         send={() => void s.go(false)}
@@ -152,13 +155,11 @@ export function LaunchComposer({
 export function ReplyComposer({
   api,
   sessionId,
-  siteId,
   onSent,
   goTo,
 }: {
   readonly api: Api
   readonly sessionId: string
-  readonly siteId: string | undefined
   readonly onSent: () => void
   readonly goTo: (sessionId: string) => void
 }) {
@@ -182,7 +183,7 @@ export function ReplyComposer({
       <Box
         text={s.text}
         setText={s.setText}
-        placeholder={siteId === undefined ? 'Reply' : `Reply in ${siteId}`}
+        placeholder={ASK_WHAT}
         label="Reply"
         canSend={!s.busy && s.text.trim() !== ''}
         send={() => void s.go(false)}
@@ -220,7 +221,7 @@ function Box({
       }}
     >
       <textarea
-        rows={1}
+        rows={2}
         value={text}
         placeholder={placeholder}
         aria-label={placeholder}

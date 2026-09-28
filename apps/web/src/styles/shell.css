@@ -58,6 +58,10 @@
   justify-content: space-between;
 }
 
+.drawer .fold {
+  display: none;
+}
+
 .drawer .brand {
   font-weight: 600;
   font-size: var(--text-title);
@@ -113,7 +117,20 @@
 @media (min-width: 1024px) {
   .app {
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: 272px 1fr;
+  }
+
+  /* Folded away: the pane takes it all, and the ☰ in the bar brings it back. */
+  .app[data-rail='closed'] {
+    grid-template-columns: 1fr;
+  }
+
+  .app[data-rail='closed'] .drawer {
+    display: none;
+  }
+
+  .app[data-rail='closed'] .menu-button {
+    display: inline-grid;
   }
 
   .drawer,
@@ -132,9 +149,13 @@
     display: none;
   }
 
+  .drawer .fold {
+    display: inline-grid;
+  }
+
   /* The bars span the pane; what is read keeps to a column (--column), so lines stay short. */
   .app > .content {
-    --column: 40rem;
+    --column: 50rem;
     width: 100%;
     min-width: 0;
   }

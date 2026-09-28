@@ -1,6 +1,7 @@
 /**
  * The session's log: messages, tool calls with their results, and long runs of reading folded into
- * one row that opens on a tap (criteria 16, 17). `fold.ts` decides; this only paints.
+ * one row that opens on a tap (criteria 16, 17), and each turn's started/finished in one quiet row
+ * that opens too. `fold.ts` and `activity.ts` decide; this only paints.
  *
  * A FAILURE gets its own line for the message, so the tool's name and argument are never cut to
  * make room for the error (criterion 17).
@@ -8,8 +9,9 @@
 
 import { useState } from 'preact/hooks'
 import type { SessionEvent } from '../types.ts'
-import { fold, type Call, type Row } from './fold.ts'
-import { clock, stateLabel, toolArg } from './format.ts'
+import { activity, type Activity, type Shown } from './activity.ts'
+import { fold, type Call } from './fold.ts'
+import { clock, toolArg } from './format.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { Markdown } from './markdown.tsx'
@@ -36,52 +38,64 @@ export function Log({
   readonly running: boolean
   readonly asking: boolean
 }) {
-  const rows = fold(events)
-  // The prompt comes before it, so "first" is the first state, not the first row.
-  const start = rows.findIndex((row) => row.kind === 'state')
   return (
     <ol class="s-log">
-      {rows.map((row, index) =>
-        // A session starts running: saying so first is noise. Running again later is a resume.
-        row.kind === 'state' && row.state === 'running' && index === start ? null : (
-          <LogRow key={row.seq} row={row} running={running} asking={asking} />
-        ),
-      )}
+      {activity(fold(events)).map((row) => (
+        <LogRow key={row.seq} row={row} running={running} asking={asking} />
+      ))}
     </ol>
   )
 }
 
-function LogRow({ row, running, asking }: { readonly row: Row; readonly running: boolean; readonly asking: boolean }) {
+function LogRow({ row, running, asking }: { readonly row: Shown; readonly running: boolean; readonly asking: boolean }) {
   switch (row.kind) {
     case 'message':
-      return (
-        <li class={row.role === 'user' ? 's-row s-user' : 's-row s-said'}>
+      // The owner's words: a bubble on the right, as typed. The agent's: the page itself, as Markdown.
+      return row.role === 'user' ? (
+        <li class="s-user">
+          <div class="s-msg">{row.text}</div>
+        </li>
+      ) : (
+        <li class="s-row s-said">
           <span class="s-gut" />
-          {/* The owner's words are shown as typed; the agent's are Markdown. */}
-          {row.role === 'user' ? (
-            <div class="s-msg">{row.text}</div>
-          ) : (
-            <div class="s-msg s-md">
-              <Markdown text={row.text} />
-            </div>
-          )}
+          <div class="s-msg s-md">
+            <Markdown text={row.text} />
+          </div>
         </li>
       )
     case 'call':
       return <CallRow call={row} running={running} asking={asking} />
     case 'fold':
       return <FoldRow calls={row.calls} names={row.names} running={running} />
-    case 'state':
-      return (
-        <li class="s-end">
-          <span>
-            {row.state === 'running' ? 'Resumed' : stateLabel(row.state)}
-            {row.reason === undefined ? '' : `: ${row.reason}`}
-            {clock(row.at) === '' ? '' : ` at ${clock(row.at)}`}
-          </span>
-        </li>
-      )
+    case 'activity':
+      return <ActivityRow row={row} />
   }
+}
+
+/** A turn's history, closed to one quiet line: how it ended and when. */
+function ActivityRow({ row }: { readonly row: Activity }) {
+  const [open, setOpen] = useState(false)
+  const when = clock(row.at)
+  return (
+    <li class={`s-activity s-activity-${row.tone}`}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? 'caret-down' : 'caret-right'} size={12} />
+        {row.summary}
+        {when === '' ? '' : ` · ${when}`}
+      </button>
+      {open ? (
+        <ol>
+          {row.entries.map((entry, i) => (
+            <li key={i}>
+              <span class="num">{clock(entry.at)}</span>
+              {entry.label}
+              {entry.reason === undefined ? '' : `: ${entry.reason}`}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </li>
+  )
 }
 
 function CallRow({ call, running, asking = false }: { readonly call: Call; readonly running: boolean; readonly asking?: boolean }) {

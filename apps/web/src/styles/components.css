@@ -276,19 +276,17 @@
 /* --- Composer ------------------------------------------------------------ */
 
 /*
- * One pill: the text on the left, the controls on the right, all on one line while it fits. The
- * text grows up to 40dvh and the controls stay on its last line; on a narrow screen with pickers,
- * they wrap under it. The radius is half the one-line height, so one line is a true pill.
+ * A rounded box: the text on top, two lines to begin with, growing up to 40dvh; the controls on
+ * the line under it, pickers on the left and send on the right, always in view.
  */
 .composer {
-  min-height: calc(var(--hit) + 2 * var(--space-2));
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  padding: var(--space-2h) var(--space-2) var(--space-2) var(--space-2);
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--space-1) var(--space-1h);
-  border: 1px solid var(--line);
-  border-radius: calc(var(--hit) / 2 + var(--space-2));
+  border: 1px solid var(--line-strong);
+  border-radius: calc(var(--hit) / 2 + var(--space-1));
   background: var(--surface);
   transition-property: border-color, box-shadow;
   transition-duration: var(--dur-press);
@@ -296,17 +294,16 @@
 }
 
 .composer:focus-within {
-  border-color: var(--line-strong);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
 
 .composer textarea {
-  flex: 1 1 12rem;
+  flex-basis: 100%;
   min-width: 0;
-  min-height: var(--hit);
+  min-height: 3em;
   max-height: 40dvh;
-  /* One line of text, centred on the send button beside it. */
-  padding-block: calc((var(--hit) - 1.5em) / 2);
+  padding: 0 var(--space-2);
   resize: none;
   border: 0;
   outline: 0;
@@ -327,16 +324,6 @@
 
 .composer textarea::placeholder {
   color: var(--text-3);
-}
-
-/* With pickers, the text takes the first line and the controls share the second, never split. */
-.composer:has(.chip) {
-  padding-left: var(--space-2);
-}
-
-.composer:has(.chip) textarea {
-  flex-basis: 100%;
-  padding-inline: var(--space-2);
 }
 
 /* A picker inside the pill reads as a quiet label with a caret, not a second box. */
@@ -363,14 +350,14 @@
   place-items: center;
   background: var(--accent);
   color: var(--on-accent);
-  transition-property: transform, background-color;
+  transition-property: transform, background-color, opacity;
   transition-duration: var(--dur-press);
   transition-timing-function: var(--ease-out);
 }
 
+/* Still the accent while there is nothing to send, only fainter: where to send is never in doubt. */
 .composer .send:disabled {
-  background: none;
-  color: var(--text-3);
+  opacity: 0.45;
 }
 
 .composer .send:active:not(:disabled) {

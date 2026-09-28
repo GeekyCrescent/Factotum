@@ -6,7 +6,8 @@
  * stays at the foot, dimmed, with its reason. The shell knows none of them by name.
  *
  * Choosing anything REPLACES the drawer's history entry (design D4), so Back goes to where you
- * were, with the drawer closed. At ≥1024 px the drawer is always there; CSS decides, not this.
+ * were, with the drawer closed. At ≥1024 px the drawer is always there unless the owner folded it
+ * away; CSS decides, from the shell's `data-rail`, not this.
  */
 
 import { useEffect, useRef } from 'preact/hooks'
@@ -24,10 +25,12 @@ export interface DrawerProps {
   readonly screen: Screen
   readonly pending: readonly Pending[]
   readonly onClose: () => void
+  /** Folds the always-there sidebar of a wide screen away. */
+  readonly onFold: () => void
   readonly select: (path: string) => void
 }
 
-export function Drawer({ open, modules, screen, pending, onClose, select }: DrawerProps) {
+export function Drawer({ open, modules, screen, pending, onClose, onFold, select }: DrawerProps) {
   const close = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -51,6 +54,10 @@ export function Drawer({ open, modules, screen, pending, onClose, select }: Draw
       <aside class="drawer" data-open={open ? 'true' : 'false'} aria-label="Navigation">
         <div class="head">
           <span class="brand">factotum</span>
+          {/* Wide screens only (CSS): fold the sidebar away. On a phone it is ✕, which closes it. */}
+          <button type="button" class="icon-btn fold" aria-label="Collapse sidebar" onClick={onFold}>
+            <Icon name="sidebar-simple" />
+          </button>
           <button type="button" ref={close} class="icon-btn close" aria-label="Close menu" onClick={onClose}>
             <Icon name="x" />
           </button>

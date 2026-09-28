@@ -15,7 +15,8 @@ import { AskPanel, useAsk } from './ask-panel.tsx'
 import { ReplyComposer } from './composer.tsx'
 import type { Api, ViewProps } from './contract.ts'
 import { messageOf } from './errors.ts'
-import { duration, stateLabel } from './format.ts'
+import { Details } from './details.tsx'
+import { stateLabel } from './format.ts'
 import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
 import { MenuButton, Strip } from './bars.tsx'
@@ -41,8 +42,8 @@ export function Session({
   const { api } = view
   const { events, state, error, restart } = useEvents(api, id, onChanged)
   const [cancelError, setCancelError] = useState<string | undefined>(undefined)
+  const [showDetails, setShowDetails] = useState(false)
   const running = state === 'running'
-  const entry = setup.catalog.find((e) => e.id === summary?.entryId)
   const other = view.pending.find((p) => sessionOf(p) !== undefined && sessionOf(p) !== id)
   // Held after its pending is resolved: the answer stays where the buttons were (design D6).
   const held = useRef<AskRef | undefined>(undefined)
@@ -67,14 +68,19 @@ export function Session({
     <div class="s-screen">
       <header class="topbar">
         <MenuButton pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
-        <div class="title">
+        <div class="title s-title">
           <h1>{summary?.siteId ?? id.slice(0, 8)}</h1>
-          <p>
-            <span class={`s-state-${state}`}>{stateLabel(state)}</span>
-            {entry === undefined ? '' : ` · ${entry.label}`}
-            {summary === undefined ? '' : ` · ${duration(summary.startedAt, summary.endedAt, Date.now())}`}
-          </p>
+          <span class={`s-badge s-state-${state}`}>{stateLabel(state)}</span>
         </div>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="Details"
+          aria-expanded={showDetails}
+          onClick={() => setShowDetails(!showDetails)}
+        >
+          <Icon name="info" />
+        </button>
         {running ? (
           <button type="button" class="btn" onClick={() => void cancel()}>
             Cancel
@@ -85,6 +91,7 @@ export function Session({
           </button>
         )}
       </header>
+      {showDetails ? <Details id={id} summary={summary} setup={setup} now={Date.now()} /> : null}
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
         <Log events={events} running={running} asking={ask !== undefined} />
@@ -111,7 +118,6 @@ export function Session({
           <ReplyComposer
             api={api}
             sessionId={id}
-            siteId={summary?.siteId}
             onSent={restart}
             goTo={(to) => view.navigate(to)}
           />

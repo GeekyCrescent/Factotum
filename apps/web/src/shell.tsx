@@ -28,6 +28,9 @@ import { useRoute, type Route } from './use-route.ts'
 
 const STARTING_RETRY_MS = 500
 const DRAWER = 'drawer'
+/** Where the sidebar stays (shell.css says the same width). */
+const WIDE = '(min-width: 1024px)'
+const RAIL_KEY = 'factotum.rail'
 
 export function Shell({ initialSearch }: { readonly initialSearch: string }) {
   const route = useRoute(initialSearch)
@@ -43,17 +46,24 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
     if (target !== undefined) land(pathOf({ kind: 'module', id: target, rest: '' }))
   }, [target, land])
 
-  const openDrawer = useCallback(() => openOverlay(DRAWER), [openOverlay])
+  const rail = useRail()
+  const { open: railOpen, setOpen: setRailOpen } = rail
+  // The same ☰ everywhere: on a wide screen with the sidebar folded it unfolds it; otherwise it opens the drawer.
+  const openDrawer = useCallback(() => {
+    if (!railOpen && window.matchMedia(WIDE).matches) setRailOpen(true)
+    else openOverlay(DRAWER)
+  }, [railOpen, setRailOpen, openOverlay])
   const bar = (title: string) => <FallbackBar title={title} pendingTotal={pendings.all.length} onMenu={openDrawer} />
 
   return (
-    <div class="app">
+    <div class="app" data-rail={railOpen ? 'open' : 'closed'}>
       <Drawer
         open={route.overlay === DRAWER}
         modules={modules}
         screen={route.screen}
         pending={pendings.all}
         onClose={closeOverlay}
+        onFold={() => setRailOpen(false)}
         select={route.go}
       />
       <main class="content">
@@ -232,6 +242,33 @@ function Page({
       </CenterState>
     </>
   )
+}
+
+/** Whether the wide screen's sidebar is out, remembered on this device across visits. */
+function useRail(): { readonly open: boolean; readonly setOpen: (open: boolean) => void } {
+  const [open, setState] = useState(() => readRail() !== 'closed')
+  const setOpen = useCallback((next: boolean) => {
+    setState(next)
+    writeRail(next ? 'open' : 'closed')
+  }, [])
+  return { open, setOpen }
+}
+
+// Storage can be off (private mode, a locked-down browser): then the sidebar just starts open.
+function readRail(): string | null {
+  try {
+    return window.localStorage.getItem(RAIL_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeRail(value: string): void {
+  try {
+    window.localStorage.setItem(RAIL_KEY, value)
+  } catch {
+    // Not remembered; it still folds for this visit.
+  }
 }
 
 /** `/modules`, retried while the daemon is starting: a state it leaves on its own, unlike an error. */

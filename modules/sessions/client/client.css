@@ -39,7 +39,7 @@
   .s-body > *,
   .s-dock > * {
     width: 100%;
-    max-width: var(--column, 40rem);
+    max-width: var(--column, 50rem);
     margin-inline: auto;
   }
 }
@@ -80,6 +80,56 @@
 
 .s-state-failed {
   color: var(--err);
+}
+
+/* --- The bar: the project, its state as a quiet tag, and the details under it -- */
+
+.s-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.s-title h1 {
+  min-width: 0;
+}
+
+.s-badge {
+  flex: none;
+  padding: 1px var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-6);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+
+.s-state-cancelled {
+  color: var(--text-3);
+}
+
+/* Held under the bar, so it opens where the owner is looking, however far down the log is. */
+.s-details {
+  position: sticky;
+  top: 56px;
+  z-index: 9;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: var(--text-small);
+}
+
+.s-details dt {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* --- The strip: another session is waiting ------------------------------ */
@@ -144,11 +194,19 @@
   text-wrap: pretty;
 }
 
+/* The owner's words: a bubble on the right, tinted, apart from the agent's page on the left. */
+.s-user {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
+}
+
 .s-user .s-msg {
+  max-width: 85%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  background: var(--surface);
+  border-radius: var(--radius-16) var(--radius-16) var(--radius-6) var(--radius-16);
+  background: var(--chip-on);
 }
 
 /* --- The agent's Markdown (markdown.tsx) -------------------------------- */
@@ -360,21 +418,43 @@
   font-weight: 500;
 }
 
-.s-end {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2h);
-  padding: var(--space-3) var(--space-4);
+/* A turn's history: one quiet line under the answer, that opens to the times. */
+.s-activity {
+  padding: 0 var(--space-4) var(--space-2) calc(var(--space-2) + 40px);
   color: var(--text-3);
   font-size: var(--text-caption);
 }
 
-.s-end::before,
-.s-end::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--line);
+.s-activity button {
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: inherit;
+}
+
+.s-activity button:hover {
+  background: var(--surface-2);
+}
+
+.s-activity-failed button {
+  color: var(--err);
+}
+
+.s-activity ol {
+  margin: 0;
+  padding: var(--space-1) 0 0 var(--space-4);
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+
+.s-activity .num {
+  margin-right: var(--space-2);
 }
 
 /* --- The composer's pickers --------------------------------------------- */
@@ -498,6 +578,38 @@
 
 /* --- The drawer's sections ---------------------------------------------- */
 
+.s-search {
+  min-height: var(--hit);
+  margin: 0 var(--space-1) var(--space-1);
+  padding: 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.s-search:focus-within {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-small);
+}
+
+.s-none {
+  padding: var(--space-3) var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
 .s-new {
   width: calc(100% - var(--space-2));
   min-height: var(--hit);
@@ -569,6 +681,9 @@
 
 .s-item-text b {
   display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 500;
 }
 
