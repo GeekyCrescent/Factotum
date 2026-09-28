@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import type { SessionPage, SessionState, SessionSummary } from '../types.ts'
 import type { DrawerProps } from './contract.ts'
 import { ago } from './format.ts'
-import { history, type Waiting } from './history.ts'
+import { history, type Group, type Waiting } from './history.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { sessionOf, type Pending } from './relevance.ts'
@@ -21,6 +21,7 @@ import { toneClass } from './tone.ts'
 
 const REFRESH_MS = 5_000
 const TICK_MS = 1_000
+const FOLDED_KEY = 'factotum.sessions.folded'
 
 const GLYPH: Readonly<Record<SessionState, SessionIcon>> = {
   running: 'circle-notch',
@@ -63,6 +64,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
 
   const now = Date.now()
   const groups = history(sessions, waitingOf(pending), query)
+  const { folded, toggle } = useFolded()
   return (
     <div class="s-drawer" ref={root}>
       <button type="button" class="s-new" onClick={() => navigate('new')}>
@@ -80,37 +82,118 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
         />
       </label>
       {groups.length === 0 && query.trim() !== '' ? <p class="s-none">Nothing matches “{query.trim()}”.</p> : null}
-      {groups.map((group) => (
-        <section key={group.key}>
-          {/* A project's name in its own colour, with its dot: the one place the list says whose it is. */}
-          <h2 class={group.key.startsWith('site:') ? `s-sect s-proj ${toneClass(group.label)}` : 's-sect'}>{group.label}</h2>
-          {group.entries.map((entry) => {
-            const asking = entry.detail !== undefined
-            // Under its project the site would repeat; under Needs you and Running it says where.
-            const where = group.key.startsWith('site:') ? '' : `${entry.site} · `
-            const when = entry.startedAt === undefined ? '' : ago(entry.startedAt, now)
-            return (
-              <button
-                type="button"
-                key={entry.id}
-                class={`s-item ${toneClass(entry.site)}${asking ? ' s-asking' : ''}`}
-                aria-current={rest === entry.id ? 'page' : undefined}
-                onClick={() => navigate(entry.id)}
-              >
-                <span class={`s-g s-g-${asking ? 'ask' : entry.state}`}>
-                  <Icon name={asking ? 'hand' : GLYPH[entry.state]} size={18} />
-                </span>
-                <span class="s-item-text">
-                  <b>{entry.title}</b>
-                  <small class={asking ? 'mono' : undefined}>{asking ? `${where}${entry.detail}` : `${where}${when}`}</small>
-                </span>
-              </button>
-            )
-          })}
-        </section>
-      ))}
+      {groups.map((group) =>
+        group.key.startsWith('site:') ? (
+          <Project
+            key={group.key}
+            group={group}
+            // A search shows every match: a folded project would hide the very thing looked for.
+            folded={query.trim() === '' && folded.has(group.label)}
+            onToggle={() => toggle(group.label)}
+            rest={rest}
+            navigate={navigate}
+          />
+        ) : (
+          <section key={group.key}>
+            <h2 class="s-sect">{group.label}</h2>
+            {group.entries.map((entry) => {
+              const asking = entry.detail !== undefined
+              const when = entry.startedAt === undefined ? '' : ago(entry.startedAt, now)
+              return (
+                <button
+                  type="button"
+                  key={entry.id}
+                  class={`s-item ${toneClass(entry.site)}${asking ? ' s-asking' : ''}`}
+                  aria-current={rest === entry.id ? 'page' : undefined}
+                  onClick={() => navigate(entry.id)}
+                >
+                  <span class={`s-g s-g-${asking ? 'ask' : entry.state}`}>
+                    <Icon name={asking ? 'hand' : GLYPH[entry.state]} size={18} />
+                  </span>
+                  <span class="s-item-text">
+                    <b>{entry.title}</b>
+                    <small class={asking ? 'mono' : undefined}>{`${entry.site} · ${asking ? entry.detail : when}`}</small>
+                  </span>
+                </button>
+              )
+            })}
+          </section>
+        ),
+      )}
     </div>
   )
+}
+
+/**
+ * One project, the way a chat app lists them: its folder in its colour and its name, a tap to fold
+ * it, and under it one line per conversation. Only what went wrong gets a mark; the rest is a title.
+ */
+function Project({
+  group,
+  folded,
+  onToggle,
+  rest,
+  navigate,
+}: {
+  readonly group: Group
+  readonly folded: boolean
+  readonly onToggle: () => void
+  readonly rest: string
+  readonly navigate: (rest: string) => void
+}) {
+  return (
+    <section class={`s-project ${toneClass(group.label)}`}>
+      <button type="button" class="s-project-head" aria-expanded={!folded} onClick={onToggle}>
+        <Icon name="folder-simple" size={18} />
+        <span class="s-project-name">{group.label}</span>
+        <Icon name={folded ? 'caret-right' : 'caret-down'} size={12} />
+      </button>
+      {folded
+        ? null
+        : group.entries.map((entry) => (
+            <button
+              type="button"
+              key={entry.id}
+              class="s-conv"
+              aria-current={rest === entry.id ? 'page' : undefined}
+              onClick={() => navigate(entry.id)}
+            >
+              <span class="s-conv-title">{entry.title}</span>
+              {entry.state === 'failed' ? <Icon name="x-circle" size={14} /> : null}
+            </button>
+          ))}
+    </section>
+  )
+}
+
+/** Which projects the owner folded, remembered on this device. Storage off: they start open. */
+function useFolded(): { readonly folded: ReadonlySet<string>; readonly toggle: (site: string) => void } {
+  const [folded, setFolded] = useState<ReadonlySet<string>>(readFolded)
+  const toggle = (site: string) => {
+    const next = new Set(folded)
+    if (next.has(site)) next.delete(site)
+    else next.add(site)
+    setFolded(next)
+    writeFolded(next)
+  }
+  return { folded, toggle }
+}
+
+function readFolded(): ReadonlySet<string> {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(FOLDED_KEY) ?? '[]')
+    return new Set(Array.isArray(stored) ? stored.filter((site): site is string => typeof site === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeFolded(folded: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(FOLDED_KEY, JSON.stringify([...folded]))
+  } catch {
+    // Not remembered; it still folds for this visit.
+  }
 }
 
 /** The first pending per session, with the site and what it asks for as the notice carried them. */

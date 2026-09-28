@@ -104,8 +104,7 @@
 }
 
 /* The project's dot, before its name. Without a colour (no summary yet), no dot. */
-.s-title h1::before,
-.s-proj::before {
+.s-title h1::before {
   content: '';
   display: inline-block;
   width: 8px;
@@ -672,9 +671,79 @@
   background: var(--project-soft, var(--surface-2));
 }
 
-.s-sect.s-proj {
+/* A project: its folder in its colour, its name, a caret; the conversations under it, one line each. */
+.s-project {
+  margin-top: var(--space-2);
+}
+
+.s-project-head {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font-weight: 500;
+  text-align: left;
+}
+
+.s-project-head:hover,
+.s-conv:hover {
+  background: var(--surface-2);
+}
+
+.s-project-head > .icon:first-child {
   color: var(--project);
-  font-weight: 600;
+}
+
+.s-project-head > .icon:last-child {
+  color: var(--text-3);
+}
+
+.s-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-conv {
+  width: 100%;
+  min-height: 40px;
+  /* Under the project's name, not under its folder. */
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + 18px + var(--space-2h));
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text-2);
+  text-align: left;
+}
+
+.s-conv[aria-current='page'] {
+  background: var(--project-soft, var(--surface-2));
+  color: var(--text);
+  font-weight: 500;
+}
+
+.s-conv-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-conv > .icon {
+  flex: none;
+  color: var(--err);
 }
 
 .s-asking {
