@@ -128,6 +128,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
 /**
  * One project, the way a chat app lists them: its folder in its colour and its name, a tap to fold
  * it, and under it one line per conversation: its title and its date, and a mark only when it failed.
+ * Folded, it keeps only the conversation open on screen.
  */
 function Project({
   group,
@@ -151,9 +152,8 @@ function Project({
         <span class="s-project-name">{group.label}</span>
         <Icon name={folded ? 'caret-right' : 'caret-down'} size={12} />
       </button>
-      {folded
-        ? null
-        : group.entries.map((entry) => (
+      {/* Folded, it still shows the conversation that is open: where you are never disappears. */}
+      {(folded ? group.entries.filter((entry) => entry.id === rest) : group.entries).map((entry) => (
             <button
               type="button"
               key={entry.id}
