@@ -44,3 +44,17 @@ test('a path that climbs out of the root cannot reach a file next to it', async 
     assert.notEqual(file?.body.toString(), 'do not serve me', `${path} must not escape`)
   }
 })
+
+test('a font is served as font/woff2, not as octet-stream', async () => {
+  const { root, serve } = await site()
+  await writeFile(join(root, 'assets', 'Geist.woff2'), 'wOF2', 'utf8')
+  assert.equal((await serve('/assets/Geist.woff2'))?.type, 'font/woff2')
+})
+
+test('only what lives under assets/ is immutable; the shell, the fallback and the root files are not', async () => {
+  const { serve } = await site()
+  assert.equal((await serve('/assets/app.js'))?.immutable, true)
+  assert.equal((await serve('/'))?.immutable, false)
+  assert.equal((await serve('/manifest.json'))?.immutable, false)
+  assert.equal((await serve('/m/sessions/abc'))?.immutable, false, 'the SPA fallback is index.html, never cacheable')
+})

@@ -119,6 +119,8 @@ export interface SessionSummary {
   readonly endedAt: string | undefined
   readonly reason: string | undefined
   readonly turns: number
+  /** The first prompt, cut. `undefined` for a session from before the field existed. */
+  readonly prompt: string | undefined
 }
 
 export interface Page {
@@ -150,6 +152,30 @@ export type AnswerResult =
   /** Answered before. Idempotent, not an error: a service worker may retry. */
   | { readonly kind: 'already' }
   | { readonly kind: 'expired' }
+  | { readonly kind: 'unknown' }
+
+/** What an ask is about to write, cut to what the panel shows. `null` fields, never undefined: JSON. */
+export interface AskPreview {
+  readonly head: string
+  readonly tail: string
+  readonly total: number
+  readonly edits: number | null
+}
+
+/**
+ * One ask, as seen by someone who HOLDS ITS TOKEN — never a list. `settled` covers answered and
+ * expired alike: reading cannot tell them apart and does not need to.
+ */
+export type InspectResult =
+  | {
+      readonly kind: 'pending'
+      readonly sessionId: string
+      readonly toolName: string
+      readonly target: string
+      readonly preview: AskPreview | null
+      readonly deadlineAt: string
+    }
+  | { readonly kind: 'settled' }
   | { readonly kind: 'unknown' }
 
 export type Decision = 'allow' | 'deny' | 'ask'
@@ -190,6 +216,8 @@ export interface SessionEngine {
    * syntax, like every member here.
    */
   readonly answer: (askId: string, decision: 'allow' | 'deny') => Promise<AnswerResult>
+  /** One ask by its token, for the approval panel (spec D8). A property, like every member here. */
+  readonly inspect: (askId: string) => Promise<InspectResult>
   readonly reconcile: () => Promise<void>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>

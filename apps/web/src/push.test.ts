@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { base64urlToBytes, enablePush, readPushState, type PushApi, type PushEnvironment } from './push.ts'
+import { base64urlToBytes, enablePush, readPushState, resubscribe, type PushApi, type PushEnvironment } from './push.ts'
 
 // ---------------------------------------------------------------------------
 // base64url → bytes: the line everybody writes wrong
@@ -198,4 +198,36 @@ test('enablePush NEVER throws — a failure is a state, like main.tsx does with 
 
   assert.equal(result.state.kind, 'off')
   assert.match(result.error ?? '', /boom/)
+})
+
+// ---------------------------------------------------------------------------
+// resubscribe — silent, at start (design D12)
+// ---------------------------------------------------------------------------
+
+test('RESUBSCRIBING NEVER ASKS and never creates: without a granted permission and a subscription, it does nothing', async () => {
+  const asked: string[] = []
+  const noPermission = browser({})
+  const env = { ...noPermission.env, requestPermission: async () => (asked.push('asked'), 'granted' as const) }
+  const a = api()
+
+  assert.equal(await resubscribe(a.value, env), undefined)
+  assert.equal(await resubscribe(a.value, browser({ permission: 'granted' }).env), undefined, 'granted but no subscription')
+  assert.deepEqual(asked, [])
+  assert.equal(a.posted.length, 0)
+})
+
+test('resubscribing re-posts the subscription this browser already has, and passes on what the daemon says', async () => {
+  const b = browser({ permission: 'granted', existingKey: KEY })
+  const a = api({ subscribe: { ok: true, count: 2, sameMachine: true } })
+
+  const result = await resubscribe(a.value, b.env)
+
+  assert.deepEqual(result, { state: { kind: 'on' }, count: 2, sameMachine: true })
+  assert.equal(a.posted.length, 1)
+  assert.deepEqual(b.subscribed, [], 'nothing new was created')
+})
+
+test('a daemon that does not say leaves sameMachine UNKNOWN, not false', async () => {
+  const result = await resubscribe(api({ subscribe: { ok: true, count: 1 } }).value, browser({ permission: 'granted', existingKey: KEY }).env)
+  assert.deepEqual(result, { state: { kind: 'on' }, count: 1 })
 })

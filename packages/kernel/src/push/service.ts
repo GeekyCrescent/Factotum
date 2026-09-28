@@ -53,7 +53,8 @@ export interface PushService {
   /** Never rejects. `moduleId` is bound by the registry; `null` is the daemon itself. */
   readonly send: (message: NotificationMessage, moduleId: string | null) => Promise<void>
   readonly publicKey: () => string | undefined
-  readonly subscribe: (subscription: Subscription) => Promise<SubscribeResult>
+  /** `sameMachine` is the kernel's reading of the request (design D12), stored with the device. */
+  readonly subscribe: (subscription: Subscription, origin: { readonly sameMachine: boolean }) => Promise<SubscribeResult>
   readonly count: () => number
   readonly reset: () => Promise<void>
   readonly status: () => PushStatus
@@ -116,7 +117,7 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
 
     publicKey: () => keys.publicKey,
 
-    subscribe: async (subscription) => {
+    subscribe: async (subscription, origin) => {
       const isNew = !store.has(subscription.endpoint)
       const before = store.all()
 
@@ -152,7 +153,8 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
         )
       }
 
-      await store.upsert(subscription)
+      // The same endpoint again updates what the kernel knows about it: the client re-posts at start.
+      await store.upsert({ ...subscription, sameMachine: origin.sameMachine })
       return { kind: 'subscribed', count: store.count() }
     },
 
@@ -187,7 +189,13 @@ export type PushInspection =
   /** Nothing yet. The daemon creates a pair on its next start. */
   | { readonly kind: 'no-keys' }
   | { readonly kind: 'unusable'; readonly reason: string }
-  | { readonly kind: 'ready'; readonly subscriptions: number; readonly warning: string | undefined }
+  | {
+      readonly kind: 'ready'
+      readonly subscriptions: number
+      /** How many of them a browser on this machine subscribed (design D12). */
+      readonly sameMachine: number
+      readonly warning: string | undefined
+    }
 
 /**
  * What `doctor` reports, READ-ONLY. Never creates a key, never rewrites a file. It prints no key
@@ -198,7 +206,8 @@ export async function inspectPush(dir: string): Promise<PushInspection> {
   if (keys.kind === 'missing') return { kind: 'no-keys' }
   if (keys.kind === 'unavailable') return { kind: 'unusable', reason: keys.reason }
   const { store, warning } = await SubscriptionStore.open(dir)
-  return { kind: 'ready', subscriptions: store.count(), warning }
+  const sameMachine = store.all().filter((s) => s.sameMachine === true).length
+  return { kind: 'ready', subscriptions: store.count(), sameMachine, warning }
 }
 
 /**

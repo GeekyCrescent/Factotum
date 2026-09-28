@@ -1,7 +1,11 @@
 // Small on purpose. It exists so the browser will offer to install, so the secure context is
-// provably real, and so the phone can be told something while the app is closed. Caching is the
-// client spec's problem: a service worker that caches the wrong thing is how a PWA becomes
-// unupdatable.
+// provably real, and so the phone can be told something while the app is closed. It caches
+// nothing: a service worker that caches the wrong thing is how a PWA becomes unupdatable.
+//
+// IT KEEPS ONE THING: what is PENDING (spec 2026-09-18, design D7). A notice with a deadline
+// (`message.until`) is stored in IndexedDB so the app can list it and answer it without the
+// notification. The window reads the same store (apps/web/src/pending-db.ts, which cannot be
+// imported here: if the schema changes on one side, it changes on the other).
 //
 // NO `fetch` HANDLER, and that is measured rather than assumed. Chrome 153 on Android
 // offered to install with this worker when it had only `install` and `activate` — a manifest
@@ -44,9 +48,67 @@ self.addEventListener('push', (event) => {
       }
       if (Array.isArray(message.actions)) options.actions = message.actions
       await self.registration.showNotification(title, options)
+      await keepPending(envelope.moduleId, message)
     })(),
   )
 })
+
+// AFTER the notification is drawn, so a store that fails never costs the owner the notice.
+// NO CONSOLE: the record may hold an ask token (ADR-0010); a failure means the pending does not
+// show in the app, and the notification is still the way to answer.
+async function keepPending(moduleId, message) {
+  const until = Date.parse(message.until)
+  if (typeof moduleId !== 'string' || typeof message.tag !== 'string' || !(until > Date.now())) return
+  try {
+    const store = self.pendingStore || indexedDbStore()
+    const settings = await store.settings()
+    const data = Object.assign({}, message.data)
+    // The token stays on the device ONLY when the daemon said this is not its machine. Unknown
+    // counts as its machine: the safe side (design D12).
+    if (settings.sameMachine !== false) delete data.askId
+    const path = typeof message.path === 'string' ? message.path.split('?')[0] : '/'
+    const key = `${moduleId}:${message.tag}`
+    await store.put({ key, moduleId, tag: message.tag, path, data, until: message.until })
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    for (const client of windows) client.postMessage({ type: 'pending', key })
+  } catch {
+    // Nothing to do; see above.
+  }
+}
+
+// Base `factotum`, stores `pending` (key `key`) and `settings` (one record, key `device`).
+function indexedDbStore() {
+  const open = () =>
+    new Promise((resolve, reject) => {
+      const request = indexedDB.open('factotum', 1)
+      request.onupgradeneeded = () => {
+        const db = request.result
+        if (!db.objectStoreNames.contains('pending')) db.createObjectStore('pending', { keyPath: 'key' })
+        if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings')
+      }
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  const run = async (name, mode, work) => {
+    const db = await open()
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = work(db.transaction(name, mode).objectStore(name))
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+    } finally {
+      db.close()
+    }
+  }
+  return {
+    put: (record) => run('pending', 'readwrite', (s) => s.put(record)),
+    settings: async () => {
+      const value = await run('settings', 'readonly', (s) => s.get('device'))
+      return value && typeof value === 'object' ? value : {}
+    },
+  }
+}
 
 // A tap. FOCUS an open window of the app before opening another — opening every time is how a
 // PWA piles up windows.

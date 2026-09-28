@@ -1,0 +1,105 @@
+/*
+ * THE ONLY FILE WITH COLOUR VALUES (spec 2026-09-18, criterion 36). Every value here is the one in
+ * design/direccion-visual.md §Tokens, exactly. A change here is a change there first, and then the
+ * contrast test runs again: `contrast.ts` reads THIS file, not a copy.
+ *
+ * Form: `oklch(L C H)` with bare numbers — what `contrast.ts` parses — and `/ A` on `--scrim` only,
+ * which is in no contrast pair. All seventeen colour tokens are declared in BOTH blocks, even when
+ * the value does not change, so neither mode inherits by accident.
+ *
+ * Three places cannot read a custom property and carry copies of two of these as hex: the two
+ * `<meta name="theme-color">` in index.html, the manifest, and make-icons.mjs. Keep them in step.
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: oklch(0.985 0.002 265);
+  --surface: oklch(0.965 0.003 265);
+  --surface-2: oklch(0.935 0.004 265);
+  --line: oklch(0.90 0.004 265);
+  --line-strong: oklch(0.62 0.01 265);
+  --text: oklch(0.22 0.01 265);
+  --text-2: oklch(0.42 0.012 265);
+  --text-3: oklch(0.50 0.012 265);
+  --accent: oklch(0.52 0.17 268);
+  --on-accent: oklch(0.99 0 0);
+  --accent-text: oklch(0.48 0.17 268);
+  --ask: oklch(0.52 0.12 70);
+  --ask-bg: oklch(0.95 0.05 85);
+  --ok: oklch(0.50 0.12 155);
+  --err: oklch(0.52 0.18 27);
+  --err-bg: oklch(0.96 0.02 27);
+  --scrim: oklch(0.2 0.01 265 / 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: oklch(0.165 0.006 265);
+    --surface: oklch(0.195 0.007 265);
+    --surface-2: oklch(0.235 0.008 265);
+    --line: oklch(0.27 0.008 265);
+    --line-strong: oklch(0.52 0.01 265);
+    --text: oklch(0.955 0.003 265);
+    --text-2: oklch(0.76 0.01 265);
+    --text-3: oklch(0.66 0.012 265);
+    --accent: oklch(0.55 0.17 268);
+    --on-accent: oklch(0.99 0 0);
+    --accent-text: oklch(0.76 0.12 268);
+    --ask: oklch(0.83 0.13 80);
+    --ask-bg: oklch(0.27 0.04 80);
+    --ok: oklch(0.78 0.13 155);
+    --err: oklch(0.72 0.16 27);
+    --err-bg: oklch(0.25 0.04 27);
+    --scrim: oklch(0.05 0 0 / 0.6);
+  }
+}
+
+:root {
+  /* Derived colours, named so no other file needs a colour function (criterion 36). */
+  --ring: color-mix(in oklch, var(--accent) 25%, transparent);
+  --ask-border: color-mix(in oklch, var(--ask) 45%, transparent);
+  --err-border: color-mix(in oklch, var(--err) 45%, transparent);
+  --chip-on: color-mix(in oklch, var(--accent) 16%, transparent);
+
+  /* Type: a fixed pixel scale, ~1.125 (direccion-visual §Tipografía). */
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', Menlo, monospace;
+  --text-caption: 12px;
+  --text-mono: 13px;
+  --text-small: 14px;
+  --text-body: 15px;
+  --text-title: 16px;
+  --text-input: 17px;
+  --text-heading: 20px;
+  --text-page: 22px;
+
+  /* Space: base 4. */
+  --space-1: 4px;
+  --space-1h: 6px;
+  --space-2: 8px;
+  --space-2h: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Radii: one rule (direccion-visual §Radios). */
+  --radius-6: 6px;
+  --radius-10: 10px;
+  --radius-16: 16px;
+
+  /* Motion. --dur-press is a range in the direction (120-160 ms); fixed at 140 (criterion 1). */
+  --dur-press: 140ms;
+  --dur-fade: 200ms;
+  --dur-sheet-in: 240ms;
+  --dur-sheet-out: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Touch. */
+  --hit: 44px;
+  --hit-decide: 52px;
+}

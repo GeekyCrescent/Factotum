@@ -28,7 +28,7 @@ async function homeWithDevices(count: number): Promise<string> {
     deliver: async () => ({ statusCode: 201 }),
   })
   for (let i = 0; i < count; i++) {
-    await push.subscribe({ endpoint: `https://fcm.googleapis.com/fcm/send/d${i}`, keys: { p256dh: 'BP', auth: 'au' } })
+    await push.subscribe({ endpoint: `https://fcm.googleapis.com/fcm/send/d${i}`, keys: { p256dh: 'BP', auth: 'au' } }, { sameMachine: false })
   }
   await push.settled()
   return home
@@ -46,7 +46,7 @@ test('with the daemon stopped, reset forgets every device and says how many (cri
   const code = await pushCommand({ env: 'prod', argv: ['reset'], home, out, fetch: down })
 
   assert.equal(code, 0)
-  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 0, warning: undefined })
+  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 0, sameMachine: 0, warning: undefined })
   assert.match(lines.join('\n'), /5/)
 })
 
@@ -61,7 +61,7 @@ test('WITH THE DAEMON RUNNING, reset REFUSES and touches nothing', async () => {
   const code = await pushCommand({ env: 'prod', argv: ['reset'], home, out, fetch: up })
 
   assert.equal(code, 1)
-  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 3, warning: undefined })
+  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 3, sameMachine: 0, warning: undefined })
   assert.match(lines.join('\n'), /running/)
   // The way out, with commands that already exist.
   assert.match(lines.join('\n'), /factotum uninstall --env prod/)
@@ -83,7 +83,7 @@ test('an unknown subcommand prints the usage and exits 2, touching nothing', asy
   assert.equal(await pushCommand({ env: 'prod', argv: ['nuke'], home, out, fetch: down }), 2)
   assert.equal(await pushCommand({ env: 'prod', argv: [], home, out, fetch: down }), 2)
   assert.match(lines.join('\n'), /push reset/)
-  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 1, warning: undefined })
+  assert.deepEqual(await inspectPush(statePaths('prod', home).push), { kind: 'ready', subscriptions: 1, sameMachine: 0, warning: undefined })
 })
 
 test('nothing printed is a key or an endpoint', async () => {

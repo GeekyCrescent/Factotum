@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NotificationMessage, Notifier, Timers } from '@factotum/core'
-import { createEngine } from './engine.ts'
+import { createEngine, PROMPT_CHARS } from './engine.ts'
 import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
@@ -578,6 +578,7 @@ test('cancelling a session that a dead daemon left behind closes it anyway', asy
     entryId: 'free',
     startedAt: new Date().toISOString(),
     sitePath: undefined,
+    prompt: undefined,
   })
 
   await engine.cancel(orphan)
@@ -601,6 +602,18 @@ test('sessions list newest first and paginate', async () => {
   const page = await engine.list({ page: 0 })
   assert.deepEqual(page.sessions.map((s) => s.id), [...ids].reverse())
   assert.equal(page.hasMore, false)
+})
+
+test('the list carries the FIRST prompt, cut to PROMPT_CHARS — tested on the engine, because the route forwards whatever it gets (criterion 31)', async () => {
+  const { engine } = await world()
+  const long = 'x'.repeat(PROMPT_CHARS + 50)
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: long, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await settle(engine, id)
+
+  const summary = (await engine.list({ page: 0 })).sessions.find((s) => s.id === id)
+  assert.equal(summary?.prompt, long.slice(0, PROMPT_CHARS))
+  assert.equal(summary?.prompt?.length, PROMPT_CHARS)
 })
 
 test('a negative page is treated as the first one rather than throwing', async () => {
@@ -647,7 +660,7 @@ test('reconcile through the facade releases a lock left by a dead daemon', async
   const { engine, stateDir, locks } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const stale = '019965aa-0000-7000-8000-0000000000bb'
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   await engine.reconcile()
@@ -924,7 +937,7 @@ test('a session that died WITH THE DAEMON is announced on the way back up, with 
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000cc'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await engine.reconcile()
@@ -940,7 +953,7 @@ test('a session stop() already closed is NOT announced a second time by reconcil
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const closed = '019965aa-0000-7000-8000-0000000000dd'
-  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
   // What stop() leaves: a terminal meta over a lock it deliberately did not release.
   await store.patchMeta(closed, (m) => ({ ...m, state: 'cancelled', reason: 'the daemon was shutting down' }))
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', closed, new Date().toISOString())
@@ -955,7 +968,7 @@ test('reconcile does not wait on a notice — a hanging push service cannot disa
   const { engine, stateDir } = await world({ notify: hanging })
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000ee'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await Promise.race([engine.reconcile(), new Promise((_, reject) => setTimeout(() => reject(new Error('reconcile waited')), 2_000))])
@@ -1178,6 +1191,56 @@ async function liveSession(engine: SessionEngine): Promise<string> {
   const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
   return result.outcome === 'started' ? result.sessionId : ''
 }
+
+test('THE ASK NOTICE carries its deadline and the drawer fields, and NEITHER the full path NOR the preview leaves the tailnet (criterion 25)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+  const secretPath = '/etc/very/secret/approved.txt'
+  const secretContent = 'THE-CONTENT-NEVER-LEAVES'
+
+  const pending = engine.decide({ ...payload(id, secretPath, '/work/site'), tool_input: { file_path: secretPath, content: secretContent } })
+  const askId = await askIdFrom(notices)
+  const notice = notices.find((n) => n.data?.['askId'] === askId)
+
+  assert.ok(notice !== undefined)
+  assert.equal(typeof notice.until, 'string')
+  assert.ok(Date.parse(notice.until ?? '') > Date.now(), 'the deadline is in the future')
+  assert.deepEqual(notice.data, { askId, sessionId: id, siteId: 'work', toolName: 'Write', file: 'approved.txt' })
+  const wire = JSON.stringify(notice)
+  assert.equal(wire.includes(secretPath), false, 'the full path must not be in the notice')
+  assert.equal(wire.includes('/etc/very/secret'), false, 'no part of the directory either')
+  assert.equal(wire.includes(secretContent), false, 'the preview must not be in the notice')
+
+  await engine.answer(askId, 'deny')
+  await pending
+  await engine.cancel(id)
+})
+
+test('INSPECT: a pending ask reads with its full path and the preview cut from the tool input; then settled; unknown otherwise (criterion 23)', async () => {
+  const { notices, notify } = reachable()
+  const { engine } = await world({ notify })
+  const id = await liveSession(engine)
+
+  const pending = engine.decide({ ...payload(id, '/etc/hosts', '/work/site'), tool_input: { file_path: '/etc/hosts', content: 'one line' } })
+  const askId = await askIdFrom(notices)
+
+  const read = await engine.inspect(askId)
+  assert.equal(read.kind, 'pending')
+  if (read.kind === 'pending') {
+    assert.equal(read.sessionId, id)
+    assert.equal(read.toolName, 'Write')
+    assert.equal(read.target, '/etc/hosts')
+    assert.deepEqual(read.preview, { head: 'one line', tail: '', total: 8, edits: null })
+    assert.equal(read.deadlineAt, notices.find((n) => n.data?.['askId'] === askId)?.until)
+  }
+
+  await engine.answer(askId, 'deny')
+  await pending
+  assert.deepEqual(await engine.inspect(askId), { kind: 'settled' })
+  assert.deepEqual(await engine.inspect('no-such-token'), { kind: 'unknown' })
+  await engine.cancel(id)
+})
 
 test('ALLOWED FROM THE PHONE: the held reply becomes allow, and the log says who granted it (criteria 11, 15)', async () => {
   const { notices, notify } = reachable()

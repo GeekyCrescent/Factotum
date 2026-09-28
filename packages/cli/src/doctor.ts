@@ -254,6 +254,10 @@ async function reportLive(
   }
 }
 
+/** The same sentence as the client's Device page: a pending keeps its token on the device (ADR-0010). */
+const SAME_MACHINE_WARNING =
+  'A browser on this machine should not subscribe: pending approvals are kept on the device, and an agent here can read them.'
+
 /**
  * Three states, and the middle one is NOT a problem: keys and no devices is how every machine
  * looks before the app is opened on a phone. Saying it as a warning would teach the owner to
@@ -283,6 +287,11 @@ async function reportPush(publicOrigin: string, paths: StatePaths, out: (line: s
           ? '  push        ready, no devices subscribed — open the app on a phone and turn notifications on'
           : `  push        ready, ${n} device${n === 1 ? '' : 's'} subscribed (at most ${MAX_SUBSCRIPTIONS})`,
       )
+      if (n > 0 && inspection.sameMachine > 0) {
+        out(`              ${inspection.sameMachine === 1 ? 'one of them is this machine' : `${inspection.sameMachine} of them are this machine`}`)
+      }
+      // ALWAYS with devices (spec 2026-09-18, design D12): the detection cannot see every case.
+      if (n > 0) out(`              ${SAME_MACHINE_WARNING}`)
       if (inspection.warning !== undefined) out(`              ${inspection.warning}`)
       break
     }

@@ -10,6 +10,8 @@ import type { Subscription } from './store.ts'
 import type { VapidKeys } from './keys.ts'
 
 const FAKE_KEYS: VapidKeys = { publicKey: 'B'.repeat(87), privateKey: 'p'.repeat(43) }
+/** Every device in these tests is a phone: the kernel read the request as not this machine. */
+const PHONE = { sameMachine: false } as const
 const quiet: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined }
 const message: NotificationMessage = { title: 'finished', body: 'proyecto-a', path: '/m/probe/x', tag: 'x' }
 
@@ -56,7 +58,7 @@ test('with no subscriptions, canReach is false — and it answers SYNCHRONOUSLY'
 test('once a device subscribes, canReach is true and a send reaches it', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  await push.subscribe(device('phone'))
+  await push.subscribe(device('phone'), PHONE)
 
   assert.equal(push.canReach(), true)
   await push.send(message, 'probe')
@@ -66,7 +68,7 @@ test('once a device subscribes, canReach is true and a send reaches it', async (
 test('the kernel stamps machine and moduleId; the module cannot', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  await push.subscribe(device('phone'))
+  await push.subscribe(device('phone'), PHONE)
 
   await push.send(message, 'probe')
 
@@ -77,7 +79,7 @@ test('the FIRST device on a fresh daemon is not announced — there is nobody to
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
 
-  const result = await push.subscribe(device('first'))
+  const result = await push.subscribe(device('first'), PHONE)
 
   assert.deepEqual(result, { kind: 'subscribed', count: 1 })
   assert.equal(sent.length, 0)
@@ -86,9 +88,9 @@ test('the FIRST device on a fresh daemon is not announced — there is nobody to
 test('a NEW device is announced to the devices that existed before it, and NOT to itself (criterion 53)', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  await push.subscribe(device('owner'))
+  await push.subscribe(device('owner'), PHONE)
 
-  const result = await push.subscribe(device('intruder'))
+  const result = await push.subscribe(device('intruder'), PHONE)
   await push.settled()
 
   assert.deepEqual(result, { kind: 'subscribed', count: 2 })
@@ -98,8 +100,8 @@ test('a NEW device is announced to the devices that existed before it, and NOT t
 test('the announcement is the daemon speaking: moduleId null, the remedy named, no endpoint (criteria 53, 59)', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  await push.subscribe(device('owner'))
-  await push.subscribe(device('second'))
+  await push.subscribe(device('owner'), PHONE)
+  await push.subscribe(device('second'), PHONE)
   await push.settled()
 
   const notice = sent[0]?.envelope
@@ -113,12 +115,12 @@ test('the announcement is the daemon speaking: moduleId null, the remedy named, 
 test('re-subscribing a KNOWN device is an update: not announced, not counted twice', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  await push.subscribe(device('owner'))
-  await push.subscribe(device('tablet'))
+  await push.subscribe(device('owner'), PHONE)
+  await push.subscribe(device('tablet'), PHONE)
   await push.settled()
   sent.length = 0
 
-  const result = await push.subscribe(device('tablet'))
+  const result = await push.subscribe(device('tablet'), PHONE)
   await push.settled()
 
   assert.deepEqual(result, { kind: 'subscribed', count: 2 })
@@ -128,11 +130,11 @@ test('re-subscribing a KNOWN device is an update: not announced, not counted twi
 test('a NEW device past the cap is refused, not stored, not announced — and the reason names the way out (criteria 54, 57)', async () => {
   const { deliver, sent } = recorder()
   const push = await service({ deliver })
-  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`))
+  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`), PHONE)
   await push.settled()
   sent.length = 0
 
-  const result = await push.subscribe(device('one-too-many'))
+  const result = await push.subscribe(device('one-too-many'), PHONE)
 
   assert.equal(result.kind, 'full')
   assert.match(result.kind === 'full' ? result.reason : '', /factotum push reset/)
@@ -142,16 +144,16 @@ test('a NEW device past the cap is refused, not stored, not announced — and th
 
 test('a KNOWN device can still re-subscribe when the cap is full', async () => {
   const push = await service({ deliver: recorder().deliver })
-  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`))
+  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`), PHONE)
 
-  const result = await push.subscribe(device('d0'))
+  const result = await push.subscribe(device('d0'), PHONE)
   assert.equal(result.kind, 'subscribed')
 })
 
 test('reset empties everything, and the gate falls back to denying (criterion 57)', async () => {
   const push = await service({ deliver: recorder().deliver })
-  await push.subscribe(device('a'))
-  await push.subscribe(device('b'))
+  await push.subscribe(device('a'), PHONE)
+  await push.subscribe(device('b'), PHONE)
 
   await push.reset()
 
@@ -171,13 +173,13 @@ test('NO KEYS: push is off, nothing throws, and the reason is available for doct
   assert.equal(push.publicKey(), undefined)
   assert.equal(push.status().kind, 'off')
   await push.send(message, 'probe') // must resolve
-  const result = await push.subscribe(device('phone'))
+  const result = await push.subscribe(device('phone'), PHONE)
   assert.equal(result.kind, 'off')
 })
 
 test('send never rejects, whatever deliver does', async () => {
   const push = await service({ deliver: async () => { throw new Error('boom') } })
-  await push.subscribe(device('phone'))
+  await push.subscribe(device('phone'), PHONE)
   await push.send(message, 'probe')
 })
 
@@ -212,14 +214,32 @@ test('inspectPush reports a count and nothing else — no key, no endpoint (crit
   const { inspectPush } = await import('./service.ts')
   const dir = await mkdtemp(join(tmpdir(), 'factotum-inspect-'))
   const push = await service({ dir, deliver: recorder().deliver })
-  await push.subscribe(device('phone'))
-  await push.subscribe(device('tablet'))
+  await push.subscribe(device('phone'), PHONE)
+  await push.subscribe(device('tablet'), PHONE)
   await push.settled()
 
   const inspection = await inspectPush(dir)
 
-  assert.deepEqual(inspection, { kind: 'ready', subscriptions: 2, warning: undefined })
+  assert.deepEqual(inspection, { kind: 'ready', subscriptions: 2, sameMachine: 0, warning: undefined })
   assert.doesNotMatch(JSON.stringify(inspection), /device-|BBBB|pppp/)
+})
+
+test('a subscription remembers whether it came from this machine, and re-posting UPDATES it (design D12)', async () => {
+  const { inspectPush } = await import('./service.ts')
+  const dir = await mkdtemp(join(tmpdir(), 'factotum-inspect-'))
+  const push = await service({ dir, deliver: recorder().deliver })
+  await push.subscribe(device('mac'), PHONE)
+  await push.subscribe(device('phone'), PHONE)
+  await push.settled()
+  assert.equal((await inspectPush(dir) as { sameMachine: number }).sameMachine, 0)
+
+  // The client re-posts at start, and this time the kernel can tell.
+  await push.subscribe(device('mac'), { sameMachine: true })
+  await push.settled()
+
+  const inspection = await inspectPush(dir)
+  assert.equal(inspection.kind === 'ready' && inspection.subscriptions, 2, 'the same endpoint, not a new one')
+  assert.equal(inspection.kind === 'ready' && inspection.sameMachine, 1)
 })
 
 test('inspectPush says why a key file is unusable, without touching it', async () => {
@@ -238,15 +258,15 @@ test('resetSubscriptions forgets every device and reports how many there were (c
   const { resetSubscriptions, inspectPush } = await import('./service.ts')
   const dir = await mkdtemp(join(tmpdir(), 'factotum-reset-'))
   const push = await service({ dir, deliver: recorder().deliver })
-  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`))
+  for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) await push.subscribe(device(`d${i}`), PHONE)
   await push.settled()
 
   assert.equal(await resetSubscriptions(dir), MAX_SUBSCRIPTIONS)
-  assert.deepEqual(await inspectPush(dir), { kind: 'ready', subscriptions: 0, warning: undefined })
+  assert.deepEqual(await inspectPush(dir), { kind: 'ready', subscriptions: 0, sameMachine: 0, warning: undefined })
 
   // …and a fresh daemon on that directory accepts a legitimate device again.
   const fresh = await service({ dir, deliver: recorder().deliver })
-  assert.equal((await fresh.subscribe(device('mine'))).kind, 'subscribed')
+  assert.equal((await fresh.subscribe(device('mine'), PHONE)).kind, 'subscribed')
 })
 
 test('settled() waits for a notice fired WITHOUT await — what boot.stop relies on to not cut one off', async () => {
@@ -262,7 +282,7 @@ test('settled() waits for a notice fired WITHOUT await — what boot.stop relies
       return { statusCode: 201 }
     },
   })
-  await push.subscribe(device('phone'))
+  await push.subscribe(device('phone'), PHONE)
 
   void push.send(message, 'probe')
   let drainedEarly = false

@@ -57,6 +57,13 @@ export interface SessionMeta {
    * field reads as — it is parsed without a schema — and it means "cannot be compared".
    */
   readonly sitePath: string | undefined
+  /**
+   * The first prompt, cut to PROMPT_CHARS, so a list can tell five sessions in one site apart
+   * without reading five logs. Same rule as `sitePath`: `string | undefined` AND REQUIRED, and
+   * listed in `#readMeta` — a field missing from that list is erased by the next `patchMeta`.
+   * A meta from before this field reads as `undefined`.
+   */
+  readonly prompt: string | undefined
 }
 
 /** Everything but the parts the store owns. */
@@ -134,6 +141,7 @@ export class SessionStore {
         // the zod-strips-unknown-keys trap of CLAUDE.md §2 in handwritten form — and `sitePath`
         // would have fallen into it if the type had allowed it to be optional (TS2741 caught it).
         sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
+        prompt: typeof json.prompt === 'string' ? json.prompt : undefined,
       }
     } catch {
       return undefined

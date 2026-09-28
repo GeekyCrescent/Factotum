@@ -156,6 +156,15 @@ export interface NotificationMessage {
   readonly actions?: readonly { readonly action: string; readonly label: string }[]
   /** Opaque to the kernel. Handed to the service worker so an action knows what it answers. */
   readonly data?: Readonly<Record<string, unknown>>
+  /**
+   * This notice ASKS FOR SOMETHING until then (ISO 8601). The client keeps it as pending —
+   * counted, listed, reachable without the notification — until it is answered, expires, or its
+   * module says it is resolved. Absent: an ordinary notice, forgotten once shown.
+   *
+   * Typed rather than hidden in `data`, because the service worker INTERPRETS it, and an opaque
+   * field with a meaning is a contract without a name. Its one consumer is the ask. ADR-0010.
+   */
+  readonly until?: string
 }
 
 /**

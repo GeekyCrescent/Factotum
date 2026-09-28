@@ -32,7 +32,7 @@ async function freshStore(): Promise<{ store: SessionStore; paths: ReturnType<ty
 const ID = '019965aa-0000-7000-8000-000000000001'
 
 async function started(store: SessionStore, id = ID) {
-  return await store.create({ id, siteId: 'work', entryId: 'free', startedAt: '2026-09-15T00:00:00.000Z', sitePath: undefined })
+  return await store.create({ id, siteId: 'work', entryId: 'free', startedAt: '2026-09-15T00:00:00.000Z', sitePath: undefined, prompt: undefined })
 }
 
 const msg = (text: string): EventInput => ({ kind: 'message', role: 'assistant', text })
@@ -203,9 +203,9 @@ test('patching a session that has no readable meta returns undefined rather than
 
 test('sessions list newest first, by id, with no in-memory index', async () => {
   const { store } = await freshStore()
-  await store.create({ id: '019965aa-0000-7000-8000-000000000001', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined })
-  await store.create({ id: '019965ab-0000-7000-8000-000000000002', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined })
-  await store.create({ id: '019965ac-0000-7000-8000-000000000003', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined })
+  await store.create({ id: '019965aa-0000-7000-8000-000000000001', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, prompt: undefined })
+  await store.create({ id: '019965ab-0000-7000-8000-000000000002', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, prompt: undefined })
+  await store.create({ id: '019965ac-0000-7000-8000-000000000003', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, prompt: undefined })
 
   assert.deepEqual(await store.listIds(), [
     '019965ac-0000-7000-8000-000000000003',
@@ -230,4 +230,18 @@ test('a rejected write does not poison the queue for the next caller', async () 
   // The next caller still gets its turn.
   const after = await store.append(ID, msg('still working'))
   assert.equal(after.seq, 0)
+})
+
+test('the first prompt survives a patchMeta round trip, and a meta from before the field reads as undefined', async () => {
+  const { store, paths } = await freshStore()
+  await store.create({ id: ID, siteId: 'work', entryId: 'free', startedAt: 'x', sitePath: undefined, prompt: 'rename loadConfig' })
+
+  await store.patchMeta(ID, (m) => ({ ...m, turns: m.turns + 1 }))
+  assert.equal((await store.readMeta(ID))?.prompt, 'rename loadConfig', 'patchMeta must not erase it')
+
+  // A meta.json written before the field existed.
+  const raw = JSON.parse(await readFile(paths.metaFile(ID), 'utf8')) as Record<string, unknown>
+  delete raw['prompt']
+  await writeFile(paths.metaFile(ID), JSON.stringify(raw))
+  assert.equal((await store.readMeta(ID))?.prompt, undefined)
 })

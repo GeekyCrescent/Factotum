@@ -8,7 +8,7 @@ A module is five things. You rarely need all five.
 | `routes` | HTTP handlers | You have no API |
 | `nav` | Label and icon | You have no screen |
 | `start` | Background work | Nothing runs on a timer |
-| `client.tsx` | The screen itself | Nav points at nothing |
+| `client.tsx` | The screen itself (see [The screen](#the-screen)) | Nav points at nothing |
 
 The shortest way in is to copy `modules/example/`. It is deliberately useless and
 deliberately complete — it exercises all five so that none of them is untested.
@@ -138,6 +138,53 @@ export const shoppingConfigSchema = z.object({
   your schema.** Zod drops unknown keys. Parsing and writing back therefore deletes
   every key your schema does not know, from disk, silently. This has bitten this
   project's predecessor. Reading only? Then it cannot happen and you can ignore this.
+
+## The screen
+
+Your client exports one object, and `apps/web/src/modules.ts` lists it:
+
+```ts
+export const shoppingClient = { id: 'shopping', View: ShoppingView }
+```
+
+That is all Example has, and it is enough: the shell draws a **fallback bar** above your screen
+(☰ and your `nav.label`), so the drawer is reachable from it, and gives it a page margin.
+
+**What the shell hands `View`** ([ADR-0010](adr/0010-pending-attention-in-the-client.md)). Declare
+only the props you use; a component that takes fewer still fits.
+
+| Prop | What it is |
+|---|---|
+| `api` | `get` and `post`, already prefixed to `/modules/shopping/` |
+| `rest` | What follows `/m/shopping/` in the URL, `''` at your root. It follows the URL: Back changes it |
+| `search` | The query the page **loaded** with, handed over once. The shell already took it out of the address bar, and it is `''` after the first navigation. Keep what you need from it in memory |
+| `navigate(rest, { replace })` | Changes what follows `/m/shopping/`, without a reload |
+| `openDrawer()` | For a ☰ you draw yourself |
+| `overlay`, `setOverlay(name)` | Your own sheet, which Android's Back closes first |
+| `pending`, `pendingTotal`, `resolvePending(tag)` | Your notices that ask for something until a deadline (`until` on the notification), how many there are in all, and how to say one is over |
+
+**Two optional fields** go next to `View`:
+
+- `Drawer`: what your module adds to the shell's drawer. It receives `api`, `rest`, `pending` and
+  a `navigate(rest)` that also closes the drawer. `modules/sessions/client/drawer.tsx` is one.
+- `ownsTopBar: true`: your screen draws its own `.topbar` with a ☰ that calls `openDrawer`, and the
+  shell draws no fallback bar. Promise it only if you keep it: a screen without a ☰ strands the
+  owner.
+
+**The rules:**
+
+- **Import nothing from `apps/web`**: not a component, not an icon, not a CSS file. Your module
+  depends on `packages/core` and on nothing else.
+- **Look like the rest by class name.** `apps/web/src/styles/components.css` is the shared
+  vocabulary: `.btn` (`.primary`, `.quiet`, `.decide`), `.icon-btn`, `.badge`, `.chip`, `.notice`
+  (`.ask`, `.err`), `.topbar`, `.sheet` with `.scrim`, `.composer`, `.skel`, `.center-state`,
+  `.mono`. Never redefine one. What only you need goes in your own `client.css`, every class with
+  your prefix (sessions uses `s-`), and colours only as `var(--…)` from `tokens.css`.
+- **Icons are data.** Copy the paths you need into your own `icons.ts`, as sessions does, with
+  the licence line.
+- **When the screen outgrows one file**, make a `client/` folder with an `index.tsx`, and keep
+  every decision in a `.ts` with a test: `node --test` does not run `.tsx`, and a `.ts` there must
+  not import one.
 
 ## Testing
 

@@ -15,13 +15,18 @@ import {
   type ModuleResponse,
 } from '@factotum/core'
 import { describePolicy, originAllowed, type OriginPolicy } from '../net/origin.ts'
+import type { Interfaces } from '../net/resolve.ts'
+import { isSameMachine, sourceIpOf } from '../net/same-machine.ts'
 import type { Registry } from '../modules/registry.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
 
 export interface StaticSite {
-  /** `undefined` when the path is not part of the site. */
-  serve: (path: string) => Promise<{ body: Buffer; type: string } | undefined>
+  /**
+   * `undefined` when the path is not part of the site. `immutable` when the file is one Vite
+   * emitted with a hash in its name, and so can be cached for good.
+   */
+  serve: (path: string) => Promise<{ body: Buffer; type: string; immutable: boolean } | undefined>
 }
 
 export interface ServerDeps {
@@ -39,6 +44,8 @@ export interface ServerDeps {
   readonly isReady: () => boolean
   /** The two push routes below. Never a module: the kernel knows no module by name. */
   readonly push: Pick<PushService, 'publicKey' | 'subscribe'>
+  /** This machine's addresses, to tell a subscription from here (design D12). */
+  readonly interfaces: Interfaces
 }
 
 /**
@@ -84,7 +91,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
   if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules') && !isPushPath(path)) {
     const file = await deps.site.serve(path)
     if (file !== undefined) {
-      res.writeHead(200, { 'content-type': file.type })
+      res.writeHead(200, {
+        'content-type': file.type,
+        // NO-STORE, not no-cache, for everything without a hash. no-cache still lets the browser
+        // KEEP the response — and the page a notification opens is requested with `?ask=<token>`
+        // in its URL: measured, Chrome stored it in its HTTP cache, token and all (spec
+        // 2026-09-18, M4). The hashed assets change name when they change, so they are forever.
+        'cache-control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+      })
       return void res.end(file.body)
     }
   }
@@ -135,12 +149,19 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
         return sendError(res, 400, 'invalid-request', `${issue?.path.join('.') || 'body'}: ${issue?.message ?? 'invalid'}`)
       }
 
-      const result = await deps.push.subscribe(parsed.data)
+      const sameMachine = isSameMachine({
+        origin: typeof origin === 'string' ? origin : undefined,
+        policy: deps.origin,
+        sourceIp: sourceIpOf(req.headers),
+        interfaces: deps.interfaces,
+      })
+      const result = await deps.push.subscribe(parsed.data, { sameMachine })
       if (result.kind === 'off') return sendError(res, 404, 'not-found', 'push is off on this machine; run `factotum doctor` for the reason')
       if (result.kind === 'full') return sendError(res, 409, 'conflict', result.reason)
       // A COUNT, never the list: every endpoint is a capability (criterion 10). The count is
       // what lets the first device on a fresh daemon notice a second one it did not add.
-      return sendJson(res, 200, { count: result.count })
+      // And whether this browser is on the daemon's machine: the client keeps no ask token if so.
+      return sendJson(res, 200, { count: result.count, sameMachine })
     }
 
     return sendError(res, 404, 'not-found', `no route ${method} ${path}`)

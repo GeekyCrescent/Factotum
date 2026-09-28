@@ -16,6 +16,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     reply: async () => ({ outcome: 'started', sessionId: 'sid-1' }),
     cancel: async () => undefined,
     answer: async () => ({ kind: 'unknown' }),
+    inspect: async () => ({ kind: 'unknown' }),
     list: async (page) => ({ sessions: [], page: page.page, hasMore: false }),
     read: async () => ({ events: [], nextSeq: 0, state: 'finished' }),
     decide: async () => ({
@@ -447,6 +448,61 @@ test('an answer reaches the engine with the token and the decision, and says it 
 test('answering twice is 200, not an error — a service worker may retry (criterion 20)', async () => {
   const { table } = await started(fakeEngine({ answer: async () => ({ kind: 'already' }) }))
   assert.equal((await call(table, answerRoute, answering('tok', { decision: 'deny' }))).status, 200)
+})
+
+test('the answer says whether it was the FIRST one, so a repeat is not reported as "Allowed" (criterion 24)', async () => {
+  const first = await started(fakeEngine({ answer: async () => ({ kind: 'answered' }) }))
+  const again = await started(fakeEngine({ answer: async () => ({ kind: 'already' }) }))
+
+  const a = await call(first.table, answerRoute, answering('tok', { decision: 'allow' }))
+  const b = await call(again.table, answerRoute, answering('tok', { decision: 'allow' }))
+
+  assert.deepEqual([a.status, a.body], [200, { answered: true, first: true }])
+  assert.deepEqual([b.status, b.body], [200, { answered: true, first: false }])
+})
+
+// ---------------------------------------------------------------------------
+// Reading an ask by its token (spec criterion 23)
+// ---------------------------------------------------------------------------
+
+const readRoute = 'GET /asks/:askId'
+const reading = (askId: string) => request('GET', `/asks/${askId}`, { params: { askId } })
+const NO_STORE = { 'cache-control': 'no-store' }
+
+test('a pending ask reads as EXACTLY five fields, a null preview included, and is never cached', async () => {
+  const seen: string[] = []
+  const { table } = await started(
+    fakeEngine({
+      inspect: async (id) => (
+        seen.push(id),
+        { kind: 'pending', sessionId: 's1', toolName: 'Write', target: '/etc/hosts', preview: null, deadlineAt: '2026-09-19T11:00:00.000Z' }
+      ),
+    }),
+  )
+
+  const response = await call(table, readRoute, reading('tok'))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(seen, ['tok'])
+  assert.deepEqual(JSON.parse(JSON.stringify(response.body)), {
+    sessionId: 's1', toolName: 'Write', target: '/etc/hosts', preview: null, deadlineAt: '2026-09-19T11:00:00.000Z',
+  })
+  assert.deepEqual(response.headers, NO_STORE)
+})
+
+test('a settled ask is 409 conflict, and an unknown token 404 — both uncached', async () => {
+  const settled = await started(fakeEngine({ inspect: async () => ({ kind: 'settled' }) }))
+  const unknown = await started(fakeEngine({ inspect: async () => ({ kind: 'unknown' }) }))
+
+  const a = await call(settled.table, readRoute, reading('tok'))
+  const b = await call(unknown.table, readRoute, reading('tok'))
+
+  assert.equal(a.status, 409)
+  assert.equal((a.body as ErrorBody).error.code, 'conflict')
+  assert.deepEqual(a.headers, NO_STORE)
+  assert.equal(b.status, 404)
+  assert.equal((b.body as ErrorBody).error.code, 'not-found')
+  assert.deepEqual(b.headers, NO_STORE)
 })
 
 test('answering an ask that already expired is 409 with a reason a person can read (criterion 21)', async () => {

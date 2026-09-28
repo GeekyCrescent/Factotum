@@ -172,6 +172,12 @@ FCM for Chrome) and from there to the phone.
   a new device is **announced to the ones already subscribed**, the list is capped at five,
   and `factotum doctor` shows the count. `factotum push reset` forgets them all; it refuses
   while the daemon runs, because the daemon would write the list back.
+- **A notice that waits for an answer stays on the device that received it**, token
+  included, until it is answered or its deadline passes, so the owner can answer from the
+  app after the notification is gone. A browser on the daemon's own machine keeps no token:
+  the daemon tells it apart when it subscribes, and `doctor` says which devices are this
+  machine. See [ADR-0010](adr/0010-pending-attention-in-the-client.md) for the rules and for
+  what that detection does not close.
 
 ### Tailscale Funnel
 

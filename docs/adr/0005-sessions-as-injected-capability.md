@@ -94,3 +94,8 @@ server ones. **The client one is still open**, because there is no sanctioned pa
 one module's screen to call another's — `moduleApi(id)` arrives prefixed, and the
 client barrel is a static array of instances. That is not a solution, it is the
 absence of a consumer, and it is written down as such rather than claimed.
+
+**Note, 2026-09-19 (client design spec):** "nine" above was the count when this was written. Counted
+again with `comm -12` over the exported types of both `types.ts`: **19** before that spec, **21**
+after it added `AskPreview` and `InspectResult`. The asymmetry and the link in `main.ts` are
+unchanged.
