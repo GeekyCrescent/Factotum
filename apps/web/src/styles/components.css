@@ -275,27 +275,38 @@
 
 /* --- Composer ------------------------------------------------------------ */
 
+/*
+ * One pill: the text on the left, the controls on the right, all on one line while it fits. The
+ * text grows up to 40dvh and the controls stay on its last line; on a narrow screen with pickers,
+ * they wrap under it. The radius is half the one-line height, so one line is a true pill.
+ */
 .composer {
-  border: 1px solid var(--line-strong);
+  min-height: calc(var(--hit) + 2 * var(--space-2));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-1) var(--space-1h);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--hit) / 2 + var(--space-2));
   background: var(--surface);
-  border-radius: var(--radius-16);
-  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
-  display: grid;
-  gap: var(--space-2);
   transition-property: border-color, box-shadow;
   transition-duration: var(--dur-press);
   transition-timing-function: var(--ease-out);
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
+  border-color: var(--line-strong);
   box-shadow: 0 0 0 3px var(--ring);
 }
 
 .composer textarea {
-  width: 100%;
-  min-height: 24px;
+  flex: 1 1 12rem;
+  min-width: 0;
+  min-height: var(--hit);
   max-height: 40dvh;
+  /* One line of text, centred on the send button beside it. */
+  padding-block: calc((var(--hit) - 1.5em) / 2);
   resize: none;
   border: 0;
   outline: 0;
@@ -318,13 +329,31 @@
   color: var(--text-3);
 }
 
-.composer .row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1h);
+/* With pickers, the text takes the first line and the controls share the second, never split. */
+.composer:has(.chip) {
+  padding-left: var(--space-2);
+}
+
+.composer:has(.chip) textarea {
+  flex-basis: 100%;
+  padding-inline: var(--space-2);
+}
+
+/* A picker inside the pill reads as a quiet label with a caret, not a second box. */
+.composer .chip {
+  padding-inline: var(--space-2);
+  border-color: transparent;
+  border-radius: calc(var(--hit) / 2);
+  background: none;
+  color: var(--text-2);
+}
+
+.composer .chip:hover {
+  background: var(--surface-2);
 }
 
 .composer .send {
+  flex: none;
   margin-left: auto;
   width: var(--hit);
   height: var(--hit);
@@ -340,7 +369,7 @@
 }
 
 .composer .send:disabled {
-  background: var(--surface-2);
+  background: none;
   color: var(--text-3);
 }
 

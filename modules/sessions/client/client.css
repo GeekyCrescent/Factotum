@@ -34,16 +34,13 @@
   display: none;
 }
 
-/* Wide screens: the dock spans the pane like the bar above; the log keeps to the shell's column. */
+/* Wide screens: the bar above spans the pane; the log and the dock keep to the shell's column. */
 @media (min-width: 1024px) {
-  .s-body > * {
+  .s-body > *,
+  .s-dock > * {
     width: 100%;
     max-width: var(--column, 40rem);
     margin-inline: auto;
-  }
-
-  .s-dock {
-    padding-inline: var(--space-4);
   }
 }
 
@@ -409,13 +406,6 @@
   color: var(--text-3);
 }
 
-.s-ctx {
-  padding-left: var(--space-1);
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .s-detail {
   color: var(--text-2);

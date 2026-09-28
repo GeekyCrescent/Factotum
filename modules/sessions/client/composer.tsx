@@ -182,14 +182,12 @@ export function ReplyComposer({
       <Box
         text={s.text}
         setText={s.setText}
-        placeholder="Reply"
+        placeholder={siteId === undefined ? 'Reply' : `Reply in ${siteId}`}
         label="Reply"
         canSend={!s.busy && s.text.trim() !== ''}
         send={() => void s.go(false)}
         autoFocus={false}
-      >
-        {siteId === undefined ? null : <span class="s-ctx mono">replying in {siteId}</span>}
-      </Box>
+      />
     </>
   )
 }
@@ -211,7 +209,7 @@ function Box({
   readonly canSend: boolean
   readonly send: () => void
   readonly autoFocus: boolean
-  readonly children: ComponentChildren
+  readonly children?: ComponentChildren
 }) {
   return (
     <form
@@ -235,12 +233,10 @@ function Box({
           }
         }}
       />
-      <div class="row">
-        {children}
-        <button type="submit" class="send" aria-label={label} disabled={!canSend}>
-          <Icon name="arrow-up" size={18} />
-        </button>
-      </div>
+      {children}
+      <button type="submit" class="send" aria-label={label} disabled={!canSend}>
+        <Icon name="arrow-up" size={18} />
+      </button>
     </form>
   )
 }
