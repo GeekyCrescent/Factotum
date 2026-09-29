@@ -86,6 +86,14 @@ A request for a project or a shared folder is **an ask with no session**:
   write), which is why a request adds "Added" (a second signal), a ceiling of three, and the
   Device warning. Not delivering approvals to browsers on this machine needs the kernel; the owner
   judged the push level enough (spec, open question 1, 2026-09-29).
+- **Deleting needs no token.** A local process can delete conversations and projects' histories
+  through the routes (`POST /sessions/remove`, `/projects/:id/remove`, the removed ones). That is
+  the spec's rule — narrowing needs no approval, and deleting asks only the screen — and it loses
+  data, never files or boundary: a folder is never touched, and an agent with a shell could
+  already delete `~/.factotum` itself. Written here so it is a decision and not a gap.
+- **One request per folder, and the parent in the notice.** A second request for a folder already
+  waiting is a 409, so three copies cannot fill the ceiling; and the notice says
+  `Add project · web (in code)`, because a folder's name alone is the caller's to choose.
 - **The checkout the daemon runs from is refused.** An agent working in it could rewrite the gate
   for the next start. To work on factotum from factotum, register another clone or worktree.
 

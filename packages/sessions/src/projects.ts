@@ -17,6 +17,7 @@
  * list must not add one stuck libuv thread per poll (`bounded.ts`).
  */
 
+import { normalize } from 'node:path'
 import type { Logger, Timers } from '@factotum/core'
 import { bounded } from './bounded.ts'
 import { canonicalPath, checkSite, contains, realDisk, type DiskProbe, type Site, type SiteCheck } from './sites.ts'
@@ -24,6 +25,12 @@ import type { Color, EngineSetupView, ProjectEntry, RegistryStore, RegistryView,
 
 /** How long one folder check may take before the folder counts as missing. */
 export const SITE_CHECK_MS = 5_000
+
+/** A path as `inspectSite` records it: normalised, no trailing separator. */
+function declared(path: string): string {
+  const clean = normalize(path)
+  return clean.length > 1 && clean.endsWith('/') ? clean.slice(0, -1) : clean
+}
 
 /** The id a shared folder is inspected under. Nothing launches there and nothing locks it. */
 const SHARED_ID = 'shared'
@@ -119,6 +126,20 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
   }
 
   /**
+   * The gate brought in line with the registry, called only with NOTHING RUNNING (criterion 20): a
+   * shared folder that is there joins it; one no longer registered leaves it — even when it was
+   * removed while a session ran and its own rebuild had to wait; one registered but missing now keeps
+   * the place it had, because a missing folder alone never changes the list.
+   */
+  const syncGate = (): void => {
+    gate = shared.flatMap((s) => {
+      if (s.check?.status === 'ok') return [s.check.site]
+      const held = gate.find((site) => site.path === declared(s.path))
+      return held === undefined ? [] : [held]
+    })
+  }
+
+  /**
    * What was seeded or typed by hand is NOT revalidated (out of scope), but it is SAID: a registry
    * whose entries break the rules a request would have to pass starts with a warning per entry.
    */
@@ -184,12 +205,7 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
       // joins it, but only with nothing running, so no live session's boundary changes under it
       // (criterion 20, guardrail 5). Compared against the gate, not against the last look: a folder
       // that came back while a session ran is still owed its place once nothing runs.
-      if (deps.liveCount() > 0) return
-      const owed = shared.flatMap((s) => {
-        const check = s.check
-        return check?.status === 'ok' && !gate.some((site) => site.path === check.site.path) ? [check.site] : []
-      })
-      if (owed.length > 0) gate = [...gate, ...owed]
+      if (deps.liveCount() === 0) syncGate()
     },
 
     status: (id) => projects.get(id)?.check?.status,
@@ -224,7 +240,9 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
         ...[...projects.values()].filter((state) => state.check === undefined).map(checkProject),
         ...shared.filter((s) => s.check === undefined).map(checkShared),
       ])
-      if (rebuildShared) rebuildGate()
+      // RE-READ HERE, after the awaits: a session that went live during the checks keeps its gate,
+      // and what is owed is settled by the next look with nothing running.
+      if (rebuildShared && deps.liveCount() === 0) syncGate()
     },
 
     sites: () =>

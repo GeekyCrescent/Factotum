@@ -22,6 +22,7 @@
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { parseLog, stateFrom } from './events.ts'
+import { isSessionId } from './id.ts'
 import type { SessionPaths } from './paths.ts'
 import type { EventInput, SessionEvent, SessionState } from './types.ts'
 
@@ -158,7 +159,9 @@ export class SessionStore {
     try {
       const text = await readFile(this.#paths.metaFile(id), 'utf8')
       const json = JSON.parse(text) as Partial<SessionMeta>
-      if (typeof json.id !== 'string' || typeof json.siteId !== 'string') return undefined
+      // THE DIRECTORY NAMES THE SESSION, not the file's contents: a meta.json whose `id` says
+      // something else is not this session's, and an id read from a file must never become a path.
+      if (json.id !== id || typeof json.siteId !== 'string') return undefined
       return {
         id: json.id,
         siteId: json.siteId,
@@ -228,10 +231,13 @@ export class SessionStore {
    * session deleted in this process: its directory is not made again (criterion 33).
    */
   async ensureDir(id: string): Promise<string | undefined> {
-    if (this.#removed.has(id)) return undefined
-    const dir = this.#paths.sessionDir(id)
-    await mkdir(dir, { recursive: true })
-    return dir
+    // IN THE TURN, so a delete cannot land between the tombstone check and the `mkdir`.
+    return await this.#take(id, async () => {
+      if (this.#removed.has(id)) return undefined
+      const dir = this.#paths.sessionDir(id)
+      await mkdir(dir, { recursive: true })
+      return dir
+    })
   }
 
   async readMeta(id: string): Promise<SessionMeta | undefined> {
@@ -329,6 +335,8 @@ export class SessionStore {
    * follow the links inside.
    */
   async remove(id: string, isLive: (id: string) => boolean): Promise<RemoveOutcome> {
+    // Checked HERE too, whoever calls: this id becomes a path under `sessions/` and is deleted.
+    if (!isSessionId(id)) return 'unknown'
     return await this.#take(id, async () => {
       if (isLive(id)) return 'running'
       const meta = await this.#readMeta(id)
@@ -340,14 +348,16 @@ export class SessionStore {
       } catch {
         return 'unknown'
       }
-      this.#removed.add(id)
       if (isLink) {
+        // The link's own entry, which lives in `sessions/`; what it points at is not touched.
         await unlink(dir)
       } else {
         // Belt and braces for the one thing that must never happen: deleting outside `sessions/`.
         if (dirname(await realpath(dir)) !== (await realpath(this.#paths.sessions))) return 'unknown'
         await rm(dir, { recursive: true, force: true })
       }
+      // Only once it is gone: a delete that failed leaves a session that still works.
+      this.#removed.add(id)
       this.#nextSeq.delete(id)
       this.#observer?.removed(id)
       return 'removed'

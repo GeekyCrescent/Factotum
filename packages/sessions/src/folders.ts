@@ -12,7 +12,7 @@
  * only narrow, or change nothing an agent can use.
  */
 
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 import type { Logger, NotificationMessage, Notifier, Timers } from '@factotum/core'
 import type { History } from './history.ts'
 import type { SessionIndex } from './index-cache.ts'
@@ -126,7 +126,9 @@ export function createFolders(deps: FoldersDeps): Folders {
     // answer a token that does not exist yet. The body names the folder, never its path.
     send({
       title: 'approval',
-      body: `${request.kind === 'project' ? 'Add project' : 'Share folder'} · ${request.base}`,
+      // The folder's name AND its parent's: a name alone is the caller's to choose (`/tmp/x/Documents`),
+      // and the parent is what tells the owner which one it is. Never the whole path.
+      body: `${request.kind === 'project' ? 'Add project' : 'Share folder'} · ${request.base} (in ${basename(dirname(request.path)) || '/'})`,
       tag: `grant:${opened.requestId}`,
       path: `/m/sessions/projects?grant=${opened.token}`,
       data: { kind: 'grant', grantId: opened.token, requestId: opened.requestId, name: request.base },
@@ -160,7 +162,12 @@ export function createFolders(deps: FoldersDeps): Folders {
       send({ title: 'not added', body: `Could not add · ${request.base}`, tag: `added:${requestId}`, path: '/m/sessions/projects' })
       return { outcome: 'rejected', reason: result.reason }
     }
-    await table.apply(result.registry, request.kind === 'shared' && deps.liveCount() === 0)
+    try {
+      await table.apply(result.registry, request.kind === 'shared')
+    } catch (error) {
+      // It IS on disk: the approval stands, and the next start loads it. Said, not swallowed.
+      deps.log.warn(`added ${request.base} to the registry but could not check it yet: ${error instanceof Error ? error.message : String(error)}`)
+    }
     send({
       title: 'added',
       body: `Added · ${request.kind === 'project' ? (request.name ?? request.id) : request.base}`,
@@ -179,6 +186,9 @@ export function createFolders(deps: FoldersDeps): Folders {
       const projects = table.registryView().projects
       const candidate = await checkCandidate(request.path, 'project', world(projects, table.registryView().shared.map((s) => s.path)))
       if (!candidate.ok) return { outcome: 'invalid', reason: candidate.reason }
+      if (grants.waitingFor(candidate.realPath)) {
+        return { outcome: 'conflict', conflict: 'already-waiting', reason: 'a request for that folder is already waiting for your approval' }
+      }
       const id = await idFor(request, candidate.base)
       if ('refused' in id) return { outcome: 'invalid', reason: id.refused }
       return open({ kind: 'project', path: candidate.realPath, id: id.id, name: request.name, color: request.color, base: candidate.base })
@@ -190,6 +200,9 @@ export function createFolders(deps: FoldersDeps): Folders {
       const view = table.registryView()
       const candidate = await checkCandidate(path, 'shared', world(view.projects, view.shared.map((s) => s.path)))
       if (!candidate.ok) return { outcome: 'invalid', reason: candidate.reason }
+      if (grants.waitingFor(candidate.realPath)) {
+        return { outcome: 'conflict', conflict: 'already-waiting', reason: 'a request for that folder is already waiting for your approval' }
+      }
       if (deps.liveCount() > 0) {
         return { outcome: 'conflict', conflict: 'live-sessions', reason: 'a session is running; shared folders change only with none' }
       }
@@ -274,7 +287,7 @@ export function createFolders(deps: FoldersDeps): Folders {
         current.shared.some((s) => s.path === path) ? { kind: 'remove-shared', path } : { refused: `${path} is not shared` },
       )
       if (result.kind !== 'ok') return change(result.reason)
-      await table.apply(result.registry, deps.liveCount() === 0)
+      await table.apply(result.registry, true)
       deps.log.info(`stopped sharing ${basename(path)}`)
       return { outcome: 'ok', removedSessions: 0 }
     },

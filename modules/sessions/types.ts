@@ -395,7 +395,7 @@ export interface ProjectPatch {
 }
 
 /** Why a request is a 409 rather than a 400: the screen says each differently. */
-export type RequestConflict = 'broken' | 'starting' | 'too-many' | 'no-device' | 'live-sessions'
+export type RequestConflict = 'broken' | 'starting' | 'too-many' | 'no-device' | 'live-sessions' | 'already-waiting'
 
 export type RequestResult =
   | { readonly outcome: 'requested'; readonly requestId: string; readonly expiresAt: string }

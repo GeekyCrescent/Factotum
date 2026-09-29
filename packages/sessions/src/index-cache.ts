@@ -15,6 +15,8 @@ import type { SessionMeta, SessionStore } from './store.ts'
 
 export class SessionIndex {
   readonly #metas = new Map<string, SessionMeta>()
+  /** Ids deleted while the build runs: a meta read before its delete must not come back as a ghost. */
+  readonly #dropped = new Set<string>()
   #ready = false
 
   get ready(): boolean {
@@ -25,8 +27,9 @@ export class SessionIndex {
   async build(store: SessionStore): Promise<void> {
     for (const id of await store.listIds()) {
       const meta = await store.readMeta(id)
-      if (meta !== undefined && !this.#metas.has(id)) this.#metas.set(id, meta)
+      if (meta !== undefined && !this.#metas.has(id) && !this.#dropped.has(id)) this.#metas.set(id, meta)
     }
+    this.#dropped.clear()
     this.#ready = true
   }
 
@@ -36,6 +39,7 @@ export class SessionIndex {
 
   drop(id: string): void {
     this.#metas.delete(id)
+    if (!this.#ready) this.#dropped.add(id)
   }
 
   get(id: string): SessionMeta | undefined {

@@ -46,6 +46,8 @@ export interface GrantTable {
   readonly get: (token: string) => (GrantRequest & { readonly expiresAt: string; readonly requestId: string }) | 'settled' | undefined
   readonly status: (requestId: string) => GrantStatus
   readonly pendingCount: () => number
+  /** Whether a request for this resolved folder is already waiting: one request per folder. */
+  readonly waitingFor: (path: string) => boolean
   readonly closeAll: (reason: string) => void
 }
 
@@ -159,6 +161,8 @@ export function createGrantTable(deps: GrantTableDeps): GrantTable {
     },
 
     pendingCount: () => pending.size,
+
+    waitingFor: (path) => [...pending.values()].some((entry) => entry.request.path === path),
 
     closeAll: (reason) => {
       for (const key of [...pending.keys()]) expire(key, reason)

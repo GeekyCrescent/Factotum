@@ -319,3 +319,12 @@ test('A DELETED CONVERSATION IS NOT MADE AGAIN: ensureDir says no, append throws
   assert.equal(await store.patchMeta(ID, (m) => m), undefined)
   await assert.rejects(() => stat(paths.sessionDir(ID)), /ENOENT/)
 })
+
+test('A meta.json WHOSE id IS NOT ITS DIRECTORY is not that session, and an id that is not one is never deleted', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  await writeFile(paths.metaFile(ID), JSON.stringify({ id: '../../elsewhere', siteId: 'work' }))
+  assert.equal(await store.readMeta(ID), undefined)
+  assert.equal(await store.remove('../../elsewhere', () => false), 'unknown')
+  assert.equal(await store.remove('not-an-id', () => false), 'unknown')
+})

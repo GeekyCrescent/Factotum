@@ -135,7 +135,7 @@ test('THE NOTICE NAMES THE FOLDER, NEVER ITS PATH, and asks until the deadline (
   const { engine, notices, folder, root } = await world()
   const { requestId, expiresAt } = await requested(engine, await folder('web'))
   const notice = notices[0]
-  assert.equal(notice?.body, 'Add project · web')
+  assert.match(notice?.body ?? '', /^Add project · web \(in factotum-folders-[^/]+\)$/)
   assert.equal(notice?.until, expiresAt)
   assert.equal(notice?.tag, `grant:${requestId}`)
   assert.match(notice?.path ?? '', /^\/m\/sessions\/projects\?grant=[A-Za-z0-9_-]{43}$/)
@@ -168,7 +168,7 @@ test('A SYMLINK REGISTERS WHERE IT LANDS: resolved path, id and notice from the 
   const target = await folder('real-name')
   await symlink(target, join(root, 'alias'))
   const { requestId } = await requested(engine, join(root, 'alias'))
-  assert.equal(notices[0]?.body, 'Add project · real-name')
+  assert.match(notices[0]?.body ?? '', /^Add project · real-name \(in /)
   await engine.answerGrant(tokenOf(notices, requestId), 'allow')
   assert.deepEqual(registry.current().projects.map((p) => [p.id, p.path]), [['real-name', target]])
 })
@@ -339,7 +339,7 @@ test('A SHARED FOLDER: asked, approved into the gate, and removed — none of it
   const asked = await engine.requestShared(notes)
   assert.equal(asked.outcome, 'requested')
   const requestId = asked.outcome === 'requested' ? asked.requestId : ''
-  assert.equal(notices[0]?.body, 'Share folder · notes')
+  assert.match(notices[0]?.body ?? '', /^Share folder · notes \(in /)
 
   // A session starts before the answer: approving is refused in the queue.
   const live = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
@@ -435,4 +435,14 @@ test('REMOVED PROJECTS: “Delete history” deletes their conversations; a regi
   assert.deepEqual((await engine.projects()).removed, [])
   assert.equal((await engine.removeHistory('demo')).outcome, 'unknown')
   assert.equal((await engine.removeHistory('web')).outcome, 'unknown')
+})
+
+test('ONE REQUEST PER FOLDER: asking again while one waits is a 409, and it does not eat the ceiling', async () => {
+  const { engine, folder, notices } = await world()
+  const path = await folder('web')
+  await requested(engine, path)
+  const again = await engine.requestProject({ path, id: 'web-2', name: undefined, color: undefined })
+  assert.equal(again.outcome === 'conflict' ? again.conflict : again.outcome, 'already-waiting')
+  assert.equal(notices.length, 1)
+  for (const name of ['a', 'b']) await requested(engine, await folder(name))
 })
