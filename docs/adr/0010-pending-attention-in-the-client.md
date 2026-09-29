@@ -70,6 +70,11 @@ here should not subscribe.
 then*. It is typed, not hidden in `data`, because the worker interprets it. Its only consumer is
 the worker, which keeps a notice with a future `until` as pending. The kernel does not read it.
 
+**Amended by [ADR-0011](0011-projects-registry-and-grants.md), 2026-09-29:** the worker still
+reads it, but two kinds of notice carry it now: the ask, and the folder request (a new project or
+shared folder waiting for approval, token in `data.grantId`, dropped on this machine like
+`askId`).
+
 ### 5. The client contract grows — in `apps/web`, not in `core`
 
 `ModuleViewProps` gains `navigate`, `openDrawer`, `overlay`/`setOverlay`, `pending`,

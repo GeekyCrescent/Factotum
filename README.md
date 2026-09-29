@@ -110,47 +110,36 @@ Write your own by copying `modules/example/` and adding a line to `modules/local
 
 ## Sessions
 
-The module that launches agents. You declare **sites** — directories you are willing
-to let an agent write in — and a **catalog** of things to launch:
+The module that launches agents. You add **projects** (sites, in the code), folders you
+are willing to let an agent write in, and a **catalog** of things to launch.
 
-```json
-{
-  "modules": {
-    "sessions": {
-      "enabled": true,
-      "sites": [{ "id": "notes", "path": "/Users/you/notes" }],
-      "catalog": [{ "id": "free", "label": "Free prompt", "invoke": { "kind": "none" } }]
-    }
-  }
-}
-```
+**Projects are added from the app**, and adding one sends an approval to your phone:
+nothing is written until you answer there. They live in
+`~/.factotum/<env>/modules/sessions/projects.json`, which **only the daemon writes**; the
+first start seeds it from the config's `sites`. Without a phone, stop the daemon, add an
+entry to that file, and start it again: `factotum site add <path>` prints exactly how, and
+`factotum site list` shows what the daemon has. A project whose folder goes missing fails
+alone: it launches nothing, its conversations are not read, and the others carry on.
 
-Declare them with `factotum site add <path>` rather than by hand: it validates against
-the real schema before writing, writes atomically, restarts the daemon, and **asks
-first** — this is the command that widens what an agent may write.
-
-A write whose destination lands inside the site is allowed. A write outside it **asks
-you** — a notification on your phone, with allow and deny — if a device is subscribed;
+A write whose destination lands inside the project is allowed. A write outside it **asks
+you**, a notification on your phone with allow and deny, if a device is subscribed;
 otherwise, or if nobody answers within the hour, it is refused with the reason in the log
 and on the screen. Reading is never asked about. Sessions persist to an append-only log,
-so you can close the tab and come back.
+so you can close the tab and come back; conversations can be renamed, archived, deleted
+and searched, message text included.
 
-**One site, one lock, one session at a time** — which is what lets you run an agent per
-project at once. A session belongs to exactly one site, so if several of them need to
-write the same place (a notes vault is the usual case), declare it once:
+**One project, one lock, one session at a time**, which is what lets you run an agent per
+project at once. A session belongs to exactly one project, so if several of them need to
+write the same place (a notes vault is the usual case), share it once, from the app.
 
-```json
-"sharedPaths": ["/Users/you/notes/inbox"]
-```
-
-Every session may write there, on top of its own site. **Nothing launches into a shared
-path and nothing locks it**: two agents can touch the same file at the same time. That
-is the trade for having them run in parallel — the alternative is one site big enough to
-contain everything, which is one lock and therefore one agent.
+Every session may write there, on top of its own project. **Nothing launches into a
+shared folder and nothing locks it**: two agents can touch the same file at the same time.
+That is the trade for having them run in parallel; the alternative is one project big
+enough to contain everything, which is one lock and therefore one agent.
 
 **`Bash` is not checked against that boundary, and this is not containment.**
 [docs/running-agents.md](docs/running-agents.md) lists all ten limits, and it is worth
-reading before you declare your first site.
+reading before you add your first project.
 
 ## Two environments
 

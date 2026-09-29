@@ -1,84 +1,78 @@
 # Running agents
 
-Read this before you declare your first site. It says exactly what "the agent may
+Read this before you add your first project. It says exactly what "the agent may
 write here" means, and — at more length — what this does **not** protect you from.
 
 ---
 
-## A site is something you write down
+## A project is something you approve
 
-```jsonc
-// ~/.factotum/<env>/config.json
-{
-  "modules": {
-    "sessions": {
-      "enabled": true,
-      "sites": [
-        { "id": "factotum", "path": "/Users/you/code/factotum" },
-        { "id": "notes",    "path": "/Users/you/notes" }
-      ],
-      "catalog": [
-        { "id": "free",    "label": "Free prompt", "invoke": { "kind": "none" } },
-        { "id": "review",  "label": "Code review", "invoke": { "kind": "command",  "name": "code-review" } },
-        { "id": "planner", "label": "Planner",     "invoke": { "kind": "subagent", "name": "planner" } }
-      ]
-    }
-  }
-}
-```
+A project (a *site*, in the code) is a folder an agent may write in. They live in
+`~/.factotum/<env>/modules/sessions/projects.json`, and **the daemon is the only thing
+that writes that file** ([ADR-0011](adr/0011-projects-registry-and-grants.md)).
 
-Add a site, restart the daemon. No rebuild, no code — and you do not have to edit that
-file by hand:
+**From the app:** Projects, *Add project*, type the folder (`~/code/thing` works). The
+daemon checks it and sends an approval to your phone; nothing is added until you answer
+there. What gets registered is the folder's **resolved** path, and its id comes from the
+resolved folder's name unless you type one. Name and colour you can change any time,
+with no approval; deleting a project deletes its conversations and never its folder.
 
-```sh
-factotum site add ~/projects/thing      # id derived from the directory name
-factotum site add ~/notes --shared      # writable from every site instead
-factotum site list                      # or --json, for something reading it
-factotum site rm thing
-```
+The first start seeds the file from the config's `sites` and `sharedPaths`, as they are.
+After that the config's lists are not read, and the start says so.
 
-It validates the result against the real schema before writing, writes atomically, and
-restarts the daemon for you when this environment is installed as a service. **It asks
-first**, every time: this is the command that widens what an agent may write, and
-`--yes` is how a script says it meant to. Without a terminal and without `--yes` it
-writes nothing.
-
-**Nothing is authorised by being inside a folder.** There is no `projectRoots` setting
-and no discovery of git repositories underneath something. A site is allowed because
-you wrote it down, for the same reason the bind address is: auto-detection lives in
-`factotum init` and nowhere else.
-
-Paths must be absolute and must not contain `..`. That is checked when the config is
-read. Whether the directory *exists* is checked when the daemon starts, because the
-first check cannot touch the disk and the second must not run any earlier.
-
-If a site is wrong, **the module is disabled with the reason** and the rest of factotum
-keeps running. `factotum doctor` will tell you which and why.
-
-### Shared paths, and what they cost
-
-A session belongs to **one** site, and a site holds **one** lock — that pairing is what
-lets you run an agent per project at the same time, and it is also why several agents
-cannot write one shared directory by declaring it in each of them.
-
-For that, declare it once, beside `sites`:
+**Without a phone:** stop the daemon (`factotum uninstall --env <env>`, or stop
+`factotum start`), add an entry to `projects.json`, and start it again (`factotum install`
+rewrites the LaunchAgent with the PATH of the shell you run it from, so run it where
+`claude` is on the PATH). An edit made while the daemon runs is ignored and overwritten
+by its next write. `factotum site add` prints this recipe, with the real path of the file
+and an example entry; it no longer writes anything.
 
 ```json
-"sharedPaths": ["/Users/you/notes/inbox"]
+{ "version": 1,
+  "projects": [{ "id": "thing", "path": "/Users/you/code/thing" }],
+  "shared": [{ "path": "/Users/you/notes/inbox" }] }
 ```
 
-Every session may write there, in addition to its own site. Same rules as a site path:
-absolute, no `..`, and it must exist or the module is disabled with the reason. The
-denial message then names the whole boundary, site and shared paths together.
+```sh
+factotum site list          # what the daemon has, or --json for something reading it
+factotum doctor             # where the file is, how many projects, whether it is broken
+```
 
-**What it is not:** nothing launches into a shared path, and **nothing locks it**. Two
-agents writing the same file there at the same time is not prevented by anything —
-last write wins, silently. Give agents separate files if you can (one note each, not a
-shared index).
+**Nothing is authorised by being inside a folder.** There is no `projectRoots` setting
+and no discovery of git repositories underneath something. A project is allowed because
+you approved it.
 
-The alternative, if that trade is wrong for you, is one site containing everything.
-That keeps a single lock over the whole tree, which means one agent at a time. Both
-are legitimate; pick the one that matches how you work.
+A project may not be `/`, your home, `~/.factotum` or the checkout factotum runs from
+(nor anything inside or above those two), and may not equal, contain or sit inside
+another project, even one whose folder is missing today.
+
+**A project whose folder is missing fails alone.** It launches nothing and its
+conversations are not read until the folder is back; every other project carries on. A
+session already running there keeps the boundary it started with.
+
+If `projects.json` does not parse, the module runs with **no project**, says why in
+Projects and in `factotum doctor`, and never writes over the file. A single bad entry is
+skipped, said, and kept in the file as it was.
+
+### Shared folders, and what they cost
+
+A session belongs to **one** project, and a project holds **one** lock: that pairing is
+what lets you run an agent per project at the same time, and it is also why several
+agents cannot write one shared directory by declaring it in each of them.
+
+For that, share it once, from Projects (*Shared folders*), with the same approval on the
+phone. Every session may then write there, in addition to its own project. Shared
+folders change only while **no session is running**, so no live session's boundary moves
+under it. A shared folder may sit inside a project.
+
+**What it is not:** nothing launches into a shared folder, and **nothing locks it**. Two
+agents writing the same file there at the same time is not prevented by anything: last
+write wins, silently. Give agents separate files if you can (one note each, not a shared
+index).
+
+The alternative, if that trade is wrong for you, is one project containing everything.
+That keeps a single lock over the whole tree, which means one agent at a time. Both are
+legitimate; pick the one that matches how you work.
 
 ### The catalog
 
@@ -203,7 +197,9 @@ share your tailnet, this is the paragraph that matters.
 
 | What you see | What it means |
 |---|---|
-| `sessions` disabled in `factotum doctor` | The config fragment or a site path is wrong; the reason is printed |
+| `sessions` disabled in `factotum doctor` | The config fragment is wrong; the reason is printed |
+| A project marked *Folder missing* | Its folder is not there. It launches nothing until it is back; the others are fine |
+| Add project answers *no device can approve* | No phone is subscribed. Subscribe one in Device, or add it by hand with the daemon stopped |
 | `409` when launching | The site already has a live session, or it is a git repo that is dirty or behind. The screen offers to go to the session, cancel it, or launch anyway |
 | A session `failed` right after a restart | It was running when the daemon stopped. The log is intact up to the last event that was written |
 | A denied write you did not expect | The site is probably narrower than the job. Widen the site rather than widening the gate |

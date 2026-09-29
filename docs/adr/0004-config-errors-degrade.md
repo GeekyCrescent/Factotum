@@ -35,3 +35,7 @@ A disabled module can go unnoticed until someone looks. That is the price, and i
 why `doctor` asks a running daemon rather than only reading files: disabled-ness
 exists only in the live process, and persisting it would create a second source of
 truth that goes stale on the next restart.
+
+**Amended by [ADR-0011](0011-projects-registry-and-grants.md), 2026-09-29:** a sessions project
+whose folder is missing no longer disables the module. That project alone is `missing`: it
+launches nothing and its conversations are not read, and every other project carries on.

@@ -99,3 +99,11 @@ absence of a consumer, and it is written down as such rather than claimed.
 again with `comm -12` over the exported types of both `types.ts`: **19** before that spec, **21**
 after it added `AskPreview` and `InspectResult`. The asymmetry and the link in `main.ts` are
 unchanged.
+
+**Note, 2026-09-29 (projects and history spec):** counted again with `comm -12` over the exported
+types of both `types.ts`: **52** now (the registry, the projects, the history and the folder
+requests). And one capability now runs **the other way**: the `RegistryStore` goes from the module
+to the engine, because the one schema of a project lives in the module (`config.ts`) and the
+daemon's only writer of `projects.json` is built there, in `start()`. The engine sees a read-only
+view and hands back edits as data, so the type still crosses in one direction on each side and the
+link in `main.ts` compiles with properties, not methods. See [ADR-0011](0011-projects-registry-and-grants.md).
