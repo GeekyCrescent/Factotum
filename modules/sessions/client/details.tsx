@@ -5,7 +5,7 @@
 
 import type { EngineSetupView, SessionSummary } from '../types.ts'
 import { clock, duration } from './format.ts'
-import { titleOf } from './history.ts'
+import { nameOf } from './history.ts'
 
 export function Details({
   id,
@@ -21,7 +21,7 @@ export function Details({
   const entry = setup.catalog.find((e) => e.id === summary?.entryId)
   const path = setup.sites.find((site) => site.id === summary?.siteId)?.path
   const rows: readonly (readonly [string, string, boolean?])[] = [
-    ['Conversation', titleOf(summary?.prompt)],
+    ['Conversation', summary === undefined ? '' : nameOf(summary)],
     ['Run', entry?.label ?? summary?.entryId ?? ''],
     ['Started', summary === undefined ? '' : started(summary.startedAt)],
     ['Duration', summary === undefined ? '' : duration(summary.startedAt, summary.endedAt, now)],

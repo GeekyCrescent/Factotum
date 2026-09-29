@@ -2,6 +2,11 @@
  * One session, the whole screen: its bar, the strip for another session waiting, the log, and the
  * dock with the ask and the reply (spec 2026-09-18, design D5).
  *
+ * ITS OWN SUMMARY (spec 2026-09-29, D9): `GET sessions/:id` when it opens and whenever its state
+ * changes, so any conversation opens with its title, its state and its project's colour — not only
+ * the ones on the first page of a list (criterion 36). A conversation of a project whose folder is
+ * missing is not read: the screen says so and shows no log (criterion 25).
+ *
  * THE LOG IS THE CURSOR. `GET sessions/:id/events?fromSeq=` every POLL_MS while it runs; a
  * reconnect is the same request with a different number, so nothing is buffered and nothing is
  * de-duplicated. Polling stops the moment it is over, and a reply starts it again.
@@ -10,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import type { EngineSetupView, EventPage, SessionEvent, SessionState, SessionSummary } from '../types.ts'
+import type { EngineSetupView, EventPage, ProjectRef, SessionEvent, SessionState, SessionSummary } from '../types.ts'
 import { AskPanel, useAsk } from './ask-panel.tsx'
 import { ReplyComposer } from './composer.tsx'
 import type { Api, ViewProps } from './contract.ts'
@@ -19,7 +24,9 @@ import { Details } from './details.tsx'
 import { stateLabel } from './format.ts'
 import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
-import { MenuButton, Strip } from './bars.tsx'
+import { MenuButton, Strip, TopBar } from './bars.tsx'
+import { ConversationMenu } from './conversation-menu.tsx'
+import { nameOf } from './history.ts'
 import { askFor, sessionOf, type AskRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
@@ -27,17 +34,99 @@ import { toneClass } from './tone.ts'
 const POLL_MS = 1_000
 const ASK = 'ask'
 
+type Found =
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'ok'; readonly summary: SessionSummary; readonly project: ProjectRef | undefined }
+  | { readonly kind: 'missing'; readonly siteId: string }
+  | { readonly kind: 'gone' }
+  | { readonly kind: 'error'; readonly message: string }
+
+/** The conversation's summary, read again every time `generation` moves. */
+function useSummary(api: Api, id: string, generation: number): Found {
+  const [found, setFound] = useState<Found>({ kind: 'loading' })
+  useEffect(() => {
+    let live = true
+    api
+      .get<{ summary: SessionSummary; project: ProjectRef | undefined }>(`sessions/${id}`)
+      .then((got) => {
+        if (live) setFound({ kind: 'ok', summary: got.summary, project: got.project })
+      })
+      .catch((cause: unknown) => {
+        if (!live) return
+        const error = cause as { status?: number; body?: { missing?: { siteId?: string } } }
+        if (error.status === 409 && typeof error.body?.missing?.siteId === 'string') setFound({ kind: 'missing', siteId: error.body.missing.siteId })
+        else if (error.status === 404 || error.status === 400) setFound({ kind: 'gone' })
+        else setFound((current) => (current.kind === 'ok' ? current : { kind: 'error', message: messageOf(cause) }))
+      })
+    return () => {
+      live = false
+    }
+  }, [api, id, generation])
+  return found
+}
+
 export function Session({
   view,
   id,
   setup,
+  onChanged,
+}: {
+  readonly view: ViewProps
+  readonly id: string
+  readonly setup: EngineSetupView
+  readonly onChanged: () => void
+}) {
+  const [generation, setGeneration] = useState(0)
+  const found = useSummary(view.api, id, generation)
+  const changed = useCallback(() => {
+    setGeneration((n) => n + 1)
+    onChanged()
+  }, [onChanged])
+
+  if (found.kind === 'missing' || found.kind === 'gone') {
+    return (
+      <div class="s-screen">
+        <TopBar title={found.kind === 'missing' ? found.siteId : 'Conversation'} pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
+        <div class="center-state">
+          <Icon name="warning" size={32} />
+          <h2>{found.kind === 'missing' ? "This project's folder is missing" : 'This conversation is not here'}</h2>
+          <p>
+            {found.kind === 'missing'
+              ? 'Its conversations are not read while the folder is gone. Put the folder back and it reads again.'
+              : 'It was deleted, or it never existed.'}
+          </p>
+          <button type="button" class="btn" onClick={() => view.navigate('new')}>
+            New session
+          </button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <Live
+      view={view}
+      id={id}
+      setup={setup}
+      summary={found.kind === 'ok' ? found.summary : undefined}
+      project={found.kind === 'ok' ? found.project : undefined}
+      onChanged={changed}
+    />
+  )
+}
+
+function Live({
+  view,
+  id,
+  setup,
   summary,
+  project,
   onChanged,
 }: {
   readonly view: ViewProps
   readonly id: string
   readonly setup: EngineSetupView
   readonly summary: SessionSummary | undefined
+  readonly project: ProjectRef | undefined
   readonly onChanged: () => void
 }) {
   const { api } = view
@@ -67,12 +156,13 @@ export function Session({
 
   return (
     // The project's colour, for everything in the screen that says whose it is (its dot, the bubbles).
-    <div class={summary === undefined ? 's-screen' : `s-screen ${toneClass(summary.siteId)}`}>
+    <div class={summary === undefined ? 's-screen' : `s-screen ${toneClass(summary.siteId, project?.color)}`}>
       <header class="topbar">
         <MenuButton pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
         <div class="title s-title">
-          <h1>{summary?.siteId ?? id.slice(0, 8)}</h1>
+          <h1>{project?.name ?? summary?.siteId ?? id.slice(0, 8)}</h1>
           <span class={`s-badge s-state-${state}`}>{stateLabel(state)}</span>
+          {summary === undefined ? null : <p class="s-subtitle">{nameOf(summary)}</p>}
         </div>
         <button
           type="button"
@@ -91,6 +181,12 @@ export function Session({
           <button type="button" class="icon-btn" aria-label="New session" onClick={() => view.navigate('new')}>
             <Icon name="note-pencil" />
           </button>
+        )}
+        {summary === undefined ? null : (
+          <ConversationMenu api={api} summary={summary} running={running} onChanged={onChanged} onDeleted={() => {
+            onChanged()
+            view.navigate('new')
+          }} />
         )}
       </header>
       {showDetails ? <Details id={id} summary={summary} setup={setup} now={Date.now()} /> : null}

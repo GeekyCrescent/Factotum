@@ -1,6 +1,7 @@
 /**
- * Each project's colour: one of PROJECT_TONES, picked from its name, so a site keeps its colour on
- * every screen and every device without anything stored. Pure; no DOM (guardrail 11).
+ * Each project's colour: the one the owner picked (spec 2026-09-29, criterion 26), else one of
+ * PROJECT_TONES picked from its id, so a site keeps its colour on every screen and every device
+ * without anything stored. Pure; no DOM (guardrail 11).
  *
  * The colours themselves are `--p1`…`--p6` in tokens.css; `client.css` turns `s-p<n>` into them.
  */
@@ -18,6 +19,6 @@ export function toneOf(site: string): number {
 }
 
 /** The class that sets `--project` and `--project-soft` for everything inside it. */
-export function toneClass(site: string): string {
-  return `s-p${toneOf(site)}`
+export function toneClass(site: string, color?: number | undefined): string {
+  return `s-p${color !== undefined && Number.isInteger(color) && color >= 1 && color <= PROJECT_TONES ? color : toneOf(site)}`
 }

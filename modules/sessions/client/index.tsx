@@ -3,15 +3,20 @@
  * (spec 2026-09-18, design D5).
  *
  * WHAT `rest` MEANS. `''` picks the session that matters (a live pending, else the newest running,
- * else the newest, else a new one) and REPLACES the entry with it; `new` is the composer; anything
- * else is a session id. The shell keeps `rest` in step with the URL, so this never reads the
- * address bar.
+ * else the newest, else a new one) and REPLACES the entry with it; `new` is the composer; `projects`
+ * is the projects screen (spec 2026-09-29, D10) and never a session id; anything else is a session
+ * id. The shell keeps `rest` in step with the URL, so this never reads the address bar.
+ *
+ * A SESSION READS ITS OWN SUMMARY (`session.tsx`), so opening one does not depend on it being on the
+ * first page of a list (criterion 36). The page here is only for landing on `''` and for noticing
+ * that a pending's session is over; `GET sessions` leaves out what is archived and what belongs to a
+ * missing project, so landing never lands on a conversation that answers 409.
  *
  * `api` arrives already prefixed to `/modules/sessions/`, and everything from outside is declared
  * STRUCTURALLY in `contract.ts`: a module depends on `packages/core` and only on core (CLAUDE.md
  * §1).
  *
- * NO CONSOLE (criterion 37): pendings and the query pass through here.
+ * NO CONSOLE (criterion 41): pendings and the query pass through here.
  */
 
 import './client.css'
@@ -23,10 +28,12 @@ import type { ViewProps } from './contract.ts'
 import { SessionsDrawer } from './drawer.tsx'
 import { messageOf } from './errors.ts'
 import { Icon } from './icon.tsx'
-import { pickRelevant, resolvedBy } from './relevance.ts'
+import { ProjectsScreen } from './projects.tsx'
+import { firstWithSession, pickRelevant, resolvedBy } from './relevance.ts'
 import { Session } from './session.tsx'
 
 const NEW = 'new'
+const PROJECTS = 'projects'
 
 function SessionsView(view: ViewProps) {
   const { api, rest, navigate, pending, resolvePending } = view
@@ -52,7 +59,13 @@ function SessionsView(view: ViewProps) {
     void refresh()
   }, [refresh])
 
-  // A pending whose session this page shows as over is over (criterion 28).
+  // Entering "New session" reads the setup again: a project added, renamed or recoloured elsewhere
+  // shows in the composer with its name and colour (criterion 26).
+  useEffect(() => {
+    if (rest === NEW) void refresh()
+  }, [rest, refresh])
+
+  // A pending whose session this page shows as over is over (criterion 28 of the previous spec).
   useEffect(() => {
     if (page === undefined) return
     for (const tag of resolvedBy(pending, page.sessions)) resolvePending(tag)
@@ -64,6 +77,8 @@ function SessionsView(view: ViewProps) {
     const pick = pickRelevant(pending, page.sessions)
     navigate(pick.kind === 'new' ? NEW : pick.id, { replace: true })
   }, [rest, page, pending, navigate])
+
+  if (rest === PROJECTS) return <ProjectsScreen view={view} />
 
   if (error !== undefined && (setup === undefined || page === undefined)) {
     return (
@@ -84,7 +99,8 @@ function SessionsView(view: ViewProps) {
   if (setup === undefined || page === undefined || rest === '') return <Loading view={view} />
 
   if (rest === NEW) {
-    const other = pending[0]
+    // The first pending WITH A SESSION: a folder request has none, and must not hide an ask's strip.
+    const other = firstWithSession(pending)
     return (
       <div class="s-screen">
         <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
@@ -94,7 +110,7 @@ function SessionsView(view: ViewProps) {
             <div class="center-state">
               <Icon name="terminal" size={32} />
               <h2>No sessions yet</h2>
-              <p>Pick a site below and tell the agent what to do. It runs on your machine; you watch it here.</p>
+              <p>Pick a project below and tell the agent what to do. It runs on your machine; you watch it here.</p>
             </div>
           ) : null}
         </div>
@@ -107,22 +123,14 @@ function SessionsView(view: ViewProps) {
               navigate(id)
             }}
             goTo={(id) => navigate(id)}
+            onManage={() => navigate(PROJECTS)}
           />
         </div>
       </div>
     )
   }
 
-  return (
-    <Session
-      key={rest}
-      view={view}
-      id={rest}
-      setup={setup}
-      summary={page.sessions.find((s) => s.id === rest)}
-      onChanged={() => void refresh()}
-    />
-  )
+  return <Session key={rest} view={view} id={rest} setup={setup} onChanged={() => void refresh()} />
 }
 
 function Loading({ view }: { readonly view: ViewProps }) {

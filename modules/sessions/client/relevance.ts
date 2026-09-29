@@ -19,6 +19,39 @@ export interface Pending {
 
 export type Landing = { readonly kind: 'session'; readonly id: string } | { readonly kind: 'new' }
 
+/**
+ * A FOLDER REQUEST waiting on the owner (spec 2026-09-29, D3): an ask with no session. Its tag is
+ * `grant:<requestId>`; on the daemon's own machine the worker keeps it without `grantId`.
+ */
+export interface GrantRef {
+  readonly tag: string
+  readonly requestId: string
+  /** The capability. Absent where this device keeps no tokens: approve from the phone. */
+  readonly grantId?: string
+  readonly name: string | undefined
+}
+
+export function grantOf(pending: Pending): GrantRef | undefined {
+  const requestId = pending.data['requestId']
+  if (pending.data['kind'] !== 'grant' || typeof requestId !== 'string') return undefined
+  const grantId = pending.data['grantId']
+  const name = pending.data['name']
+  return {
+    tag: pending.tag,
+    requestId,
+    ...(typeof grantId === 'string' ? { grantId } : {}),
+    name: typeof name === 'string' ? name : undefined,
+  }
+}
+
+/**
+ * The first pending that is about a SESSION — what the strip shows. Never `pending[0]`: a folder
+ * request has no session, and taking it would hide the strip of an ask behind it (criterion 22).
+ */
+export function firstWithSession(pending: readonly Pending[]): Pending | undefined {
+  return pending.find((p) => sessionOf(p) !== undefined)
+}
+
 /** The session a pending is about, when its data says. */
 export function sessionOf(pending: Pending): string | undefined {
   const id = pending.data['sessionId']

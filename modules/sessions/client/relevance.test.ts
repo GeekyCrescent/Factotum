@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SessionState, SessionSummary } from '../types.ts'
-import { askFor, pickRelevant, resolvedBy, type Pending } from './relevance.ts'
+import { askFor, firstWithSession, grantOf, pickRelevant, resolvedBy, type Pending } from './relevance.ts'
 
 const TOKEN = 'a'.repeat(43)
 
@@ -69,4 +69,30 @@ test('a pending kept WITHOUT its token (this is the daemon machine) is still an 
   const ask = askFor('s1', [pending('s1')], '')
   assert.equal(ask?.askId, undefined)
   assert.equal(ask?.toolName, 'Write')
+})
+
+// ---------------------------------------------------------------------------
+// folder requests (spec 2026-09-29, criterion 22)
+// ---------------------------------------------------------------------------
+
+const grantPending = (data: Record<string, unknown>): Pending => ({ tag: 'grant:req-1', until: '2099-01-01T00:00:00.000Z', data })
+
+test('a folder request is read from its pending, with or without the token', () => {
+  assert.deepEqual(grantOf(grantPending({ kind: 'grant', requestId: 'req-1', grantId: TOKEN, name: 'web' })), {
+    tag: 'grant:req-1',
+    requestId: 'req-1',
+    grantId: TOKEN,
+    name: 'web',
+  })
+  assert.deepEqual(grantOf(grantPending({ kind: 'grant', requestId: 'req-1' })), { tag: 'grant:req-1', requestId: 'req-1', name: undefined })
+  assert.equal(grantOf(grantPending({ sessionId: 'x', askId: TOKEN })), undefined)
+})
+
+test('A FOLDER REQUEST DOES NOT HIDE AN ASK: the strip takes the first pending with a session, and landing skips it (criterion 22)', () => {
+  const grant = grantPending({ kind: 'grant', requestId: 'req-1', name: 'web' })
+  const ask: Pending = { tag: 'ask:s1', until: '2099-01-01T00:00:00.000Z', data: { sessionId: 's1' } }
+  assert.equal(firstWithSession([grant, ask]), ask)
+  assert.equal(firstWithSession([grant]), undefined)
+  assert.deepEqual(pickRelevant([grant, ask], []), { kind: 'session', id: 's1' })
+  assert.deepEqual(resolvedBy([grant], []), [])
 })

@@ -1,7 +1,8 @@
 /**
  * The sessions screens' glyphs — its own, because a module imports nothing from the shell.
  *
- * Phosphor Icons, MIT (c) 2023 Phosphor Icons — paths copied from @phosphor-icons/core 2.1.1,
+ * Phosphor Icons, MIT (c) 2023 Phosphor Icons — paths copied from @phosphor-icons/core 2.1.1 (the six
+ * added by spec 2026-09-29 from @phosphor-icons/react 2.1.10, same paths),
  * weights noted per glyph, with every coordinate ROUNDED TO ONE DECIMAL: on a 256-unit grid drawn at
  * 20 px the difference is under a hundredth of a pixel, and it keeps the bundle under its ceiling
  * (spec 2026-09-18, criterion 30). Copied, not installed: a package for ~20 paths is the dependency this
@@ -32,6 +33,12 @@ export const ICONS = {
   'terminal': 'M117.3,134l-72,64a8,8,0,1,1-10.6-12L100,128,34.7,70A8,8,0,1,1,45.3,58l72,64a8,8,0,0,1,0,12ZM216,184H120a8,8,0,0,0,0,16h96a8,8,0,0,0,0-16Z', // regular
   'file-plus': 'M213.7,82.3l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.7,82.3ZM160,51.3,188.7,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-40-64a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V160H104a8,8,0,0,1,0-16h16V128a8,8,0,0,1,16,0v16h16A8,8,0,0,1,160,152Z', // regular
   'stack': 'M230.9,172A8,8,0,0,1,228,182.9l-96,56a8,8,0,0,1-8.1,0l-96-56A8,8,0,0,1,36,169.1l92,53.6,92-53.6A8,8,0,0,1,230.9,172ZM220,121.1l-92,53.6L36,121.1A8,8,0,0,0,28,134.9l96,56a8,8,0,0,0,8.1,0l96-56A8,8,0,1,0,220,121.1ZM24,80a8,8,0,0,1,4-6.9l96-56a8,8,0,0,1,8.1,0l96,56a8,8,0,0,1,0,13.8l-96,56a8,8,0,0,1-8.1,0l-96-56A8,8,0,0,1,24,80Zm23.9,0L128,126.7,208.1,80,128,33.3Z', // regular
+  'dots-three': 'M144,128a16,16,0,1,1-16-16A16,16,0,0,1,144,128ZM60,112a16,16,0,1,0,16,16A16,16,0,0,0,60,112Zm136,0a16,16,0,1,0,16,16A16,16,0,0,0,196,112Z', // bold
+  'archive': 'M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z', // regular
+  'trash': 'M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z', // regular
+  'square': 'M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,176H48V48H208V208Z', // regular
+  'check-square': 'M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm-34.3,77.7-56,56a8,8,0,0,1-11.3,0l-24-24a8,8,0,0,1,11.3-11.3L112,148.7l50.3-50.3a8,8,0,0,1,11.3,11.3Z', // fill
+  'x': 'M208.5,191.5a12,12,0,0,1-17,17L128,145,64.5,208.5a12,12,0,0,1-17-17L111,128,47.5,64.5a12,12,0,0,1,17-17L128,111l63.5-63.5a12,12,0,0,1,17,17L145,128Z', // bold
 } as const
 
 export type SessionIcon = keyof typeof ICONS

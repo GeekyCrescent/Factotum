@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PROJECT_TONES, toneOf } from './tone.ts'
+import { PROJECT_TONES, toneClass, toneOf } from './tone.ts'
 
 test('a project always gets the same colour', () => {
   assert.equal(toneOf('proyecto-a'), toneOf('proyecto-a'))
@@ -20,4 +20,10 @@ test('different projects spread over the colours instead of piling on one', () =
 
 test('two names that differ by one letter usually differ in colour', () => {
   assert.notEqual(toneOf('proyecto-a'), toneOf('proyecto-b'))
+})
+
+test('A COLOUR THE OWNER PICKED wins; without one, or out of range, the one from the id (criterion 26)', () => {
+  assert.equal(toneClass('proyecto-a', 5), 's-p5')
+  assert.equal(toneClass('proyecto-a'), `s-p${toneOf('proyecto-a')}`)
+  assert.equal(toneClass('proyecto-a', 9), `s-p${toneOf('proyecto-a')}`)
 })

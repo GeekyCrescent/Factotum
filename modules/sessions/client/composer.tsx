@@ -64,28 +64,40 @@ export function LaunchComposer({
   setup,
   onLaunched,
   goTo,
+  onManage,
 }: {
   readonly api: Api
   readonly setup: EngineSetupView
   readonly onLaunched: (sessionId: string) => void
   readonly goTo: (sessionId: string) => void
+  /** To the projects screen, where one is added (spec 2026-09-29, D10). */
+  readonly onManage: () => void
 }) {
   const usable = setup.catalog.filter((entry) => entry.disabledReason === undefined)
-  const [siteId, setSiteId] = useState(setup.sites[0]?.id ?? '')
+  // A project whose folder is missing launches nothing (criterion 23): it is not offered.
+  const sites = setup.sites.filter((site) => site.status === 'ok')
+  const [siteId, setSiteId] = useState(sites[0]?.id ?? '')
+  const site = sites.find((s) => s.id === siteId)
   const [entryId, setEntryId] = useState(usable[0]?.id ?? '')
   const s = useSend(async (text, force) => {
     const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text, force })
     onLaunched(result.sessionId)
   })
 
-  if (setup.sites.length === 0) {
+  if (sites.length === 0) {
     return (
       <div class="notice">
-        <div class="head">No sites</div>
+        <div class="head">{setup.sites.length === 0 ? 'No projects yet' : 'No project can launch'}</div>
         <p class="dim-2">
-          Declare one under <code>modules.sessions.sites</code> in <code>~/.factotum/&lt;env&gt;/config.json</code> and
-          restart. Nothing is allowed by being inside a folder: a site is allowed because you wrote it down.
+          {setup.sites.length === 0
+            ? 'Add one in Projects. Nothing is allowed by being inside a folder: a project is allowed because you approved it.'
+            : 'The folders of your projects are missing. Put them back, or look at them in Projects.'}
         </p>
+        <div class="acts">
+          <button type="button" class="btn" onClick={onManage}>
+            Projects
+          </button>
+        </div>
       </div>
     )
   }
@@ -126,14 +138,14 @@ export function LaunchComposer({
         canSend={!s.busy && s.text.trim() !== '' && entryId !== ''}
         send={() => void s.go(false)}
         autoFocus
-        tone={siteId === '' ? undefined : toneClass(siteId)}
+        tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
       >
         <label class="chip s-pick">
           <Icon name="folder-simple" size={16} />
-          <select aria-label="Site" value={siteId} onChange={(e) => setSiteId((e.target as HTMLSelectElement).value)}>
-            {setup.sites.map((site) => (
-              <option key={site.id} value={site.id}>
-                {site.id}
+          <select aria-label="Project" value={siteId} onChange={(e) => setSiteId((e.target as HTMLSelectElement).value)}>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name ?? s.id}
               </option>
             ))}
           </select>
