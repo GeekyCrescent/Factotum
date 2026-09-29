@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sessionPaths } from './paths.ts'
@@ -244,4 +244,78 @@ test('the first prompt survives a patchMeta round trip, and a meta from before t
   delete raw['prompt']
   await writeFile(paths.metaFile(ID), JSON.stringify(raw))
   assert.equal((await store.readMeta(ID))?.prompt, undefined)
+})
+
+// ---------------------------------------------------------------------------
+// Title, archive and deleting (spec 2026-09-29, criteria 29, 33)
+// ---------------------------------------------------------------------------
+
+test('A TITLE AND AN ARCHIVE DATE SURVIVE every later patchMeta — the hand-listed reader keeps them (criterion 29)', async () => {
+  const { store } = await freshStore()
+  await started(store)
+  await store.patchMeta(ID, (m) => ({ ...m, title: 'Fix the parser', archivedAt: '2026-09-29T00:00:00.000Z' }))
+  // What finalize and reconcile do: a patch that knows nothing about either field.
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'failed', reason: 'crash' }))
+  const meta = await store.readMeta(ID)
+  assert.equal(meta?.title, 'Fix the parser')
+  assert.equal(meta?.archivedAt, '2026-09-29T00:00:00.000Z')
+})
+
+test('the observer hears every meta written and every session removed', async () => {
+  const { store } = await freshStore()
+  const written: string[] = []
+  const removed: string[] = []
+  store.observe({ written: (m) => written.push(`${m.id}:${m.state}`), removed: (id) => removed.push(id) })
+  await started(store)
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'finished' }))
+  await store.remove(ID, () => false)
+  assert.deepEqual(written, [`${ID}:running`, `${ID}:finished`])
+  assert.deepEqual(removed, [ID])
+})
+
+test('DELETING ONE: gone from disk; a live or running one is refused; an unknown one is unknown (criterion 33)', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  assert.equal(await store.remove(ID, () => false), 'running', 'meta says running')
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'finished' }))
+  assert.equal(await store.remove(ID, (id) => id === ID), 'running', 'the engine says live')
+  assert.equal(await store.remove(ID, () => false), 'removed')
+  await assert.rejects(() => stat(paths.sessionDir(ID)), /ENOENT/)
+  assert.equal(await store.remove(ID, () => false), 'unknown')
+})
+
+test('a directory with no meta — a launch that died first — is deleted too (criterion 33)', async () => {
+  const { store, paths } = await freshStore()
+  await mkdir(paths.sessionDir(ID), { recursive: true })
+  await writeFile(paths.settingsFile(ID), '{}')
+  assert.equal(await store.remove(ID, () => false), 'removed')
+  assert.deepEqual(await readdir(paths.sessions), [])
+})
+
+test('NOTHING IS FOLLOWED OUT OF sessions/: a link inside is unlinked, and a link in the session’s place is unlinked, not walked (criterion 33)', async () => {
+  const { store, paths } = await freshStore()
+  const outside = await mkdtemp(join(tmpdir(), 'factotum-outside-'))
+  await writeFile(join(outside, 'precious.txt'), 'keep me')
+
+  await started(store)
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'finished' }))
+  await symlink(outside, join(paths.sessionDir(ID), 'escape'))
+  assert.equal(await store.remove(ID, () => false), 'removed')
+  assert.equal(await readFile(join(outside, 'precious.txt'), 'utf8'), 'keep me')
+
+  const OTHER = '019965aa-0000-7000-8000-000000000002'
+  await symlink(outside, paths.sessionDir(OTHER))
+  assert.equal(await store.remove(OTHER, () => false), 'removed')
+  assert.equal(await readFile(join(outside, 'precious.txt'), 'utf8'), 'keep me')
+})
+
+test('A DELETED CONVERSATION IS NOT MADE AGAIN: ensureDir says no, append throws (criterion 33)', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'finished' }))
+  await store.remove(ID, () => false)
+  assert.equal(await store.ensureDir(ID), undefined)
+  await assert.rejects(() => store.append(ID, msg('late')), /deleted/)
+  assert.equal(await store.patchMeta(ID, (m) => m), undefined)
+  await assert.rejects(() => stat(paths.sessionDir(ID)), /ENOENT/)
 })

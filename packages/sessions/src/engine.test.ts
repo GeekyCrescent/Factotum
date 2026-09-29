@@ -69,6 +69,9 @@ async function readPage(engine: SessionEngine, id: string, fromSeq: number): Pro
   return result as EventPage
 }
 
+/** The locks each test engine uses, so a helper can wait for a turn to be truly over. */
+const engineLocks = new WeakMap<SessionEngine, SiteLocks>()
+
 /** For the setups that are not about notices. */
 const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
 
@@ -105,6 +108,7 @@ async function world(
 
   const engine = await createEngine(setup, { bin: FAKE, ...(options.askTimeoutMs !== undefined ? { askTimeoutMs: options.askTimeoutMs } : {}) })
   const paths = sessionPaths(stateDir)
+  engineLocks.set(engine, new SiteLocks(paths))
   return { engine, stateDir, siteDir, store: new SessionStore(paths, () => new Date()), locks: new SiteLocks(paths), warnings, notices }
 }
 
@@ -657,12 +661,7 @@ test('cancelling a session that a dead daemon left behind closes it anyway', asy
 test('sessions list newest first and paginate', async () => {
   const { engine } = await world()
   const ids: string[] = []
-  for (let i = 0; i < 3; i += 1) {
-    const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
-    const id = result.outcome === 'started' ? result.sessionId : ''
-    ids.push(id)
-    await settle(engine, id)
-  }
+  for (let i = 0; i < 3; i += 1) ids.push(await finished(engine))
 
   const page = await engine.list({ page: 0, site: undefined, archived: false })
   assert.deepEqual(page.sessions.map((s) => s.id), [...ids].reverse())
@@ -1564,4 +1563,233 @@ test('the view carries each project’s name, colour and status (criterion 26)',
   await registry.update(async () => ({ kind: 'add-project', id: 'web', path: home, name: 'Web app', color: 4 }))
   const { engine } = await world({ registry })
   assert.deepEqual(engine.view().sites, [{ id: 'web', path: home, isRepo: false, name: 'Web app', color: 4, status: 'ok' }])
+})
+
+// ---------------------------------------------------------------------------
+// The history (spec 2026-09-29, block E: criteria 20, 24, 29-37)
+// ---------------------------------------------------------------------------
+
+/**
+ * A finished session in `siteId`, launched through the engine — and OVER: the log says `finished`
+ * a moment before the engine lets go of the session and its lock, so this waits for the lock.
+ */
+async function finished(engine: SessionEngine, siteId = 'work', text = QUICK): Promise<string> {
+  const result = await engine.launch({ siteId, entryId: 'free', text, force: false })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  assert.notEqual(id, '', JSON.stringify(result))
+  await settle(engine, id)
+  const locks = engineLocks.get(engine)
+  const deadline = Date.now() + 15_000
+  while (locks !== undefined && (await locks.heldBy(siteId)) !== undefined) {
+    if (Date.now() > deadline) throw new Error(`the lock on ${siteId} never came back`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  return id
+}
+
+test('THE INDEX SEES WHAT RECONCILE WROTE: a session a crash left running lists as failed (criterion 37)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-idx-'))
+  const stateDir = join(home, 'state')
+  const siteDir = join(home, 'site')
+  await mkdir(siteDir, { recursive: true })
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  await store.ensureRoots()
+  const stale = uuidv7()
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: siteDir, prompt: 'left running' })
+  await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
+
+  const engine = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
+  await engine.reconcile()
+  const page = await engine.list({ page: 0, site: 'work', archived: false })
+  assert.deepEqual(page.sessions.map((s) => [s.id, s.state]), [[stale, 'failed']])
+})
+
+test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; empty is refused (criteria 29, 30)', async () => {
+  const { engine } = await world()
+  const id = await finished(engine)
+  const renamed = await engine.rename(id, `  ${'t'.repeat(100)}  `)
+  assert.equal(renamed.outcome, 'ok')
+  assert.equal(renamed.outcome === 'ok' ? renamed.summary.title : '', 't'.repeat(80))
+  assert.deepEqual(await engine.rename(id, '   '), { outcome: 'invalid', reason: 'a title needs some text' })
+  assert.equal((await engine.rename(uuidv7(), 'x')).outcome, 'unknown')
+  assert.equal((await engine.rename('../x', 'x')).outcome, 'invalid')
+
+  // Another turn: finalize patches the meta again and the title stays.
+  await engine.reply(id, QUICK, false)
+  await settle(engine, id)
+  const summary = await engine.summary(id)
+  assert.equal(summary.kind === 'ok' ? summary.summary.title : '', 't'.repeat(80))
+})
+
+test('ARCHIVE: out of the drawer’s lists, still readable, reversible; a running one is refused (criterion 31)', async () => {
+  const { engine } = await world()
+  const id = await finished(engine)
+  const archived = await engine.archive(id, true)
+  assert.equal(archived.outcome === 'ok' && archived.summary.archived, true)
+  assert.deepEqual((await engine.list({ page: 0, site: undefined, archived: false })).sessions, [])
+  assert.deepEqual((await engine.list({ page: 0, site: 'work', archived: true })).sessions.map((s) => s.id), [id])
+  const projects = await engine.projects()
+  assert.equal(projects.projects[0]?.total, 0)
+  assert.equal(projects.projects[0]?.archived, 1)
+  assert.equal((await engine.archive(id, false)).outcome, 'ok')
+  assert.equal((await engine.list({ page: 0, site: undefined, archived: false })).sessions.length, 1)
+
+  const live = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const liveId = live.outcome === 'started' ? live.sessionId : ''
+  assert.deepEqual(await engine.archive(liveId, true), { outcome: 'running' })
+  await engine.cancel(liveId)
+})
+
+test('DELETE SEVERAL: a result per id, in order — removed, running, unknown, invalid (criteria 32, 34)', async () => {
+  const { engine, stateDir } = await world()
+  const done = await finished(engine)
+  const live = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const liveId = live.outcome === 'started' ? live.sessionId : ''
+  const nobody = uuidv7()
+  const results = await engine.remove([done, liveId, nobody, '../../etc'])
+  assert.deepEqual(results, [
+    { id: done, outcome: 'removed' },
+    { id: liveId, outcome: 'running' },
+    { id: nobody, outcome: 'unknown' },
+    { id: '../../etc', outcome: 'invalid' },
+  ])
+  await assert.rejects(() => readFile(join(stateDir, 'sessions', done, 'meta.json')), /ENOENT/)
+  assert.equal((await engine.summary(done)).kind, 'unknown')
+  await engine.cancel(liveId)
+})
+
+test('A REPLY BEHIND A DELETE is rejected “deleted”, gives the lock back, and makes nothing again (criterion 33)', async () => {
+  // A repository, so the reply spends a git check between taking the lock and writing anything:
+  // that is the window the delete lands in.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-race-'))
+  const repo = join(home, 'repo')
+  await initRepo(repo)
+  const { engine, stateDir, locks } = await world({ sites: [{ id: 'repo', path: repo }] })
+  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: true })
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  await settle(engine, id)
+
+  const [reply, removed] = await Promise.all([engine.reply(id, 'one more', true), engine.remove([id])])
+  if (removed[0]?.outcome === 'removed') {
+    assert.deepEqual(reply, { outcome: 'rejected', reason: 'that conversation was deleted' })
+    assert.equal(await locks.heldBy('repo'), undefined, 'the lock came back')
+    await assert.rejects(() => readFile(join(stateDir, 'sessions', id, 'settings.json')), /ENOENT/)
+  } else {
+    // The reply won the turn: then it runs, and the delete said so. Never both, never neither.
+    assert.equal(removed[0]?.outcome, 'running')
+    assert.equal(reply.outcome, 'started')
+    await settle(engine, id)
+  }
+})
+
+test('GET ONE: its summary, its title and its project’s colour; unknown, missing and invalid are said (criterion 36)', async () => {
+  const registry = memoryRegistry()
+  const home = await mkdtemp(join(tmpdir(), 'factotum-one-'))
+  await registry.update(async () => ({ kind: 'add-project', id: 'work', path: home, name: 'Work', color: 5 }))
+  const { engine } = await world({ registry })
+  const id = await finished(engine)
+  const one = await engine.summary(id)
+  assert.equal(one.kind, 'ok')
+  if (one.kind !== 'ok') return
+  assert.equal(one.summary.id, id)
+  assert.deepEqual(one.project, { id: 'work', name: 'Work', color: 5 })
+  assert.deepEqual(await engine.summary(uuidv7()), { kind: 'unknown' })
+  assert.deepEqual(await engine.summary('projects'), { kind: 'invalid' })
+
+  await rename(home, `${home}-moved`)
+  assert.deepEqual(await engine.summary(id), { kind: 'site-missing', siteId: 'work' })
+  await rename(`${home}-moved`, home)
+})
+
+test('PROJECTS: the newest 8 and every running one, a total, and SHOW MORE through the site list (criterion 35)', async () => {
+  const { engine } = await world()
+  const ids: string[] = []
+  for (let i = 0; i < 10; i++) ids.push(await finished(engine))
+  const page = await engine.projects()
+  const work = page.projects[0]
+  assert.equal(work?.sessions.length, 8)
+  assert.deepEqual(work?.sessions.map((s) => s.id), [...ids].reverse().slice(0, 8))
+  assert.equal(work?.total, 10)
+  assert.equal(work?.status, 'ok')
+  assert.equal(page.registryError, undefined)
+  assert.equal(page.file, '/memory/projects.json')
+  assert.equal(page.canRequest, false)
+
+  const more = await engine.list({ page: 0, site: 'work', archived: false })
+  assert.equal(more.sessions.length, 10)
+  assert.equal(more.hasMore, false)
+})
+
+test('REMOVED PROJECTS: conversations whose project is not registered are counted apart, and in no list (criterion 28)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-removed-'))
+  const stateDir = join(home, 'state')
+  const a = join(home, 'a')
+  await mkdir(a, { recursive: true })
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  await store.ensureRoots()
+  for (let i = 0; i < 3; i++) {
+    const id = uuidv7()
+    await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'old' })
+    await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
+  }
+  const engine = await engineOver(stateDir, [{ id: 'a', path: a }])
+  await engine.reconcile()
+  const page = await engine.projects()
+  assert.deepEqual(page.removed, [{ siteId: 'demo', count: 3 }])
+  assert.deepEqual((await engine.list({ page: 0, site: undefined, archived: false })).sessions, [])
+})
+
+test('A MISSING PROJECT shows no conversations and its site list is empty; it COMES BACK on the next look (criteria 24, 25)', async () => {
+  const { engine, siteDir } = await world()
+  await finished(engine)
+  await rename(siteDir, `${siteDir}-moved`)
+  const gone = await engine.projects()
+  assert.equal(gone.projects[0]?.status, 'missing')
+  assert.match(gone.projects[0]?.reason ?? '', /does not exist/)
+  assert.deepEqual(gone.projects[0]?.sessions, [])
+  assert.equal(gone.projects[0]?.total, 1)
+  assert.deepEqual((await engine.list({ page: 0, site: 'work', archived: false })).sessions, [])
+
+  await rename(`${siteDir}-moved`, siteDir)
+  const back = await engine.projects()
+  assert.equal(back.projects[0]?.status, 'ok')
+  assert.equal(back.projects[0]?.sessions.length, 1)
+})
+
+test('A SHARED FOLDER THAT REAPPEARS joins the gate at the next look — only with nothing running (criterion 20)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-back-'))
+  const a = join(home, 'a')
+  const vault = join(home, 'vault')
+  await mkdir(a, { recursive: true })
+  const setup: EngineSetup = {
+    stateDir: join(home, 'state'),
+    ...registryOf([{ id: 'a', path: a }], [vault]),
+    catalog: CATALOG,
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    now: () => new Date(),
+    timers,
+    hookUrl: () => BASE,
+    notify: silentNotify,
+  }
+  await mkdir(setup.stateDir, { recursive: true })
+  const engine = await createEngine(setup, { bin: FAKE })
+  const target = join(vault, 'n.md')
+
+  // Missing at start: not in the gate.
+  let live = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  let id = live.outcome === 'started' ? live.sessionId : ''
+  assert.equal((await engine.decide(payload(id, target, a))).hookSpecificOutput.permissionDecision, 'deny')
+
+  // It comes back WHILE a session runs: the projects list sees it, the gate does not change.
+  await mkdir(vault)
+  assert.equal((await engine.projects()).shared[0]?.status, 'ok')
+  assert.equal((await engine.decide(payload(id, target, a))).hookSpecificOutput.permissionDecision, 'deny')
+  await engine.cancel(id)
+
+  // With nothing running, the next look puts it in the gate.
+  await engine.projects()
+  live = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  id = live.outcome === 'started' ? live.sessionId : ''
+  assert.equal((await engine.decide(payload(id, target, a))).hookSpecificOutput.permissionDecision, 'allow')
+  await engine.cancel(id)
 })

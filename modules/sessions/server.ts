@@ -23,8 +23,8 @@ import { homedir } from 'node:os'
 import type { FactotumModule, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
 import { sessionsConfigSchema, type SessionsConfig } from './config.ts'
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
-import { isSiteId } from './requests.ts'
-import type { CreateEngine, LaunchResult, SessionEngine } from './types.ts'
+import { isSiteId, parseArchived, parseIds, parseTitle } from './requests.ts'
+import type { CreateEngine, LaunchResult, SessionEdit, SessionEngine } from './types.ts'
 
 /**
  * The hole.
@@ -61,6 +61,27 @@ function siteMissing(siteId: string): ModuleResponse {
     status: 409,
     headers: NO_STORE,
     body: { error: { code: 'conflict', message: `the folder of project "${siteId}" is missing` }, missing: { siteId } },
+  }
+}
+
+function notFound(message: string): ModuleResponse {
+  return { status: 404, headers: NO_STORE, body: { error: { code: 'not-found', message } } }
+}
+
+function conflict(message: string, extra: Readonly<Record<string, unknown>> = {}): ModuleResponse {
+  return { status: 409, headers: NO_STORE, body: { error: { code: 'conflict', message }, ...extra } }
+}
+
+function fromEdit(result: SessionEdit): ModuleResponse {
+  switch (result.outcome) {
+    case 'ok':
+      return { status: 200, headers: NO_STORE, body: { summary: result.summary } }
+    case 'unknown':
+      return notFound('there is no conversation with that id')
+    case 'running':
+      return conflict('that conversation is running', { running: true })
+    case 'invalid':
+      return invalid(result.reason)
   }
 }
 
@@ -116,7 +137,7 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
   }
 
   return {
-    'GET /setup': withEngine(async (engine) => ({ status: 200, body: engine.view() })),
+    'GET /setup': withEngine(async (engine) => ({ status: 200, headers: NO_STORE, body: engine.view() })),
 
     'GET /sessions': withEngine(async (engine, req) => {
       const page = Number.parseInt(req.query['page'] ?? '0', 10)
@@ -127,6 +148,46 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
         headers: NO_STORE,
         body: await engine.list({ page: Number.isNaN(page) ? 0 : page, site, archived: req.query['archived'] === 'true' }),
       }
+    }),
+
+    // --- the history (spec 2026-09-29, D8) ---------------------------------
+
+    'GET /projects': withEngine(async (engine) => ({ status: 200, headers: NO_STORE, body: await engine.projects() })),
+
+    // One conversation with its title, its state and its project's colour (criterion 36). The id is
+    // checked by the engine, where the rule for a session id lives (criterion 32).
+    'GET /sessions/:id': withEngine(async (engine, req) => {
+      const found = await engine.summary(req.params['id'] ?? '')
+      switch (found.kind) {
+        case 'ok':
+          return { status: 200, headers: NO_STORE, body: { summary: found.summary, project: found.project } }
+        case 'unknown':
+          return notFound('there is no conversation with that id')
+        case 'invalid':
+          return invalid('that is not a session id')
+        case 'site-missing':
+          return siteMissing(found.siteId)
+      }
+    }),
+
+    'POST /sessions/:id/title': withEngine(async (engine, req) => {
+      const title = parseTitle(req.body)
+      if (!title.ok) return invalid(title.message)
+      return fromEdit(await engine.rename(req.params['id'] ?? '', title.value))
+    }),
+
+    'POST /sessions/:id/archive': withEngine(async (engine, req) => {
+      const archived = parseArchived(req.body)
+      if (!archived.ok) return invalid(archived.message)
+      return fromEdit(await engine.archive(req.params['id'] ?? '', archived.value))
+    }),
+
+    // POST, not DELETE: the contract has no DELETE and one action does not earn a verb. A result per
+    // id, in the order asked (criterion 34).
+    'POST /sessions/remove': withEngine(async (engine, req) => {
+      const ids = parseIds(req.body)
+      if (!ids.ok) return invalid(ids.message)
+      return { status: 200, headers: NO_STORE, body: { results: await engine.remove(ids.value) } }
     }),
 
     'POST /sessions': withEngine(async (engine, req) => {

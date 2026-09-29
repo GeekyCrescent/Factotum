@@ -107,8 +107,13 @@ export class SiteLocks {
    * Every lock on disk.
    *
    * This is what `reconcile()` walks, and it is what bounds it: there is at most one
-   * lock per declared site, so the cost is O(sites) and not O(sessions) — and sessions
-   * are never deleted.
+   * lock per site, so the cost is O(sites) and not O(sessions). (Sessions CAN be deleted
+   * now — spec 2026-09-29, D4 — which changes nothing here: a lock names a site, and a
+   * deleted session is never running, so it holds none.)
+   *
+   * A lock may hold `removing` instead of a session id, while a project is deleted. The
+   * next boot releases it like any lock whose daemon is dead: `readMeta('removing')` finds
+   * no meta, and row 5 lets it go.
    */
   async all(): Promise<readonly { readonly siteId: string; readonly info: LockInfo | undefined }[]> {
     let names: string[]

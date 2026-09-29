@@ -179,12 +179,17 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
     },
 
     refreshAll: async () => {
-      const wasMissing = new Set(shared.filter((s) => s.check?.status !== 'ok').map((s) => s.path))
       await Promise.all([...[...projects.values()].map(checkProject), ...shared.map(checkShared)])
-      // A shared folder that came back joins the gate — but only with nothing running, so no live
-      // session's boundary changes under it (criterion 20, guardrail 5).
-      const cameBack = shared.some((s) => wasMissing.has(s.path) && s.check?.status === 'ok')
-      if (cameBack && deps.liveCount() === 0) rebuildGate()
+      // A shared folder that is there and NOT IN THE GATE — it was missing when the gate was built —
+      // joins it, but only with nothing running, so no live session's boundary changes under it
+      // (criterion 20, guardrail 5). Compared against the gate, not against the last look: a folder
+      // that came back while a session ran is still owed its place once nothing runs.
+      if (deps.liveCount() > 0) return
+      const owed = shared.flatMap((s) => {
+        const check = s.check
+        return check?.status === 'ok' && !gate.some((site) => site.path === check.site.path) ? [check.site] : []
+      })
+      if (owed.length > 0) gate = [...gate, ...owed]
     },
 
     status: (id) => projects.get(id)?.check?.status,

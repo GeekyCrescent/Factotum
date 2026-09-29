@@ -19,7 +19,8 @@
  * for good and no client can recover it, because the log is the only source of truth.
  */
 
-import { mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { parseLog, stateFrom } from './events.ts'
 import type { SessionPaths } from './paths.ts'
 import type { EventInput, SessionEvent, SessionState } from './types.ts'
@@ -73,6 +74,18 @@ export interface SessionMeta {
   readonly archivedAt: string | undefined
 }
 
+/**
+ * Who hears about every meta the store writes and every session it deletes: the history index
+ * (`index-cache.ts`), which is how it sees what `reconcile` writes too (criterion 37).
+ */
+export interface StoreObserver {
+  readonly written: (meta: SessionMeta) => void
+  readonly removed: (id: string) => void
+}
+
+/** What deleting one came to (criterion 33). */
+export type RemoveOutcome = 'removed' | 'unknown' | 'running'
+
 /** Everything but the parts the store owns. */
 export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'archivedAt'>
 
@@ -82,6 +95,13 @@ export class SessionStore {
   /** One chain per session id. Serialises writes; see the header. */
   readonly #turns = new Map<string, Promise<unknown>>()
   readonly #nextSeq = new Map<string, number>()
+  /**
+   * TOMBSTONES: ids deleted in this process. A reply already past its checks when the delete ran
+   * must not bring the directory back (`ensureDir`, `append`), or a deleted conversation would
+   * reappear as a folder with a settings file and nothing else (criterion 33).
+   */
+  readonly #removed = new Set<string>()
+  #observer: StoreObserver | undefined
 
   constructor(paths: SessionPaths, now: () => Date) {
     this.#paths = paths
@@ -106,6 +126,11 @@ export class SessionStore {
     return next
   }
 
+  /** One observer; the engine's index. */
+  observe(observer: StoreObserver): void {
+    this.#observer = observer
+  }
+
   async #writeMeta(meta: SessionMeta): Promise<void> {
     // TEMP + RENAME, and it is not belt-and-braces.
     //
@@ -119,6 +144,7 @@ export class SessionStore {
     const temp = `${path}.tmp`
     await writeFile(temp, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
     await rename(temp, path)
+    this.#observer?.written(meta)
   }
 
   async #readMeta(id: string): Promise<SessionMeta | undefined> {
@@ -197,8 +223,12 @@ export class SessionStore {
     })
   }
 
-  /** The directory only. `settings.json` is written before the meta exists (D9). */
-  async ensureDir(id: string): Promise<string> {
+  /**
+   * The directory only. `settings.json` is written before the meta exists (D9). `undefined` for a
+   * session deleted in this process: its directory is not made again (criterion 33).
+   */
+  async ensureDir(id: string): Promise<string | undefined> {
+    if (this.#removed.has(id)) return undefined
     const dir = this.#paths.sessionDir(id)
     await mkdir(dir, { recursive: true })
     return dir
@@ -230,6 +260,8 @@ export class SessionStore {
    */
   async append(id: string, event: EventInput): Promise<SessionEvent> {
     return await this.#take(id, async () => {
+      // `open(…, 'a')` would create the file again inside a directory made again by someone.
+      if (this.#removed.has(id)) throw new Error('that conversation was deleted')
       const seq = await this.#seqFor(id)
       const full: SessionEvent = { ...event, seq, at: this.#now().toISOString() }
 
@@ -285,6 +317,41 @@ export class SessionStore {
     } catch {
       return []
     }
+  }
+
+  /**
+   * Deletes one conversation, IN ITS TURN, so nothing interleaves with it (criterion 33).
+   *
+   * `isLive` is the engine's: the store does not see the live map. A live session, or a meta that
+   * says `running`, is not deleted. A directory with no meta — a launch that died before writing
+   * one — is deleted like any other. The tombstone goes up BEFORE the files go, and nothing is
+   * followed out of `sessions/`: a symlink in its place is unlinked, not walked, and `rm` does not
+   * follow the links inside.
+   */
+  async remove(id: string, isLive: (id: string) => boolean): Promise<RemoveOutcome> {
+    return await this.#take(id, async () => {
+      if (isLive(id)) return 'running'
+      const meta = await this.#readMeta(id)
+      if (meta?.state === 'running') return 'running'
+      const dir = this.#paths.sessionDir(id)
+      let isLink: boolean
+      try {
+        isLink = (await lstat(dir)).isSymbolicLink()
+      } catch {
+        return 'unknown'
+      }
+      this.#removed.add(id)
+      if (isLink) {
+        await unlink(dir)
+      } else {
+        // Belt and braces for the one thing that must never happen: deleting outside `sessions/`.
+        if (dirname(await realpath(dir)) !== (await realpath(this.#paths.sessions))) return 'unknown'
+        await rm(dir, { recursive: true, force: true })
+      }
+      this.#nextSeq.delete(id)
+      this.#observer?.removed(id)
+      return 'removed'
+    })
   }
 
   sessionDir(id: string): string {

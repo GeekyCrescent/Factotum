@@ -552,3 +552,97 @@ test('a decision that is neither allow nor deny is refused BEFORE reaching the e
   }
   assert.equal(called, 0)
 })
+
+// ---------------------------------------------------------------------------
+// The history routes (spec 2026-09-29, block E: criteria 32, 36, 40)
+// ---------------------------------------------------------------------------
+
+const SUMMARY = {
+  id: '01a0eb02-9104-7cc7-bafc-259cf61fb313',
+  siteId: 'work',
+  entryId: 'free',
+  state: 'finished' as const,
+  startedAt: '2026-09-29T00:00:00.000Z',
+  endedAt: undefined,
+  reason: undefined,
+  turns: 1,
+  prompt: 'hi',
+  title: undefined,
+  archived: false,
+}
+
+test('EVERY LIST, SUMMARY AND EVENT PAGE IS no-store (criterion 40)', async () => {
+  const { table } = await started(fakeEngine({ summary: async () => ({ kind: 'ok', summary: SUMMARY, project: undefined }) }))
+  for (const [key, req] of [
+    ['GET /projects', request('GET', '/projects')],
+    ['GET /sessions', request('GET', '/sessions')],
+    ['GET /sessions/:id', request('GET', `/sessions/${SUMMARY.id}`, { params: { id: SUMMARY.id } })],
+    ['GET /sessions/:id/events', request('GET', `/sessions/${SUMMARY.id}/events`, { params: { id: SUMMARY.id } })],
+    ['GET /setup', request('GET', '/setup')],
+  ] as const) {
+    const response = await call(table, key, req)
+    assert.equal(response.status, 200, key)
+    assert.equal(response.headers?.['cache-control'], 'no-store', key)
+  }
+})
+
+test('GET /sessions reads site, page and archived, and refuses a site id that could not be one (criterion 11)', async () => {
+  let asked: unknown
+  const { table } = await started(fakeEngine({ list: async (page) => ((asked = page), { sessions: [], page: page.page, hasMore: false }) }))
+  await call(table, 'GET /sessions', request('GET', '/sessions', { query: { site: 'web', page: '2', archived: 'true' } }))
+  assert.deepEqual(asked, { page: 2, site: 'web', archived: true })
+  const bad = await call(table, 'GET /sessions', request('GET', '/sessions', { query: { site: '../x' } }))
+  assert.equal(bad.status, 400)
+})
+
+test('GET /sessions/:id: 200 with the project, 404, 400 and 409 with which project is missing (criteria 25, 36)', async () => {
+  const outcomes = [
+    [{ kind: 'ok', summary: SUMMARY, project: { id: 'work', name: 'Work', color: 2 } }, 200],
+    [{ kind: 'unknown' }, 404],
+    [{ kind: 'invalid' }, 400],
+    [{ kind: 'site-missing', siteId: 'work' }, 409],
+  ] as const
+  for (const [result, status] of outcomes) {
+    const { table } = await started(fakeEngine({ summary: async () => result }))
+    const response = await call(table, 'GET /sessions/:id', request('GET', '/sessions/x', { params: { id: 'x' } }))
+    assert.equal(response.status, status, result.kind)
+    if (result.kind === 'site-missing') assert.deepEqual((response.body as { missing: unknown }).missing, { siteId: 'work' })
+  }
+})
+
+test('the events of a conversation of a missing project are a 409; an invalid id a 400 (criteria 25, 32)', async () => {
+  const missing = await started(fakeEngine({ read: async () => ({ kind: 'site-missing', siteId: 'work' }) }))
+  const r1 = await call(missing.table, 'GET /sessions/:id/events', request('GET', '/sessions/x/events', { params: { id: 'x' } }))
+  assert.equal(r1.status, 409)
+  const invalidId = await started(fakeEngine({ read: async () => ({ kind: 'invalid' }) }))
+  const r2 = await call(invalidId.table, 'GET /sessions/:id/events', request('GET', '/sessions/x/events', { params: { id: 'x' } }))
+  assert.equal(r2.status, 400)
+})
+
+test('rename and archive: the body is checked here, the outcome mapped to 200, 400, 404 and 409 (criteria 30, 31)', async () => {
+  const outcomes = [
+    [{ outcome: 'ok', summary: SUMMARY }, 200],
+    [{ outcome: 'unknown' }, 404],
+    [{ outcome: 'running' }, 409],
+    [{ outcome: 'invalid', reason: 'no' }, 400],
+  ] as const
+  for (const [result, status] of outcomes) {
+    const { table } = await started(fakeEngine({ rename: async () => result, archive: async () => result }))
+    const params = { id: SUMMARY.id }
+    assert.equal((await call(table, 'POST /sessions/:id/title', request('POST', '/t', { params, body: { title: 'x' } }))).status, status)
+    assert.equal((await call(table, 'POST /sessions/:id/archive', request('POST', '/a', { params, body: { archived: true } }))).status, status)
+  }
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, 'POST /sessions/:id/title', request('POST', '/t', { params: { id: 'x' }, body: { title: '  ' } }))).status, 400)
+  assert.equal((await call(table, 'POST /sessions/:id/archive', request('POST', '/a', { params: { id: 'x' }, body: { archived: 'yes' } }))).status, 400)
+})
+
+test('delete several: at least one, at most 100, a result each (criterion 34)', async () => {
+  const { table } = await started(fakeEngine())
+  const ok = await call(table, 'POST /sessions/remove', request('POST', '/sessions/remove', { body: { ids: ['a', 'b'] } }))
+  assert.equal(ok.status, 200)
+  assert.deepEqual((ok.body as { results: unknown[] }).results.length, 2)
+  for (const body of [{ ids: [] }, { ids: Array.from({ length: 101 }, (_, i) => String(i)) }, { ids: 'a' }, undefined]) {
+    assert.equal((await call(table, 'POST /sessions/remove', request('POST', '/sessions/remove', { body }))).status, 400)
+  }
+})

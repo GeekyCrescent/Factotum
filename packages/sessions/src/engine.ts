@@ -25,10 +25,12 @@ import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
 import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
+import { createHistory, PAGE_SIZE } from './history.ts'
+import { SessionIndex } from './index-cache.ts'
 import { createSiteTable } from './projects.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import type { DiskProbe, Site } from './sites.ts'
-import { SessionStore, type SessionMeta } from './store.ts'
+import { SessionStore } from './store.ts'
 import type {
   EngineSetup,
   EngineSetupView,
@@ -38,22 +40,20 @@ import type {
   InvalidId,
   LaunchInput,
   LaunchResult,
-  Page,
   SessionEngine,
-  SessionPage,
   SessionState,
-  SessionSummary,
   SiteMissing,
 } from './types.ts'
 import { isSessionId } from './id.ts'
 
-export const PAGE_SIZE = 25
+export { PAGE_SIZE }
 
 /** How much of the first prompt a session summary keeps (spec D8d). */
 export const PROMPT_CHARS = 140
 
 const STOPPED = 'engine stopped'
 const BEING_REMOVED = 'this project is being removed'
+const DELETED = 'that conversation was deleted'
 const CANCELLED_REASON = 'cancelled by the owner'
 const SHUTDOWN_REASON = 'the daemon was shutting down'
 
@@ -125,6 +125,23 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   })
   await table.load()
 
+  // THE HISTORY INDEX hears every meta the store writes from here on, reconcile's included, and is
+  // read in full once, at the end of `reconcile()` (spec 2026-09-29, D6; criterion 37).
+  const index = new SessionIndex()
+  store.observe({ written: (meta) => index.put(meta), removed: (id) => index.drop(id) })
+  let building: Promise<void> | undefined
+  const ensureIndex = (): Promise<void> => (building ??= index.build(store))
+  const history = createHistory({
+    store,
+    index,
+    ensureIndex,
+    table,
+    isLive: (id) => live.has(id),
+    now: setup.now,
+    registryFile: setup.registry.file,
+    canRequest: () => setup.notify.canReach(),
+  })
+
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
   for (const entry of catalog) {
     if (entry.disabledReason !== undefined) {
@@ -163,8 +180,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   // --- the pieces launch and reply share ----------------------------------
 
-  async function writeSettings(sessionId: string): Promise<string> {
-    await store.ensureDir(sessionId)
+  /** `undefined` when the conversation was deleted in the meantime: nothing is written (crit. 33). */
+  async function writeSettings(sessionId: string): Promise<string | undefined> {
+    if ((await store.ensureDir(sessionId)) === undefined) return undefined
     const path = store.settingsFile(sessionId)
     // `hookUrl()` throws while the composition root has not filled the thunk in. That
     // is on purpose and it is the last thing that can go wrong before a subprocess
@@ -342,6 +360,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       }
 
       const settingsPath = await writeSettings(sessionId)
+      // A fresh id is never a deleted one; said rather than asserted with a cast.
+      if (settingsPath === undefined) return { outcome: 'rejected', reason: DELETED }
       await store.create({
         id: sessionId,
         siteId: site.id,
@@ -437,15 +457,20 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         }
       }
 
+      // A DELETE THAT RAN SINCE THE CHECKS ABOVE: the tombstone refuses the directory and the
+      // missing meta refuses the patch. Either way this is `rejected`, and the `finally` gives the
+      // lock back — nothing is made again (criterion 33).
       const settingsPath = await writeSettings(id)
+      if (settingsPath === undefined) return { outcome: 'rejected', reason: DELETED }
       finalized.delete(id)
-      await store.patchMeta(id, (current) => ({
+      const reopened = await store.patchMeta(id, (current) => ({
         ...current,
         state: 'running',
         endedAt: undefined,
         reason: undefined,
         turns: current.turns + 1,
       }))
+      if (reopened === undefined) return { outcome: 'rejected', reason: DELETED }
       // Written into the log so "I resumed over a warning" is recoverable later, like launch does.
       if (forcedOver !== undefined) {
         await store.append(id, { kind: 'message', role: 'user', text: `resumed over a freshness warning: ${forcedOver}` })
@@ -504,35 +529,6 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   }
 
   // --- reading -------------------------------------------------------------
-
-  function summaryOf(meta: SessionMeta): SessionSummary {
-    return {
-      id: meta.id,
-      siteId: meta.siteId,
-      entryId: meta.entryId,
-      state: meta.state,
-      startedAt: meta.startedAt,
-      endedAt: meta.endedAt,
-      reason: meta.reason,
-      turns: meta.turns,
-      prompt: meta.prompt,
-      title: meta.title,
-      archived: meta.archivedAt !== undefined,
-    }
-  }
-
-  async function list(page: Page): Promise<SessionPage> {
-    const ids = await store.listIds()
-    const from = Math.max(0, page.page) * PAGE_SIZE
-    const slice = ids.slice(from, from + PAGE_SIZE)
-
-    const sessions: SessionSummary[] = []
-    for (const id of slice) {
-      const meta = await store.readMeta(id)
-      if (meta !== undefined) sessions.push(summaryOf(meta))
-    }
-    return { sessions, page: Math.max(0, page.page), hasMore: ids.length > from + PAGE_SIZE }
-  }
 
   async function read(id: string, fromSeq: number): Promise<EventPage | SiteMissing | InvalidId> {
     if (!isSessionId(id)) return { kind: 'invalid' }
@@ -701,6 +697,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // notices reconcile raises are NOT awaited — `announce` never is — or a slow push service
     // could get the whole module disabled at boot (spec D7).
     await reconcileLocks({ store, locks, log, now: setup.now, announce })
+    // AFTER reconciling, so a session a crash left `running` is read as the `failed` it now is.
+    await ensureIndex()
   }
 
   function view(): EngineSetupView {
@@ -765,18 +763,18 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     cancel,
     answer,
     inspect,
-    list,
+    list: history.list,
     read,
     decide,
     reconcile,
     view,
     stop,
-    summary: later('summary'),
-    rename: later('rename'),
-    archive: later('archive'),
-    remove: later('remove'),
+    summary: history.summary,
+    rename: history.rename,
+    archive: history.archive,
+    remove: history.remove,
     search: later('search'),
-    projects: later('projects'),
+    projects: history.projects,
     requestProject: later('requestProject'),
     requestShared: later('requestShared'),
     requestStatus: later('requestStatus'),
