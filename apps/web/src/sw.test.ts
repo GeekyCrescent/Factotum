@@ -205,6 +205,34 @@ test('THE TOKEN IS KEPT ONLY WHEN THE DAEMON SAID THIS IS NOT ITS MACHINE: unkno
   }
 })
 
+// A folder request is an ask with no session (spec 2026-09-29, D3): its token is `grantId`, and
+// it is dropped on this machine exactly like `askId`.
+const grant = (extra: Record<string, unknown> = {}) =>
+  envelope({
+    title: 'approval',
+    body: 'Add project · web',
+    path: '/m/sessions/projects?grant=TOKEN',
+    tag: 'grant:REQ',
+    data: { kind: 'grant', grantId: 'TOKEN', requestId: 'REQ', name: 'web' },
+    until: FUTURE,
+    ...extra,
+  })
+
+test('A FOLDER REQUEST’S TOKEN (grantId) IS DROPPED ON THIS MACHINE TOO, and the pending is kept without its query', async () => {
+  for (const settings of [{ sameMachine: true }, {}]) {
+    const w = await worker({ store: memoryStore(settings) })
+    await w.dispatch('push', pushEvent(grant()))
+    const row = w.store.rows.get('sessions:grant:REQ')
+    assert.ok(row, `still pending with ${JSON.stringify(settings)}`)
+    assert.equal('grantId' in row.data, false, `no token with ${JSON.stringify(settings)}`)
+    assert.equal(row.data['requestId'], 'REQ')
+    assert.equal(row.path, '/m/sessions/projects')
+  }
+  const away = await worker({ store: memoryStore({ sameMachine: false }) })
+  await away.dispatch('push', pushEvent(grant()))
+  assert.equal(away.store.rows.get('sessions:grant:REQ')?.data['grantId'], 'TOKEN', 'kept on another device')
+})
+
 test('open windows are told a pending arrived, by key', async () => {
   const w = await worker({ windows: [`${ORIGIN}/m/example`], store: memoryStore({ sameMachine: false }) })
   await w.dispatch('push', pushEvent(ask()))

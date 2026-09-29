@@ -13,6 +13,8 @@ const session = (id: string, siteId: string, startedAt: string, prompt?: string,
   reason: undefined,
   turns: 1,
   prompt,
+  title: undefined,
+  archived: false,
 })
 const labels = (groups: ReturnType<typeof history>) => groups.map((g) => [g.label, g.entries.map((e) => e.id)])
 

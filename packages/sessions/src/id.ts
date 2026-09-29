@@ -34,3 +34,14 @@ export function uuidv7(now: number = Date.now()): string {
   const hex = Array.from(bytes, (byte) => HEX[byte] ?? '00').join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
+
+/**
+ * Is this the shape `uuidv7` produces? Checked on every `:id` of a session in a route and on every
+ * id handed to a delete, BEFORE it becomes a path (spec 2026-09-29, criterion 32): an id is joined
+ * onto `sessions/`, and `..` or a slash there would walk out of it.
+ */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+export function isSessionId(value: string): boolean {
+  return SESSION_ID.test(value)
+}

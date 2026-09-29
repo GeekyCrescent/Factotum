@@ -25,8 +25,9 @@ import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
 import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
+import { createSiteTable } from './projects.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
-import { inspectSite, type Site } from './sites.ts'
+import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore, type SessionMeta } from './store.ts'
 import type {
   EngineSetup,
@@ -34,6 +35,7 @@ import type {
   EventPage,
   HookDecision,
   InspectResult,
+  InvalidId,
   LaunchInput,
   LaunchResult,
   Page,
@@ -41,7 +43,9 @@ import type {
   SessionPage,
   SessionState,
   SessionSummary,
+  SiteMissing,
 } from './types.ts'
+import { isSessionId } from './id.ts'
 
 export const PAGE_SIZE = 25
 
@@ -49,6 +53,7 @@ export const PAGE_SIZE = 25
 export const PROMPT_CHARS = 140
 
 const STOPPED = 'engine stopped'
+const BEING_REMOVED = 'this project is being removed'
 const CANCELLED_REASON = 'cancelled by the owner'
 const SHUTDOWN_REASON = 'the daemon was shutting down'
 
@@ -66,7 +71,16 @@ export interface EngineDeps {
   readonly bin?: string
   /** How long an ask waits for the owner. A seam for the same reason: a test cannot wait an hour. */
   readonly askTimeoutMs?: number
+  /** Whether the rules for a folder ignore case. Defaults to macOS; a test picks. */
+  readonly caseInsensitive?: boolean
+  /** The disk the folder rules read, so a test can hang it (criterion 15). */
+  readonly disk?: DiskProbe
+  /** The ceiling of one folder check, so a test does not wait for it. */
+  readonly checkMs?: number
 }
+
+/** What a lock holds while a project is being deleted: not a session id, so nothing mistakes it. */
+export const REMOVING = 'removing'
 
 interface Live {
   readonly run: AgentRun
@@ -91,24 +105,25 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const locks = new SiteLocks(paths)
   await store.ensureRoots()
 
-  // THE I/O THAT DECIDES CRITERION 15 BY ITS SECOND ROUTE. A declared site that is not
-  // there throws from here, which is inside `start()`, which is inside the registry's
-  // try/catch: the module is disabled with the reason and the daemon stays up. The
-  // first route is the schema at step 6, and the two are tested separately because
-  // they are genuinely different paths.
-  const sites = new Map<string, Site>()
-  for (const config of setup.sites) {
-    const site = await inspectSite(config)
-    sites.set(site.id, site)
-  }
+  const live = new Map<string, Live>()
 
-  // Inspected exactly like a site — existence, directory, and the symlink spelling —
-  // because containment is checked the same way and `/tmp` is a symlink on macOS. The
-  // id is not a site id: nothing launches here and nothing locks it.
-  const shared: Site[] = []
-  for (const path of setup.sharedPaths ?? []) {
-    shared.push(await inspectSite({ id: 'shared', path }))
-  }
+  // A FOLDER THAT IS NOT THERE NO LONGER DISABLES THE MODULE (spec 2026-09-29, criterion 23;
+  // ADR-0011). Until then a declared site that was missing threw from here, inside `start()`, and
+  // took every site down with it. Now each project carries its own check and fails alone; a broken
+  // registry starts the module with no project at all, and says so.
+  const table = createSiteTable({
+    registry: setup.registry,
+    home: setup.home,
+    factotumRoot: setup.factotumRoot,
+    installRoot: setup.installRoot,
+    timers: setup.timers,
+    log,
+    liveCount: () => live.size,
+    caseInsensitive: deps.caseInsensitive ?? process.platform === 'darwin',
+    ...(deps.disk === undefined ? {} : { disk: deps.disk }),
+    ...(deps.checkMs === undefined ? {} : { checkMs: deps.checkMs }),
+  })
+  await table.load()
 
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
   for (const entry of catalog) {
@@ -117,7 +132,6 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     }
   }
 
-  const live = new Map<string, Live>()
   const finalized = new Set<string>()
   let stopped = false
   const asks = createAskTable({
@@ -272,13 +286,31 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     return entry
   }
 
+  /**
+   * The project a launch or a reply would run in, CHECKED AGAIN NOW: a folder that went missing
+   * since the last look is refused here, and one that came back is usable (criteria 23, 24).
+   */
+  async function siteFor(siteId: string): Promise<{ kind: 'ok'; site: Site } | { kind: 'refused'; reason: string }> {
+    const check = await table.refresh(siteId)
+    if (check === undefined) return { kind: 'refused', reason: `no project "${siteId}" is registered` }
+    if (check.status === 'missing') return { kind: 'refused', reason: `the folder of project "${siteId}" is missing: ${check.reason}` }
+    return { kind: 'ok', site: check.site }
+  }
+
+  /** Reading a conversation of a project whose folder is missing is refused (criterion 25). */
+  async function missingFor(siteId: string): Promise<SiteMissing | undefined> {
+    const check = await table.refresh(siteId)
+    return check?.status === 'missing' ? { kind: 'site-missing', siteId } : undefined
+  }
+
   // --- launch --------------------------------------------------------------
 
   async function launch(input: LaunchInput): Promise<LaunchResult> {
     if (stopped) throw new Error(STOPPED)
 
-    const site = sites.get(input.siteId)
-    if (site === undefined) return { outcome: 'rejected', reason: `no site "${input.siteId}" is declared` }
+    const found = await siteFor(input.siteId)
+    if (found.kind !== 'ok') return { outcome: 'rejected', reason: found.reason }
+    const site = found.site
 
     const entry = findInvokable(catalog, input.entryId)
     if (!entry.ok) return { outcome: 'rejected', reason: entry.reason }
@@ -293,6 +325,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
           reason: `site "${input.siteId}" is locked but the lock cannot be read; restart factotum to clear it`,
         }
       }
+      if (holder.sessionId === REMOVING) return { outcome: 'rejected', reason: BEING_REMOVED }
       return { outcome: 'busy', sessionId: holder.sessionId }
     }
 
@@ -350,12 +383,14 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   async function reply(id: string, text: string, force: boolean): Promise<LaunchResult> {
     if (stopped) throw new Error(STOPPED)
 
+    if (!isSessionId(id)) return { outcome: 'rejected', reason: `"${id}" is not a session id` }
     const meta = await store.readMeta(id)
     if (meta === undefined) return { outcome: 'rejected', reason: `no session "${id}"` }
     if (meta.state === 'running') return { outcome: 'rejected', reason: 'that session is still running' }
 
-    const site = sites.get(meta.siteId)
-    if (site === undefined) return { outcome: 'rejected', reason: `site "${meta.siteId}" is no longer declared` }
+    const found = await siteFor(meta.siteId)
+    if (found.kind !== 'ok') return { outcome: 'rejected', reason: found.reason }
+    const site = found.site
 
     // THE ID STILL RESOLVES, BUT TO WHERE? A config can move an id to another directory, and
     // `--resume` would carry on a thread whose context describes the old tree inside the new one.
@@ -381,6 +416,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       if (holder === undefined) {
         return { outcome: 'rejected', reason: `site "${meta.siteId}" is locked but the lock cannot be read` }
       }
+      if (holder.sessionId === REMOVING) return { outcome: 'rejected', reason: BEING_REMOVED }
       return { outcome: 'busy', sessionId: holder.sessionId }
     }
 
@@ -480,6 +516,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       reason: meta.reason,
       turns: meta.turns,
       prompt: meta.prompt,
+      title: meta.title,
+      archived: meta.archivedAt !== undefined,
     }
   }
 
@@ -496,7 +534,13 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     return { sessions, page: Math.max(0, page.page), hasMore: ids.length > from + PAGE_SIZE }
   }
 
-  async function read(id: string, fromSeq: number): Promise<EventPage> {
+  async function read(id: string, fromSeq: number): Promise<EventPage | SiteMissing | InvalidId> {
+    if (!isSessionId(id)) return { kind: 'invalid' }
+    const meta = await store.readMeta(id)
+    if (meta !== undefined) {
+      const missing = await missingFor(meta.siteId)
+      if (missing !== undefined) return missing
+    }
     const page = await store.read(id, Math.max(0, fromSeq))
     return { events: page.events, nextSeq: page.nextSeq, state: page.state }
   }
@@ -525,7 +569,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       return denyBody(`factotum does not recognise session ${body.session_id}`)
     }
 
-    const site = sites.get(meta.siteId)
+    // THE LAST CHECK THAT WAS OK, never a fresh one: a live session keeps the boundary it started
+    // with when its folder goes missing (criterion 23), and the gate does no I/O it can avoid.
+    const site = table.lastSite(meta.siteId)
     if (site === undefined) {
       return denyBody(`session ${body.session_id} belongs to site "${meta.siteId}", which is no longer declared`)
     }
@@ -535,7 +581,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       toolInput: body.tool_input,
       cwd: body.cwd,
       site,
-      shared,
+      shared: table.gateShared(),
       // Asked HERE and handed in as data, so `decide` stays pure. Synchronous by contract: no
       // I/O happens before the gate knows whether it may ask (ADR-0008).
       canAsk: setup.notify.canReach(),
@@ -659,7 +705,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   function view(): EngineSetupView {
     return {
-      sites: [...sites.values()].map((site) => ({ id: site.id, path: site.path, isRepo: site.isRepo })),
+      sites: table.sites(),
       catalog: catalog.map((entry) => ({
         id: entry.id,
         label: entry.label,
@@ -709,5 +755,36 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     live.clear()
   }
 
-  return { launch, reply, cancel, answer, inspect, list, read, decide, reconcile, view, stop }
+  const later = (name: string) => async (): Promise<never> => {
+    throw new Error(`${name} is not implemented yet`)
+  }
+
+  return {
+    launch,
+    reply,
+    cancel,
+    answer,
+    inspect,
+    list,
+    read,
+    decide,
+    reconcile,
+    view,
+    stop,
+    summary: later('summary'),
+    rename: later('rename'),
+    archive: later('archive'),
+    remove: later('remove'),
+    search: later('search'),
+    projects: later('projects'),
+    requestProject: later('requestProject'),
+    requestShared: later('requestShared'),
+    requestStatus: later('requestStatus'),
+    inspectGrant: later('inspectGrant'),
+    answerGrant: later('answerGrant'),
+    updateProject: later('updateProject'),
+    removeProject: later('removeProject'),
+    removeHistory: later('removeHistory'),
+    removeShared: later('removeShared'),
+  }
 }

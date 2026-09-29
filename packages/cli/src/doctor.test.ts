@@ -469,3 +469,20 @@ test('push output never carries a key or an endpoint (criterion 3)', async () =>
   assert.equal(output.includes(keys.privateKey), false)
   assert.equal(output.includes(keys.publicKey), false)
 })
+
+// ---------------------------------------------------------------------------
+// The projects registry (spec 2026-09-29, criterion 7)
+// ---------------------------------------------------------------------------
+
+test('doctor says where the projects registry is and how many projects it has — or that it is broken, or not there yet', async () => {
+  const home = await withConfig('prod', goodProd)
+  assert.match(await report(home), /projects +.*projects\.json not created yet — seeded from the config/)
+
+  const registry = join(statePaths('prod', home).root, 'modules', 'sessions', 'projects.json')
+  await mkdir(join(registry, '..'), { recursive: true })
+  await writeFile(registry, JSON.stringify({ version: 1, projects: [{ id: 'a', path: '/a' }, { id: 'b' }], shared: [{ path: '/n' }] }))
+  assert.match(await report(home), /projects +.*projects\.json: 1 project\(s\), 1 shared, 1 entry skipped/)
+
+  await writeFile(registry, '{ nope')
+  assert.match(await report(home), /projects +.*is BROKEN, so no project loads/)
+})

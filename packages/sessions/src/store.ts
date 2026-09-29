@@ -64,10 +64,17 @@ export interface SessionMeta {
    * A meta from before this field reads as `undefined`.
    */
   readonly prompt: string | undefined
+  /**
+   * The owner's title (spec 2026-09-29, D4). Listed in `#readMeta` like every field here, or the
+   * next `patchMeta` — a finalize, a reconcile — would erase it (criterion 29).
+   */
+  readonly title: string | undefined
+  /** When it was archived. `undefined`: not archived. */
+  readonly archivedAt: string | undefined
 }
 
 /** Everything but the parts the store owns. */
-export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid'>
+export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'archivedAt'>
 
 export class SessionStore {
   readonly #paths: SessionPaths
@@ -142,6 +149,8 @@ export class SessionStore {
         // would have fallen into it if the type had allowed it to be optional (TS2741 caught it).
         sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
         prompt: typeof json.prompt === 'string' ? json.prompt : undefined,
+        title: typeof json.title === 'string' ? json.title : undefined,
+        archivedAt: typeof json.archivedAt === 'string' ? json.archivedAt : undefined,
       }
     } catch {
       return undefined
@@ -179,6 +188,8 @@ export class SessionStore {
         reason: undefined,
         turns: 1,
         agentPid: undefined,
+        title: undefined,
+        archivedAt: undefined,
       }
       await this.#writeMeta(meta)
       this.#nextSeq.set(session.id, 0)

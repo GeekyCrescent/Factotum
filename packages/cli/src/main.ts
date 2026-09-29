@@ -30,14 +30,14 @@ const USAGE = `factotum ${VERSION}
   factotum start [--env dev|prod]      run the daemon in the foreground
   factotum doctor                      report what is set up, without starting anything
   factotum qr [--env dev|prod]         show the QR again, without touching the config
-  factotum site <add|list|rm>          declare where agents may write, and restart
+  factotum site <list|add|rm>          the projects agents may write in (added from the app)
   factotum push reset [--env dev|prod] forget every device subscribed to notifications
   factotum install [--env dev|prod]    keep it running across logins (launchd)
   factotum uninstall [--env dev|prod]  stop doing that
 
-  factotum site add <path> [--id <id>] [--shared] [--yes] [--no-restart]
-  factotum site list [--json]
-  factotum site rm <id|path>
+  factotum site list [--json]          read the projects registry
+  factotum site add <path> [--id <id>] how to add one: from the app, or by hand without a phone
+  factotum site rm <id|path>           how to remove one
 
 Environment resolves as --env, then FACTOTUM_ENV, then prod.
 `
@@ -102,7 +102,15 @@ export async function main(argv: readonly string[]): Promise<number> {
  */
 function siteRoot(): string {
   // packages/cli/dist/main.js -> repository root -> apps/web/dist
-  return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'web', 'dist')
+  return join(installRoot(), 'apps', 'web', 'dist')
+}
+
+/**
+ * The checkout this daemon runs from. The sessions module refuses it as a project, with what is
+ * inside and above it (ADR-0011): an agent working there could rewrite the gate for the next start.
+ */
+function installRoot(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 }
 
 /**
@@ -148,7 +156,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   try {
     handle = await boot({
       env,
-      modules: [...ALL_MODULES, sessionsModule(engineFactory, hookUrl)],
+      modules: [...ALL_MODULES, sessionsModule(engineFactory, hookUrl, { installRoot: installRoot() })],
       version: VERSION,
       site: createStaticSite(siteRoot()),
     })

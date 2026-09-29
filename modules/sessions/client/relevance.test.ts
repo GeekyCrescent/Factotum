@@ -15,6 +15,8 @@ const session = (id: string, state: SessionState, startedAt: string): SessionSum
   reason: undefined,
   turns: 1,
   prompt: undefined,
+  title: undefined,
+  archived: false,
 })
 const pending = (sessionId: string, askId?: string): Pending => ({
   tag: `ask:${sessionId}`,

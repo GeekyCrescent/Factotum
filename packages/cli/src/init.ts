@@ -16,6 +16,8 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
 import { ensureStateRoots, loadOrCreateKeys, localUrl, statePaths } from '@factotum/kernel'
 import { rootConfigSchema, type Environment } from '@factotum/core'
+import { sessionsConfigSchema } from '@factotum/modules'
+import { FREE_ENTRY } from './site.ts'
 import {
   execRunner,
   readFqdn,
@@ -92,15 +94,19 @@ export async function init(deps: InitDeps): Promise<number> {
     environment: deps.env,
     listen: { address: BIND_ADDRESS, port },
     publicOrigin,
-    // Turned on so the walk-through ends with something on the screen. Everything
-    // else defaults to off.
-    modules: { example: { enabled: true } },
+    // Turned on so the walk-through ends with something on the screen. And sessions, since projects
+    // are added from the app now (spec 2026-09-29, D1): a module that is off has no app to add one
+    // from. Everything else defaults to off.
+    modules: { example: { enabled: true }, sessions: { enabled: true, catalog: [FREE_ENTRY] } },
   }
 
   // VALIDATED WITH THE REAL SCHEMA BEFORE IT TOUCHES THE DISK. Re-implementing the
   // canonical-origin rule here would be a second copy of it, and the copy that
   // drifts is the one that decides what gets written.
-  const checked = rootConfigSchema.safeParse(config)
+  // The root schema keeps each module's fragment opaque, so the sessions fragment is checked with
+  // the module's own schema too: a fragment it would refuse disables the module at step 6.
+  const fragment = sessionsConfigSchema.safeParse(config.modules.sessions)
+  const checked = fragment.success ? rootConfigSchema.safeParse(config) : fragment
   if (!checked.success) {
     const issue = checked.error.issues[0]
     out('factotum worked out a config that it will not write, because it would not start:')

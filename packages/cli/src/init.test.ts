@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootConfigSchema } from '@factotum/core'
+import { sessionsConfigSchema } from '@factotum/modules'
 import { init } from './init.ts'
 import type { RunResult, Runner } from './tailscale.ts'
 
@@ -79,6 +80,15 @@ test('switches the example module on, so the walk-through ends with something vi
   const h = await home()
   await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined })
   assert.equal((await readConfig(h)).modules.example.enabled, true)
+})
+
+test('SWITCHES SESSIONS ON with "Free prompt", validated by the module’s own schema (spec 2026-09-29, criterion 7)', async () => {
+  // Projects are added from the app now, so a module that is off leaves nowhere to add one from.
+  const h = await home()
+  await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined })
+  const sessions = (await readConfig(h)).modules.sessions as unknown
+  assert.deepEqual(sessions, { enabled: true, catalog: [{ id: 'free', label: 'Free prompt', invoke: { kind: 'none' } }] })
+  assert.equal(sessionsConfigSchema.safeParse(sessions).success, true)
 })
 
 test('dev gets its own port so both environments can run at once', async () => {

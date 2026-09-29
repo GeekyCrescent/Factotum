@@ -1,23 +1,26 @@
 /**
- * `factotum site add|list|rm` — the boundary, edited by a command instead of by hand.
+ * `factotum site list|add|rm` — the projects, READ by a command; never written by one.
  *
- * THIS COMMAND WIDENS WHAT AN AGENT MAY WRITE, so it asks before it does. That is not
- * ceremony: an agent has a shell, `Bash` is not checked against the boundary
- * (`docs/running-agents.md`), and a convenient `site add` is a convenient way for one
- * to grant itself a directory. `--yes` skips the prompt and is meant to be visible in
- * whatever log runs it.
+ * THE DAEMON IS THE ONLY WRITER of the projects registry (spec 2026-09-29, D1; ADR-0011). An agent
+ * has a shell and `Bash` is not checked against the boundary (`docs/running-agents.md`), so a
+ * convenient `site add` was a convenient way for one to grant itself a folder. Now adding a project
+ * widens the boundary only with an approval on the owner's phone — or, without a phone, by hand with
+ * the daemon stopped, which is what `add` and `rm` explain instead of doing.
  *
- * The editing itself is in `site.ts` and pure. Here: the disk, the prompt, and asking
- * the supervisor to pick the change up.
+ * One thing `add` still does: an installation that never had the sessions module switched on gets
+ * it switched on, with a confirmation and a restart, as it always did — otherwise there is no app to
+ * add a project from. An `enabled: false` somebody wrote is left alone.
  */
 
-import { readFile, writeFile, rename, stat } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import { statePaths } from '@factotum/kernel'
+import { moduleStateDir, statePaths } from '@factotum/kernel'
 import type { Environment } from '@factotum/core'
-import { addSite, listSites, removeSite } from './site.ts'
+import { readRegistry, registryFile } from '@factotum/modules'
+import { enableSessions, listSites, sessionsState } from './site.ts'
 import { restartDaemon } from './restart.ts'
-import type { Runner } from './tailscale.ts'
+import { labelFor } from './supervise.ts'
+import { execRunner, type Runner } from './tailscale.ts'
 
 export interface SiteCommandDeps {
   readonly env: Environment
@@ -59,13 +62,17 @@ export async function siteCommand(deps: SiteCommandDeps): Promise<number> {
     case 'remove':
       return await runRemove(deps, rest, out)
     default:
-      out('usage: factotum site <add|list|rm> [...]')
+      out('usage: factotum site <list|add|rm> [...]')
       out('')
-      out('  factotum site add <path> [--id <id>] [--shared] [--yes] [--no-restart]')
-      out('  factotum site list [--json]')
-      out('  factotum site rm <id|path> [--yes] [--no-restart]')
+      out('  factotum site list [--json]          the projects the daemon has, from its registry')
+      out('  factotum site add <path> [--id <id>]  how to add one: from the app, or by hand')
+      out('  factotum site rm <id|path>            how to remove one')
       return 2
   }
+}
+
+function registryPath(deps: SiteCommandDeps): string {
+  return registryFile(moduleStateDir(statePaths(deps.env, deps.home), 'sessions'))
 }
 
 // ---------------------------------------------------------------------------
@@ -73,106 +80,180 @@ export async function siteCommand(deps: SiteCommandDeps): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function runList(deps: SiteCommandDeps, out: (line: string) => void): Promise<number> {
-  const loaded = await load(deps, out)
-  if (loaded === undefined) return 1
+  const file = registryPath(deps)
+  const read = await readRegistry(file)
+  if (read.kind === 'broken') {
+    out(`the projects registry is broken, so the daemon loads no project: ${read.reason}`)
+    out(`fix ${file} by hand with the daemon stopped, or delete it to seed it again from the config`)
+    return 1
+  }
 
-  const { sites, sharedPaths } = listSites(loaded.config)
+  let projects: readonly { readonly id: string; readonly path: string; readonly name?: string | undefined }[]
+  let shared: readonly string[]
+  let source: 'registry' | 'config'
+  if (read.kind === 'ok') {
+    projects = read.registry.projects
+    shared = read.registry.shared.map((s) => s.path)
+    source = 'registry'
+  } else {
+    // No registry yet: the daemon seeds it from the config at its next start, so the config IS what
+    // it will load.
+    const loaded = await load(deps, out)
+    if (loaded === undefined) return 1
+    const fromConfig = listSites(loaded.config)
+    projects = fromConfig.sites
+    shared = fromConfig.sharedPaths
+    source = 'config'
+  }
+
   if (deps.argv.includes('--json')) {
-    out(JSON.stringify({ sites, sharedPaths }))
+    out(JSON.stringify({ source, file, sites: projects, sharedPaths: shared }))
     return 0
   }
 
-  if (sites.length === 0) out('no sites declared — an agent has nowhere it may write')
-  for (const site of sites) out(`  ${site.id.padEnd(16)} ${site.path}`)
-  for (const path of sharedPaths) out(`  ${'(shared)'.padEnd(16)} ${path}`)
-  if (sharedPaths.length > 0) out('')
-  if (sharedPaths.length > 0) out('  shared paths are writable from every site, and nothing locks them')
+  out(source === 'registry' ? `projects in ${file}` : `no ${file} yet: the daemon seeds it from the config at its next start`)
+  if (projects.length === 0) out('no projects — an agent has nowhere it may write')
+  for (const project of projects) {
+    out(`  ${project.id.padEnd(16)} ${project.path}${project.name === undefined ? '' : `  (${project.name})`}`)
+  }
+  for (const path of shared) out(`  ${'(shared)'.padEnd(16)} ${path}`)
+  if (read.kind === 'ok' && read.skipped.length > 0) {
+    out('')
+    for (const skipped of read.skipped) out(`  skipped ${skipped.list}[${skipped.index}]: ${skipped.reason}`)
+  }
+  if (shared.length > 0) {
+    out('')
+    out('  shared folders are writable from every project, and nothing locks them')
+  }
   return 0
 }
 
 // ---------------------------------------------------------------------------
-// add
+// add and rm: said, not done
 // ---------------------------------------------------------------------------
 
-async function runAdd(
-  deps: SiteCommandDeps,
-  rest: readonly string[],
-  out: (line: string) => void,
-): Promise<number> {
+async function runAdd(deps: SiteCommandDeps, rest: readonly string[], out: (line: string) => void): Promise<number> {
   const raw = rest.find((arg) => !arg.startsWith('--'))
   if (raw === undefined) {
-    out('which directory? usage: factotum site add <path> [--id <id>] [--shared]')
+    out('which folder? usage: factotum site add <path> [--id <id>]')
     return 2
   }
-
-  // Resolved here and not in `site.ts`: turning `.` into a path depends on where the
-  // command was run, which is I/O in everything but name.
+  // Resolved here: turning `.` into a path depends on where the command was run.
   const path = isAbsolute(raw) ? raw : resolve(process.cwd(), raw)
-  const shared = rest.includes('--shared')
-  const idFlag = flagValue(rest, '--id')
-
-  const exists = await isDirectory(path)
-  if (!exists) {
-    // The same refusal the daemon would make at startup, made now — while the person
-    // who typed the path is still here to fix it.
-    out(`${path} is not a directory that exists.`)
-    out('A declared boundary that is not there disables the whole module at startup.')
-    return 1
-  }
+  const id = flagValue(rest, '--id') ?? '<id>'
 
   const loaded = await load(deps, out)
   if (loaded === undefined) return 1
 
-  const edit = addSite(loaded.config, idFlag === undefined ? { path, shared } : { path, id: idFlag, shared })
-  if (!edit.ok) {
-    out(edit.error)
-    return 1
+  const state = sessionsState(loaded.config)
+  if (state === 'off') {
+    out('the sessions module is switched off in the config (`enabled: false`), and this command does not')
+    out('overrule that. Switch it on by hand if you want it.')
+    out('')
   }
+  if (state === 'absent' && !(await switchOn(deps, rest, loaded, out))) return 1
 
-  const what = shared ? `shared path ${path}` : `site ${describeAdded(edit.config, path)}`
-  if (!(await confirmed(deps, rest, out, `Let agents write in ${what}?`))) return 0
-
-  await write(loaded.path, edit.config)
-  out(`added ${what}`)
-  if (shared) out('nothing locks a shared path: two agents can write the same file there')
-  return await maybeRestart(deps, rest, out)
+  await recipe(deps, out, 'add', {
+    how: 'add it from the app (Projects)',
+    edit: `add an entry to ${registryPath(deps)} (example below)`,
+    example: JSON.stringify({ id, path }),
+  })
+  // Code 1 whatever happened above: THE PROJECT WAS NOT ADDED, and a script that asked for it must
+  // be able to tell.
+  return 1
 }
 
-function describeAdded(config: unknown, path: string): string {
-  const added = listSites(config).sites.find((site) => site.path === path)
-  return added === undefined ? path : `"${added.id}" (${path})`
-}
-
-// ---------------------------------------------------------------------------
-// rm
-// ---------------------------------------------------------------------------
-
-async function runRemove(
-  deps: SiteCommandDeps,
-  rest: readonly string[],
-  out: (line: string) => void,
-): Promise<number> {
+async function runRemove(deps: SiteCommandDeps, rest: readonly string[], out: (line: string) => void): Promise<number> {
   const target = rest.find((arg) => !arg.startsWith('--'))
   if (target === undefined) {
     out('which one? usage: factotum site rm <id|path>')
     return 2
   }
+  await recipe(deps, out, 'rm', {
+    how: 'remove it from the app (Projects), which also deletes its history',
+    edit: `delete its entry from ${registryPath(deps)}`,
+    example: undefined,
+  })
+  return 1
+}
 
-  const loaded = await load(deps, out)
-  if (loaded === undefined) return 1
+/**
+ * The way round without a phone, in the words that match how this environment runs — the same
+ * three cases `restart.ts` tells apart. Never a command that does not exist.
+ */
+async function recipe(
+  deps: SiteCommandDeps,
+  out: (line: string) => void,
+  action: 'add' | 'rm',
+  words: { readonly how: string; readonly edit: string; readonly example: string | undefined },
+): Promise<void> {
+  const env = `--env ${deps.env}`
+  const supervisor = await supervisorOf(deps)
+  out(`factotum ${action} no longer edits projects: the daemon is the only thing that writes them.`)
+  if (supervisor === 'launchagent') {
+    out(`${capital(words.how)}. Without a phone: \`factotum uninstall ${env}\`, ${words.edit}, \`factotum install ${env}\`.`)
+    out('`factotum install` rewrites the LaunchAgent with the PATH of the shell you run it from: run it')
+    out('where `claude` is on the PATH, or the daemon comes back up unable to launch anything.')
+  } else if (supervisor === 'foreground') {
+    out(`${capital(words.how)}. Without a phone: stop \`factotum start ${env}\`, ${words.edit}, and start it again.`)
+  } else {
+    out(`${capital(words.how)}. Without a phone: stop the daemon (your supervisor's unit, or \`factotum start ${env}\`),`)
+    out(`${words.edit}, and start it again.`)
+  }
+  out('Edits made while the daemon runs are ignored, and overwritten by its next write.')
+  if (words.example !== undefined) {
+    out('')
+    out(`  ${words.example}`)
+  }
+}
 
-  const edit = removeSite(loaded.config, target)
+async function supervisorOf(deps: SiteCommandDeps): Promise<'launchagent' | 'foreground' | 'other'> {
+  const platform = deps.platform ?? process.platform
+  if (platform !== 'darwin') return 'other'
+  const run = deps.run ?? execRunner
+  const uid = deps.uid ?? process.getuid?.() ?? 0
+  const loaded = await run('launchctl', ['print', `gui/${uid}/${labelFor(deps.env)}`])
+  return loaded.code === 0 ? 'launchagent' : 'foreground'
+}
+
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/**
+ * An installation from before `init` switched the module on. Switching it on widens nothing by
+ * itself — the registry is seeded from the sites ALREADY in the config — but it still asks, because
+ * those sites become writable at the restart.
+ */
+async function switchOn(
+  deps: SiteCommandDeps,
+  rest: readonly string[],
+  loaded: { path: string; config: unknown },
+  out: (line: string) => void,
+): Promise<boolean> {
+  const edit = enableSessions(loaded.config)
   if (!edit.ok) {
     out(edit.error)
-    return 1
+    return false
   }
-
-  // Narrowing the boundary does not need consent the way widening it does, but a live
-  // session in that site would be refused on its next write, so it is still announced.
+  const sites = listSites(loaded.config).sites.length
+  const question = `The sessions module is not on. Switch it on${sites === 0 ? '' : `, with the ${sites} site(s) already in the config`}?`
+  if (!(await confirmed(deps, rest, out, question))) return false
   await write(loaded.path, edit.config)
-  out(`removed ${target}`)
-  out('a session running there is denied on its next write, with the reason')
-  return await maybeRestart(deps, rest, out)
+  out('switched the sessions module on, with "Free prompt"')
+  if (rest.includes('--no-restart')) {
+    out('not restarting: the daemon picks it up at its next start')
+  } else {
+    await restartDaemon({
+      env: deps.env,
+      out,
+      ...(deps.run === undefined ? {} : { run: deps.run }),
+      ...(deps.uid === undefined ? {} : { uid: deps.uid }),
+      ...(deps.platform === undefined ? {} : { platform: deps.platform }),
+    })
+  }
+  out('')
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +280,7 @@ async function load(
   }
 }
 
-/** Written beside the target and renamed: a crash mid-write must not leave half a boundary. */
+/** Written beside the target and renamed: a crash mid-write must not leave half a config. */
 async function write(path: string, config: unknown): Promise<void> {
   const temporary = `${path}.tmp`
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
@@ -214,9 +295,9 @@ async function confirmed(
 ): Promise<boolean> {
   if (rest.includes('--yes')) return true
   if (deps.ask === undefined) {
-    // No terminal and no `--yes` means nobody consented. Assuming yes here is how a
-    // script — or an agent — ends up widening the boundary without anyone deciding to.
-    out('refusing to widen the boundary without a confirmation: pass --yes')
+    // No terminal and no `--yes` means nobody consented. Assuming yes here is how a script — or an
+    // agent — ends up switching the module on without anyone deciding to.
+    out('refusing to switch the sessions module on without a confirmation: pass --yes')
     return false
   }
   const answer = (await deps.ask(`${question} [y/N] `)).trim().toLowerCase()
@@ -225,34 +306,7 @@ async function confirmed(
   return false
 }
 
-async function maybeRestart(
-  deps: SiteCommandDeps,
-  rest: readonly string[],
-  out: (line: string) => void,
-): Promise<number> {
-  if (rest.includes('--no-restart')) {
-    out('not restarting: the daemon keeps the old boundary until it does')
-    return 0
-  }
-  await restartDaemon({
-    env: deps.env,
-    out,
-    ...(deps.run === undefined ? {} : { run: deps.run }),
-    ...(deps.uid === undefined ? {} : { uid: deps.uid }),
-    ...(deps.platform === undefined ? {} : { platform: deps.platform }),
-  })
-  return 0
-}
-
 function flagValue(argv: readonly string[], flag: string): string | undefined {
   const at = argv.indexOf(flag)
   return at === -1 ? undefined : argv[at + 1]
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory()
-  } catch {
-    return false
-  }
 }

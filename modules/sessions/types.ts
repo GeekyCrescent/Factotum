@@ -65,13 +65,98 @@ export interface CatalogEntry {
   readonly invoke: InvokeConfig
 }
 
+// --- The projects registry (spec 2026-09-29, D1) ----------------------------
+//
+// A CAPABILITY THAT RUNS THE OTHER WAY. Everything else in this file is what the engine offers
+// the module; the registry is what the MODULE offers the engine, because the one schema of a
+// project lives in the module (`config.ts`) and the engine only checks the disk (ADR-0005,
+// ADR-0011). So the engine sees a READ-ONLY VIEW and hands back EDITS AS DATA, never a whole
+// registry: the type crosses one way on each side, and the link in `main.ts` compiles with
+// properties, not methods.
+
+/** One of the six project tones, `--p1`…`--p6` in tokens.css. */
+export type Color = 1 | 2 | 3 | 4 | 5 | 6
+
+/** `?:` AND `| undefined`, like `InvokeConfig.name`: this is what the module's zod infers. */
+export interface ProjectEntry {
+  readonly id: string
+  readonly path: string
+  readonly name?: string | undefined
+  readonly color?: Color | undefined
+  readonly addedAt?: string | undefined
+}
+
+export interface SharedEntry {
+  readonly path: string
+  readonly addedAt?: string | undefined
+}
+
+export interface RegistryView {
+  readonly projects: readonly ProjectEntry[]
+  readonly shared: readonly SharedEntry[]
+}
+
+/** An entry the reader skipped, said out loud: GET /projects and the projects screen show it. */
+export interface SkippedEntry {
+  readonly list: 'projects' | 'shared'
+  readonly index: number
+  readonly reason: string
+}
+
+export type RegistryEdit =
+  | {
+      readonly kind: 'add-project'
+      readonly id: string
+      readonly path: string
+      readonly name?: string | undefined
+      readonly color?: Color | undefined
+    }
+  | { readonly kind: 'set-project'; readonly id: string; readonly name?: string | undefined; readonly color?: Color | undefined }
+  | { readonly kind: 'remove-project'; readonly id: string }
+  | { readonly kind: 'add-shared'; readonly path: string }
+  | { readonly kind: 'remove-shared'; readonly path: string }
+
+export type RegistryLoad =
+  | {
+      readonly kind: 'ok'
+      readonly registry: RegistryView
+      readonly warnings: readonly string[]
+      readonly skipped: readonly SkippedEntry[]
+    }
+  | { readonly kind: 'broken'; readonly reason: string }
+
+export type RegistryUpdate =
+  | { readonly kind: 'ok'; readonly registry: RegistryView }
+  | { readonly kind: 'refused' | 'failed' | 'broken'; readonly reason: string }
+
+export interface RegistryStore {
+  /** Where it lives. Said in `registryError` and in the recipe for adding one without a phone. */
+  readonly file: string
+  /** At start. Seeds ONLY on ENOENT; any other read error, or an invalid envelope, is `broken`. */
+  readonly load: () => Promise<RegistryLoad>
+  /**
+   * IN A QUEUE. `decide` runs INSIDE it with the current view, so a disk check made while
+   * approving sees the approval before it (criterion 15). The store applies the edit to a copy,
+   * writes it, and replaces its memory ONLY once the write finished; a failed write is `failed`
+   * and leaves the memory as it was, and the next write still works (criterion 4).
+   */
+  readonly update: (
+    decide: (current: RegistryView) => Promise<RegistryEdit | { readonly refused: string }>,
+  ) => Promise<RegistryUpdate>
+  /** The module's id rule, so the engine does not copy it (criteria 11, 13). */
+  readonly deriveId: (basename: string) => string | undefined
+  readonly isValidId: (id: string) => boolean
+}
+
 // --- what the engine is handed ---------------------------------------------
 
 export interface EngineSetup {
   readonly stateDir: string
-  readonly sites: readonly SiteConfig[]
-  /** Writable from every site, locked by nothing. Declared once in the fragment. */
-  readonly sharedPaths?: readonly string[]
+  /** The projects and shared folders; the config's `sites` and `sharedPaths` only seed it (D1). */
+  readonly registry: RegistryStore
+  readonly home: string
+  readonly factotumRoot: string
+  readonly installRoot: string | undefined
   readonly catalog: readonly CatalogEntry[]
   readonly log: Logger
   readonly now: () => Date
@@ -121,10 +206,15 @@ export interface SessionSummary {
   readonly turns: number
   /** The first prompt, cut. `undefined` for a session from before the field existed. */
   readonly prompt: string | undefined
+  /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
+  readonly title: string | undefined
+  readonly archived: boolean
 }
 
 export interface Page {
   readonly page: number
+  readonly site: string | undefined
+  readonly archived: boolean
 }
 
 export interface SessionPage {
@@ -144,6 +234,17 @@ export interface EventPage {
   readonly events: readonly SessionEvent[]
   readonly nextSeq: number
   readonly state: SessionState
+}
+
+/** A conversation of a project whose folder is not there is not read (criterion 25). */
+export interface SiteMissing {
+  readonly kind: 'site-missing'
+  readonly siteId: string
+}
+
+/** An id that is not a session id (criterion 32). */
+export interface InvalidId {
+  readonly kind: 'invalid'
 }
 
 /** What answering an ask came to. Discriminated by `kind`: a boolean cannot tell four apart. */
@@ -189,13 +290,154 @@ export interface HookDecision {
 }
 
 export interface EngineSetupView {
-  readonly sites: readonly { readonly id: string; readonly path: string; readonly isRepo: boolean }[]
+  readonly sites: readonly {
+    readonly id: string
+    readonly path: string
+    readonly isRepo: boolean
+    readonly name: string | undefined
+    readonly color: Color | undefined
+    readonly status: 'ok' | 'missing'
+  }[]
   readonly catalog: readonly {
     readonly id: string
     readonly label: string
     readonly disabledReason: string | undefined
   }[]
 }
+
+// --- Projects, as the screens see them (spec 2026-09-29, D4, D8) -------------
+
+export type ProjectStatus = 'ok' | 'missing'
+
+export interface ProjectView {
+  readonly id: string
+  readonly path: string
+  readonly name: string | undefined
+  readonly color: Color | undefined
+  readonly status: ProjectStatus
+  /** Why it is `missing`. Shown on the screen only, never in a notice: it can hold a path. */
+  readonly reason: string | undefined
+  readonly isRepo: boolean
+  /** The newest few that are not archived, and every running one. */
+  readonly sessions: readonly SessionSummary[]
+  /** Not archived. */
+  readonly total: number
+  readonly archived: number
+}
+
+export interface SharedView {
+  readonly path: string
+  readonly status: ProjectStatus
+  readonly reason: string | undefined
+}
+
+/** Conversations whose project is no longer registered: in prod, the seven of `demo`. */
+export interface RemovedView {
+  readonly siteId: string
+  readonly count: number
+}
+
+export interface ProjectsPage {
+  readonly projects: readonly ProjectView[]
+  readonly shared: readonly SharedView[]
+  /** Empty while the registry is broken (criterion 6). */
+  readonly removed: readonly RemovedView[]
+  readonly registryError: string | undefined
+  readonly skipped: readonly SkippedEntry[]
+  /** Where `projects.json` is, for the recipe without a phone. */
+  readonly file: string
+  /** Whether a request can reach a device right now (criterion 10). */
+  readonly canRequest: boolean
+}
+
+export interface ProjectRef {
+  readonly id: string
+  readonly name: string | undefined
+  readonly color: Color | undefined
+}
+
+export type SummaryResult =
+  | { readonly kind: 'ok'; readonly summary: SessionSummary; readonly project: ProjectRef | undefined }
+  | { readonly kind: 'unknown' }
+  | SiteMissing
+  | InvalidId
+
+/** What renaming or archiving one came to. */
+export type SessionEdit =
+  | { readonly outcome: 'ok'; readonly summary: SessionSummary }
+  | { readonly outcome: 'unknown' }
+  | { readonly outcome: 'running' }
+  | { readonly outcome: 'invalid'; readonly reason: string }
+
+/** One per id asked for, in the order asked (criterion 34). */
+export interface RemoveResult {
+  readonly id: string
+  readonly outcome: 'removed' | 'unknown' | 'running' | 'invalid'
+}
+
+/** One per conversation. No snippet: it matched by its title or its project. */
+export interface SearchHit {
+  readonly summary: SessionSummary
+  readonly snippet: string | undefined
+}
+
+export interface ProjectRequest {
+  readonly path: string
+  /** Validated by the module's rule. Absent: derived from the RESOLVED folder's name. */
+  readonly id: string | undefined
+  readonly name: string | undefined
+  readonly color: Color | undefined
+}
+
+export interface ProjectPatch {
+  readonly name: string | undefined
+  readonly color: Color | undefined
+}
+
+/** Why a request is a 409 rather than a 400: the screen says each differently. */
+export type RequestConflict = 'broken' | 'starting' | 'too-many' | 'no-device' | 'live-sessions'
+
+export type RequestResult =
+  | { readonly outcome: 'requested'; readonly requestId: string; readonly expiresAt: string }
+  | { readonly outcome: 'invalid'; readonly reason: string }
+  | { readonly outcome: 'conflict'; readonly conflict: RequestConflict; readonly reason: string }
+
+export interface GrantOutcome {
+  readonly outcome: 'approved' | 'denied' | 'rejected'
+  readonly reason: string | undefined
+}
+
+export type AnswerGrantResult =
+  | (GrantOutcome & { readonly first: boolean })
+  | { readonly outcome: 'unknown' | 'expired' }
+
+export type GrantRequestView =
+  | {
+      readonly kind: 'project'
+      readonly path: string
+      readonly id: string
+      readonly name: string | undefined
+      readonly color: Color | undefined
+    }
+  | { readonly kind: 'shared'; readonly path: string }
+
+/** One request BY ITS TOKEN, for the approval panel. Never a list. */
+export type GrantInspect =
+  | { readonly kind: 'pending'; readonly request: GrantRequestView; readonly expiresAt: string }
+  | { readonly kind: 'settled' }
+  | { readonly kind: 'unknown' }
+
+export type GrantStatus =
+  | { readonly status: 'pending' | 'approved' | 'denied' | 'expired' | 'rejected'; readonly reason: string | undefined }
+  | { readonly status: 'unknown' }
+
+/** Changing, removing, or deleting the history of a project; removing a shared folder. */
+export type ProjectChange =
+  | { readonly outcome: 'ok'; readonly removedSessions: number }
+  | { readonly outcome: 'unknown' }
+  | { readonly outcome: 'conflict'; readonly reason: string }
+  | { readonly outcome: 'invalid'; readonly reason: string }
+
 
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
@@ -208,8 +450,23 @@ export interface SessionEngine {
   readonly reply: (id: string, text: string, force: boolean) => Promise<LaunchResult>
   readonly cancel: (id: string) => Promise<void>
   readonly list: (page: Page) => Promise<SessionPage>
-  readonly read: (id: string, fromSeq: number) => Promise<EventPage>
+  readonly read: (id: string, fromSeq: number) => Promise<EventPage | SiteMissing | InvalidId>
   readonly decide: (payload: unknown) => Promise<HookDecision>
+  readonly summary: (id: string) => Promise<SummaryResult>
+  readonly rename: (id: string, title: string) => Promise<SessionEdit>
+  readonly archive: (id: string, archived: boolean) => Promise<SessionEdit>
+  readonly remove: (ids: readonly string[]) => Promise<readonly RemoveResult[]>
+  readonly search: (query: string) => Promise<readonly SearchHit[]>
+  readonly projects: () => Promise<ProjectsPage>
+  readonly requestProject: (request: ProjectRequest) => Promise<RequestResult>
+  readonly requestShared: (path: string) => Promise<RequestResult>
+  readonly requestStatus: (requestId: string) => Promise<GrantStatus>
+  readonly inspectGrant: (token: string) => Promise<GrantInspect>
+  readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
+  readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  readonly removeProject: (id: string) => Promise<ProjectChange>
+  readonly removeHistory: (siteId: string) => Promise<ProjectChange>
+  readonly removeShared: (path: string) => Promise<ProjectChange>
   /**
    * The owner's answer to an ask. The id is a capability — it authorises the answer — and lives
    * only in memory and in the encrypted push (spec §5). A PROPERTY OF FUNCTION TYPE, never method

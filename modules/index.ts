@@ -28,6 +28,11 @@ export { LOCAL }
  * own module should not have to pay for a pattern one bundled module needed.
  */
 export { sessionsModule } from './sessions/server.ts'
+export type { SessionsModuleOptions } from './sessions/server.ts'
+// What `factotum site list` and `doctor` read, and the root the composition root checks against the
+// kernel's layout (spec 2026-09-29, D1). The CLI READS the registry; only the daemon writes it.
+export { factotumRootOf, readRegistry, registryFile } from './sessions/registry.ts'
+export type { RegistryRead } from './sessions/registry.ts'
 export type {
   CreateEngine,
   EngineSetup,

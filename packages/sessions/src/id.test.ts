@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { uuidv7 } from './id.ts'
+import { isSessionId, uuidv7 } from './id.ts'
 
 test('it looks like a UUID, and says it is version 7', () => {
   const id = uuidv7()
@@ -31,4 +31,11 @@ test('the timestamp really is in the first six bytes', () => {
 test('a nonsensical clock does not produce a malformed id', () => {
   assert.match(uuidv7(-1), /^[0-9a-f]{8}-[0-9a-f]{4}-7/)
   assert.match(uuidv7(0), /^0{8}-0{4}-7/)
+})
+
+test('isSessionId accepts what uuidv7 makes and nothing that could walk out of sessions/ (spec 2026-09-29, criterion 32)', () => {
+  for (let i = 0; i < 20; i++) assert.equal(isSessionId(uuidv7()), true)
+  for (const bad of ['', '..', '../x', 'a/b', 'projects', '01a0a770-8bce-4d99-8976-0e16dfa1fa0a', `${uuidv7()}/..`, uuidv7().toUpperCase(), ` ${uuidv7()}`]) {
+    assert.equal(isSessionId(bad), false, JSON.stringify(bad))
+  }
 })

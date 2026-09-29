@@ -20,6 +20,7 @@ import {
   inspectPush,
   localUrl,
   MAX_SUBSCRIPTIONS,
+  moduleStateDir,
   policyFor,
   resolveListen,
   statePaths,
@@ -27,6 +28,7 @@ import {
   type StatePaths,
 } from '@factotum/kernel'
 import { ENVIRONMENTS, rootConfigSchema, type Environment } from '@factotum/core'
+import { readRegistry, registryFile } from '@factotum/modules'
 import {
   execRunner,
   httpsPort,
@@ -123,6 +125,7 @@ async function reportEnvironment(
 
   const enabled = Object.entries(modules).filter(([, entry]) => entry.enabled).map(([id]) => id)
   out(`  enabled     ${enabled.length === 0 ? '(none)' : enabled.join(', ')}`)
+  out(`  projects    ${await describeRegistry(registryFile(moduleStateDir(paths, 'sessions')))}`)
 
   // Resolve the bind the same way `boot` does, including the `listen.interface`
   // case, which doctor used to skip entirely. `resolveListen` THROWS a BootError —
@@ -294,6 +297,24 @@ async function reportPush(publicOrigin: string, paths: StatePaths, out: (line: s
       if (n > 0) out(`              ${SAME_MACHINE_WARNING}`)
       if (inspection.warning !== undefined) out(`              ${inspection.warning}`)
       break
+    }
+  }
+}
+
+/**
+ * Where the projects live and how many there are (spec 2026-09-29, criterion 7). Read, never
+ * written: the daemon is the only writer. Never throws, like everything here.
+ */
+async function describeRegistry(file: string): Promise<string> {
+  const read = await readRegistry(file)
+  switch (read.kind) {
+    case 'missing':
+      return `${file} not created yet — seeded from the config at the next start`
+    case 'broken':
+      return `${file} is BROKEN, so no project loads: ${read.reason}`
+    case 'ok': {
+      const skipped = read.skipped.length === 0 ? '' : `, ${read.skipped.length} entr${read.skipped.length === 1 ? 'y' : 'ies'} skipped`
+      return `${file}: ${read.registry.projects.length} project(s), ${read.registry.shared.length} shared${skipped}`
     }
   }
 }

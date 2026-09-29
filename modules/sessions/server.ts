@@ -19,8 +19,11 @@
  *    outcome is this module disabled with a reason.
  */
 
+import { homedir } from 'node:os'
 import type { FactotumModule, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
 import { sessionsConfigSchema, type SessionsConfig } from './config.ts'
+import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
+import { isSiteId } from './requests.ts'
 import type { CreateEngine, LaunchResult, SessionEngine } from './types.ts'
 
 /**
@@ -40,7 +43,25 @@ const STARTING: ModuleResponse = {
 }
 
 function invalid(message: string): ModuleResponse {
-  return { status: 400, body: { error: { code: 'invalid-request', message } } }
+  return { status: 400, headers: NO_STORE, body: { error: { code: 'invalid-request', message } } }
+}
+
+/**
+ * NEVER CACHED: lists, summaries, searches and requests (criterion 40). A stored response would
+ * keep titles, paths and message text on the device's disk after the history was deleted.
+ */
+const NO_STORE: Readonly<Record<string, string>> = { 'cache-control': 'no-store' }
+
+/**
+ * A 409 that says WHICH conflict, with the kernel's closed list of codes untouched: `conflict`
+ * plus a field, the way `busy` carries `conflict` and `stale` carries `freshness`.
+ */
+function siteMissing(siteId: string): ModuleResponse {
+  return {
+    status: 409,
+    headers: NO_STORE,
+    body: { error: { code: 'conflict', message: `the folder of project "${siteId}" is missing` }, missing: { siteId } },
+  }
 }
 
 /** A refusal the owner has to be able to read, turned into a response that carries it. */
@@ -77,7 +98,8 @@ function text(body: unknown, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-function routeTable(holder: EngineHolder): RouteTable {
+function routeTable(holder: EngineHolder, home: string): RouteTable {
+  void home
   /**
    * Every route funnels through here, so the empty hole is handled in ONE place.
    *
@@ -98,7 +120,13 @@ function routeTable(holder: EngineHolder): RouteTable {
 
     'GET /sessions': withEngine(async (engine, req) => {
       const page = Number.parseInt(req.query['page'] ?? '0', 10)
-      return { status: 200, body: await engine.list({ page: Number.isNaN(page) ? 0 : page }) }
+      const site = req.query['site']
+      if (site !== undefined && !isSiteId(site)) return invalid('that is not a project id')
+      return {
+        status: 200,
+        headers: NO_STORE,
+        body: await engine.list({ page: Number.isNaN(page) ? 0 : page, site, archived: req.query['archived'] === 'true' }),
+      }
     }),
 
     'POST /sessions': withEngine(async (engine, req) => {
@@ -120,10 +148,9 @@ function routeTable(holder: EngineHolder): RouteTable {
 
     'GET /sessions/:id/events': withEngine(async (engine, req) => {
       const fromSeq = Number.parseInt(req.query['fromSeq'] ?? '0', 10)
-      return {
-        status: 200,
-        body: await engine.read(req.params['id'] ?? '', Number.isNaN(fromSeq) ? 0 : fromSeq),
-      }
+      const result = await engine.read(req.params['id'] ?? '', Number.isNaN(fromSeq) ? 0 : fromSeq)
+      if ('kind' in result) return result.kind === 'invalid' ? invalid('that is not a session id') : siteMissing(result.siteId)
+      return { status: 200, headers: NO_STORE, body: result }
     }),
 
     'POST /sessions/:id/reply': withEngine(async (engine, req) => {
@@ -237,6 +264,16 @@ function routeTable(holder: EngineHolder): RouteTable {
   }
 }
 
+export interface SessionsModuleOptions {
+  /**
+   * The checkout the daemon runs from. Only the composition root knows it, and a project there or
+   * above it is refused (ADR-0011): an agent in it could rewrite the gate for the next start.
+   */
+  readonly installRoot?: string
+  /** `os.homedir()` unless a test says otherwise. */
+  readonly home?: string
+}
+
 export function sessionsModule(
   createEngine: CreateEngine,
   /**
@@ -246,8 +283,10 @@ export function sessionsModule(
    * starting an agent whose gate is unreachable.
    */
   hookUrl: () => string,
+  options: SessionsModuleOptions = {},
 ): FactotumModule<SessionsConfig> {
   const holder: EngineHolder = {}
+  const home = options.home ?? homedir()
 
   return {
     id: 'sessions',
@@ -258,15 +297,24 @@ export function sessionsModule(
 
     // Step 8. Composes functions and nothing else: no disk, no validation, nothing
     // that can throw.
-    routes: () => routeTable(holder),
+    routes: () => routeTable(holder, home),
 
     // Step 12. The setup crosses WHOLE — nothing is added to it from outside, because
     // the revision that split it in two did not compile.
     start: async (ctx: ModuleContext<SessionsConfig>) => {
+      // THE REGISTRY IS BUILT HERE AND HANDED OVER: the one schema of a project is this module's,
+      // and the daemon — this — is the only thing that writes it (spec 2026-09-29, D1).
+      const registry = createRegistryStore({
+        file: registryFile(ctx.stateDir),
+        seed: { sites: ctx.config.sites, sharedPaths: ctx.config.sharedPaths },
+        now: ctx.now,
+      })
       const engine = await createEngine({
         stateDir: ctx.stateDir,
-        sites: ctx.config.sites,
-        sharedPaths: ctx.config.sharedPaths,
+        registry,
+        home,
+        factotumRoot: factotumRootOf(ctx.stateDir),
+        installRoot: options.installRoot,
         catalog: ctx.config.catalog,
         log: ctx.log,
         now: ctx.now,

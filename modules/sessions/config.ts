@@ -25,7 +25,7 @@ import { z } from 'zod'
  * halves of the same boundary, and a rule that applied to one of them would be a rule
  * with a way around it.
  */
-const boundaryPath = z
+export const boundaryPath = z
   .string()
   .min(1)
   // Absolute, because a relative path would be resolved against whatever directory
@@ -36,9 +36,18 @@ const boundaryPath = z
   // climbs is a boundary that is hard to read and easy to get wrong.
   .refine((value) => !value.split('/').includes('..'), 'a site path must not contain ".."')
 
-const siteSchema = z.object({
-  /** Same shape as a module id: it names a lock file, so it cannot contain a slash. */
-  id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'a site id must match /^[a-z0-9][a-z0-9-]*$/'),
+/**
+ * Same shape as a module id: it names a lock file, so it cannot contain a slash. Exported because
+ * every `:id` of a project in a route is checked against it BEFORE the engine sees it (spec
+ * 2026-09-29, criterion 11), and a second copy of the pattern is the copy that drifts.
+ */
+export const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
+
+export const siteIdSchema = z.string().regex(SITE_ID_PATTERN, 'a site id must match /^[a-z0-9][a-z0-9-]*$/')
+
+/** Exported so the projects registry is built from it (spec 2026-09-29, criterion 3). */
+export const siteSchema = z.object({
+  id: siteIdSchema,
   path: boundaryPath,
 })
 

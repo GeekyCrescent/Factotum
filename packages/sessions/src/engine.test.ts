@@ -2,16 +2,18 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NotificationMessage, Notifier, Timers } from '@factotum/core'
 import { createEngine, PROMPT_CHARS } from './engine.ts'
+import { uuidv7 } from './id.ts'
 import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
-import type { CatalogEntry, EngineSetup, SessionEngine, SiteConfig } from './types.ts'
+import { memoryRegistry } from './test-registry.ts'
+import type { CatalogEntry, EngineSetup, EventPage, SessionEngine, SiteConfig } from './types.ts'
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'fake-claude.mjs')
 const BASE = 'http://100.64.0.1:7778'
@@ -47,11 +49,37 @@ interface World {
   readonly notices: NotificationMessage[]
 }
 
+/**
+ * The registry and the world around it, from the `sites` and `sharedPaths` the tests used to hand
+ * the engine directly (spec 2026-09-29, D1). The home and `~/.factotum` are somewhere no test site is.
+ */
+function registryOf(sites: readonly SiteConfig[], sharedPaths: readonly string[] = []) {
+  return {
+    registry: memoryRegistry({ sites, sharedPaths }),
+    home: '/nonexistent-home-for-tests',
+    factotumRoot: '/nonexistent-home-for-tests/.factotum',
+    installRoot: undefined,
+  }
+}
+
+/** `read` as a page, failing the test when it is a refusal. */
+async function readPage(engine: SessionEngine, id: string, fromSeq: number): Promise<EventPage> {
+  const result = await engine.read(id, fromSeq)
+  assert.equal('kind' in result, false, `read ${id} was refused: ${JSON.stringify(result)}`)
+  return result as EventPage
+}
+
 /** For the setups that are not about notices. */
 const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
 
 async function world(
-  options: { sites?: readonly SiteConfig[]; hookUrl?: () => string; notify?: Notifier; askTimeoutMs?: number } = {},
+  options: {
+    sites?: readonly SiteConfig[]
+    hookUrl?: () => string
+    notify?: Notifier
+    askTimeoutMs?: number
+    registry?: EngineSetup['registry']
+  } = {},
 ): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
   const stateDir = join(home, 'state')
@@ -63,7 +91,8 @@ async function world(
   const notices: NotificationMessage[] = []
   const setup: EngineSetup = {
     stateDir,
-    sites: options.sites ?? [{ id: 'work', path: siteDir }],
+    ...registryOf(options.sites ?? [{ id: 'work', path: siteDir }]),
+    ...(options.registry === undefined ? {} : { registry: options.registry }),
     catalog: CATALOG,
     log: { info: () => undefined, warn: (m: string) => void warnings.push(m), error: () => undefined },
     now: () => new Date(),
@@ -92,11 +121,23 @@ async function initRepo(path: string): Promise<void> {
 // createEngine — criterion 15's second route
 // ---------------------------------------------------------------------------
 
-test('a declared site that does not exist makes createEngine THROW, which is what disables the module', async () => {
-  await assert.rejects(
-    () => world({ sites: [{ id: 'gone', path: '/definitely/not/here' }] }),
-    /site "gone": .* does not exist/,
-  )
+test('A PROJECT WHOSE FOLDER IS GONE FAILS ALONE: the engine comes up, launching there is refused, the other launches (criterion 23)', async () => {
+  // This used to make createEngine throw and disable the whole module (ADR-0004). ADR-0011 turned
+  // it round: it only ever narrowed the boundary, and it cost the owner every other project.
+  const home = await mkdtemp(join(tmpdir(), 'factotum-gone-'))
+  const here = join(home, 'here')
+  await mkdir(here)
+  const { engine, warnings } = await world({ sites: [{ id: 'gone', path: join(home, 'not-here') }, { id: 'here', path: here }] })
+
+  const refused = await engine.launch({ siteId: 'gone', entryId: 'free', text: QUICK, force: false })
+  assert.equal(refused.outcome, 'rejected')
+  assert.match(refused.outcome === 'rejected' ? refused.reason : '', /project "gone" is missing/)
+  assert.match(warnings.join('\n'), /project "gone" is missing/)
+  assert.deepEqual(engine.view().sites.map((s) => [s.id, s.status]), [['gone', 'missing'], ['here', 'ok']])
+
+  const started = await engine.launch({ siteId: 'here', entryId: 'free', text: QUICK, force: false })
+  assert.equal(started.outcome, 'started')
+  await settle(engine, started.outcome === 'started' ? started.sessionId : '')
 })
 
 test('a broken catalog entry is warned about and does not stop the engine coming up', async () => {
@@ -130,7 +171,7 @@ test('a launch starts a session, writes its meta and records the agent process g
   assert.equal(typeof meta?.agentPid, 'number')
 
   await settle(engine, id)
-  assert.equal((await engine.read(id, 0)).state, 'finished')
+  assert.equal((await readPage(engine, id, 0)).state, 'finished')
 })
 
 test('the prompt that launched a session is the first thing in its log, like a reply is', async () => {
@@ -139,7 +180,7 @@ test('the prompt that launched a session is the first thing in its log, like a r
   const id = result.outcome === 'started' ? result.sessionId : ''
   await settle(engine, id)
 
-  const first = (await engine.read(id, 0)).events[0]
+  const first = (await readPage(engine, id, 0)).events[0]
   assert.deepEqual(first?.kind === 'message' ? [first.role, first.text] : [], ['user', QUICK])
 })
 
@@ -149,14 +190,14 @@ test('a launch with no text writes no empty message', async () => {
   const id = result.outcome === 'started' ? result.sessionId : ''
   await settle(engine, id)
 
-  const said = (await engine.read(id, 0)).events.filter((e) => e.kind === 'message' && e.role === 'user')
+  const said = (await readPage(engine, id, 0)).events.filter((e) => e.kind === 'message' && e.role === 'user')
   assert.deepEqual(said, [])
 })
 
 async function settle(engine: SessionEngine, id: string): Promise<void> {
   const deadline = Date.now() + 15_000
   for (;;) {
-    const page = await engine.read(id, 0)
+    const page = await readPage(engine, id, 0)
     if (page.state !== 'running') return
     if (Date.now() > deadline) throw new Error(`session ${id} never settled`)
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -169,7 +210,7 @@ test('an unknown site is REJECTED with a reason, not an exception', async () => 
   const { engine } = await world()
   const result = await engine.launch({ siteId: 'nope', entryId: 'free', text: QUICK, force: false })
   assert.equal(result.outcome, 'rejected')
-  assert.match(result.outcome === 'rejected' ? result.reason : '', /no site "nope" is declared/)
+  assert.match(result.outcome === 'rejected' ? result.reason : '', /no project "nope" is registered/)
 })
 
 test('an unknown catalog entry is rejected with a reason', async () => {
@@ -290,7 +331,7 @@ test('TWO live sessions in TWO different sites are not confused with each other'
 
   const setup: EngineSetup = {
     stateDir: join(home, 'state'),
-    sites: [{ id: 'a', path: a }, { id: 'b', path: b }],
+    ...registryOf([{ id: 'a', path: a }, { id: 'b', path: b }]),
     catalog: CATALOG,
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
@@ -330,8 +371,7 @@ test('TWO live sessions in two sites can BOTH write a shared path', async () => 
 
   const setup: EngineSetup = {
     stateDir: join(home, 'state'),
-    sites: [{ id: 'a', path: a }, { id: 'b', path: b }],
-    sharedPaths: [vault],
+    ...registryOf([{ id: 'a', path: a }, { id: 'b', path: b }], [vault]),
     catalog: CATALOG,
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
@@ -362,17 +402,16 @@ test('TWO live sessions in two sites can BOTH write a shared path', async () => 
   await engine.stop()
 })
 
-test('a sharedPath that does not exist disables the module, like a site that does not', async () => {
-  // Same rule as a site, for the same reason: a boundary the owner declared and that is
-  // not there is a configuration error about permissions, not something to skip quietly.
+test('A SHARED FOLDER THAT IS NOT THERE no longer disables the module: the gate simply does not have it (criterion 23)', async () => {
+  // It used to throw from createEngine, like a missing site. Now it fails alone, and it can only
+  // narrow: a folder that is not there is not writable through the gate either.
   const home = await mkdtemp(join(tmpdir(), 'factotum-shared-missing-'))
   const a = join(home, 'a')
   await mkdir(a, { recursive: true })
 
   const setup: EngineSetup = {
     stateDir: join(home, 'state'),
-    sites: [{ id: 'a', path: a }],
-    sharedPaths: [join(home, 'no-such-vault')],
+    ...registryOf([{ id: 'a', path: a }], [join(home, 'no-such-vault')]),
     catalog: CATALOG,
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
@@ -382,7 +421,13 @@ test('a sharedPath that does not exist disables the module, like a site that doe
   }
   await mkdir(setup.stateDir, { recursive: true })
 
-  await assert.rejects(() => createEngine(setup, { bin: FAKE }), /no-such-vault/)
+  const engine = await createEngine(setup, { bin: FAKE })
+  const started = await engine.launch({ siteId: 'a', entryId: 'free', text: 'linger', force: false })
+  const id = started.outcome === 'started' ? started.sessionId : ''
+  const denied = await engine.decide(payload(id, join(home, 'no-such-vault', 'n.md'), a))
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny')
+  await engine.cancel(id)
+  await engine.stop()
 })
 
 // ---------------------------------------------------------------------------
@@ -429,9 +474,9 @@ test('a deny is written to the log; an ALLOW writes nothing', async () => {
   const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
   const id = result.outcome === 'started' ? result.sessionId : ''
 
-  const before = (await engine.read(id, 0)).events.length
+  const before = (await readPage(engine, id, 0)).events.length
   await engine.decide(payload(id, '/etc/passwd', '/work/site'))
-  const afterDeny = await engine.read(id, 0)
+  const afterDeny = await readPage(engine, id, 0)
   assert.equal(afterDeny.events.length, before + 1)
   const written = afterDeny.events.at(-1)
   assert.equal(written?.kind === 'result' ? written.ok : true, false)
@@ -439,7 +484,7 @@ test('a deny is written to the log; an ALLOW writes nothing', async () => {
 
   // Criterion 2: the gate is not noise when everything is fine.
   await engine.decide(payload(id, '/etc/passwd', '/work/site', 'Read'))
-  assert.equal((await engine.read(id, 0)).events.length, before + 1)
+  assert.equal((await readPage(engine, id, 0)).events.length, before + 1)
 
   await engine.cancel(id)
 })
@@ -460,7 +505,7 @@ test('after stop(), launch, reply and decide all REJECT — no session exists wi
 test('reading and listing still work after stop, because they cannot hurt anything', async () => {
   const { engine } = await world()
   await engine.stop()
-  assert.deepEqual((await engine.list({ page: 0 })).sessions, [])
+  assert.deepEqual((await engine.list({ page: 0, site: undefined, archived: false })).sessions, [])
 })
 
 // ---------------------------------------------------------------------------
@@ -560,7 +605,7 @@ test('a cancelled session reads CANCELLED even when the exit looks like an ordin
   // any of its script kills it by the default disposition, which is NOT the shape the
   // real CLI has — it traps the signal and exits 143 like an ordinary failure.
   const deadline = Date.now() + 15_000
-  while ((await engine.read(id, 0)).events.length < 2 && Date.now() < deadline) {
+  while ((await readPage(engine, id, 0)).events.length < 2 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 
@@ -571,7 +616,7 @@ test('a cancelled session reads CANCELLED even when the exit looks like an ordin
   assert.equal(meta?.reason, 'cancelled by the owner')
 
   // And the LOG agrees, because the log is what the screen reads.
-  const page = await engine.read(id, 0)
+  const page = await readPage(engine, id, 0)
   assert.equal(page.state, 'cancelled')
   const last = page.events.at(-1)
   assert.equal(last?.kind === 'state' ? last.state : '', 'cancelled')
@@ -619,7 +664,7 @@ test('sessions list newest first and paginate', async () => {
     await settle(engine, id)
   }
 
-  const page = await engine.list({ page: 0 })
+  const page = await engine.list({ page: 0, site: undefined, archived: false })
   assert.deepEqual(page.sessions.map((s) => s.id), [...ids].reverse())
   assert.equal(page.hasMore, false)
 })
@@ -631,15 +676,16 @@ test('the list carries the FIRST prompt, cut to PROMPT_CHARS — tested on the e
   const id = result.outcome === 'started' ? result.sessionId : ''
   await settle(engine, id)
 
-  const summary = (await engine.list({ page: 0 })).sessions.find((s) => s.id === id)
+  const summary = (await engine.list({ page: 0, site: undefined, archived: false })).sessions.find((s) => s.id === id)
   assert.equal(summary?.prompt, long.slice(0, PROMPT_CHARS))
   assert.equal(summary?.prompt?.length, PROMPT_CHARS)
 })
 
 test('a negative page is treated as the first one rather than throwing', async () => {
   const { engine } = await world()
-  assert.equal((await engine.list({ page: -5 })).page, 0)
-  assert.deepEqual((await engine.read('nothing', -3)).events, [])
+  assert.equal((await engine.list({ page: -5, site: undefined, archived: false })).page, 0)
+  // An id nobody has heard of, in the right shape: an empty page, not an error.
+  assert.deepEqual((await readPage(engine, uuidv7(), -3)).events, [])
 })
 
 // ---------------------------------------------------------------------------
@@ -708,7 +754,7 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
 
   const setup: EngineSetup = {
     stateDir: join(home, 'state'),
-    sites: [{ id: 'repo', path: siteDir }],
+    ...registryOf([{ id: 'repo', path: siteDir }]),
     catalog: CATALOG,
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
@@ -733,7 +779,7 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
   await settle(engine, id)
 
   // And the report is the first thing in the log, so the decision is recoverable; the prompt follows.
-  const [first, second] = (await engine.read(id, 0)).events
+  const [first, second] = (await readPage(engine, id, 0)).events
   assert.match(first?.kind === 'message' ? first.text : '', /launched over a freshness warning/)
   assert.equal(second?.kind === 'message' ? second.text : '', QUICK)
 })
@@ -746,7 +792,7 @@ test('a refused stale launch does not keep the lock', async () => {
 
   const setup: EngineSetup = {
     stateDir: join(home, 'state'),
-    sites: [{ id: 'repo', path: siteDir }],
+    ...registryOf([{ id: 'repo', path: siteDir }]),
     catalog: CATALOG,
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     now: () => new Date(),
@@ -1039,7 +1085,7 @@ async function engineOver(stateDir: string, sites: readonly SiteConfig[]): Promi
   return await createEngine(
     {
       stateDir,
-      sites,
+      ...registryOf(sites),
       catalog: CATALOG,
       log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       now: () => new Date(),
@@ -1120,7 +1166,7 @@ test('a meta.json from BEFORE the path was recorded still resumes, and the log s
   const result = await engine.reply(id, QUICK, false)
 
   assert.equal(result.outcome, 'started')
-  const texts = (await engine.read(id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
+  const texts = (await readPage(engine, id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
   assert.equal(texts.some((t) => /could not be compared/.test(t)), true)
   await settle(engine, id)
 })
@@ -1160,12 +1206,12 @@ test('A STALE REPLY LEAVES NO TRACE: meta.json exactly as it was, lock back (cri
   await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
   await writeFile(join(siteDir, 'dirty-since.txt'), 'x')
   const before = await store.readMeta(id)
-  const eventsBefore = (await engine.read(id, 0)).events.length
+  const eventsBefore = (await readPage(engine, id, 0)).events.length
 
   await engine.reply(id, QUICK, false)
 
   assert.deepEqual(await store.readMeta(id), before)
-  assert.equal((await engine.read(id, 0)).events.length, eventsBefore)
+  assert.equal((await readPage(engine, id, 0)).events.length, eventsBefore)
   assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('repo'), undefined)
 })
 
@@ -1181,7 +1227,7 @@ test('`force` resumes over the warning, and the warning is written to the log (c
   const result = await engine.reply(id, QUICK, true)
 
   assert.equal(result.outcome, 'started')
-  const texts = (await engine.read(id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
+  const texts = (await readPage(engine, id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
   assert.equal(texts.some((t) => /resumed over a freshness warning/.test(t)), true)
   await settle(engine, id)
 })
@@ -1274,7 +1320,7 @@ test('ALLOWED FROM THE PHONE: the held reply becomes allow, and the log says who
 
   const decision = await pending
   assert.equal(decision.hookSpecificOutput.permissionDecision, 'allow')
-  const last = (await engine.read(id, 0)).events.at(-1)
+  const last = (await readPage(engine, id, 0)).events.at(-1)
   assert.equal(last?.kind === 'result' && last.ok, true)
   assert.match(last?.kind === 'result' ? last.summary : '', /approved by the owner/)
   await engine.cancel(id)
@@ -1291,7 +1337,7 @@ test('DENIED FROM THE PHONE: deny, with the boundary reason, and the log says so
   const decision = await pending
   assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
   assert.match(decision.hookSpecificOutput.permissionDecisionReason, /writes outside work/)
-  const last = (await engine.read(id, 0)).events.at(-1)
+  const last = (await readPage(engine, id, 0)).events.at(-1)
   assert.match(last?.kind === 'result' ? last.summary : '', /denied by the owner/)
   await engine.cancel(id)
 })
@@ -1304,7 +1350,7 @@ test('NOBODY ANSWERS: deny, the session stays alive, and the log says nobody ans
   const decision = await engine.decide(payload(id, '/etc/hosts', '/work/site'))
 
   assert.equal(decision.hookSpecificOutput.permissionDecision, 'deny')
-  const page = await engine.read(id, 0)
+  const page = await readPage(engine, id, 0)
   assert.equal(page.state, 'running', 'a deny does not end the session — measured against the CLI too')
   const last = page.events.at(-1)
   assert.match(last?.kind === 'result' ? last.summary : '', /nobody answered/)
@@ -1456,4 +1502,66 @@ test('THE ASK NOTICE carries the site, the tool and the FILE NAME — never the 
   await engine.answer(askId, 'deny')
   await pending
   await engine.cancel(id)
+})
+
+// ---------------------------------------------------------------------------
+// Projects that fail alone (spec 2026-09-29, block B: criteria 6, 23, 25)
+// ---------------------------------------------------------------------------
+
+test('A LIVE SESSION KEEPS THE BOUNDARY IT STARTED WITH when its folder goes missing; a new launch there is refused (criterion 23)', async () => {
+  const { engine, siteDir } = await world()
+  const started = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
+  const id = started.outcome === 'started' ? started.sessionId : ''
+  assert.notEqual(id, '')
+
+  // The folder goes away under the running agent (moved, here, so it can come back).
+  await rename(siteDir, `${siteDir}-moved`)
+  const refused = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  assert.equal(refused.outcome, 'rejected')
+  assert.equal(engine.view().sites[0]?.status, 'missing')
+
+  // The gate still answers from the site the session started with: no new denial because of it.
+  const decision = await engine.decide(payload(id, join(siteDir, 'still-mine.txt'), siteDir))
+  assert.equal(decision.hookSpecificOutput.permissionDecision, 'allow')
+
+  await rename(`${siteDir}-moved`, siteDir)
+  await engine.cancel(id)
+})
+
+test('A CONVERSATION OF A MISSING PROJECT IS NOT READ: site-missing, and it reads again when the folder is back (criteria 24, 25)', async () => {
+  const { engine, siteDir } = await world()
+  const started = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  const id = started.outcome === 'started' ? started.sessionId : ''
+  await settle(engine, id)
+
+  await rename(siteDir, `${siteDir}-moved`)
+  assert.deepEqual(await engine.read(id, 0), { kind: 'site-missing', siteId: 'work' })
+  const reply = await engine.reply(id, 'more', false)
+  assert.equal(reply.outcome, 'rejected')
+
+  await rename(`${siteDir}-moved`, siteDir)
+  assert.equal((await readPage(engine, id, 0)).state, 'finished')
+})
+
+test('an id that is not a session id is refused before it becomes a path (criterion 32)', async () => {
+  const { engine } = await world()
+  assert.deepEqual(await engine.read('../../etc', 0), { kind: 'invalid' })
+  const reply = await engine.reply('../x', 'hi', false)
+  assert.equal(reply.outcome, 'rejected')
+})
+
+test('A BROKEN REGISTRY starts the engine with NO project, and nothing launches (criterion 6)', async () => {
+  const { engine, warnings } = await world({ registry: memoryRegistry({}, { broken: 'projects.json is not valid JSON' }) })
+  assert.deepEqual(engine.view().sites, [])
+  assert.match(warnings.join('\n'), /registry is broken.*not valid JSON/)
+  const refused = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
+  assert.equal(refused.outcome, 'rejected')
+})
+
+test('the view carries each project’s name, colour and status (criterion 26)', async () => {
+  const registry = memoryRegistry({ sites: [] })
+  const home = await mkdtemp(join(tmpdir(), 'factotum-named-'))
+  await registry.update(async () => ({ kind: 'add-project', id: 'web', path: home, name: 'Web app', color: 4 }))
+  const { engine } = await world({ registry })
+  assert.deepEqual(engine.view().sites, [{ id: 'web', path: home, isRepo: false, name: 'Web app', color: 4, status: 'ok' }])
 })

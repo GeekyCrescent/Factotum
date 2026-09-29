@@ -29,6 +29,21 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     reconcile: async () => undefined,
     view: () => ({ sites: [], catalog: [] }),
     stop: async () => undefined,
+    summary: async () => ({ kind: 'unknown' }),
+    rename: async () => ({ outcome: 'unknown' }),
+    archive: async () => ({ outcome: 'unknown' }),
+    remove: async (ids) => ids.map((id) => ({ id, outcome: 'unknown' as const })),
+    search: async () => [],
+    projects: async () => ({ projects: [], shared: [], removed: [], registryError: undefined, skipped: [], file: '/state/projects.json', canRequest: false }),
+    requestProject: async () => ({ outcome: 'invalid', reason: 'no' }),
+    requestShared: async () => ({ outcome: 'invalid', reason: 'no' }),
+    requestStatus: async () => ({ status: 'unknown' }),
+    inspectGrant: async () => ({ kind: 'unknown' }),
+    answerGrant: async () => ({ outcome: 'unknown' }),
+    updateProject: async () => ({ outcome: 'unknown' }),
+    removeProject: async () => ({ outcome: 'unknown' }),
+    removeHistory: async () => ({ outcome: 'unknown' }),
+    removeShared: async () => ({ outcome: 'unknown' }),
     ...overrides,
   }
 }
@@ -113,14 +128,20 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     // silence, and tsc would not say so: this list is what does.
     'notify',
     'now',
-    // The permission boundary is `sites` AND `sharedPaths`, so half of it arriving is
-    // half a boundary. This list is what catches that, which is why it is spelled out.
-    'sharedPaths',
-    'sites',
+    // The permission boundary is the REGISTRY now, with the three things the folder rules need
+    // around it (spec 2026-09-29, D1). Half of it arriving is half a boundary, and this list is
+    // what catches that, which is why it is spelled out.
+    'factotumRoot',
+    'home',
+    'installRoot',
+    'registry',
     'stateDir',
     'timers',
-  ])
+  ].sort())
   assert.equal(setup.stateDir, '/state/modules/sessions')
+  // Three levels above `<root>/<env>/modules/sessions`; this fixture has no env level, so `/`.
+  assert.equal(setup.factotumRoot, '/')
+  assert.equal(setup.registry.file, '/state/modules/sessions/projects.json')
   assert.equal(reconciled, 1)
 })
 
@@ -281,7 +302,7 @@ test('cancel is a POST, because adding a verb for one action is the growth to av
 })
 
 test('the setup route answers with what the screens need to draw the form', async () => {
-  const view = { sites: [{ id: 'a', path: '/a', isRepo: true }], catalog: [] }
+  const view = { sites: [{ id: 'a', path: '/a', isRepo: true, name: 'A', color: 2 as const, status: 'ok' as const }], catalog: [] }
   const { table } = await started(fakeEngine({ view: () => view }))
   const response = await call(table, 'GET /setup', request('GET', '/setup'))
   assert.deepEqual(response.body, view)
