@@ -646,3 +646,123 @@ test('delete several: at least one, at most 100, a result each (criterion 34)', 
     assert.equal((await call(table, 'POST /sessions/remove', request('POST', '/sessions/remove', { body }))).status, 400)
   }
 })
+
+// ---------------------------------------------------------------------------
+// The projects routes (spec 2026-09-29, blocks C and D: criteria 8, 11, 17, 40)
+// ---------------------------------------------------------------------------
+
+test('THE 202 CARRIES NO TOKEN — whatever the engine hands back, only the request id and the deadline leave (criterion 8)', async () => {
+  // An engine that, by some future mistake, put the token in its result. The route must not pass
+  // it on: the whole approval rests on the token never leaving memory except in the push.
+  const SECRET = 'S'.repeat(43)
+  const leaky = { outcome: 'requested', requestId: 'req-1', expiresAt: '2026-09-29T10:10:00.000Z', token: SECRET } as const
+  const { table } = await started(fakeEngine({ requestProject: async () => leaky, requestShared: async () => leaky }))
+  for (const [key, body] of [
+    ['POST /projects', { path: '/Users/me/web' }],
+    ['POST /shared', { path: '/Users/me/notes' }],
+  ] as const) {
+    const response = await call(table, key, request('POST', '/', { body }))
+    assert.equal(response.status, 202, key)
+    assert.equal(JSON.stringify(response).includes(SECRET), false, `${key} leaked the token`)
+    assert.deepEqual(response.body, { requestId: 'req-1', expiresAt: '2026-09-29T10:10:00.000Z' })
+    assert.equal(response.headers?.['cache-control'], 'no-store')
+  }
+})
+
+test('POST /projects checks the shape BEFORE the engine: relative, `..`, a bad id are 400 and the engine is never asked (criterion 11)', async () => {
+  let asked = 0
+  const { table } = await started(fakeEngine({ requestProject: async () => ((asked += 1), { outcome: 'invalid', reason: 'no' }) }))
+  for (const body of [{ path: 'rel' }, { path: '/a/../b' }, { path: '/x', id: 'Bad' }, { path: '/x', color: 9 }]) {
+    assert.equal((await call(table, 'POST /projects', request('POST', '/projects', { body }))).status, 400, JSON.stringify(body))
+  }
+  assert.equal(asked, 0)
+})
+
+test('the 409s of a request say which conflict, with the kernel’s codes untouched', async () => {
+  const { table } = await started(fakeEngine({ requestProject: async () => ({ outcome: 'conflict', conflict: 'no-device', reason: 'subscribe one in Device' }) }))
+  const response = await call(table, 'POST /projects', request('POST', '/projects', { body: { path: '/x' } }))
+  assert.equal(response.status, 409)
+  assert.deepEqual(response.body, { error: { code: 'conflict', message: 'subscribe one in Device' }, request: { conflict: 'no-device' } })
+})
+
+test('EVERY :id AND :siteId OF A PROJECT passes the site rule in the module: 400 and the engine is never asked (criterion 11)', async () => {
+  let asked = 0
+  const count = async () => ((asked += 1), { outcome: 'unknown' as const })
+  const { table } = await started(fakeEngine({ updateProject: count, removeProject: count, removeHistory: count }))
+  const bad = { id: '../x', siteId: 'A B' }
+  assert.equal((await call(table, 'POST /projects/:id', request('POST', '/', { params: bad, body: {} }))).status, 400)
+  assert.equal((await call(table, 'POST /projects/:id/remove', request('POST', '/', { params: bad }))).status, 400)
+  assert.equal((await call(table, 'POST /projects/removed/:siteId/remove', request('POST', '/', { params: bad }))).status, 400)
+  assert.equal(asked, 0)
+})
+
+test('changing and removing map to 200, 400, 404 and 409', async () => {
+  const outcomes = [
+    [{ outcome: 'ok', removedSessions: 3 }, 200],
+    [{ outcome: 'unknown' }, 404],
+    [{ outcome: 'conflict', reason: 'a session is running' }, 409],
+    [{ outcome: 'invalid', reason: 'no' }, 400],
+  ] as const
+  for (const [result, status] of outcomes) {
+    const both = async () => result
+    const { table } = await started(fakeEngine({ updateProject: both, removeProject: both, removeHistory: both, removeShared: both }))
+    const params = { id: 'web', siteId: 'demo' }
+    assert.equal((await call(table, 'POST /projects/:id', request('POST', '/', { params, body: { name: 'W' } }))).status, status)
+    assert.equal((await call(table, 'POST /projects/:id/remove', request('POST', '/', { params }))).status, status)
+    assert.equal((await call(table, 'POST /projects/removed/:siteId/remove', request('POST', '/', { params }))).status, status)
+    assert.equal((await call(table, 'POST /shared/remove', request('POST', '/', { body: { path: '/n' } }))).status, status)
+  }
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, 'POST /projects/:id', request('POST', '/', { params: { id: 'web' }, body: { color: 0 } }))).status, 400)
+  assert.equal((await call(table, 'POST /shared/remove', request('POST', '/', { body: { path: 'rel' } }))).status, 400)
+  assert.equal((await call(table, 'POST /shared', request('POST', '/', { body: {} }))).status, 400)
+})
+
+test('THE REQUEST STATUS by request id; the GRANT by its token, never cached (criteria 15, 17)', async () => {
+  const { table } = await started(
+    fakeEngine({
+      requestStatus: async (id) => (id === 'req-1' ? { status: 'rejected', reason: 'inside the project "a"' } : { status: 'unknown' }),
+      inspectGrant: async (token) =>
+        token === 'live'
+          ? { kind: 'pending', request: { kind: 'project', path: '/Users/me/web', id: 'web', name: undefined, color: 2 }, expiresAt: 'soon' }
+          : token === 'old'
+            ? { kind: 'settled' }
+            : { kind: 'unknown' },
+    }),
+  )
+  const status = await call(table, 'GET /projects/requests/:requestId', request('GET', '/', { params: { requestId: 'req-1' } }))
+  assert.deepEqual([status.status, status.body], [200, { status: 'rejected', reason: 'inside the project "a"' }])
+  assert.equal((await call(table, 'GET /projects/requests/:requestId', request('GET', '/', { params: { requestId: 'x' } }))).status, 404)
+
+  const live = await call(table, 'GET /grants/:token', request('GET', '/', { params: { token: 'live' } }))
+  assert.equal(live.status, 200)
+  assert.equal(live.headers?.['cache-control'], 'no-store')
+  assert.equal((live.body as { path: string }).path, '/Users/me/web')
+  assert.equal((await call(table, 'GET /grants/:token', request('GET', '/', { params: { token: 'old' } }))).status, 409)
+  const unknown = await call(table, 'GET /grants/:token', request('GET', '/', { params: { token: 'x' } }))
+  assert.equal(unknown.status, 404)
+  assert.equal(unknown.headers?.['cache-control'], 'no-store')
+})
+
+test('answering a grant: 200 with first and outcome, 404 unknown, 409 expired, 400 for anything but allow or deny', async () => {
+  const outcomes = [
+    [{ outcome: 'approved', reason: undefined, first: true }, 200],
+    [{ outcome: 'unknown' }, 404],
+    [{ outcome: 'expired' }, 409],
+  ] as const
+  for (const [result, status] of outcomes) {
+    const { table } = await started(fakeEngine({ answerGrant: async () => result }))
+    const response = await call(table, 'POST /grants/:token/answer', request('POST', '/', { params: { token: 't' }, body: { decision: 'allow' } }))
+    assert.equal(response.status, status)
+  }
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, 'POST /grants/:token/answer', request('POST', '/', { params: { token: 't' }, body: { decision: 'maybe' } }))).status, 400)
+})
+
+test('GET /search: at least two characters, hits under no-store (criteria 38, 40)', async () => {
+  let asked = ''
+  const { table } = await started(fakeEngine({ search: async (q) => ((asked = q), []) }))
+  const ok = await call(table, 'GET /search', request('GET', '/search', { query: { q: '  parser ' } }))
+  assert.deepEqual([ok.status, ok.body, ok.headers?.['cache-control'], asked], [200, { hits: [] }, 'no-store', 'parser'])
+  assert.equal((await call(table, 'GET /search', request('GET', '/search', { query: { q: 'p' } }))).status, 400)
+})

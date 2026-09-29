@@ -25,10 +25,10 @@ import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
 import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
-import { createHistory, PAGE_SIZE } from './history.ts'
-import { SessionIndex } from './index-cache.ts'
-import { createSiteTable } from './projects.ts'
+import { PAGE_SIZE } from './history.ts'
+import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
+import { searchHistory } from './search.ts'
 import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore } from './store.ts'
 import type {
@@ -77,6 +77,10 @@ export interface EngineDeps {
   readonly disk?: DiskProbe
   /** The ceiling of one folder check, so a test does not wait for it. */
   readonly checkMs?: number
+  /** How long a folder request waits for the owner. A test cannot wait ten minutes. */
+  readonly grantTimeoutMs?: number
+  /** The ceiling of checking a new folder (5 s), so a test can hang one and not wait. */
+  readonly candidateTimeoutMs?: number
 }
 
 /** What a lock holds while a project is being deleted: not a session id, so nothing mistakes it. */
@@ -107,39 +111,14 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   const live = new Map<string, Live>()
 
-  // A FOLDER THAT IS NOT THERE NO LONGER DISABLES THE MODULE (spec 2026-09-29, criterion 23;
-  // ADR-0011). Until then a declared site that was missing threw from here, inside `start()`, and
-  // took every site down with it. Now each project carries its own check and fails alone; a broken
-  // registry starts the module with no project at all, and says so.
-  const table = createSiteTable({
-    registry: setup.registry,
-    home: setup.home,
-    factotumRoot: setup.factotumRoot,
-    installRoot: setup.installRoot,
-    timers: setup.timers,
-    log,
-    liveCount: () => live.size,
-    caseInsensitive: deps.caseInsensitive ?? process.platform === 'darwin',
-    ...(deps.disk === undefined ? {} : { disk: deps.disk }),
-    ...(deps.checkMs === undefined ? {} : { checkMs: deps.checkMs }),
-  })
-  await table.load()
-
-  // THE HISTORY INDEX hears every meta the store writes from here on, reconcile's included, and is
-  // read in full once, at the end of `reconcile()` (spec 2026-09-29, D6; criterion 37).
-  const index = new SessionIndex()
-  store.observe({ written: (meta) => index.put(meta), removed: (id) => index.drop(id) })
-  let building: Promise<void> | undefined
-  const ensureIndex = (): Promise<void> => (building ??= index.build(store))
-  const history = createHistory({
+  // The projects, the history index and the folder requests (spec 2026-09-29), composed in
+  // `parts.ts`. A folder that is not there no longer disables the module: it fails alone (ADR-0011).
+  const { table, index, ensureIndex, history, grants, folders } = await createParts(setup, deps, {
     store,
-    index,
-    ensureIndex,
-    table,
+    locks,
+    liveCount: () => live.size,
     isLive: (id) => live.has(id),
-    now: setup.now,
-    registryFile: setup.registry.file,
-    canRequest: () => setup.notify.canReach(),
+    removing: REMOVING,
   })
 
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
@@ -728,6 +707,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // FIRST: every held reply resolves as a deny now, before anything is killed. An ask must not
     // outlive the engine as a promise nobody will ever settle (criterion 22).
     asks.closeAll(SHUTDOWN_REASON)
+    // And every folder request: its approval can no longer be written by anybody.
+    grants.closeAll(SHUTDOWN_REASON)
 
     for (const [sessionId, entry] of live) {
       try {
@@ -753,9 +734,13 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     live.clear()
   }
 
-  const later = (name: string) => async (): Promise<never> => {
-    throw new Error(`${name} is not implemented yet`)
-  }
+  /** After `stop`, nothing widens and nothing is deleted: the same rule as launch. */
+  const unlessStopped =
+    <A extends unknown[], R>(work: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      if (stopped) throw new Error(STOPPED)
+      return await work(...args)
+    }
 
   return {
     launch,
@@ -773,16 +758,16 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     rename: history.rename,
     archive: history.archive,
     remove: history.remove,
-    search: later('search'),
+    search: async (query) => await searchHistory({ index, store, table, ensureIndex }, query),
     projects: history.projects,
-    requestProject: later('requestProject'),
-    requestShared: later('requestShared'),
-    requestStatus: later('requestStatus'),
-    inspectGrant: later('inspectGrant'),
-    answerGrant: later('answerGrant'),
-    updateProject: later('updateProject'),
-    removeProject: later('removeProject'),
-    removeHistory: later('removeHistory'),
-    removeShared: later('removeShared'),
+    requestProject: unlessStopped(folders.requestProject),
+    requestShared: unlessStopped(folders.requestShared),
+    requestStatus: folders.requestStatus,
+    inspectGrant: folders.inspectGrant,
+    answerGrant: unlessStopped(folders.answerGrant),
+    updateProject: unlessStopped(folders.updateProject),
+    removeProject: unlessStopped(folders.removeProject),
+    removeHistory: unlessStopped(folders.removeHistory),
+    removeShared: unlessStopped(folders.removeShared),
   }
 }

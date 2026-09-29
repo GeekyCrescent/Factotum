@@ -23,8 +23,17 @@ import { homedir } from 'node:os'
 import type { FactotumModule, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
 import { sessionsConfigSchema, type SessionsConfig } from './config.ts'
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
-import { isSiteId, parseArchived, parseIds, parseTitle } from './requests.ts'
-import type { CreateEngine, LaunchResult, SessionEdit, SessionEngine } from './types.ts'
+import {
+  isSiteId,
+  parseArchived,
+  parseIds,
+  parseProjectPatch,
+  parseProjectRequest,
+  parseQuery,
+  parseSharedRequest,
+  parseTitle,
+} from './requests.ts'
+import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, SessionEdit, SessionEngine } from './types.ts'
 
 /**
  * The hole.
@@ -85,6 +94,35 @@ function fromEdit(result: SessionEdit): ModuleResponse {
   }
 }
 
+function fromChange(result: ProjectChange): ModuleResponse {
+  switch (result.outcome) {
+    case 'ok':
+      return { status: 200, headers: NO_STORE, body: { removedSessions: result.removedSessions } }
+    case 'unknown':
+      return notFound('there is no such project')
+    case 'conflict':
+      return conflict(result.reason)
+    case 'invalid':
+      return invalid(result.reason)
+  }
+}
+
+/**
+ * A folder request. THE 202 IS BUILT FIELD BY FIELD, never forwarded: whatever the engine returns,
+ * only the request id and the deadline leave (criterion 8). The token authorises the approval and
+ * travels in the push alone; a response that carried it would hand it to any process that asked.
+ */
+function fromRequest(result: RequestResult): ModuleResponse {
+  switch (result.outcome) {
+    case 'requested':
+      return { status: 202, headers: NO_STORE, body: { requestId: result.requestId, expiresAt: result.expiresAt } }
+    case 'invalid':
+      return invalid(result.reason)
+    case 'conflict':
+      return conflict(result.reason, { request: { conflict: result.conflict } })
+  }
+}
+
 /** A refusal the owner has to be able to read, turned into a response that carries it. */
 function fromLaunch(result: LaunchResult): ModuleResponse {
   switch (result.outcome) {
@@ -120,7 +158,6 @@ function text(body: unknown, key: string): string | undefined {
 }
 
 function routeTable(holder: EngineHolder, home: string): RouteTable {
-  void home
   /**
    * Every route funnels through here, so the empty hole is handled in ONE place.
    *
@@ -153,6 +190,14 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
     // --- the history (spec 2026-09-29, D8) ---------------------------------
 
     'GET /projects': withEngine(async (engine) => ({ status: 200, headers: NO_STORE, body: await engine.projects() })),
+
+    // Titles, projects and the text of the messages, in every conversation of a project that is
+    // there, archived included (criteria 25, 38). NEVER CACHED: the snippets are message text.
+    'GET /search': withEngine(async (engine, req) => {
+      const query = parseQuery(req.query['q'])
+      if (!query.ok) return invalid(query.message)
+      return { status: 200, headers: NO_STORE, body: { hits: await engine.search(query.value) } }
+    }),
 
     // One conversation with its title, its state and its project's colour (criterion 36). The id is
     // checked by the engine, where the rule for a session id lives (criterion 32).
@@ -188,6 +233,85 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       const ids = parseIds(req.body)
       if (!ids.ok) return invalid(ids.message)
       return { status: 200, headers: NO_STORE, body: { results: await engine.remove(ids.value) } }
+    }),
+
+    // --- the projects (spec 2026-09-29, D3, D8) -------------------------------
+
+    // ASKING, NOT ADDING: 202, a request id and a deadline. The approval goes to the owner's phone
+    // (criteria 8-10). The body's shape is checked here, before the engine touches the disk (11).
+    'POST /projects': withEngine(async (engine, req) => {
+      const parsed = parseProjectRequest(req.body, home)
+      if (!parsed.ok) return invalid(parsed.message)
+      return fromRequest(await engine.requestProject(parsed.value))
+    }),
+
+    'GET /projects/requests/:requestId': withEngine(async (engine, req) => {
+      const status = await engine.requestStatus(req.params['requestId'] ?? '')
+      if (status.status === 'unknown') return notFound('there is no request with that id')
+      return { status: 200, headers: NO_STORE, body: status }
+    }),
+
+    // Name and colour: nothing an agent can use, so no approval (guardrail 4).
+    'POST /projects/:id': withEngine(async (engine, req) => {
+      const id = req.params['id']
+      if (!isSiteId(id)) return invalid('that is not a project id')
+      const patch = parseProjectPatch(req.body)
+      if (!patch.ok) return invalid(patch.message)
+      return fromChange(await engine.updateProject(id, patch.value))
+    }),
+
+    // Its history goes, its folder never does (guardrail 7). The name typed on the screen is the
+    // client's check; this is the daemon's part.
+    'POST /projects/:id/remove': withEngine(async (engine, req) => {
+      const id = req.params['id']
+      if (!isSiteId(id)) return invalid('that is not a project id')
+      return fromChange(await engine.removeProject(id))
+    }),
+
+    'POST /projects/removed/:siteId/remove': withEngine(async (engine, req) => {
+      const siteId = req.params['siteId']
+      if (!isSiteId(siteId)) return invalid('that is not a project id')
+      return fromChange(await engine.removeHistory(siteId))
+    }),
+
+    'POST /shared': withEngine(async (engine, req) => {
+      const path = parseSharedRequest(req.body, home)
+      if (!path.ok) return invalid(path.message)
+      return fromRequest(await engine.requestShared(path.value))
+    }),
+
+    'POST /shared/remove': withEngine(async (engine, req) => {
+      const path = parseSharedRequest(req.body, home)
+      if (!path.ok) return invalid(path.message)
+      return fromChange(await engine.removeShared(path.value))
+    }),
+
+    // One request BY ITS TOKEN, for the approval panel: the full path, which the push never
+    // carries. Authorised like the answer, never a list, NEVER CACHED (criterion 17).
+    'GET /grants/:token': withEngine(async (engine, req) => {
+      const found = await engine.inspectGrant(req.params['token'] ?? '')
+      switch (found.kind) {
+        case 'pending':
+          return { status: 200, headers: NO_STORE, body: { ...found.request, expiresAt: found.expiresAt } }
+        case 'settled':
+          return conflict('that request was already answered, or it expired')
+        case 'unknown':
+          return notFound('there is no request with that token')
+      }
+    }),
+
+    'POST /grants/:token/answer': withEngine(async (engine, req) => {
+      const decision = text(req.body, 'decision')
+      if (decision !== 'allow' && decision !== 'deny') return invalid('an answer is `allow` or `deny`')
+      const result = await engine.answerGrant(req.params['token'] ?? '', decision)
+      switch (result.outcome) {
+        case 'unknown':
+          return notFound('there is no request with that token')
+        case 'expired':
+          return conflict('too late: that request expired')
+        default:
+          return { status: 200, headers: NO_STORE, body: { first: result.first, outcome: result.outcome, reason: result.reason } }
+      }
     }),
 
     'POST /sessions': withEngine(async (engine, req) => {
