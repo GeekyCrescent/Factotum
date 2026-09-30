@@ -257,6 +257,10 @@ test('the lock comes back when a session ends, so the site can be used again', a
   const { engine, locks } = await world()
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
   await settle(engine, first.outcome === 'started' ? first.sessionId : '')
+  // POLLED, not read once: `finalize` writes the terminal state FIRST and releases the lock LAST
+  // (design D9), so `settle` can return in the few milliseconds between the two. Reading the lock
+  // once right after was a flaky test, not a lock that stayed held.
+  await turnOver(locks, 'work')
   assert.equal(await locks.heldBy('work'), undefined)
 
   const second = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
@@ -486,8 +490,7 @@ test('a payload carrying fields nothing reads still validates, because the schem
 
 test('a deny is written to the log; an ALLOW writes nothing', async () => {
   const { engine } = await world()
-  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
-  const id = result.outcome === 'started' ? result.sessionId : ''
+  const id = await liveSession(engine)
 
   const before = (await readPage(engine, id, 0)).events.length
   await engine.decide(payload(id, '/etc/passwd', '/work/site'))
@@ -1267,9 +1270,21 @@ async function askIdFrom(notices: NotificationMessage[]): Promise<string> {
   }
 }
 
+/**
+ * A running session that has GONE QUIET. The fake's `linger` writes a tool call, its result and a
+ * message, then says nothing for a minute. Returning before those land let them arrive AFTER what a
+ * test wrote next, so "the last event" was the fake's `File created successfully` under load — a
+ * flaky test, not a missing log line.
+ */
 async function liveSession(engine: SessionEngine): Promise<string> {
   const result = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
-  return result.outcome === 'started' ? result.sessionId : ''
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  const deadline = Date.now() + 15_000
+  while (!(await readPage(engine, id, 0)).events.some((e) => e.kind === 'message' && e.role === 'assistant')) {
+    if (Date.now() > deadline) throw new Error(`session ${id} never went quiet`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return id
 }
 
 test('THE ASK NOTICE carries its deadline and the drawer fields, and NEITHER the full path NOR the preview leaves the tailnet (criterion 25)', async () => {
