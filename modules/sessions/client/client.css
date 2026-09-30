@@ -1935,6 +1935,10 @@
 }
 
 .s-sent-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* --- The owner's arrangement: categories, the grip, where a drag lands ------------- */
 
