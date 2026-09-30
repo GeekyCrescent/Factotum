@@ -11,11 +11,14 @@
 import { join } from 'node:path'
 import { z } from 'zod'
 import { boundaryPath, siteIdSchema } from './config.ts'
-import { colorSchema, NAME_MAX } from './registry.ts'
-import type { Color } from './types.ts'
+import { CATEGORIES_MAX, categoryIdSchema, colorSchema, NAME_MAX } from './registry.ts'
+import type { Color, ProjectLayout } from './types.ts'
 
 /** How many conversations one delete may name (criterion 34). */
 export const REMOVE_MAX = 100
+
+/** How many projects one layout may place: far past any owner's, short of a body built to hurt. */
+export const LAYOUT_PROJECTS_MAX = 500
 
 /** The shortest search worth running (criterion 38). */
 export const SEARCH_MIN = 2
@@ -51,6 +54,29 @@ const projectPatchSchema = z.object({
   color: colorSchema.optional(),
 })
 
+/** A category's name: trimmed, and REQUIRED — a header with nothing in it is not one to find. */
+const categoryNameSchema = z
+  .string()
+  .max(200)
+  .transform((value) => value.trim())
+  .pipe(z.string().min(1, 'a category needs a name').max(NAME_MAX, `a category name is at most ${NAME_MAX} characters`))
+
+const layoutSchema = z
+  .object({
+    categories: z.array(z.object({ id: categoryIdSchema, name: categoryNameSchema })).max(CATEGORIES_MAX, `at most ${CATEGORIES_MAX} categories`),
+    order: z
+      .array(z.object({ id: siteIdSchema, category: categoryIdSchema.optional() }))
+      .max(LAYOUT_PROJECTS_MAX, `at most ${LAYOUT_PROJECTS_MAX} projects`),
+  })
+  .superRefine((layout, ctx) => {
+    const categories = new Set(layout.categories.map((c) => c.id))
+    if (categories.size !== layout.categories.length) ctx.addIssue({ code: 'custom', path: ['categories'], message: 'a category is there twice' })
+    const ids = new Set(layout.order.map((placed) => placed.id))
+    if (ids.size !== layout.order.length) ctx.addIssue({ code: 'custom', path: ['order'], message: 'a project is there twice' })
+    const unknown = layout.order.find((placed) => placed.category !== undefined && !categories.has(placed.category))
+    if (unknown !== undefined) ctx.addIssue({ code: 'custom', path: ['order'], message: `no category "${unknown.category}"` })
+  })
+
 function first(error: z.ZodError): string {
   const issue = error.issues[0]
   const where = issue?.path.join('.') ?? ''
@@ -85,6 +111,23 @@ export function parseProjectPatch(body: unknown): Parsed<{ name: string | undefi
   const parsed = projectPatchSchema.safeParse(record(body))
   if (!parsed.success) return { ok: false, message: first(parsed.error) }
   return { ok: true, value: { name: parsed.data.name, color: parsed.data.color } }
+}
+
+/**
+ * The SHAPE of a layout: ids that could be ids, names that are names, nothing twice, and no category
+ * named that is not sent. Whether it places exactly the projects there are is the engine's, inside
+ * the registry's queue: only there is "the projects there are" a fact rather than a guess.
+ */
+export function parseLayout(body: unknown): Parsed<ProjectLayout> {
+  const parsed = layoutSchema.safeParse(record(body))
+  if (!parsed.success) return { ok: false, message: first(parsed.error) }
+  return {
+    ok: true,
+    value: {
+      categories: parsed.data.categories.map(({ id, name }) => ({ id, name })),
+      order: parsed.data.order.map(({ id, category }) => ({ id, category })),
+    },
+  }
 }
 
 /**

@@ -8,8 +8,8 @@
  * then (criterion 15). A process on this machine can call every route here (requirements §0.5); what
  * it does not have is the token, which travels only in memory and in the encrypted push.
  *
- * Renaming, recolouring, removing a shared folder and deleting a project need no approval: they
- * only narrow, or change nothing an agent can use.
+ * Renaming, recolouring, ordering, categorising, removing a shared folder and deleting a project need
+ * no approval: they only narrow, or change nothing an agent can use.
  */
 
 import { basename, dirname } from 'node:path'
@@ -27,6 +27,7 @@ import type {
   GrantOutcome,
   GrantStatus,
   ProjectChange,
+  ProjectLayout,
   ProjectPatch,
   ProjectRequest,
   RegistryStore,
@@ -66,6 +67,7 @@ export interface Folders {
   readonly inspectGrant: (token: string) => Promise<GrantInspect>
   readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
   readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  readonly setLayout: (layout: ProjectLayout) => Promise<ProjectChange>
   readonly removeProject: (id: string) => Promise<ProjectChange>
   readonly removeHistory: (siteId: string) => Promise<ProjectChange>
   readonly removeShared: (path: string) => Promise<ProjectChange>
@@ -238,6 +240,22 @@ export function createFolders(deps: FoldersDeps): Folders {
       const result = await registry.update(async (current) =>
         current.projects.some((p) => p.id === id) ? { kind: 'set-project', id, name: patch.name, color: patch.color } : { refused: `no project "${id}"` },
       )
+      if (result.kind !== 'ok') return change(result.reason)
+      await table.apply(result.registry, false)
+      return { outcome: 'ok', removedSessions: 0 }
+    },
+
+    /**
+     * The owner's order and categories, WHOLE. Checked inside the queue against the projects there
+     * are then: a layout read before a project was added or removed would drop it or name one that
+     * is gone, so it is refused and the screen reloads. The module checked its shape already.
+     */
+    setLayout: async (layout) => {
+      const result = await registry.update(async (current) => {
+        const ids = new Set(layout.order.map((placed) => placed.id))
+        const fits = ids.size === layout.order.length && ids.size === current.projects.length && current.projects.every((p) => ids.has(p.id))
+        return fits ? { kind: 'set-layout', layout } : { refused: 'the projects changed since this screen read them; reload and try again' }
+      })
       if (result.kind !== 'ok') return change(result.reason)
       await table.apply(result.registry, false)
       return { outcome: 'ok', removedSessions: 0 }

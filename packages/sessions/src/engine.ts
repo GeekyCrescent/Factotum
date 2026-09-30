@@ -444,7 +444,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   // --- reply ---------------------------------------------------------------
 
-  async function reply(id: string, text: string, force: boolean): Promise<LaunchResult> {
+  async function reply(id: string, text: string): Promise<LaunchResult> {
     if (stopped) throw new Error(STOPPED)
 
     if (!isSessionId(id)) return { outcome: 'rejected', reason: `"${id}" is not a session id` }
@@ -486,21 +486,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
     let handedOver = false
     try {
-      // FRESHNESS, AFTER THE LOCK AND BEFORE ANYTHING IS WRITTEN — and the second half is the one
-      // that matters. After the lock, like `launch`: checking a repository another agent may be
-      // changing measures nothing. Before `patchMeta`, UNLIKE where "the same as launch" would put
-      // it: in `launch` nothing is written yet at this point, but here the next statement sets
-      // `running` and bumps `turns`, and a refusal after it would strand a running session with no
-      // process and a turn that never happened (criterion 49).
-      let forcedOver: string | undefined
-      if (site.isRepo) {
-        const report = await checkFreshness({ cwd: site.path, timers: setup.timers })
-        if (!isFresh(report)) {
-          if (!force) return { outcome: 'stale', freshness: report }
-          forcedOver = describeFreshness(report)
-        }
-      }
-
+      // NO FRESHNESS CHECK HERE, on purpose: it runs once, at launch. After the first turn the
+      // agent's own edits leave the repo dirty, so checking on every reply warned on every message.
       // A DELETE THAT RAN SINCE THE CHECKS ABOVE: the tombstone refuses the directory and the
       // missing meta refuses the patch. Either way this is `rejected`, and the `finally` gives the
       // lock back — nothing is made again (criterion 33).
@@ -515,10 +502,6 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         turns: current.turns + 1,
       }))
       if (reopened === undefined) return { outcome: 'rejected', reason: DELETED }
-      // Written into the log so "I resumed over a warning" is recoverable later, like launch does.
-      if (forcedOver !== undefined) {
-        await store.append(id, { kind: 'message', role: 'user', text: `resumed over a freshness warning: ${forcedOver}` })
-      }
       // A session from before `sitePath` existed: said, not assumed (criterion 35).
       if (meta.sitePath === undefined) {
         await store.append(id, {
@@ -837,6 +820,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     inspectGrant: folders.inspectGrant,
     answerGrant: unlessStopped(folders.answerGrant),
     updateProject: unlessStopped(folders.updateProject),
+    setLayout: unlessStopped(folders.setLayout),
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),
     removeShared: unlessStopped(folders.removeShared),

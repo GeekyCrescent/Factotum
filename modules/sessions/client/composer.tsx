@@ -201,9 +201,9 @@ export function ReplyComposer({
   readonly goTo: (sessionId: string) => void
 }) {
   const attach = useAttachments(api, uploadsOf(setup))
-  const s = useSend(async (text, force) => {
+  const s = useSend(async (text) => {
     const sent = attach.items.filter((item) => item.state === 'ready')
-    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent), force })
+    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent) })
     attach.clear(sent.map((item) => item.key))
     onSent()
   })

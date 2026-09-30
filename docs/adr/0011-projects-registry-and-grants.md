@@ -74,6 +74,13 @@ A request for a project or a shared folder is **an ask with no session**:
   changes only then, at start, and when a missing shared folder comes back with nothing running.
 - Renaming, recolouring, removing a shared folder and deleting a project need no approval. Deleting
   a project deletes its conversations under a `removing` lock, never its folder.
+- **The order of the projects and the owner's categories** need none either: they are cosmetic,
+  like a name. The order is the order of `projects` in the file; `categories` is an optional list
+  of `{ id, name }` and a project's optional `category` names one. They are set **whole**, by
+  `POST /project-layout` — every project once, checked inside the queue — so two screens never
+  interleave into an order neither asked for: the stale one is a 409 and reloads. A bad category
+  is skipped and kept like any entry; a category a project cannot use costs it the category, never
+  its place.
 
 ## What this does not contain — and why that is proportionate
 
@@ -106,6 +113,8 @@ A request for a project or a shared folder is **an ask with no session**:
 
 ## Reverting
 
-Delete `projects.json` and go back to the previous commit; the config did not change. **Projects
+Delete `projects.json` and go back to the previous commit; the config did not change. (Going back
+only past the categories needs nothing: the older reader ignores `categories` and `category`, and
+its next write drops them — the order stays.) **Projects
 added from the app live only in `projects.json`**: copy them into the config by hand before
 reverting.

@@ -17,6 +17,11 @@
  * it writes the skipped entries back as they were, so a rename from the phone never deletes in
  * silence what the owner typed by hand.
  *
+ * THE ORDER IS THE OWNER'S, and so are the categories: the drawer lists the projects as they stand
+ * in the array, grouped under the `categories` the owner named. Both cosmetic, set whole by one
+ * edit (`set-layout`). A file from before them has no `categories` and parses as none, and the key
+ * is only written once there is one, so such a file is not rewritten just for being read.
+ *
  * WRITTEN FROM MEMORY. What somebody puts in the file while the daemon runs is ignored and
  * overwritten by the next write (criterion 5). With the daemon stopped, a hand edit is loaded at
  * the next start: that is the way to add a project without a phone.
@@ -27,7 +32,9 @@ import { basename, join } from 'node:path'
 import { z } from 'zod'
 import { boundaryPath, SITE_ID_PATTERN, siteSchema } from './config.ts'
 import type {
+  CategoryEntry,
   Color,
+  ProjectLayout,
   RegistryEdit,
   RegistryLoad,
   RegistryStore,
@@ -40,12 +47,27 @@ export const REGISTRY_FILE = 'projects.json'
 
 export const NAME_MAX = 40
 
+/** How many categories the drawer may have: past this it is not grouping any more. */
+export const CATEGORIES_MAX = 50
+
+export const CATEGORY_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/
+
+export const categoryIdSchema = z.string().regex(CATEGORY_ID_PATTERN, 'a category id must match /^[a-z0-9][a-z0-9-]{0,39}$/')
+
+export const categoryEntrySchema = z.object({
+  id: categoryIdSchema,
+  name: z.string().trim().min(1, 'a category needs a name').max(NAME_MAX, `a category name is at most ${NAME_MAX} characters`),
+})
+
 export const colorSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)])
 
 export const projectEntrySchema = siteSchema.extend({
   name: z.string().max(NAME_MAX).optional(),
   color: colorSchema.optional(),
   addedAt: z.string().optional(),
+  // COSMETIC, SO IT NEVER COSTS THE PROJECT: a category the reader cannot use is dropped, and the
+  // project loads without one. Skipping the entry over it would take away where an agent may write.
+  category: categoryIdSchema.optional().catch(undefined),
 })
 
 export const sharedEntrySchema = z.object({ path: boundaryPath, addedAt: z.string().optional() })
@@ -54,18 +76,22 @@ export const registrySchema = z.object({
   version: z.literal(1),
   projects: z.array(projectEntrySchema),
   shared: z.array(sharedEntrySchema),
+  categories: z.array(categoryEntrySchema),
 })
 
 /** THE SOURCE OF THE TYPES: the engine's `RegistryView` is its read-only mirror. */
 export type Registry = z.infer<typeof registrySchema>
 type ProjectEntry = z.infer<typeof projectEntrySchema>
 type SharedEntry = z.infer<typeof sharedEntrySchema>
+type ListName = 'projects' | 'shared' | 'categories'
 
 /** The envelope alone: each entry is parsed on its own below. */
 const envelopeSchema = z.object({
   version: z.literal(1),
   projects: z.array(z.unknown()),
   shared: z.array(z.unknown()),
+  // Absent in every file from before the categories: none, not broken.
+  categories: z.array(z.unknown()).optional(),
 })
 
 export function registryFile(stateDir: string): string {
@@ -110,7 +136,7 @@ export type RegistryRead =
       readonly warnings: readonly string[]
       readonly skipped: readonly SkippedEntry[]
       /** The skipped entries AS THEY WERE, to be written back untouched. */
-      readonly raw: { readonly projects: readonly unknown[]; readonly shared: readonly unknown[] }
+      readonly raw: Raw
     }
 
 /**
@@ -143,8 +169,8 @@ export function parseRegistry(text: string, file: string): RegistryRead {
 
   const warnings: string[] = []
   const skipped: SkippedEntry[] = []
-  const raw: { projects: unknown[]; shared: unknown[] } = { projects: [], shared: [] }
-  const skip = (list: 'projects' | 'shared', index: number, entry: unknown, reason: string) => {
+  const raw: { projects: unknown[]; shared: unknown[]; categories: unknown[] } = { projects: [], shared: [], categories: [] }
+  const skip = (list: ListName, index: number, entry: unknown, reason: string) => {
     skipped.push({ list, index, reason })
     raw[list].push(entry)
     warnings.push(`${file}: ${list}[${index}] skipped: ${reason}`)
@@ -167,7 +193,16 @@ export function parseRegistry(text: string, file: string): RegistryRead {
     shared.push(parsed.data)
   })
 
-  return { kind: 'ok', registry: { version: 1, projects, shared }, warnings, skipped, raw }
+  const categories: CategoryEntry[] = []
+  ;(envelope.data.categories ?? []).forEach((entry, index) => {
+    const parsed = categoryEntrySchema.safeParse(entry)
+    if (!parsed.success) return skip('categories', index, entry, describe(parsed.error))
+    if (categories.some((c) => c.id === parsed.data.id)) return skip('categories', index, entry, `the category "${parsed.data.id}" is already there`)
+    if (categories.length >= CATEGORIES_MAX) return skip('categories', index, entry, `more than ${CATEGORIES_MAX} categories`)
+    categories.push(parsed.data)
+  })
+
+  return { kind: 'ok', registry: { version: 1, projects, shared, categories }, warnings, skipped, raw }
 }
 
 function describe(error: z.ZodError): string {
@@ -201,17 +236,20 @@ async function writeAtomically(file: string, text: string): Promise<void> {
   await rename(temp, file)
 }
 
-type Raw = { readonly projects: readonly unknown[]; readonly shared: readonly unknown[] }
+type Raw = { readonly projects: readonly unknown[]; readonly shared: readonly unknown[]; readonly categories: readonly unknown[] }
 
 export function createRegistryStore(deps: RegistryStoreDeps): RegistryStore {
   const write = deps.write ?? writeAtomically
   let memory: Registry | undefined
-  let raw: Raw = { projects: [], shared: [] }
+  let raw: Raw = { projects: [], shared: [], categories: [] }
   let broken: string | undefined
   let chain: Promise<unknown> = Promise.resolve()
 
-  const serialise = (registry: Registry): string =>
-    `${JSON.stringify({ version: 1, projects: [...registry.projects, ...raw.projects], shared: [...registry.shared, ...raw.shared] }, null, 2)}\n`
+  const serialise = (registry: Registry): string => {
+    const categories = [...registry.categories, ...raw.categories]
+    const file = { version: 1, projects: [...registry.projects, ...raw.projects], shared: [...registry.shared, ...raw.shared] }
+    return `${JSON.stringify(categories.length === 0 ? file : { ...file, categories }, null, 2)}\n`
+  }
 
   const load = async (): Promise<RegistryLoad> => {
     const read = await readRegistry(deps.file)
@@ -317,7 +355,45 @@ function apply(current: Registry, edit: RegistryEdit, at: string): Registry | st
     case 'remove-shared':
       if (!current.shared.some((s) => s.path === edit.path)) return 'that folder is not shared'
       return { ...current, shared: current.shared.filter((s) => s.path !== edit.path) }
+    case 'set-layout':
+      return applyLayout(current, edit.layout)
   }
+}
+
+/**
+ * The owner's order and categories, checked WHOLE against the registry as it is: every project
+ * once, no other, and every category a project names one of those sent. What the request parser
+ * already checked is checked again — this is the last line — and what it could not know, the
+ * projects there are now, is only checkable here.
+ */
+export function applyLayout(current: Registry, layout: ProjectLayout): Registry | string {
+  const stale = staleLayout(current.projects, layout)
+  if (stale !== undefined) return stale
+  const categories = z.array(categoryEntrySchema).max(CATEGORIES_MAX).safeParse(layout.categories)
+  if (!categories.success) return describe(categories.error)
+  const known = new Set(categories.data.map((c) => c.id))
+  if (known.size !== categories.data.length) return 'a category is there twice'
+  const unknown = layout.order.find((placed) => placed.category !== undefined && !known.has(placed.category))
+  if (unknown !== undefined) return `no category "${unknown.category}"`
+  const byId = new Map(current.projects.map((p) => [p.id, p]))
+  const projects = layout.order.flatMap((placed) => {
+    const found = byId.get(placed.id)
+    /* node:coverage ignore next */
+    if (found === undefined) return [] // `staleLayout` above has already refused this
+    return [stripUndefined({ ...found, category: placed.category })]
+  })
+  return { ...current, projects, categories: categories.data }
+}
+
+/**
+ * Why a layout no longer fits the projects there are — one added, or removed, since the screen
+ * read them — or `undefined` when it fits. The engine asks it inside the queue too, so the owner
+ * reads "reload" rather than a refusal from the file.
+ */
+export function staleLayout(projects: readonly { readonly id: string }[], layout: ProjectLayout): string | undefined {
+  const ids = new Set(layout.order.map((placed) => placed.id))
+  const same = ids.size === layout.order.length && ids.size === projects.length && projects.every((p) => ids.has(p.id))
+  return same ? undefined : 'the projects changed since this screen read them; reload and try again'
 }
 
 /** So an unset name or colour is absent in the file rather than `null`-ish noise. */

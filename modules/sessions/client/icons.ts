@@ -2,7 +2,8 @@
  * The sessions screens' glyphs — its own, because a module imports nothing from the shell.
  *
  * Phosphor Icons, MIT (c) 2023 Phosphor Icons — paths copied from @phosphor-icons/core 2.1.1 (the six
- * added by spec 2026-09-29 from @phosphor-icons/react 2.1.10, same paths),
+ * added by spec 2026-09-29, and the three for ordering projects, from @phosphor-icons/react 2.1.10,
+ * same paths),
  * weights noted per glyph, with every coordinate ROUNDED TO ONE DECIMAL: on a 256-unit grid drawn at
  * 20 px the difference is under a hundredth of a pixel, and it keeps the bundle under its ceiling
  * (spec 2026-09-18, criterion 30). Copied, not installed: a package for ~20 paths is the dependency this
@@ -44,6 +45,9 @@ export const ICONS = {
   'copy': 'M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z', // regular
   'code': 'M69.1,94.2,28.5,128l40.6,33.9a8,8,0,1,1-10.2,12.3l-48-40a8,8,0,0,1,0-12.3l48-40a8,8,0,0,1,10.2,12.3Zm176,27.7-48-40a8,8,0,1,0-10.2,12.3L227.5,128l-40.6,33.9a8,8,0,1,0,10.2,12.3l48-40a8,8,0,0,0,0-12.3ZM162.7,32.5a8,8,0,0,0-10.2,4.8l-64,176a8,8,0,0,0,4.8,10.3A8.1,8.1,0,0,0,96,224a8,8,0,0,0,7.5-5.3l64-176A8,8,0,0,0,162.7,32.5Z', // regular
   'lightning': 'M215.8,118.2a8,8,0,0,0-5-5.7L153.2,90.9l14.7-73.3a8,8,0,0,0-13.7-7l-112,120a8,8,0,0,0,3,13l57.6,21.6L88.2,238.4a8,8,0,0,0,13.7,7l112-120A8,8,0,0,0,215.8,118.2ZM109.4,214l10.5-52.4a8,8,0,0,0-5-9.1L62,132.7l84.6-90.7L136.2,94.4a8,8,0,0,0,5,9.1l52.8,19.8Z', // regular
+  'arrow-down': 'M208.5,152.5l-72,72a12,12,0,0,1-17,0l-72-72a12,12,0,0,1,17-17L116,187V40a12,12,0,0,1,24,0V187l51.5-51.5a12,12,0,0,1,17,17Z', // bold
+  'dots-six-vertical': 'M108,60A16,16,0,1,1,92,44,16,16,0,0,1,108,60Zm56,16a16,16,0,1,0-16-16A16,16,0,0,0,164,76ZM92,112a16,16,0,1,0,16,16A16,16,0,0,0,92,112Zm72,0a16,16,0,1,0,16,16A16,16,0,0,0,164,112ZM92,180a16,16,0,1,0,16,16A16,16,0,0,0,92,180Zm72,0a16,16,0,1,0,16,16A16,16,0,0,0,164,180Z', // bold
+  'folder-simple-plus': 'M216,72H130.7L102.9,51.2a16.1,16.1,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.9A15.1,15.1,0,0,0,232,200.9V88A16,16,0,0,0,216,72Zm0,128H40V64H93.3L123.2,86.4A8,8,0,0,0,128,88h88Zm-56-56a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V152H104a8,8,0,0,1,0-16h16V120a8,8,0,0,1,16,0v16h16A8,8,0,0,1,160,144Z', // regular
   'folder-open': 'M245,110.6A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.7L102.9,51.2a16.1,16.1,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208h0a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.6-5.5l28.5-85.5A16.1,16.1,0,0,0,245,110.6ZM93.3,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.8a16,16,0,0,0-15.2,10.9L40,158.7V64Zm112,136H43.1l26.7-80H232Z', // regular
 } as const
 

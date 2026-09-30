@@ -44,7 +44,7 @@ test('A SHARED FOLDER REMOVED while a session ran leaves the gate at the next lo
   const { sites } = await table(live)
   assert.equal(sites.gateShared().length, 1)
   live.count = 1
-  await sites.apply({ projects: [], shared: [] }, true)
+  await sites.apply({ projects: [], shared: [], categories: [] }, true)
   assert.equal(sites.gateShared().length, 1, 'not under a live session')
   await sites.refreshAll()
   assert.equal(sites.gateShared().length, 1)

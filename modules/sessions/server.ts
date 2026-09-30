@@ -27,6 +27,7 @@ import {
   isSiteId,
   parseArchived,
   parseIds,
+  parseLayout,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -269,6 +270,15 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       return fromChange(await engine.updateProject(id, patch.value))
     }),
 
+    // The drawer's order and categories, WHOLE (see `ProjectLayout`). Cosmetic, like a name: no
+    // approval. NOT `/projects/layout`: a literal beats a parameter, so a project whose folder is
+    // called `layout` could never be renamed again.
+    'POST /project-layout': withEngine(async (engine, req) => {
+      const layout = parseLayout(req.body)
+      if (!layout.ok) return invalid(layout.message)
+      return fromChange(await engine.setLayout(layout.value))
+    }),
+
     // Its history goes, its folder never does (guardrail 7). The name typed on the screen is the
     // client's check; this is the daemon's part.
     'POST /projects/:id/remove': withEngine(async (engine, req) => {
@@ -353,10 +363,8 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       const message = text(req.body, 'text')
       if (message === undefined || message === '') return invalid('a reply needs some text')
       if (HAS_NUL.test(message)) return invalid(NUL_REFUSED)
-      // `force` exactly as `POST /sessions` reads it: resuming onto a dirty or stale repo is
-      // refused with the report, and the owner can choose to go over it (criteria 31, 32).
-      const body = req.body as { force?: unknown } | null | undefined
-      return fromLaunch(await engine.reply(req.params['id'] ?? '', message, body?.force === true))
+      // No freshness here: it is checked once, at launch (see `reply` in the engine).
+      return fromLaunch(await engine.reply(req.params['id'] ?? '', message))
     }),
 
     /**

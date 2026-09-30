@@ -11,11 +11,18 @@
  * Delete (spec 2026-09-30). Select starts choosing: from then on a click marks or unmarks instead of
  * opening, and a bar says how many, with Archive, Delete and Done. Escape leaves it.
  *
+ * THE OWNER ARRANGES THE PROJECTS: dragged by their grip (`drag.ts`), or moved a step at a time from
+ * their menu or the arrow keys, into categories that fold like a project does — folded per device,
+ * the arrangement itself in the daemon, so the phone and the Mac show the same (`use-layout.ts`).
+ * Categories first, projects in none loose at the bottom. Not while searching or selecting: what is
+ * on screen then is not the whole list, and a drop there would land somewhere the owner cannot see.
+ *
  * NO CONSOLE (criterion 41): the pendings it lists may hold tokens, and the search is typed here.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import type { ProjectsPage, SessionPage, SessionState, SessionSummary } from '../types.ts'
+import type { CategoryEntry, ProjectsPage, SessionPage, SessionState, SessionSummary } from '../types.ts'
+import { CategoryBlock, CategoryNameSheet, Grip, markClass, MoveToCategorySheet, type DropMark } from './categories.tsx'
 import type { DrawerProps } from './contract.ts'
 import { messageOf } from './errors.ts'
 import { ago, day } from './format.ts'
@@ -24,14 +31,31 @@ import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { ContextMenu, useLongPress, type MenuAt } from './context-menu.tsx'
 import { ConversationSheet } from './conversation-menu.tsx'
+import { useDrag, type Dragging } from './drag.ts'
+import {
+  addCategory,
+  arrange,
+  moveCategory,
+  moveProject,
+  newCategoryId,
+  placeOf,
+  removeCategory,
+  renameCategory,
+  stepCategory,
+  stepProject,
+  type Layout,
+} from './layout.ts'
 import { ConfirmSheet } from './project-forms.tsx'
 import { grantOf, sessionOf, type Pending } from './relevance.ts'
 import { SearchResults } from './search-results.tsx'
 import { toneClass } from './tone.ts'
+import { useProjectLayout } from './use-layout.ts'
 
 const REFRESH_MS = 5_000
 const TICK_MS = 1_000
 const FOLDED_KEY = 'factotum.sessions.folded'
+/** The categories the owner folded on this device. Apart from the projects': an id may be in both. */
+const CATEGORIES_FOLDED_KEY = 'factotum.sessions.categories.folded'
 
 const GLYPH: Readonly<Record<SessionState, SessionIcon>> = {
   running: 'circle-notch',
@@ -52,6 +76,30 @@ interface RowState {
 
 type Acting = { readonly kind: 'rename' | 'delete'; readonly entry: Entry }
 
+/** What arranging asks through a sheet. */
+type Arranging =
+  | { readonly kind: 'new'; readonly project: string | undefined }
+  | { readonly kind: 'rename' | 'delete'; readonly category: CategoryEntry }
+  | { readonly kind: 'move'; readonly project: string; readonly label: string }
+
+interface MenuChoice {
+  readonly icon: SessionIcon
+  readonly label: string
+  readonly danger?: boolean
+  readonly disabled: boolean
+  readonly choose: () => void
+}
+
+/** What a project's section needs to be dragged and arranged. */
+interface Arrange {
+  readonly canMove: boolean
+  readonly mark: (id: string) => DropMark
+  readonly dragged: (id: string) => boolean
+  readonly start: (id: string, event: PointerEvent) => void
+  readonly step: (id: string, delta: -1 | 1) => void
+  readonly menu: (id: string, label: string, at: MenuAt) => void
+}
+
 export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
   const [page, setPage] = useState<ProjectsPage | undefined>(undefined)
   const [more, setMore] = useState<ReadonlyMap<string, { readonly sessions: readonly SessionSummary[]; readonly next: number }>>(new Map())
@@ -64,8 +112,20 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
   const [generation, setGeneration] = useState(0)
   const [menu, setMenu] = useState<{ readonly entry: Entry; readonly at: MenuAt } | undefined>(undefined)
   const [acting, setActing] = useState<Acting | undefined>(undefined)
+  const [arranging, setArranging] = useState<Arranging | undefined>(undefined)
+  const [layoutMenu, setLayoutMenu] = useState<{ readonly at: MenuAt; readonly items: readonly MenuChoice[] } | undefined>(undefined)
   const root = useRef<HTMLDivElement>(null)
   const closeMenu = useCallback(() => setMenu(undefined), [])
+  const closeLayoutMenu = useCallback(() => setLayoutMenu(undefined), [])
+  const closeArranging = useCallback(() => setArranging(undefined), [])
+  // Never throws: a failed read leaves the list as it was, as the poll below does.
+  const refetch = useCallback(async () => {
+    try {
+      setPage(await api.get<ProjectsPage>('projects'))
+    } catch {
+      // the next poll tries again
+    }
+  }, [api])
   const reload = () => {
     setMore(new Map())
     setGeneration((n) => n + 1)
@@ -100,11 +160,24 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
 
   const projects = page?.projects ?? []
   const groups = history(projects, new Map([...more].map(([id, m]) => [id, m.sessions])), waitingOf(pending), query)
-  const { folded, toggle } = useFolded()
+  const { folded, toggle } = useFolded(FOLDED_KEY)
+  const categoriesFolded = useFolded(CATEGORIES_FOLDED_KEY)
+  const { layout, change, failure: layoutFailure } = useProjectLayout(api, page, refetch)
   const grants = pending.flatMap((p) => grantOf(p) ?? [])
   const searching = query.trim() !== ''
   const labelOf = (id: string) => projects.find((p) => p.id === id)?.name ?? id
   const colorOf = (id: string) => projects.find((p) => p.id === id)?.color
+  const blocks = arrange(groups, layout, searching)
+
+  const onDrop = (drag: Dragging) => {
+    if (drag.kind === 'category') {
+      if (drag.index !== undefined) change(moveCategory(layout, drag.id, drag.index))
+      return
+    }
+    const place = drag.drop === undefined ? undefined : placeOf(layout, drag.id, drag.drop)
+    if (place !== undefined) change(moveProject(layout, drag.id, place))
+  }
+  const { dragging, start } = useDrag(root, onDrop)
 
   const showMore = async (siteId: string) => {
     const next = more.get(siteId)?.next ?? 0
@@ -180,6 +253,52 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
     return done.results.filter((r) => r.outcome !== 'removed').map((r) => r.id)
   }
 
+  const arrangeProps: Arrange = {
+    canMove: !searching && !selecting && page?.registryError === undefined,
+    mark: (id) => (dragging?.kind === 'project' && dragging.drop?.kind !== 'into' && dragging.drop?.id === id ? dragging.drop.kind : undefined),
+    dragged: (id) => dragging?.kind === 'project' && dragging.id === id,
+    start: (id, event) => start('project', id, event),
+    step: (id, delta) => change(stepProject(layout, id, delta)),
+    menu: (id, label, at) => setLayoutMenu({ at, items: projectMenu(id, label) }),
+  }
+
+  const projectMenu = (id: string, label: string): readonly MenuChoice[] => [
+    { icon: 'arrow-up', label: 'Move up', disabled: !arrangeProps.canMove, choose: () => change(stepProject(layout, id, -1)) },
+    { icon: 'arrow-down', label: 'Move down', disabled: !arrangeProps.canMove, choose: () => change(stepProject(layout, id, 1)) },
+    { icon: 'folder-simple', label: 'Move to category…', disabled: !arrangeProps.canMove, choose: () => setArranging({ kind: 'move', project: id, label }) },
+    { icon: 'folder-simple-plus', label: 'New category…', disabled: !arrangeProps.canMove, choose: () => setArranging({ kind: 'new', project: id }) },
+  ]
+
+  const categoryMenu = (category: CategoryEntry): readonly MenuChoice[] => [
+    { icon: 'pencil-simple', label: 'Rename', disabled: false, choose: () => setArranging({ kind: 'rename', category }) },
+    { icon: 'arrow-up', label: 'Move up', disabled: !arrangeProps.canMove, choose: () => change(stepCategory(layout, category.id, -1)) },
+    { icon: 'arrow-down', label: 'Move down', disabled: !arrangeProps.canMove, choose: () => change(stepCategory(layout, category.id, 1)) },
+    { icon: 'trash', label: 'Delete category', danger: true, disabled: false, choose: () => setArranging({ kind: 'delete', category }) },
+  ]
+
+  /** Where a dragged thing lands, said on the category it lands on or next to. */
+  const categoryMark = (id: string): DropMark => {
+    if (dragging?.kind === 'project') return dragging.drop?.kind === 'into' && dragging.drop.category === id ? 'into' : undefined
+    if (dragging?.kind !== 'category' || dragging.index === undefined || dragging.id === id) return undefined
+    const others = layout.categories.filter((c) => c.id !== dragging.id)
+    if (others[dragging.index]?.id === id) return 'before'
+    return dragging.index === others.length && others[others.length - 1]?.id === id ? 'after' : undefined
+  }
+
+  const project = (group: Group, inFolded: boolean) =>
+    group.project === undefined ? null : (
+      <Project
+        key={group.key}
+        group={group}
+        // A search shows every match: a folded project would hide the very thing looked for.
+        folded={inFolded || (!searching && folded.has(group.project.id))}
+        onToggle={toggle}
+        rows={rows}
+        onMore={(id) => void showMore(id)}
+        arrange={arrangeProps}
+      />
+    )
+
   const rows: RowState = { rest, now: Date.now(), selecting, picked, onPick, navigate, onMenu: (entry, at) => setMenu({ entry, at }) }
 
   return (
@@ -233,8 +352,37 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
           ))}
         </section>
       )}
-      {groups.map((group) =>
-        group.project === undefined ? (
+      {layoutFailure === undefined ? null : (
+        <p class="s-error" role="alert">
+          {layoutFailure}
+        </p>
+      )}
+      {blocks.map((block) => {
+        if (block.kind === 'category') {
+          const { category } = block
+          // Folded, it keeps only the project whose conversation is open: where you are never goes.
+          const shut = !searching && categoriesFolded.folded.has(category.id)
+          const shown = shut ? block.groups.filter((group) => group.entries.some((entry) => entry.id === rest)) : block.groups
+          return (
+            <CategoryBlock
+              key={`category:${category.id}`}
+              category={category}
+              count={layout.order.filter((placed) => placed.category === category.id).length}
+              folded={shut}
+              mark={categoryMark(category.id)}
+              dragged={dragging?.kind === 'category' && dragging.id === category.id}
+              canMove={arrangeProps.canMove}
+              onToggle={() => categoriesFolded.toggle(category.id)}
+              onMenu={(at) => setLayoutMenu({ at, items: categoryMenu(category) })}
+              onStart={(event) => start('category', category.id, event)}
+              onStep={(delta) => change(stepCategory(layout, category.id, delta))}
+            >
+              {shown.map((group) => project(group, shut))}
+            </CategoryBlock>
+          )
+        }
+        const { group } = block
+        return group.project === undefined ? (
           <section key={group.key}>
             <h2 class="s-sect">{group.label}</h2>
             {group.entries.map((entry) => (
@@ -242,17 +390,15 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
             ))}
           </section>
         ) : (
-          <Project
-            key={group.key}
-            group={group}
-            // A search shows every match: a folded project would hide the very thing looked for.
-            folded={!searching && folded.has(group.project.id)}
-            onToggle={toggle}
-            rows={rows}
-            onMore={(id) => void showMore(id)}
-          />
-        ),
-      )}
+          project(group, false)
+        )
+      })}
+      {dragging?.kind === 'project' && layout.categories.length > 0 ? (
+        // Under everything while a project is dragged: the way out of every category at once.
+        <div class={`s-drop-loose${dragging.drop?.kind === 'into' && dragging.drop.category === undefined ? ' s-drop-into' : ''}`} data-target="loose">
+          No category
+        </div>
+      ) : null}
       {page !== undefined && projects.length === 0 && !searching ? (
         <p class="s-none">
           No projects yet.{' '}
@@ -288,6 +434,14 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
           <MenuItem icon="trash" label="Delete" danger disabled={menu.entry.state === 'running'} onChoose={() => setActing({ kind: 'delete', entry: menu.entry })} />
         </ContextMenu>
       )}
+      {layoutMenu === undefined ? null : (
+        <ContextMenu at={layoutMenu.at} onClose={closeLayoutMenu}>
+          {layoutMenu.items.map((item) => (
+            <MenuItem key={item.label} icon={item.icon} label={item.label} danger={item.danger ?? false} disabled={item.disabled} onChoose={item.choose} />
+          ))}
+        </ContextMenu>
+      )}
+      {arranging === undefined ? null : <ArrangeSheet arranging={arranging} layout={layout} change={change} onSwitch={setArranging} onClose={closeArranging} />}
       {acting === undefined ? null : (
         <ConversationSheet
           api={api}
@@ -392,22 +546,44 @@ function Project({
   onToggle,
   rows,
   onMore,
+  arrange,
 }: {
   readonly group: Group
   readonly folded: boolean
   readonly onToggle: (id: string) => void
   readonly rows: RowState
   readonly onMore: (id: string) => void
+  readonly arrange: Arrange
 }) {
   const id = group.project?.id ?? group.label
   const missing = group.project?.status === 'missing'
+  const press = useLongPress((at) => arrange.menu(id, group.label, at))
   return (
-    <section class={`s-project ${toneClass(id, group.project?.color)}`}>
-      <button type="button" class="s-project-head" aria-expanded={!folded} onClick={() => onToggle(id)}>
-        <Icon name={missing ? 'warning' : 'folder-simple'} size={18} />
-        <span class="s-project-name">{group.label}</span>
-        <Icon name={folded ? 'caret-right' : 'caret-down'} size={12} />
-      </button>
+    <section
+      class={`s-project ${toneClass(id, group.project?.color)}${arrange.dragged(id) ? ' s-dragging' : ''}${markClass(arrange.mark(id))}`}
+      data-target="project"
+      data-id={id}
+    >
+      <div class="s-project-row">
+        <button
+          type="button"
+          class="s-project-head"
+          aria-expanded={!folded}
+          onClick={() => {
+            if (!press.swallow()) onToggle(id)
+          }}
+          onContextMenu={press.onContextMenu}
+          onPointerDown={press.onPointerDown}
+          onPointerMove={press.onPointerMove}
+          onPointerUp={press.onPointerUp}
+          onPointerCancel={press.onPointerCancel}
+        >
+          <Icon name={missing ? 'warning' : 'folder-simple'} size={18} />
+          <span class="s-project-name">{group.label}</span>
+          <Icon name={folded ? 'caret-right' : 'caret-down'} size={12} />
+        </button>
+        {arrange.canMove ? <Grip label={group.label} onStart={(event) => arrange.start(id, event)} onStep={(delta) => arrange.step(id, delta)} /> : null}
+      </div>
       {missing && !folded ? <p class="s-missing s-indent">Folder missing</p> : null}
       {/* Folded, it still shows the conversation that is open: where you are never disappears. */}
       {(folded ? group.entries.filter((entry) => entry.id === rows.rest) : group.entries).map((entry) => (
@@ -422,33 +598,104 @@ function Project({
   )
 }
 
-/** Which projects the owner folded, by id, remembered on this device. Storage off: they start open. */
-function useFolded(): { readonly folded: ReadonlySet<string>; readonly toggle: (site: string) => void } {
-  const [folded, setFolded] = useState<ReadonlySet<string>>(readFolded)
-  const toggle = (site: string) => {
+/**
+ * Which projects — or categories — the owner folded, by id, remembered on this device under `key`.
+ * Storage off: they start open.
+ */
+function useFolded(key: string): { readonly folded: ReadonlySet<string>; readonly toggle: (id: string) => void } {
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => readFolded(key))
+  const toggle = (id: string) => {
     const next = new Set(folded)
-    if (next.has(site)) next.delete(site)
-    else next.add(site)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
     setFolded(next)
-    writeFolded(next)
+    writeFolded(key, next)
   }
   return { folded, toggle }
 }
 
-function readFolded(): ReadonlySet<string> {
+function readFolded(key: string): ReadonlySet<string> {
   try {
-    const stored: unknown = JSON.parse(window.localStorage.getItem(FOLDED_KEY) ?? '[]')
-    return new Set(Array.isArray(stored) ? stored.filter((site): site is string => typeof site === 'string') : [])
+    const stored: unknown = JSON.parse(window.localStorage.getItem(key) ?? '[]')
+    return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : [])
   } catch {
     return new Set()
   }
 }
 
-function writeFolded(folded: ReadonlySet<string>): void {
+function writeFolded(key: string, folded: ReadonlySet<string>): void {
   try {
-    window.localStorage.setItem(FOLDED_KEY, JSON.stringify([...folded]))
+    window.localStorage.setItem(key, JSON.stringify([...folded]))
   } catch {
     // Not remembered; it still folds for this visit.
+  }
+}
+
+/**
+ * The sheets arranging opens. Each applies its change AT ONCE and closes: the layout is optimistic,
+ * and a failure is said in the drawer, where the change would have shown.
+ */
+function ArrangeSheet({
+  arranging,
+  layout,
+  change,
+  onSwitch,
+  onClose,
+}: {
+  readonly arranging: Arranging
+  readonly layout: Layout
+  readonly change: (next: Layout) => void
+  /** From one sheet to the next: "Move to…" becomes "New category" for the same project. */
+  readonly onSwitch: (next: Arranging) => void
+  readonly onClose: () => void
+}) {
+  switch (arranging.kind) {
+    case 'new':
+      return (
+        <CategoryNameSheet
+          title="New category"
+          initial=""
+          action="Create"
+          onClose={onClose}
+          onSave={(name) => change(addCategory(layout, { id: newCategoryId(layout.categories), name }, arranging.project))}
+        />
+      )
+    case 'rename':
+      return (
+        <CategoryNameSheet
+          title="Rename category"
+          initial={arranging.category.name}
+          action="Save"
+          onClose={onClose}
+          onSave={(name) => change(renameCategory(layout, arranging.category.id, name))}
+        />
+      )
+    case 'delete':
+      return (
+        <ConfirmSheet
+          title={`Delete ${arranging.category.name}?`}
+          body="Its projects stay, with no category. Nothing else changes."
+          action="Delete category"
+          busy={false}
+          error={undefined}
+          onClose={onClose}
+          onConfirm={() => {
+            change(removeCategory(layout, arranging.category.id))
+            onClose()
+          }}
+        />
+      )
+    case 'move':
+      return (
+        <MoveToCategorySheet
+          project={arranging.label}
+          categories={layout.categories}
+          current={layout.order.find((placed) => placed.id === arranging.project)?.category}
+          onClose={onClose}
+          onPick={(category) => change(moveProject(layout, arranging.project, { category, index: Number.MAX_SAFE_INTEGER }))}
+          onNew={() => onSwitch({ kind: 'new', project: arranging.project })}
+        />
+      )
   }
 }
 
