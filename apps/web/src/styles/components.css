@@ -273,6 +273,31 @@
   opacity: 0.6;
 }
 
+/*
+ * On a computer a sheet from the bottom edge is the wrong shape: it spans the window, runs under
+ * the sidebar, and puts two buttons half a metre apart. From 720 px it is a dialog in the middle,
+ * as wide as what it asks. `translate`, not `transform`, so the entry animation still composes.
+ */
+@media (min-width: 720px) {
+  .sheet {
+    left: 50%;
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    translate: -50% -50%;
+    width: min(480px, calc(100vw - 2 * var(--space-4)));
+    max-height: min(80dvh, 720px);
+    padding: var(--space-5);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-16);
+    box-shadow: 0 16px 48px var(--scrim);
+  }
+
+  .sheet .grab {
+    display: none;
+  }
+}
+
 /* --- Composer ------------------------------------------------------------ */
 
 /*
