@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1844,4 +1844,136 @@ test('A SHARED FOLDER THAT REAPPEARS joins the gate at the next look — only wi
   id = live.outcome === 'started' ? live.sessionId : ''
   assert.equal((await engine.decide(payload(id, target, a))).hookSpecificOutput.permissionDecision, 'allow')
   await engine.cancel(id)
+})
+
+// ---------------------------------------------------------------------------
+// The titler, wired in (spec 2026-09-30, D7). ON only in these tests: everywhere else TITLES_OFF.
+// ---------------------------------------------------------------------------
+
+const TITLES_ON: TitlesConfig = { enabled: true, model: 'haiku', effort: 'low' }
+
+/** What the titler was started with, from the fake's own log in the titler's directory (D6). */
+async function titlerCalls(stateDir: string): Promise<readonly { owner: string; pid: number }[]> {
+  try {
+    const text = await readFile(join(sessionPaths(stateDir).titler, 'titler-calls.log'), 'utf8')
+    return text
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as { owner: string; pid: number })
+  } catch {
+    return []
+  }
+}
+
+async function until(check: () => Promise<boolean>, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`never happened: ${what}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+const gone = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch {
+    return true
+  }
+}
+
+test('TITLER: launch does not wait for it; the title lands later, in the titler’s own directory, and survives finalize and reconcile (2026-09-30 crit. 3, 19, 21)', async () => {
+  const { engine, stateDir, siteDir, store } = await world({ titles: TITLES_ON })
+  // The directory exists before anything is launched, and it is not the project's (crit. 19).
+  assert.ok((await stat(sessionPaths(stateDir).titler)).isDirectory())
+
+  const launched = await engine.launch({ siteId: 'work', entryId: 'free', text: 'title:slow:300', force: false })
+  assert.equal(launched.outcome, 'started')
+  const id = launched.outcome === 'started' ? launched.sessionId : ''
+  // Returned BEFORE the titler answered (crit. 3).
+  assert.equal((await store.readMeta(id))?.autoTitle, undefined)
+
+  await until(async () => (await store.readMeta(id))?.autoTitle === 'Plan de maratón', 'the title written')
+  assert.deepEqual((await titlerCalls(stateDir)).map((call) => call.owner), ['title:slow:300'])
+
+  // Another turn: finalize patches the meta again, and the title stays (crit. 21).
+  await settle(engine, id)
+  await turnOver(engineLocks.get(engine)!, 'work')
+  await engine.reply(id, QUICK, false)
+  await settle(engine, id)
+  assert.equal((await store.readMeta(id))?.autoTitle, 'Plan de maratón')
+  await turnOver(engineLocks.get(engine)!, 'work')
+  await engine.stop()
+
+  // And a boot's reconcile reads it back (crit. 21).
+  const again = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
+  await again.reconcile()
+  const one = await again.summary(id)
+  assert.equal(one.kind === 'ok' ? one.summary.autoTitle : '', 'Plan de maratón')
+  await again.stop()
+})
+
+test('TITLER: the owner’s title and one already written are never overwritten (2026-09-30 crit. 15, 22)', async () => {
+  const { engine, stateDir, store } = await world({ titles: TITLES_ON })
+
+  // Renamed while the titler thinks: both end up side by side (crit. 22).
+  const first = await engine.launch({ siteId: 'work', entryId: 'free', text: 'title:slow:400', force: false })
+  const renamedId = first.outcome === 'started' ? first.sessionId : ''
+  await engine.rename(renamedId, 'Mine')
+  await until(async () => (await store.readMeta(renamedId))?.autoTitle !== undefined, 'the title written')
+  const renamed = await store.readMeta(renamedId)
+  assert.deepEqual([renamed?.title, renamed?.autoTitle], ['Mine', 'Plan de maratón'])
+  await settle(engine, renamedId)
+  await turnOver(engineLocks.get(engine)!, 'work')
+
+  // A title already there when the titler answers stays (crit. 15).
+  const second = await engine.launch({ siteId: 'work', entryId: 'free', text: 'title:slow:400', force: false })
+  const keptId = second.outcome === 'started' ? second.sessionId : ''
+  await store.patchMeta(keptId, (meta) => ({ ...meta, autoTitle: 'Earlier' }))
+  await until(async () => (await titlerCalls(stateDir)).length === 2, 'the second titler started')
+  const pid = (await titlerCalls(stateDir))[1]!.pid
+  await until(async () => gone(pid), 'the second titler done')
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal((await store.readMeta(keptId))?.autoTitle, 'Earlier')
+  await settle(engine, keptId)
+  await turnOver(engineLocks.get(engine)!, 'work')
+  await engine.stop()
+})
+
+test('TITLER: a boot’s reconcile and a reply never start it; only a launch does (2026-09-30 crit. 13, 14)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-titler-engine-'))
+  const stateDir = join(home, 'state')
+  const siteDir = join(home, 'site')
+  await mkdir(siteDir, { recursive: true })
+  const sites = [{ id: 'work', path: siteDir }]
+
+  // Sessions from before, launched with the titler OFF: nothing of theirs is in the log.
+  const off = await engineOver(stateDir, sites)
+  const old = await off.launch({ siteId: 'work', entryId: 'free', text: 'title:ok', force: false })
+  const oldId = old.outcome === 'started' ? old.sessionId : ''
+  await settle(off, oldId)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
+  await off.stop()
+  assert.deepEqual(await titlerCalls(stateDir), [])
+
+  // The titler ON, over the same state. THE WITNESS FIRST: a launch here does write a line, so an
+  // empty log below means "not started", not "could not have been seen".
+  const on = await engineOver(stateDir, sites, TITLES_ON)
+  await on.reconcile()
+  assert.deepEqual(await titlerCalls(stateDir), [], 'reconcile started the titler (crit. 13)')
+  const witness = await on.launch({ siteId: 'work', entryId: 'free', text: 'title:none', force: false })
+  const witnessId = witness.outcome === 'started' ? witness.sessionId : ''
+  await until(async () => (await titlerCalls(stateDir)).length === 1, 'the witness titled')
+  await settle(on, witnessId)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
+
+  // A reply to the old session, with a text the fake WOULD title (crit. 14).
+  await on.reply(oldId, 'title:ok', false)
+  await settle(on, oldId)
+  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal((await titlerCalls(stateDir)).length, 1, 'reply started the titler (crit. 14)')
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  assert.equal((await store.readMeta(oldId))?.autoTitle, undefined)
+  await on.stop()
 })

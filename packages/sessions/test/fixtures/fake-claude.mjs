@@ -16,12 +16,55 @@
  *                That is what the REAL CLI looks like from outside, and the difference
  *                matters: a finalizer that inferred cancellation from the exit status
  *                would call this one "failed: exited with code 143".
+ *
+ * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
+ * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
+ * own directory, where no session ever runs, so that file exists only if the titler was started —
+ * and answers by the text after the FIRST "\n\nowner: ":
+ *
+ *   "title:ok"          <title>Plan de maratón</title>
+ *   "title:none"        <title>NO TITLE.</title>
+ *   "title:preamble"    a preamble and a suffix around the tag
+ *   "title:boom"        stderr, exit 1
+ *   "title:hang"        sleeps a minute
+ *   "title:slow:<ms>"   waits <ms>, then answers like "title:ok"
+ *   anything else       <title>NO TITLE</title> — so a session test's `quick` titles nothing
  */
 import { spawn } from 'node:child_process'
+import { appendFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 const prompt = args[args.indexOf('-p') + 1] ?? ''
 const emit = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
+
+if (args.includes('--tools')) {
+  const marker = '\n\nowner: '
+  const at = prompt.indexOf(marker)
+  const owner = at === -1 ? '' : prompt.slice(at + marker.length)
+  // One JSON line per call: what it was asked, and its pid, so a test can watch it die.
+  appendFileSync('titler-calls.log', `${JSON.stringify({ owner, pid: process.pid })}\n`)
+  const answer = (text) => process.stdout.write(text, () => process.exit(0))
+  if (owner.startsWith('title:boom')) {
+    process.stderr.write('fake-claude: the titler broke\n')
+    process.exit(1)
+  } else if (owner.startsWith('title:hang')) {
+    setTimeout(() => answer('<title>Too late</title>'), 60_000)
+  } else if (owner.startsWith('title:slow:')) {
+    setTimeout(() => answer('<title>Plan de maratón</title>'), Number(owner.slice('title:slow:'.length)) || 0)
+  } else if (owner.startsWith('title:ok')) {
+    answer('<title>Plan de maratón</title>')
+  } else if (owner.startsWith('title:none')) {
+    answer('<title>NO TITLE.</title>')
+  } else if (owner.startsWith('title:preamble')) {
+    answer('Sure!\n<title>Foo bar</title>\nHope it helps')
+  } else {
+    answer('<title>NO TITLE</title>')
+  }
+} else {
+  session()
+}
+
+function session() {
 
 const toolUse = {
   type: 'assistant',
@@ -66,4 +109,5 @@ if (prompt.startsWith('traps')) {
   }, 60_000)
 } else {
   emit({ type: 'result', subtype: 'success', result: 'done' })
+}
 }

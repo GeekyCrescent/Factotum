@@ -10,7 +10,7 @@
  * can read. So every check that touches the disk lives here, below `start()`.
  */
 
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { Logger, NotificationMessage } from '@factotum/core'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
@@ -31,6 +31,7 @@ import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
 import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore } from './store.ts'
+import { createTitler } from './titler/index.ts'
 import type {
   EngineSetup,
   EngineSetupView,
@@ -81,6 +82,8 @@ export interface EngineDeps {
   readonly grantTimeoutMs?: number
   /** The ceiling of checking a new folder (5 s), so a test can hang one and not wait. */
   readonly candidateTimeoutMs?: number
+  /** How long the titler waits for `claude`. A test cannot wait thirty seconds. */
+  readonly titlerTimeoutMs?: number
 }
 
 /** What a lock holds while a project is being deleted: not a session id, so nothing mistakes it. */
@@ -119,6 +122,19 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     liveCount: () => live.size,
     isLive: (id) => live.has(id),
     removing: REMOVING,
+  })
+
+  // The titler (spec 2026-09-30, D7). Handed ONE function that writes, never the store: it cannot
+  // take a lock or touch a log. The write keeps a title that is already there (criterion 15).
+  await mkdir(paths.titler, { recursive: true })
+  const titler = createTitler({
+    config: setup.titles,
+    cwd: paths.titler,
+    timers: setup.timers,
+    log,
+    write: async (id, title) => await store.patchMeta(id, (meta) => (meta.autoTitle !== undefined ? meta : { ...meta, autoTitle: title })),
+    ...(deps.bin !== undefined ? { bin: deps.bin } : {}),
+    ...(deps.titlerTimeoutMs !== undefined ? { timeoutMs: deps.titlerTimeoutMs } : {}),
   })
 
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
@@ -371,6 +387,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       await store.append(sessionId, { kind: 'state', state: 'running', reason: undefined })
 
       handedOver = true
+      // AFTER the hand-over: before it, a failure would leave nothing to title. Not awaited, and it
+      // cannot throw (titler/index.ts), so a started conversation stays started. `reply` never
+      // titles, and neither does `reconcile` (criteria 13, 14).
+      titler.start(sessionId, input.text)
       return { outcome: 'started', sessionId }
     } finally {
       if (!handedOver) await locks.release(input.siteId)
@@ -704,7 +724,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
    */
   async function stop(): Promise<void> {
     stopped = true
-    // FIRST: every held reply resolves as a deny now, before anything is killed. An ask must not
+    // The titler first: the cheapest thing to stop, and nothing depends on it. After this nothing
+    // it had in flight writes a title (criterion 12).
+    titler.stop()
+    // Every held reply resolves as a deny now, before anything is killed. An ask must not
     // outlive the engine as a promise nobody will ever settle (criterion 22).
     asks.closeAll(SHUTDOWN_REASON)
     // And every folder request: its approval can no longer be written by anybody.

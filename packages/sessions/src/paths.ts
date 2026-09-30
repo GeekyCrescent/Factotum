@@ -14,6 +14,11 @@ export interface SessionPaths {
   /** One file per SITE, not per session: the lock is what makes a site exclusive. */
   readonly locks: string
   readonly sessions: string
+  /**
+   * The titler's working directory (spec 2026-09-30, D7): empty, and never a project's folder, so a
+   * prompt that says "read secrets.env" has nothing there to read even if tools came back.
+   */
+  readonly titler: string
   readonly lockFile: (siteId: string) => string
   readonly sessionDir: (sessionId: string) => string
   readonly metaFile: (sessionId: string) => string
@@ -30,6 +35,7 @@ export function sessionPaths(stateDir: string): SessionPaths {
     root: stateDir,
     locks,
     sessions,
+    titler: join(stateDir, 'titler'),
     lockFile: (siteId) => join(locks, `${siteId}.json`),
     sessionDir,
     metaFile: (sessionId) => join(sessionDir(sessionId), 'meta.json'),
