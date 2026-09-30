@@ -12,6 +12,7 @@ import { Registry } from '../modules/registry.ts'
 import { statePaths } from '../config/paths.ts'
 import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
+import type { ComposedModule } from '../config/load.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -36,13 +37,13 @@ const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key:
 const MAC_IP = '100.71.174.49'
 const MAC = (() => ({ lo0: [{ address: '127.0.0.1', internal: true }], utun4: [{ address: MAC_IP, internal: false }] })) as unknown as Interfaces
 
-async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces } = {}) {
+async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
   await mkdir(join(root, 'assets'), { recursive: true })
   await writeFile(join(root, 'assets', 'index-abc123.js'), 'console.log(1)')
   const home = await mkdtemp(join(tmpdir(), 'factotum-home-'))
-  const registry = await Registry.create([], {
+  const registry = await Registry.create(opts.modules ?? [], {
     paths: statePaths('prod', home),
     env: 'prod',
     push: { canReach: () => false, send: async () => undefined },
@@ -61,7 +62,7 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-  return { base, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
+  return { base, home, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +289,112 @@ test('hashed assets are cached for good; the page a notification opens is NEVER 
     const page = await fetch(`${base}/m/sessions/abc?ask=${'T'.repeat(43)}`)
     assert.match(page.headers.get('content-type') ?? '', /text\/html/)
     assert.equal(page.headers.get('cache-control'), 'no-store')
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The module branch, pinned BEFORE it is reordered (spec 2026-10-01, B0, criterion 4)
+//
+// Written against the code as it was and green there. The upload work reorders this branch — the
+// route is resolved before the body is read — and these must pass after it WITHOUT BEING TOUCHED.
+// ---------------------------------------------------------------------------
+
+const probeModules = (): readonly ComposedModule[] => [
+  {
+    module: {
+      id: 'probe',
+      routes: () => ({
+        'POST /echo': (req) => ({ status: 200, body: { got: req.body } }),
+        'POST /throws': () => {
+          throw new Error('secret path /Users/someone/.ssh')
+        },
+      }),
+    },
+    status: { kind: 'enabled' },
+    config: undefined,
+  },
+  { module: { id: 'broken' }, status: { kind: 'disabled', reason: 'bad config' }, config: undefined },
+]
+
+test('module branch: a JSON body reaches the handler (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/probe/echo`, { method: 'POST', body: JSON.stringify({ a: 1 }) })
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { got: { a: 1 } })
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: 2 MB to a JSON route is 413, and the body was drained so the answer arrives (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/probe/echo`, { method: 'POST', body: 'x'.repeat(2 * MAX_BODY_BYTES) })
+    assert.equal(response.status, 413)
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, 'body-too-large')
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: bytes that are not JSON are 400 (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/probe/echo`, { method: 'POST', body: '\x89PNG\r\n' })
+    assert.equal(response.status, 400)
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, 'invalid-request')
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: a disabled module is 501 with its reason (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/broken/anything`, { method: 'POST', body: '{}' })
+    assert.equal(response.status, 501)
+    const body = (await response.json()) as { error: { code: string; message: string } }
+    assert.equal(body.error.code, 'module-disabled')
+    assert.equal(body.error.message, 'bad config')
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: an unknown route, and an unknown module, are 404 even with a body (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const route = await fetch(`${base}/modules/probe/nope`, { method: 'POST', body: '{"a":1}' })
+    assert.equal(route.status, 404)
+    const nobody = await fetch(`${base}/modules/ghost/x`, { method: 'POST', body: '{"a":1}' })
+    assert.equal(nobody.status, 404)
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: an oversized body to an unknown route is still 413 first, as it always was (criterion 4)', async () => {
+  // The body is read BEFORE the route is looked up. Pinned, because the reorder must keep it.
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/probe/nope`, { method: 'POST', body: 'x'.repeat(2 * MAX_BODY_BYTES) })
+    assert.equal(response.status, 413)
+  } finally {
+    await close()
+  }
+})
+
+test('module branch: a handler that throws is 500 module-error, and its message does not leak (criterion 4)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const response = await fetch(`${base}/modules/probe/throws`, { method: 'POST', body: '{}' })
+    assert.equal(response.status, 500)
+    const text = await response.text()
+    assert.match(text, /module-error/)
+    assert.doesNotMatch(text, /\.ssh/)
   } finally {
     await close()
   }
