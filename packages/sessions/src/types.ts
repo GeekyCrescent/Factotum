@@ -179,6 +179,21 @@ export interface EngineSetup {
    * nobody sees. When push is off, `canReach` says so and `send` does nothing.
    */
   readonly notify: Notifier
+  /** The titler's settings, parsed by the module's one schema (spec 2026-09-30, D9). */
+  readonly titles: TitlesConfig
+}
+
+/** How much the titler thinks. The CLI's `--effort` levels. */
+export type TitlerEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/**
+ * EXACTLY what the module's zod infers for `titles`: every field has a default, so none is optional.
+ * The link in `main.ts` is what keeps the two in step.
+ */
+export interface TitlesConfig {
+  readonly enabled: boolean
+  readonly model: string
+  readonly effort: TitlerEffort
 }
 
 // --- What the engine does --------------------------------------------------
@@ -234,6 +249,8 @@ export interface SessionSummary {
   readonly prompt: string | undefined
   /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
   readonly title: string | undefined
+  /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
+  readonly autoTitle: string | undefined
   readonly archived: boolean
 }
 

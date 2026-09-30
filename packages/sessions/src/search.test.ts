@@ -61,6 +61,7 @@ async function world(seeds: readonly Seed[]): Promise<{ engine: SessionEngine; i
   })
   await registry.update(async () => ({ kind: 'set-project', id: 'b', name: 'Beta Garden', color: 2 }))
   const engine = await createEngine({
+    titles: { enabled: false, model: 'haiku', effort: 'low' },
     stateDir,
     registry,
     home: join(root, 'home'),

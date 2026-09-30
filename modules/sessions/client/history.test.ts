@@ -10,6 +10,7 @@ const session = (
   prompt?: string,
   state: SessionState = 'finished',
   title?: string,
+  autoTitle?: string,
 ): SessionSummary => ({
   id,
   siteId,
@@ -21,6 +22,7 @@ const session = (
   turns: 1,
   prompt,
   title,
+  autoTitle,
   archived: false,
 })
 

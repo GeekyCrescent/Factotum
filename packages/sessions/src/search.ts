@@ -65,8 +65,8 @@ export async function searchHistory(deps: SearchDeps, query: string): Promise<re
   return hits
 }
 
-/** Its title, its first prompt, its project's id or name. */
+/** Its title, the titler's, its first prompt, its project's id or name. */
 function namedBy(meta: SessionMeta, table: SiteTable, wanted: string): boolean {
   const name = table.entry(meta.siteId)?.name
-  return [meta.title, meta.prompt, meta.siteId, name].some((field) => field?.toLowerCase().includes(wanted) === true)
+  return [meta.title, meta.autoTitle, meta.prompt, meta.siteId, name].some((field) => field?.toLowerCase().includes(wanted) === true)
 }

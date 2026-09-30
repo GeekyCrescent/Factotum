@@ -518,6 +518,7 @@ export function sessionsModule(
         timers: ctx.timers,
         hookUrl,
         notify: ctx.notify,
+        titles: ctx.config.titles,
       })
       await engine.reconcile()
       holder.engine = engine

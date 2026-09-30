@@ -65,6 +65,7 @@ async function world(
   const reach = { value: true }
   const engine = await createEngine(
     {
+      titles: { enabled: false, model: 'haiku', effort: 'low' },
       stateDir,
       registry,
       home,

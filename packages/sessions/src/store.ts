@@ -71,6 +71,12 @@ export interface SessionMeta {
    * next `patchMeta` — a finalize, a reconcile — would erase it (criterion 29).
    */
   readonly title: string | undefined
+  /**
+   * The title the titler wrote at launch (spec 2026-09-30, D1). A SIBLING of `title`, never the same
+   * field: the owner's name wins over it, and clearing the owner's name shows it again. Listed in
+   * `#readMeta` like every field here, or the next `patchMeta` would erase it (criterion 21).
+   */
+  readonly autoTitle: string | undefined
   /** When it was archived. `undefined`: not archived. */
   readonly archivedAt: string | undefined
 }
@@ -88,7 +94,7 @@ export interface StoreObserver {
 export type RemoveOutcome = 'removed' | 'unknown' | 'running'
 
 /** Everything but the parts the store owns. */
-export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'archivedAt'>
+export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'autoTitle' | 'archivedAt'>
 
 export class SessionStore {
   readonly #paths: SessionPaths
@@ -179,6 +185,7 @@ export class SessionStore {
         sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
         prompt: typeof json.prompt === 'string' ? json.prompt : undefined,
         title: typeof json.title === 'string' ? json.title : undefined,
+        autoTitle: typeof json.autoTitle === 'string' ? json.autoTitle : undefined,
         archivedAt: typeof json.archivedAt === 'string' ? json.archivedAt : undefined,
       }
     } catch {
@@ -218,6 +225,7 @@ export class SessionStore {
         turns: 1,
         agentPid: undefined,
         title: undefined,
+        autoTitle: undefined,
         archivedAt: undefined,
       }
       await this.#writeMeta(meta)

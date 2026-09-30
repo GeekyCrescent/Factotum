@@ -69,6 +69,13 @@ const catalogEntrySchema = z.object({
   }),
 })
 
+/** Every field has a default: a config with no `titles` titles with Haiku, thinking little. */
+const titlesSchema = z.object({
+  enabled: z.boolean().default(true),
+  model: z.string().min(1).default('haiku'),
+  effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('low'),
+})
+
 export const sessionsConfigSchema = z
   .object({
     sites: z.array(siteSchema).default([]),
@@ -85,6 +92,11 @@ export const sessionsConfigSchema = z
      * rather than a gap to close later.
      */
     sharedPaths: z.array(boundaryPath).default([]),
+    /**
+     * The titler (spec 2026-09-30, D9). `.prefault({})` and NOT `.default({})`: zod 4 hands a default
+     * back WITHOUT parsing it, so the fields' own defaults would never apply — and tsc says so.
+     */
+    titles: titlesSchema.prefault({}),
   })
   // Duplicate ids are refused here rather than resolved somewhere later: two sites
   // with one id means two directories sharing one lock, which is the one thing the

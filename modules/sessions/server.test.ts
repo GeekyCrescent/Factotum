@@ -137,6 +137,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'registry',
     'stateDir',
     'timers',
+    // The titler's settings (spec 2026-09-30, D9), from the module's one schema.
+    'titles',
   ].sort())
   assert.equal(setup.stateDir, '/state/modules/sessions')
   // Three levels above `<root>/<env>/modules/sessions`; this fixture has no env level, so `/`.
@@ -401,7 +403,22 @@ test('a decision the engine made travels through untouched', async () => {
 // ---------------------------------------------------------------------------
 
 test('an empty fragment is valid: a module that needs configuring to start is badly designed', () => {
-  assert.deepEqual(sessionsConfigSchema.parse({}), { sites: [], catalog: [], sharedPaths: [] })
+  // `titles` comes out WITH its fields' defaults (spec 2026-09-30, crit. 30). With `.default({})` it
+  // would come out `{}` — zod 4 does not parse a default — and tsc refuses that form anyway.
+  assert.deepEqual(sessionsConfigSchema.parse({}), {
+    sites: [],
+    catalog: [],
+    sharedPaths: [],
+    titles: { enabled: true, model: 'haiku', effort: 'low' },
+  })
+  // Half a `titles` is filled in, not replaced.
+  assert.deepEqual(sessionsConfigSchema.parse({ titles: { model: 'sonnet' } }).titles, { enabled: true, model: 'sonnet', effort: 'low' })
+})
+
+test('a malformed `titles` is refused by the schema, so it disables the module alone (2026-09-30 crit. 31)', () => {
+  for (const titles of [{ effort: 'extreme' }, { model: '' }, { enabled: 'yes' }]) {
+    assert.equal(sessionsConfigSchema.safeParse({ titles }).success, false, JSON.stringify(titles))
+  }
 })
 
 test('a well-formed fragment parses', () => {
@@ -596,6 +613,7 @@ const SUMMARY = {
   turns: 1,
   prompt: 'hi',
   title: undefined,
+  autoTitle: undefined,
   archived: false,
 }
 
@@ -661,7 +679,15 @@ test('rename and archive: the body is checked here, the outcome mapped to 200, 4
     assert.equal((await call(table, 'POST /sessions/:id/archive', request('POST', '/a', { params, body: { archived: true } }))).status, status)
   }
   const { table } = await started(fakeEngine())
-  assert.equal((await call(table, 'POST /sessions/:id/title', request('POST', '/t', { params: { id: 'x' }, body: { title: '  ' } }))).status, 400)
+  // Empty text reaches the engine, which clears the owner's title (spec 2026-09-30, crit. 23). Only a
+  // body that is not text is refused here.
+  for (const body of [undefined, {}, { title: 3 }, { title: null }]) {
+    assert.equal((await call(table, 'POST /sessions/:id/title', request('POST', '/t', { params: { id: 'x' }, body }))).status, 400)
+  }
+  let given: string | undefined
+  const { table: clearing } = await started(fakeEngine({ rename: async (_id, title) => ((given = title), { outcome: 'ok', summary: SUMMARY }) }))
+  assert.equal((await call(clearing, 'POST /sessions/:id/title', request('POST', '/t', { params: { id: 'x' }, body: { title: '  ' } }))).status, 200)
+  assert.equal(given, '  ')
   assert.equal((await call(table, 'POST /sessions/:id/archive', request('POST', '/a', { params: { id: 'x' }, body: { archived: 'yes' } }))).status, 400)
 })
 

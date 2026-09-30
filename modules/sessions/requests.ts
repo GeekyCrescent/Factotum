@@ -87,10 +87,13 @@ export function parseProjectPatch(body: unknown): Parsed<{ name: string | undefi
   return { ok: true, value: { name: parsed.data.name, color: parsed.data.color } }
 }
 
-/** The engine trims and cuts it (criterion 30); here, only that it is text. */
+/**
+ * The engine trims and cuts it (criterion 30); here, only that it is text. EMPTY IS VALID: it clears
+ * the owner's title (spec 2026-09-30, criterion 23).
+ */
 export function parseTitle(body: unknown): Parsed<string> {
   const title = record(body)['title']
-  if (typeof title !== 'string' || title.trim() === '') return { ok: false, message: 'a title needs some text' }
+  if (typeof title !== 'string') return { ok: false, message: 'a title must be text' }
   return { ok: true, value: title }
 }
 

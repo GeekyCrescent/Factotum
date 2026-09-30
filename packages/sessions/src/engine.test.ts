@@ -13,7 +13,7 @@ import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
 import { memoryRegistry } from './test-registry.ts'
-import type { CatalogEntry, EngineSetup, EventPage, SessionEngine, SiteConfig } from './types.ts'
+import type { CatalogEntry, EngineSetup, EventPage, SessionEngine, SiteConfig, TitlesConfig } from './types.ts'
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'fake-claude.mjs')
 const BASE = 'http://100.64.0.1:7778'
@@ -75,6 +75,12 @@ const engineLocks = new WeakMap<SessionEngine, SiteLocks>()
 /** For the setups that are not about notices. */
 const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
 
+/**
+ * The titler OFF everywhere but the tests about it (spec 2026-09-30, B0): on, every `launch` here
+ * would start a second `claude` of its own.
+ */
+const TITLES_OFF: TitlesConfig = { enabled: false, model: 'haiku', effort: 'low' }
+
 async function world(
   options: {
     sites?: readonly SiteConfig[]
@@ -82,6 +88,7 @@ async function world(
     notify?: Notifier
     askTimeoutMs?: number
     registry?: EngineSetup['registry']
+    titles?: TitlesConfig
   } = {},
 ): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
@@ -93,6 +100,7 @@ async function world(
   const warnings: string[] = []
   const notices: NotificationMessage[] = []
   const setup: EngineSetup = {
+    titles: options.titles ?? TITLES_OFF,
     stateDir,
     ...registryOf(options.sites ?? [{ id: 'work', path: siteDir }]),
     ...(options.registry === undefined ? {} : { registry: options.registry }),
@@ -334,6 +342,7 @@ test('TWO live sessions in TWO different sites are not confused with each other'
   await mkdir(b, { recursive: true })
 
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'a', path: a }, { id: 'b', path: b }]),
     catalog: CATALOG,
@@ -374,6 +383,7 @@ test('TWO live sessions in two sites can BOTH write a shared path', async () => 
   for (const dir of [a, b, vault]) await mkdir(dir, { recursive: true })
 
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'a', path: a }, { id: 'b', path: b }], [vault]),
     catalog: CATALOG,
@@ -414,6 +424,7 @@ test('A SHARED FOLDER THAT IS NOT THERE no longer disables the module: the gate 
   await mkdir(a, { recursive: true })
 
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'a', path: a }], [join(home, 'no-such-vault')]),
     catalog: CATALOG,
@@ -752,6 +763,7 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
   await writeFile(join(siteDir, 'dirty.txt'), 'uncommitted')
 
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'repo', path: siteDir }]),
     catalog: CATALOG,
@@ -790,6 +802,7 @@ test('a refused stale launch does not keep the lock', async () => {
   await writeFile(join(siteDir, 'dirty.txt'), 'x')
 
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'repo', path: siteDir }]),
     catalog: CATALOG,
@@ -1079,10 +1092,11 @@ test('A FULL RUN COUNTS EXACTLY THE NOTICES IT SHOULD, AND NOT ONE MORE (criteri
 // ---------------------------------------------------------------------------
 
 /** An engine over `sites`, on a state directory that can be shared between two engines. */
-async function engineOver(stateDir: string, sites: readonly SiteConfig[]): Promise<SessionEngine> {
+async function engineOver(stateDir: string, sites: readonly SiteConfig[], titles: TitlesConfig = TITLES_OFF): Promise<SessionEngine> {
   await mkdir(stateDir, { recursive: true })
   return await createEngine(
     {
+      titles,
       stateDir,
       ...registryOf(sites),
       catalog: CATALOG,
@@ -1604,13 +1618,12 @@ test('THE INDEX SEES WHAT RECONCILE WROTE: a session a crash left running lists 
   assert.deepEqual(page.sessions.map((s) => [s.id, s.state]), [[stale, 'failed']])
 })
 
-test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; empty is refused (criteria 29, 30)', async () => {
+test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; EMPTY CLEARS IT (criteria 29, 30; 2026-09-30 crit. 23)', async () => {
   const { engine } = await world()
   const id = await finished(engine)
   const renamed = await engine.rename(id, `  ${'t'.repeat(100)}  `)
   assert.equal(renamed.outcome, 'ok')
   assert.equal(renamed.outcome === 'ok' ? renamed.summary.title : '', 't'.repeat(80))
-  assert.deepEqual(await engine.rename(id, '   '), { outcome: 'invalid', reason: 'a title needs some text' })
   assert.equal((await engine.rename(uuidv7(), 'x')).outcome, 'unknown')
   assert.equal((await engine.rename('../x', 'x')).outcome, 'invalid')
 
@@ -1619,6 +1632,44 @@ test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; e
   await settle(engine, id)
   const summary = await engine.summary(id)
   assert.equal(summary.kind === 'ok' ? summary.summary.title : '', 't'.repeat(80))
+
+  // Empty, or only spaces, CLEARS the owner's title: what shows is the titler's or the first line.
+  // It used to be refused (spec 2026-09-29, criterion 30); spec 2026-09-30 turns it round on purpose.
+  const cleared = await engine.rename(id, '   ')
+  assert.equal(cleared.outcome, 'ok')
+  assert.equal(cleared.outcome === 'ok' ? cleared.summary.title : 'still there', undefined)
+})
+
+test('AUTO TITLE: the real engine hands it out in list, summary, projects and search, and a rename leaves it (2026-09-30 crit. 22, 24, 25)', async () => {
+  // THE ENGINE, NOT THE SERVER: the server passes the engine's objects through untouched, so the
+  // one place `autoTitle` can be dropped is `summaryOf` — and only this test would notice.
+  const { engine, stateDir, siteDir, store } = await world()
+  const id = await finished(engine)
+  await engine.stop()
+  await store.patchMeta(id, (meta) => ({ ...meta, autoTitle: 'Plan de maratón' }))
+
+  const again = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
+  await again.reconcile()
+  const listed = await again.list({ page: 0, site: undefined, archived: false })
+  assert.equal(listed.sessions.find((s) => s.id === id)?.autoTitle, 'Plan de maratón')
+  const one = await again.summary(id)
+  assert.equal(one.kind === 'ok' ? one.summary.autoTitle : '', 'Plan de maratón')
+  const projects = await again.projects()
+  assert.equal(projects.projects[0]?.sessions.find((s) => s.id === id)?.autoTitle, 'Plan de maratón')
+  // The prompt is `quick`: only the titler's title says "maratón".
+  const hits = await again.search('maratón')
+  assert.deepEqual(
+    hits.map((hit) => hit.summary.id),
+    [id],
+  )
+  assert.equal(hits[0]?.summary.autoTitle, 'Plan de maratón')
+
+  // The owner's title sits NEXT to it; clearing the owner's leaves the titler's where it was.
+  const renamed = await again.rename(id, 'Mine')
+  assert.deepEqual(renamed.outcome === 'ok' ? [renamed.summary.title, renamed.summary.autoTitle] : [], ['Mine', 'Plan de maratón'])
+  const cleared = await again.rename(id, '')
+  assert.deepEqual(cleared.outcome === 'ok' ? [cleared.summary.title, cleared.summary.autoTitle] : [], [undefined, 'Plan de maratón'])
+  await again.stop()
 })
 
 test('ARCHIVE: out of the drawer’s lists, still readable, reversible; a running one is refused (criterion 31)', async () => {
@@ -1762,6 +1813,7 @@ test('A SHARED FOLDER THAT REAPPEARS joins the gate at the next look — only wi
   const vault = join(home, 'vault')
   await mkdir(a, { recursive: true })
   const setup: EngineSetup = {
+    titles: TITLES_OFF,
     stateDir: join(home, 'state'),
     ...registryOf([{ id: 'a', path: a }], [vault]),
     catalog: CATALOG,

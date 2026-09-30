@@ -69,6 +69,7 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
     turns: meta.turns,
     prompt: meta.prompt,
     title: meta.title,
+    autoTitle: meta.autoTitle,
     archived: meta.archivedAt !== undefined,
   }
 }
@@ -137,10 +138,11 @@ export function createHistory(deps: HistoryDeps): History {
       }
     },
 
+    // EMPTY CLEARS the owner's title, and the titler's shows again (spec 2026-09-30, D3). It used to
+    // be refused: with only the first line behind it, there was nothing to go back to.
     rename: async (id, title) => {
       const trimmed = title.trim()
-      if (trimmed === '') return { outcome: 'invalid', reason: 'a title needs some text' }
-      return await edit(id, (meta) => ({ ...meta, title: trimmed.slice(0, TITLE_MAX) }))
+      return await edit(id, (meta) => ({ ...meta, title: trimmed === '' ? undefined : trimmed.slice(0, TITLE_MAX) }))
     },
 
     archive: async (id, archived) =>

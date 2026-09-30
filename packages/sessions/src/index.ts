@@ -29,6 +29,8 @@ export type {
   SessionState,
   SessionSummary,
   SiteConfig,
+  TitlerEffort,
+  TitlesConfig,
 } from './types.ts'
 
 export { createEngine, PAGE_SIZE } from './engine.ts'
