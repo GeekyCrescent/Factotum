@@ -17,6 +17,7 @@ import { summaryOf } from './history.ts'
 import type { SiteTable } from './projects.ts'
 import type { SessionMeta, SessionStore } from './store.ts'
 import type { SearchHit } from './types.ts'
+import { stripRefs } from './uploads/refs.ts'
 
 /** At most this many conversations (criterion 38). */
 export const SEARCH_LIMIT = 50
@@ -29,6 +30,12 @@ export interface SearchDeps {
   readonly store: SessionStore
   readonly table: SiteTable
   readonly ensureIndex: () => Promise<void>
+  /**
+   * Where uploads live. With it, a message's reference lines are dropped before searching and cutting
+   * the snippet, so a search never finds or shows an upload's path (spec 2026-10-01, criterion 32).
+   * Optional so the setups that predate uploads still compile.
+   */
+  readonly uploadsRoot?: string
 }
 
 /** The phrase around a match, on one line, with an ellipsis where it was cut. */
@@ -56,9 +63,10 @@ export async function searchHistory(deps: SearchDeps, query: string): Promise<re
     const page = await deps.store.read(meta.id, 0)
     for (const event of page.events) {
       if (event.kind !== 'message') continue
-      const at = event.text.toLowerCase().indexOf(wanted)
+      const text = deps.uploadsRoot === undefined ? event.text : stripRefs(event.text, deps.uploadsRoot)
+      const at = text.toLowerCase().indexOf(wanted)
       if (at === -1) continue
-      hits.push({ summary: summaryOf(meta), snippet: snippetOf(event.text, at, wanted.length) })
+      hits.push({ summary: summaryOf(meta), snippet: snippetOf(text, at, wanted.length) })
       break
     }
   }

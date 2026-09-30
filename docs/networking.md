@@ -143,7 +143,8 @@ not being on 443 — which is exactly what changed.
   nothing against a process on this machine with `curl` — which is deliberate, because
   that is what the permission hook is.
 - **`Host` is not checked**, so **DNS rebinding is not covered.** Declared, not
-  forgotten.
+  forgotten. Since attachments ([ADR-0012](adr/0012-binary-bodies-as-a-route-kind.md)), what
+  sits behind that gap includes the photos and documents you uploaded, not only history text.
 - **There is no rate limit.**
 - **It does not stop a process on this machine from subscribing a device of its own** to
   push notifications (`POST /push/subscriptions` with no `Origin`). See *What leaves the

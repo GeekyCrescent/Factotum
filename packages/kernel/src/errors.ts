@@ -27,6 +27,7 @@ export type BootErrorCode =
   | 'module-id-invalid'
   | 'module-id-duplicate'
   | 'route-key-invalid'
+  | 'route-upload-invalid'
   | 'port-in-use'
   | 'bind-mismatch'
 

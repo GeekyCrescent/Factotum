@@ -11,7 +11,7 @@
 import type { SessionIndex } from './index-cache.ts'
 import { isSessionId } from './id.ts'
 import type { SiteTable } from './projects.ts'
-import type { SessionMeta, SessionStore } from './store.ts'
+import type { RemoveOutcome, SessionMeta, SessionStore } from './store.ts'
 import type {
   Page,
   ProjectsPage,
@@ -39,6 +39,11 @@ export interface HistoryDeps {
   readonly ensureIndex: () => Promise<void>
   readonly table: SiteTable
   readonly isLive: (id: string) => boolean
+  /**
+   * Deletes one conversation AND the uploads its owner sent in it (spec 2026-10-01, D6). The one way
+   * a conversation is deleted, so the three doors — here and the two in `folders.ts` — cannot drift.
+   */
+  readonly removeConversation: (id: string) => Promise<RemoveOutcome>
   readonly now: () => Date
   readonly registryFile: string
   readonly home: string
@@ -159,7 +164,7 @@ export function createHistory(deps: HistoryDeps): History {
           results.push({ id, outcome: 'invalid' })
           continue
         }
-        results.push({ id, outcome: await store.remove(id, deps.isLive) })
+        results.push({ id, outcome: await deps.removeConversation(id) })
       }
       return results
     },

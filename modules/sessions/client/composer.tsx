@@ -6,8 +6,12 @@
  * Enter breaks the line and the button sends, because a phone's Enter is where a person expects a
  * new line. Ctrl/Cmd+Enter sends everywhere. Never while an input method is composing a word.
  *
- * Under the text, one row: `+` (attaching files, not yet: disabled), the project, what to run, and
- * send. Above the box, three suggestions that do nothing yet, disabled until they get a use.
+ * Under the text, one row: `+` (attaching files), the project, what to run, and send. Above the box,
+ * three suggestions that do nothing yet, disabled until they get a use.
+ *
+ * ATTACHING (spec 2026-10-01, D10): chips above the box, `+` in the row, and a file dropped on the box
+ * or pasted into the text. On sending, each ready file becomes a line `@<path>` after the words — the
+ * sent text is the only record — and the chips go only when the send went through.
  *
  * A 409 is read off the body the error carries: `conflict` (the site is busy) and `freshness` (the
  * repo is not clean or not up to date) each get their own notice, and going over a stale repo is
@@ -17,6 +21,8 @@
 import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
 import type { Color, EngineSetupView } from '../types.ts'
+import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls } from './attach.tsx'
+import { canSend, uploadsOf, withRefs } from './attachments.ts'
 import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
@@ -86,8 +92,11 @@ export function LaunchComposer({
   const [siteId, setSiteId] = useState(sites[0]?.id ?? '')
   const site = sites.find((s) => s.id === siteId)
   const [entryId, setEntryId] = useState(usable[0]?.id ?? '')
+  const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text, force) => {
-    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text, force })
+    const sent = attach.items.filter((item) => item.state === 'ready')
+    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force })
+    attach.clear(sent.map((item) => item.key))
     onLaunched(result.sessionId)
   })
 
@@ -142,7 +151,8 @@ export function LaunchComposer({
         setText={s.setText}
         placeholder={ASK_WHAT}
         label="Launch"
-        canSend={!s.busy && s.text.trim() !== '' && entryId !== ''}
+        attach={attach}
+        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: entryId !== '' })}
         send={() => void s.go(false)}
         autoFocus
         tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
@@ -175,20 +185,26 @@ export function LaunchComposer({
 
 export function ReplyComposer({
   api,
+  setup,
   sessionId,
   project,
   onSent,
   goTo,
 }: {
   readonly api: Api
+  /** Only for whether this host takes files, and up to how big (spec 2026-10-01, D10). */
+  readonly setup: EngineSetupView
   readonly sessionId: string
   /** The conversation's project, shown as a label in the row: a reply cannot change it. */
   readonly project: { readonly id: string; readonly label: string; readonly color: Color | undefined } | undefined
   readonly onSent: () => void
   readonly goTo: (sessionId: string) => void
 }) {
+  const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text) => {
-    await api.post(`sessions/${sessionId}/reply`, { text })
+    const sent = attach.items.filter((item) => item.state === 'ready')
+    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent) })
+    attach.clear(sent.map((item) => item.key))
     onSent()
   })
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)
@@ -210,7 +226,8 @@ export function ReplyComposer({
         setText={s.setText}
         placeholder={ASK_WHAT}
         label="Reply"
-        canSend={!s.busy && s.text.trim() !== ''}
+        attach={attach}
+        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: true })}
         send={() => void s.go(false)}
         autoFocus={false}
         tone={tone}
@@ -231,6 +248,7 @@ function Box({
   setText,
   placeholder,
   label,
+  attach,
   canSend,
   send,
   autoFocus,
@@ -241,6 +259,7 @@ function Box({
   readonly setText: (text: string) => void
   readonly placeholder: string
   readonly label: string
+  readonly attach: AttachControls
   readonly canSend: boolean
   readonly send: () => void
   readonly autoFocus: boolean
@@ -248,14 +267,34 @@ function Box({
   readonly tone?: string | undefined
   readonly children?: ComponentChildren
 }) {
+  const [dropping, setDropping] = useState(false)
+  const classes = ['composer', tone, dropping ? 's-dropping' : undefined].filter((c) => c !== undefined).join(' ')
   return (
     <div class="s-composer">
       <Suggestions />
+      <Chips attach={attach} />
       <form
-        class={tone === undefined ? 'composer' : `composer ${tone}`}
+        class={classes}
         onSubmit={(event) => {
           event.preventDefault()
           if (canSend) send()
+        }}
+        // A file from Finder dropped ON THE BOX (the brief: only here, not the whole window).
+        onDragOver={(event) => {
+          if (!event.dataTransfer?.types.includes('Files')) return
+          event.preventDefault()
+          setDropping(true)
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+          setDropping(false)
+        }}
+        onDrop={(event) => {
+          if (event.dataTransfer === null || !event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          setDropping(false)
+          if (dropsFolder(event.dataTransfer)) return attach.refuse('Folders cannot be attached. Drop the files inside it instead.')
+          attach.add(Array.from(event.dataTransfer.files))
         }}
       >
         <textarea
@@ -265,6 +304,14 @@ function Box({
           aria-label={placeholder}
           autoFocus={autoFocus}
           onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
+          // A screenshot on the clipboard is attached; text is pasted as it always was (criterion 15).
+          // A copy from a spreadsheet carries BOTH its text and a picture of it: that is text.
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData?.files ?? [])
+            if (files.length === 0 || (event.clipboardData?.getData('text/plain') ?? '') !== '') return
+            event.preventDefault()
+            attach.add(files)
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
             const sends = event.metaKey || event.ctrlKey || window.matchMedia(FINE_POINTER).matches
@@ -273,9 +320,7 @@ function Box({
             if (canSend) send()
           }}
         />
-        <button type="button" class="s-plus" aria-label="Attach files (coming soon)" title="Coming soon" disabled>
-          <Icon name="plus" size={18} />
-        </button>
+        <AttachButton attach={attach} />
         <span class="s-sep" aria-hidden="true" />
         {children}
         <button type="submit" class="send" aria-label={label} disabled={!canSend}>

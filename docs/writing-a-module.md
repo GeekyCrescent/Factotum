@@ -93,8 +93,8 @@ routes: (ctx) => ({
 - The path is **relative**: the kernel serves it at `/modules/<id>/items`.
 - **`req.params` is already URL-decoded.** Ids in a path are real things — an email
   address, a name with a space — and you would remember to decode them exactly once.
-- **`req.body` is parsed JSON**, capped at 1 MB by the kernel. Binary bodies do not
-  fit this contract yet: you cannot upload or serve a file. That is a known gap.
+- **`req.body` is parsed JSON**, capped at 1 MB by the kernel. For a file, see
+  *Receiving and serving a file* below.
 - **Literal segments beat parameters.** `GET /items/new` wins over `GET /items/:id`
   no matter which order you wrote them in.
 - **Two parameters with the same name abort startup.** Name them
@@ -102,6 +102,36 @@ routes: (ctx) => ({
 - If you throw, the client gets a generic 500. **Your exception message is not
   forwarded** — it could carry a path or a credential. Return a `ModuleResponse` for
   anything you want the user to read.
+
+### Receiving and serving a file
+
+An upload is a kind of route, and a file is a kind of response
+([ADR-0012](adr/0012-binary-bodies-as-a-route-kind.md)). You never see the stream.
+
+```ts
+import { uploadRoute } from '@factotum/core'
+
+routes: (ctx) => ({
+  'POST /photos': uploadRoute(10 * 1024 * 1024, async (req) => {
+    if (req.file === undefined) return { status: 400 }
+    const kept = join(ctx.stateDir, 'photos', randomName())
+    await rename(req.file.path, kept)          // keep it: same disk, atomic
+    return { status: 201, body: { bytes: req.file.bytes } }
+  }),
+  'GET /photos/:name': (req) => ({ status: 200, file: join(ctx.stateDir, 'photos', req.params.name) }),
+})
+```
+
+- The body is the raw bytes of **one** file; anything else travels in the query.
+- `req.file.path` is inside `<stateDir>/.incoming/`, named by the kernel. **Whatever you do not
+  move away is deleted** when your handler returns — or throws.
+- The ceiling is yours, up to `MAX_UPLOAD_BYTES` (32 MiB); more aborts startup. Over it, the
+  client gets a 413 or a cut connection, and nothing reaches the disk.
+- `file` in a response must be an absolute path inside your `stateDir`, and **not** a symlink.
+  The kernel ignores your `body` and `headers` for it: PNG, JPEG, GIF and WebP (by their bytes,
+  not their name) are shown inline, everything else is a sandboxed download.
+- A name that came from the network never forms a path unchecked. Sanitise it to a closed
+  alphabet first — the sessions module refuses a separator rather than cleaning it.
 
 ## Background work
 

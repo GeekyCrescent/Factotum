@@ -115,6 +115,27 @@ five seconds.
   directory of its own, with none of your settings, hooks or MCP servers, and leaves no
   conversation in your `claude` history.
 
+### Attachments
+
+Drop a file on the box, paste a screenshot, or tap `+` (on a phone: photos and files, or the
+camera). It is uploaded at once to
+`~/.factotum/<env>/modules/sessions/uploads/<id>/<name>`, and when you send, its path goes at the
+end of your message as an `@<path>` line — which is how the agent reads it. Up to five per
+message and 20 MB each; any kind of file.
+
+- **The agent reads it like any file.** Reading needs no approval, so an attachment never raises
+  an ask, even though it lives outside the project's folder.
+- **Your message is the record.** The log shows a thumbnail or a chip in place of the path, but
+  what was attached is exactly the `@<path>` lines you sent.
+- **Deleting a conversation deletes the files you sent in it** — from the history, with its
+  project, or with a removed project's leftovers. Not the ones its agent only read, and not
+  through a symlink. **Archiving deletes nothing.** If you copied a path into another
+  conversation, it breaks when the first is deleted: there is no trash.
+- **What is never deleted:** a file you attached and then did not send. It stays under
+  `uploads/`.
+- A state folder whose path has a space in it cannot carry a reference, so attaching is off
+  there, and the box says why.
+
 ---
 
 ## What "may write here" means, precisely

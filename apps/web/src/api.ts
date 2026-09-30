@@ -35,49 +35,85 @@ export async function fetchModules(): Promise<ModulesResult> {
 export interface ModuleApi {
   get: <T>(path: string) => Promise<T>
   post: <T>(path: string, body?: unknown) => Promise<T>
+  /**
+   * The raw bytes of ONE file, to one of this module's upload routes (spec 2026-10-01, D10). The name
+   * and anything else travel in the query; the body is the file itself, never JSON.
+   */
+  upload: <T>(path: string, file: Blob, query: Readonly<Record<string, string>>) => Promise<T>
+}
+
+/**
+ * What a response carries, WITHOUT ASSUMING IT IS JSON (spec 2026-10-01, D10).
+ *
+ * `response.json()` used to be called on everything. With the daemon down, `tailscale serve` answers
+ * 502 in plain text, and that threw a `SyntaxError` with no status — so a screen could not tell "the
+ * daemon is not there" from anything else. JSON is parsed only when it says it is JSON and has a body
+ * (`send` in the kernel writes an empty body for `body: undefined`).
+ *
+ * THE BODY TRAVELS WITH THE ERROR. It used to be thrown away, which was fine while every failure was
+ * just a message — and stops being fine the moment a server says "that site is busy, here is the
+ * session that has it" and the screen has to be able to offer to go there.
+ *
+ * PROPERTIES ON AN ORDINARY `Error`, NOT AN EXPORTED CLASS, and that is the decision rather than the
+ * shortcut. A class is a value at runtime, so reading it with `instanceof` would force a module's
+ * screen to import from `apps/web/` — and CLAUDE.md §1 says a module depends on `packages/core` and
+ * only on core. Read structurally instead, the way `modules/example/client.tsx` already declares the
+ * api it is handed.
+ */
+export async function readResponse<T>(response: Response): Promise<T> {
+  const type = response.headers.get('content-type') ?? ''
+  const text = await response.text()
+  let body: unknown
+  if (type.includes('json') && text.trim() !== '') {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = undefined
+    }
+  }
+  if (!response.ok) {
+    const message = (body as { error?: { message?: unknown } } | undefined)?.error?.message
+    throw Object.assign(new Error(typeof message === 'string' ? message : `${response.status}`), {
+      status: response.status,
+      body,
+    })
+  }
+  return body as T
+}
+
+/** A request that never got an answer — no network, or a connection cut on a refusal. Status 0. */
+function unreachable(cause: unknown): Error {
+  return Object.assign(new Error(cause instanceof Error ? cause.message : 'could not reach the daemon'), { status: 0, body: undefined })
 }
 
 export function moduleApi(id: string): ModuleApi {
   const base = `/modules/${id}/`
+  const url = (path: string): string => base + path.replace(/^\//, '')
 
-  const request = async <T>(path: string, init: RequestInit): Promise<T> => {
-    const response = await fetch(base + path.replace(/^\//, ''), {
-      ...init,
-      headers: { 'content-type': 'application/json', ...init.headers },
-    })
-    const body = (await response.json()) as T & { error?: { message: string } }
-    if (!response.ok) {
-      // THE BODY TRAVELS WITH THE ERROR. It used to be thrown away, which was fine
-      // while every failure was just a message — and stops being fine the moment a
-      // server says "that site is busy, here is the session that has it" and the
-      // screen has to be able to offer to go there.
-      //
-      // PROPERTIES ON AN ORDINARY `Error`, NOT AN EXPORTED CLASS, and that is the
-      // decision rather than the shortcut. A class is a value at runtime, so reading
-      // it with `instanceof` would force a module's screen to import from `apps/web/`
-      // — and CLAUDE.md §1 says a module depends on `packages/core` and only on core.
-      // Read structurally instead, the way `modules/example/client.tsx` already
-      // declares the api it is handed.
-      //
-      // This does not grow `ModuleApi`: it still has `get` and `post`, and no module
-      // gains a new way to talk to the kernel. What changes is that an error stops
-      // discarding what the server sent to explain it — which is a fix for every
-      // module, not a favour to one.
-      throw Object.assign(new Error(body.error?.message ?? `${response.status}`), {
-        status: response.status,
-        body,
-      })
+  const send = async <T>(path: string, init: RequestInit): Promise<T> => {
+    let response: Response
+    try {
+      response = await fetch(url(path), init)
+    } catch (cause) {
+      throw unreachable(cause)
     }
-    return body
+    return await readResponse<T>(response)
   }
 
+  const json = (init: RequestInit): RequestInit => ({ ...init, headers: { 'content-type': 'application/json', ...init.headers } })
+
   return {
-    get: (path) => request(path, { method: 'GET' }),
+    get: (path) => send(path, json({ method: 'GET' })),
     // The body is ADDED, not set to `undefined`. With `exactOptionalPropertyTypes` a
     // `body: undefined` is not assignable to `RequestInit` — which had been a type error here
     // for as long as nothing type-checked `apps/web` (the root tsconfig does not reference it).
     post: (path, body) =>
-      request(path, body === undefined ? { method: 'POST' } : { method: 'POST', body: JSON.stringify(body) }),
+      send(path, json(body === undefined ? { method: 'POST' } : { method: 'POST', body: JSON.stringify(body) })),
+    // ONE MORE METHOD, and still only this module's own prefix: `base` is `/modules/<id>/` exactly as
+    // for `get` and `post`, so no module gains a way to reach another module or the kernel. What is
+    // new is the body — the file's bytes, with no JSON content type — not the way (spec 2026-10-01,
+    // D10, which amends the note below that said this interface does not grow).
+    upload: (path, file, query) => send(`${path}?${new URLSearchParams(query).toString()}`, { method: 'POST', body: file }),
   }
 }
 
@@ -86,8 +122,9 @@ export function moduleApi(id: string): ModuleApi {
 // ---------------------------------------------------------------------------
 
 /**
- * Two kernel-level calls, and `ModuleApi` does NOT grow: no module gains a new way to reach the
- * kernel. They exist because the subscription is the shell's, not any screen's (ADR-0008).
+ * Two kernel-level calls, and `ModuleApi` does NOT grow for them: no module gains a new way to reach
+ * the kernel. They exist because the subscription is the shell's, not any screen's (ADR-0008).
+ * (`ModuleApi.upload` did grow it by one — to the module's own prefix; see above.)
  */
 export async function fetchPushPublicKey(): Promise<
   { readonly ok: true; readonly publicKey: string } | { readonly ok: false; readonly message: string }

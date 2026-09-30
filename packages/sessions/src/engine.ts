@@ -10,9 +10,9 @@
  * can read. So every check that touches the disk lives here, below `start()`.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import type { Logger, NotificationMessage } from '@factotum/core'
+import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
 import { uuidv7 } from './id.ts'
@@ -30,8 +30,10 @@ import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
 import type { DiskProbe, Site } from './sites.ts'
-import { SessionStore } from './store.ts'
+import { SessionStore, type RemoveOutcome } from './store.ts'
 import { createTitler } from './titler/index.ts'
+import { ownerUploadIds, promptOf, stripRefs } from './uploads/refs.ts'
+import { createUploadStore } from './uploads/store.ts'
 import type {
   EngineSetup,
   EngineSetupView,
@@ -113,6 +115,45 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   await store.ensureRoots()
 
   const live = new Map<string, Live>()
+  const isLive = (id: string): boolean => live.has(id)
+
+  // What the owner attaches (spec 2026-10-01, D5). BEFORE the parts: deleting a conversation, which
+  // they are handed, deletes its uploads too.
+  const uploads = createUploadStore({
+    root: paths.uploads,
+    maxBytes: setup.uploadMaxBytes ?? MAX_UPLOAD_BYTES,
+    now: setup.now,
+    log,
+  })
+
+  /**
+   * The uploads a conversation's OWNER sent in it — never a path its agent read or quoted (D6). An
+   * empty list at the first doubt: a directory that is a link is not read through, the same thing
+   * `store.remove` refuses to follow.
+   */
+  async function ownerUploadsOf(id: string): Promise<readonly string[]> {
+    if (!isSessionId(id)) return []
+    try {
+      if ((await lstat(store.sessionDir(id))).isSymbolicLink()) return []
+      const page = await store.read(id, 0)
+      return ownerUploadIds(page.events, uploads.root)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * THE ONE WAY A CONVERSATION IS DELETED (D6): the history, a removed project and a removed project's
+   * leftovers all come through here. The events are read in `store.read`'s own turn, before
+   * `store.remove` takes its: a conversation that may be deleted is not live, so nothing writes to its
+   * log in between — and a reply that starts in between makes `remove` answer `running`.
+   */
+  async function removeConversation(id: string): Promise<RemoveOutcome> {
+    const owned = await ownerUploadsOf(id)
+    const outcome = await store.remove(id, isLive)
+    if (outcome === 'removed') await uploads.forget(owned)
+    return outcome
+  }
 
   // The projects, the history index and the folder requests (spec 2026-09-29), composed in
   // `parts.ts`. A folder that is not there no longer disables the module: it fails alone (ADR-0011).
@@ -120,8 +161,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     store,
     locks,
     liveCount: () => live.size,
-    isLive: (id) => live.has(id),
+    isLive,
     removing: REMOVING,
+    removeConversation,
   })
 
   // The titler (spec 2026-09-30, D7). Handed ONE function that writes, never the store: it cannot
@@ -365,7 +407,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // So resuming can tell the site moved under the same id (criterion 33).
         sitePath: site.path,
         // So the drawer can tell sessions apart without reading their logs (spec D8d).
-        prompt: input.text.slice(0, PROMPT_CHARS),
+        // The words, or the names of the files when there are none — never a path (spec 2026-10-01, D7).
+        prompt: promptOf(input.text, uploads.root).slice(0, PROMPT_CHARS),
       })
 
       if (site.isRepo && input.force) {
@@ -390,7 +433,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // AFTER the hand-over: before it, a failure would leave nothing to title. Not awaited, and it
       // cannot throw (titler/index.ts), so a started conversation stays started. `reply` never
       // titles, and neither does `reconcile` (criteria 13, 14).
-      titler.start(sessionId, input.text)
+      // Without the reference lines: a path is not what a conversation is about, and a message of
+      // files alone leaves nothing, which the titler does not title (spec 2026-10-01, D7).
+      titler.start(sessionId, stripRefs(input.text, uploads.root))
       return { outcome: 'started', sessionId }
     } finally {
       if (!handedOver) await locks.release(input.siteId)
@@ -691,6 +736,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         label: entry.label,
         disabledReason: entry.disabledReason,
       })),
+      uploads: uploads.view,
     }
   }
 
@@ -764,7 +810,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     rename: history.rename,
     archive: history.archive,
     remove: history.remove,
-    search: async (query) => await searchHistory({ index, store, table, ensureIndex }, query),
+    search: async (query) => await searchHistory({ index, store, table, ensureIndex, uploadsRoot: uploads.root }, query),
+    upload: unlessStopped(uploads.adopt),
+    openUpload: uploads.locate,
     projects: history.projects,
     requestProject: unlessStopped(folders.requestProject),
     requestShared: unlessStopped(folders.requestShared),

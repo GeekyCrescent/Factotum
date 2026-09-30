@@ -242,6 +242,7 @@ function Live({
         {running ? null : (
           <ReplyComposer
             api={api}
+            setup={setup}
             sessionId={id}
             project={summary === undefined ? undefined : { id: summary.siteId, label: project?.name ?? summary.siteId, color: project?.color }}
             onSent={restart}

@@ -8,16 +8,22 @@
 
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
+  DRAIN_MAX_BYTES,
   errorBody,
+  isUploadRoute,
   MAX_BODY_BYTES,
   type Environment,
   type ErrorCode,
   type ModuleResponse,
 } from '@factotum/core'
+import { rm } from 'node:fs/promises'
+import { refuseTooLarge } from './body.ts'
+import { sendFile } from './serve-file.ts'
+import { readUploadBody } from './upload.ts'
 import { describePolicy, originAllowed, type OriginPolicy } from '../net/origin.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import { isSameMachine, sourceIpOf } from '../net/same-machine.ts'
-import type { Registry } from '../modules/registry.ts'
+import { Registry, type Resolved } from '../modules/registry.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
 
@@ -170,27 +176,82 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
   const moduleRoute = /^\/modules\/([^/]+)(\/.*)?$/.exec(path)
   if (moduleRoute !== null) {
     const [, id, rest] = moduleRoute as unknown as [string, string, string | undefined]
-
-    const read = await readBodyOrAnswer(req, res)
-    if (!read.ok) return
-    const body = read.body
-
-    let response: ModuleResponse | undefined
-    try {
-      response = await deps.registry.dispatch(id, method, rest ?? '/', url.searchParams, body)
-    } catch {
-      // A module's exception message never reaches the client: it can carry paths,
-      // credentials, or anything else the module happened to interpolate.
-      return sendError(res, 500, 'module-error', `module "${id}" failed to handle this request`)
-    }
-
-    if (response === undefined) {
-      return sendError(res, 404, 'not-found', `no module "${id}" is running`)
-    }
-    return send(res, response)
+    return await handleModule(req, res, deps, { id, method, path: rest ?? '/', query: url.searchParams })
   }
 
   return sendError(res, 404, 'not-found', `no route ${method} ${path}`)
+}
+
+/**
+ * The module branch (spec 2026-10-01, D2). THE ROUTE IS RESOLVED BEFORE THE BODY IS READ, because an
+ * upload route reads its body into a file and every other route reads JSON.
+ *
+ * For everything that is not an upload the order of answers is exactly what it was — JSON read
+ * first, so a 413 or a 400 still comes before a 404 or a 501 — and the tests written against the old
+ * code before this change (`server.test.ts`, "module branch") pass untouched.
+ */
+async function handleModule(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ServerDeps,
+  target: { readonly id: string; readonly method: string; readonly path: string; readonly query: URLSearchParams },
+): Promise<void> {
+  const { id, method, path, query } = target
+  const moduleFailed = () => sendError(res, 500, 'module-error', `module "${id}" failed to handle this request`)
+
+  // `resolve` can throw (a malformed `%` escape in a parameter). It used to throw inside `dispatch`,
+  // after the body was read, as a 500; it still ends there.
+  let resolved: Resolved | undefined
+  try {
+    resolved = deps.registry.resolve(id, method, path)
+  } catch {
+    resolved = undefined
+  }
+
+  if (resolved?.kind === 'route' && isUploadRoute(resolved.handler)) {
+    const file = await readUploadBody(req, res, resolved.stateDir, resolved.handler.upload.maxBytes)
+    if (file === undefined) return
+    let response: ModuleResponse | undefined
+    try {
+      response = await Registry.call(resolved, method, path, query, undefined, file)
+    } catch {
+      response = undefined
+    }
+    // What the handler did not move is not anybody's. Always, even when it threw — and BEFORE
+    // answering, so nothing the client can observe happens while the file is still there.
+    await rm(file.path, { force: true })
+    if (response === undefined) return moduleFailed()
+    return await respond(res, response, resolved.stateDir)
+  }
+
+  const read = await readBodyOrAnswer(req, res)
+  if (!read.ok) return
+
+  if (resolved === undefined) return moduleFailed()
+  switch (resolved.kind) {
+    case 'none':
+      return sendError(res, 404, 'not-found', `no module "${id}" is running`)
+    case 'disabled':
+    case 'no-route':
+      return send(res, resolved.response)
+    case 'route': {
+      let response: ModuleResponse
+      try {
+        response = await Registry.call(resolved, method, path, query, read.body)
+      } catch {
+        // A module's exception message never reaches the client: it can carry paths,
+        // credentials, or anything else the module happened to interpolate.
+        return moduleFailed()
+      }
+      return await respond(res, response, resolved.stateDir)
+    }
+  }
+}
+
+/** A file when the module named one — served by the kernel's rules, not the module's — else JSON. */
+async function respond(res: ServerResponse, response: ModuleResponse, stateDir: string): Promise<void> {
+  if (response.file !== undefined) return await sendFile(res, response.file, stateDir)
+  send(res, response)
 }
 
 /**
@@ -215,7 +276,7 @@ function normalizePath(pathname: string): string {
 /**
  * Reads the body, or answers 413 / 400 itself. THE BODY CAP LIVES HERE, ONCE.
  *
- * `readJsonBody` only throws `'too-large'`; the 413 with its drain and the 400 used to live
+ * `readJsonBody` only reports `'too-large'`; the 413 with its drain and the 400 used to live
  * inline in the module branch. A second branch that read bodies would have had to copy them —
  * and the header of this file says the body cap is one of the three things that must not be
  * decided in two places.
@@ -224,44 +285,45 @@ async function readBodyOrAnswer(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<{ readonly ok: true; readonly body: unknown } | { readonly ok: false }> {
-  try {
-    return { ok: true, body: await readJsonBody(req) }
-  } catch (error) {
-    if ((error as Error).message === 'too-large') {
-      await drain(req)
-      sendError(res, 413, 'body-too-large', `bodies are capped at ${MAX_BODY_BYTES} bytes`)
-      return { ok: false }
-    }
+  const read = await readJsonBody(req)
+  if (read.kind === 'too-large') {
+    refuseTooLarge(res, read.drained, `bodies are capped at ${MAX_BODY_BYTES} bytes`)
+    return { ok: false }
+  }
+  if (read.kind === 'invalid') {
     sendError(res, 400, 'invalid-request', 'the body is not valid JSON')
     return { ok: false }
   }
+  return { ok: true, body: read.body }
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  if (req.method === 'GET' || req.method === 'HEAD') return undefined
+type JsonRead =
+  | { readonly kind: 'ok'; readonly body: unknown }
+  | { readonly kind: 'invalid' }
+  /** `drained`: the whole body was read, so the client is listening for the answer. */
+  | { readonly kind: 'too-large'; readonly drained: boolean }
+
+/**
+ * NOTHING THROWS INSIDE THE LOOP. It used to: a `throw` out of `for await` destroys the request, and
+ * the drain that followed then waited on a dead stream — a 413 of 2 MB took six seconds to arrive
+ * (spec 2026-10-01, B0). Past the cap it keeps reading and discarding, up to DRAIN_MAX_BYTES.
+ */
+async function readJsonBody(req: IncomingMessage): Promise<JsonRead> {
+  if (req.method === 'GET' || req.method === 'HEAD') return { kind: 'ok', body: undefined }
 
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > MAX_BODY_BYTES) throw new Error('too-large')
-    chunks.push(chunk as Buffer)
+    if (size > MAX_BODY_BYTES + DRAIN_MAX_BYTES) return { kind: 'too-large', drained: false }
+    if (size <= MAX_BODY_BYTES) chunks.push(chunk as Buffer)
   }
-  if (size === 0) return undefined
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
-
-/**
- * Drained before answering 413. Without it the socket is destroyed mid-upload and
- * the client never gets to read the error it caused.
- */
-async function drain(req: IncomingMessage): Promise<void> {
+  if (size > MAX_BODY_BYTES) return { kind: 'too-large', drained: true }
+  if (size === 0) return { kind: 'ok', body: undefined }
   try {
-    for await (const _chunk of req) {
-      // discard
-    }
+    return { kind: 'ok', body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }
   } catch {
-    // The client went away; nothing to do.
+    return { kind: 'invalid' }
   }
 }
 

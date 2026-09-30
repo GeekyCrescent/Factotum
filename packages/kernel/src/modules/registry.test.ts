@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AnyModule, ModuleContext, NotificationMessage } from '@factotum/core'
 import type { ComposedModule } from '../config/load.ts'
-import { statePaths } from '../config/paths.ts'
+import { incomingDir, moduleStateDir, statePaths } from '../config/paths.ts'
 import { Registry } from './registry.ts'
 
 /** What the registry was asked to send, and on behalf of whom. */
@@ -271,4 +271,55 @@ test('canReach is the push service answering, not a value frozen at composition'
   assert.equal(seen?.notify.canReach(), false)
   reachable = true // a device subscribed after boot
   assert.equal(seen?.notify.canReach(), true)
+})
+
+// ---------------------------------------------------------------------------
+// resolve() and the upload directory (spec 2026-10-01, D2)
+// ---------------------------------------------------------------------------
+
+test('resolve names the handler and the module directory, without calling anything', async () => {
+  let called = 0
+  const d = await deps()
+  const registry = await Registry.create(
+    [enabled({ id: 'example', routes: () => ({ 'POST /things/:id': () => ((called += 1), { status: 200 }) }) })],
+    d,
+  )
+
+  const resolved = registry.resolve('example', 'POST', '/things/a%20b')
+  assert.equal(resolved.kind, 'route')
+  if (resolved.kind !== 'route') return
+  assert.deepEqual(resolved.params, { id: 'a b' })
+  assert.equal(resolved.stateDir, moduleStateDir(d.paths, 'example'))
+  assert.equal(called, 0)
+  assert.deepEqual(await Registry.call(resolved, 'POST', '/things/a%20b', query, undefined, { path: '/tmp/f', bytes: 1 }), { status: 200 })
+  assert.equal(called, 1)
+})
+
+test('resolve: no module, a disabled one, and no route are told apart with the same bodies as dispatch', async () => {
+  const registry = await Registry.create(
+    [enabled({ id: 'example', routes: () => ({ 'GET /ping': () => ({ status: 200 }) }) }), disabled({ id: 'broken' }, 'bad config')],
+    await deps(),
+  )
+  assert.deepEqual(registry.resolve('ghost', 'GET', '/'), { kind: 'none' })
+  const off = registry.resolve('broken', 'GET', '/')
+  assert.equal(off.kind, 'disabled')
+  assert.deepEqual(off.kind === 'disabled' ? off.response : undefined, await registry.dispatch('broken', 'GET', '/', query, undefined))
+  const nope = registry.resolve('example', 'GET', '/nope')
+  assert.equal(nope.kind, 'no-route')
+  assert.equal(nope.kind === 'no-route' ? nope.response.status : 0, 404)
+})
+
+test('resolve throws where a malformed escape throws, so the server can keep it in its try', async () => {
+  const registry = await Registry.create([enabled({ id: 'example', routes: () => ({ 'GET /x/:id': () => ({ status: 200 }) }) })], await deps())
+  assert.throws(() => registry.resolve('example', 'GET', '/x/%E0%A4%A'), URIError)
+})
+
+test('what an upload left half-written in .incoming/ is gone when the registry is built again', async () => {
+  const d = await deps()
+  const leftover = incomingDir(moduleStateDir(d.paths, 'example'))
+  await mkdir(leftover, { recursive: true })
+  await writeFile(`${leftover}/dead.part`, 'half a photo')
+
+  await Registry.create([enabled({ id: 'example' })], d)
+  await assert.rejects(readdir(leftover), { code: 'ENOENT' })
 })

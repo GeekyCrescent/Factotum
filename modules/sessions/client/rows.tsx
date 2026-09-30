@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { SessionEvent } from '../types.ts'
 import { activity, type Activity, type Shown } from './activity.ts'
+import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
 import { fold, type Call } from './fold.ts'
 import { clock, toolArg } from './format.ts'
 import { Icon } from './icon.tsx'
@@ -53,7 +54,7 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
       // The owner's words: a bubble on the right, as typed. The agent's: the page itself, as Markdown.
       return row.role === 'user' ? (
         <li class="s-user">
-          <div class="s-msg">{row.text}</div>
+          <OwnerMessage text={row.text} />
         </li>
       ) : (
         <li class="s-row s-said">
@@ -75,6 +76,57 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
     case 'activity':
       return <ActivityRow row={row} />
   }
+}
+
+/**
+ * The owner's words as typed, with every attached file shown as what it is instead of its path — a
+ * thumbnail for a picture, a chip for anything else (spec 2026-10-01, D11). The text is still the
+ * record: this only reads the `@<path>` lines back out of it.
+ */
+function OwnerMessage({ text }: { readonly text: string }) {
+  const pieces = splitRefs(text)
+  if (!pieces.some((piece) => piece.kind === 'ref')) return <div class="s-msg">{text}</div>
+  const words = pieces.filter((piece) => piece.kind === 'text')
+  const files = pieces.filter((piece): piece is Extract<Piece, { kind: 'ref' }> => piece.kind === 'ref')
+  return (
+    <div class="s-user-body">
+      {words.map((piece, i) => (
+        <div key={i} class="s-msg">
+          {piece.text}
+        </div>
+      ))}
+      <ul class="s-sent-files" aria-label="Attached files">
+        {files.map((file, i) => (
+          <li key={`${file.uploadId}-${i}`}>
+            <SentFile uploadId={file.uploadId} name={file.name} image={file.image} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * A picture tries to paint; if it cannot — deleted, no network, a `.png` that is not one and so is
+ * served as a download — it becomes the plain chip. The chip NEVER SAYS WHY: an `<img>` cannot tell a
+ * 404 from a 503, so it does not pretend to (criterion 31).
+ */
+function SentFile({ uploadId, name, image }: { readonly uploadId: string; readonly name: string; readonly image: boolean }) {
+  const [broken, setBroken] = useState(false)
+  const href = uploadUrl(uploadId, name)
+  if (image && !broken) {
+    return (
+      <a class="s-sent-thumb" href={href} target="_blank" rel="noopener">
+        <img src={href} alt={name} loading="lazy" onError={() => setBroken(true)} />
+      </a>
+    )
+  }
+  return (
+    <a class="s-sent-file" href={href} target="_blank" rel="noopener" download={name}>
+      <Icon name="file-text" size={16} />
+      <span>{name}</span>
+    </a>
+  )
 }
 
 /** How long "Copied" stays before it goes back to "Copy". */

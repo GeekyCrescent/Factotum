@@ -18,10 +18,23 @@ export type {
   ErrorCode,
   ModuleRequest,
   ModuleResponse,
+  ReceivedFile,
   RouteHandler,
   RouteTable,
+  UploadRoute,
+  UploadSpec,
 } from './http.ts'
-export { ERROR_CODES, errorBody, MAX_BODY_BYTES } from './http.ts'
+export {
+  DRAIN_MAX_BYTES,
+  ERROR_CODES,
+  errorBody,
+  isUploadRoute,
+  MAX_BODY_BYTES,
+  MAX_UPLOAD_BYTES,
+  uploadRoute,
+} from './http.ts'
+export type { RasterType } from './sniff.ts'
+export { rasterTypeOf, SNIFF_BYTES } from './sniff.ts'
 export type { Environment } from './env.ts'
 export { DEFAULT_ENVIRONMENT, ENVIRONMENTS, isEnvironment } from './env.ts'
 export type { ListenConfig, ModuleEntry, RootConfig } from './config.ts'
