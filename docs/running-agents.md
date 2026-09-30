@@ -90,6 +90,31 @@ paid for: without it, every reply re-invokes the whole skill and treats your ans
 a brand new brief. It also means a follow-up can start with its own `/command` and the
 agent will run it with the previous turn's context.
 
+### Titles
+
+When a conversation starts, factotum asks `claude` — separately, in the background — for a
+title of three to six words from your first message, in the language you wrote it in. Until
+it arrives, or if it never does, the conversation is named by that message's first line.
+
+```json
+"sessions": {
+  "titles": { "enabled": true, "model": "haiku", "effort": "low" }
+}
+```
+
+All three have those defaults, so a config without `titles` titles with Haiku. `"enabled":
+false` turns it off. Each title is one short call on your subscription, measured at about
+five seconds.
+
+- **Your own name always wins.** Renaming a conversation never loses its automatic title,
+  and emptying the rename field goes back to it.
+- **Only new conversations.** Nothing is titled at startup, on a reply, or twice.
+- **No retries.** A title that fails — quota, timeout, a message like "hi" that says
+  nothing — leaves the first line. Rename it if you want another.
+- **What the titler can touch: nothing.** It runs with no tools at all, in an empty
+  directory of its own, with none of your settings, hooks or MCP servers, and leaves no
+  conversation in your `claude` history.
+
 ---
 
 ## What "may write here" means, precisely
@@ -189,7 +214,9 @@ share your tailnet, this is the paragraph that matters.
 - **Cancelling kills the whole process group**, not just the `claude` process. It
   usually has a dozen descendants — MCP servers and their runtimes — and killing only
   the child would leave every one of them running.
-- **No flag anywhere skips the permission gate.** There is a `grep` that checks.
+- **Every agent that can use a tool goes through the permission gate.** The one `claude`
+  factotum starts without the gate's hook is the titler, and it runs with `--tools ""`: it
+  has no tool to ask about.
 
 ---
 
