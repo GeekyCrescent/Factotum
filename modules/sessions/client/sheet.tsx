@@ -22,7 +22,9 @@ export function Sheet({
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
-    heading.current?.focus()
+    // A field that asks for focus gets it — typing is why the sheet opened; otherwise the title.
+    const field = heading.current?.closest('.sheet')?.querySelector<HTMLElement>('[autofocus]')
+    ;(field ?? heading.current)?.focus()
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
     }

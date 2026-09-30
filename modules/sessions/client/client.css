@@ -1676,3 +1676,35 @@
     white-space: nowrap;
   }
 }
+
+/* --- Spec 2026-09-30: the rename dialog: whose it is, a counter, help under the field --- */
+
+.s-dialog-context {
+  margin-top: calc(-1 * var(--space-2));
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+.s-dialog-context .icon {
+  color: var(--project, var(--text-3));
+}
+
+.s-field-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.s-counter {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.s-counter-full {
+  color: var(--ask);
+}

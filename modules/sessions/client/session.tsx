@@ -198,7 +198,7 @@ function Live({
           </button>
         )}
         {summary === undefined ? null : (
-          <ConversationMenu api={api} summary={summary} running={running} onChanged={onChanged} onDeleted={() => {
+          <ConversationMenu api={api} summary={summary} projectLabel={project?.name ?? summary.siteId} running={running} onChanged={onChanged} onDeleted={() => {
             onChanged()
             view.navigate('new')
           }} />

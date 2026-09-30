@@ -23,12 +23,14 @@ type Open = 'menu' | 'rename' | 'delete'
 export function ConversationMenu({
   api,
   summary,
+  projectLabel,
   running,
   onChanged,
   onDeleted,
 }: {
   readonly api: Api
   readonly summary: SessionSummary
+  readonly projectLabel: string | undefined
   readonly running: boolean
   readonly onChanged: () => void
   readonly onDeleted: () => void
@@ -87,7 +89,7 @@ export function ConversationMenu({
       {open === 'rename' || open === 'delete' ? (
         <ConversationSheet
           api={api}
-          target={{ id: summary.id, title: summary.title ?? nameOf(summary) }}
+          target={{ id: summary.id, title: summary.title ?? nameOf(summary), project: projectLabel }}
           kind={open}
           onClose={close}
           onDone={open === 'delete' ? onDeleted : onChanged}
@@ -101,6 +103,8 @@ export function ConversationMenu({
 export interface SheetTarget {
   readonly id: string
   readonly title: string
+  /** Whose conversation it is, said under the dialog's title. */
+  readonly project?: string | undefined
 }
 
 /**
@@ -121,6 +125,8 @@ export function ConversationSheet({
   readonly onDone: () => void
 }) {
   const [title, setTitle] = useState(target.title)
+  // Nothing to save when it is empty, or when it says what it already said.
+  const canSave = title.trim() !== '' && title.trim() !== target.title.trim()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const act = async (work: () => Promise<unknown>) => {
@@ -158,24 +164,45 @@ export function ConversationSheet({
     )
   }
   return (
-    <Sheet id="s-rename-title" title="Rename" onClose={onClose}>
+    <Sheet id="s-rename-title" title="Rename conversation" onClose={onClose}>
       <form
+        class="s-dialog"
         onSubmit={(event) => {
           event.preventDefault()
-          if (title.trim() !== '') void act(() => api.post(`sessions/${target.id}/title`, { title }))
+          if (canSave) void act(() => api.post(`sessions/${target.id}/title`, { title }))
         }}
       >
+        {target.project === undefined ? null : (
+          <p class="s-dialog-context">
+            <Icon name="folder-simple" size={14} />
+            {target.project}
+          </p>
+        )}
         <label class="s-field">
-          <span>Title</span>
-          <input class="s-input" value={title} maxLength={TITLE_MAX} autoFocus onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+          <span class="s-field-row">
+            Title
+            <span class={`num s-counter${title.length >= TITLE_MAX ? ' s-counter-full' : ''}`}>
+              {title.length}/{TITLE_MAX}
+            </span>
+          </span>
+          <input
+            class="s-input"
+            value={title}
+            maxLength={TITLE_MAX}
+            autoFocus
+            // The whole title selected: typing replaces it, an arrow key keeps it.
+            onFocus={(e) => (e.target as HTMLInputElement).select()}
+            onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+          />
+          <small>Shown in the drawer and at the top of the conversation.</small>
         </label>
         {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
-        <div class="s-choice">
-          <button type="button" class="btn decide" onClick={onClose}>
+        <div class="s-dialog-acts">
+          <button type="button" class="btn" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" class="btn decide primary" disabled={busy || title.trim() === ''}>
-            Save
+          <button type="submit" class="btn primary" disabled={busy || !canSave}>
+            {busy ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

@@ -291,7 +291,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
       {acting === undefined ? null : (
         <ConversationSheet
           api={api}
-          target={{ id: acting.entry.id, title: acting.entry.title }}
+          target={{ id: acting.entry.id, title: acting.entry.title, project: acting.entry.siteLabel }}
           kind={acting.kind}
           onClose={() => setActing(undefined)}
           onDone={() => {
