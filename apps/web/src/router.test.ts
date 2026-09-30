@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 import { historyStep, locationOf, navigateTarget, onLoad, overlayOf, pathOf, screenOf, type HistoryState } from './router.ts'
 
 test('screenOf and pathOf are inverse on every valid screen', () => {
-  for (const path of ['/', '/device', '/m/sessions', '/m/sessions/new', '/m/sessions/019a-bc', '/m/x/a/b']) {
+  for (const path of ['/', '/settings', '/m/sessions', '/m/sessions/new', '/m/sessions/019a-bc', '/m/x/a/b']) {
     assert.equal(pathOf(screenOf(path)), path, path)
   }
+})
+
+test('/device, the old address of the settings page, still leads there', () => {
+  assert.deepEqual(screenOf('/device'), { kind: 'settings' })
+  assert.deepEqual(screenOf('/settings/'), { kind: 'settings' })
 })
 
 test('a module screen carries its id and what follows it', () => {

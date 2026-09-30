@@ -2,7 +2,7 @@
  * The drawer: the shell's frame, and whatever each module puts in it (design D3).
  *
  * Head (factotum, ✕), then the `Drawer` of every ENABLED module that declares one, in `nav.order`,
- * and at the foot every module with its `nav.icon` and `nav.label`, plus Device. A disabled module
+ * and at the foot every module with its `nav.icon` and `nav.label`, plus Settings. A disabled module
  * stays at the foot, dimmed, with its reason. The shell knows none of them by name.
  *
  * Choosing anything REPLACES the drawer's history entry (design D4), so Back goes to where you
@@ -20,7 +20,7 @@ import { pathOf, type Screen } from './router.ts'
 
 export interface DrawerProps {
   readonly open: boolean
-  /** Already in `nav.order`. Empty while the daemon is starting or unreachable: only Device then. */
+  /** Already in `nav.order`. Empty while the daemon is starting or unreachable: only Settings then. */
   readonly modules: readonly ModuleSummary[]
   readonly screen: Screen
   readonly pending: readonly Pending[]
@@ -88,9 +88,9 @@ export function Drawer({ open, modules, screen, pending, onClose, onFold, select
               </a>
             )
           })}
-          <a href="/device" onClick={follow('/device')} aria-current={screen.kind === 'device' ? 'page' : undefined}>
-            <Icon name="device-mobile" />
-            Device
+          <a href="/settings" onClick={follow('/settings')} aria-current={screen.kind === 'settings' ? 'page' : undefined}>
+            <Icon name="gear-six" />
+            Settings
           </a>
         </nav>
       </aside>

@@ -15,9 +15,9 @@ import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
 import { fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
 import { CenterState, FallbackBar } from './bar.tsx'
-import { Device, PUSH_API, rememberPush } from './device.tsx'
+import { PUSH_API, rememberPush, Settings, type SettingsLink } from './device.tsx'
 import { Drawer } from './drawer.tsx'
-import type { ShellIcon } from './icons.ts'
+import { navIcon, type ShellIcon } from './icons.ts'
 import { apiFor, clientFor, type ModuleClient } from './modules.ts'
 import { landing, ordered } from './nav.ts'
 import { forModule } from './pending.ts'
@@ -78,8 +78,15 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
               Try again
             </button>
           </Page>
-        ) : route.screen.kind === 'device' ? (
-          <Device push={push.result} onPush={push.set} pendingTotal={pendings.all.length} openDrawer={openDrawer} />
+        ) : route.screen.kind === 'settings' ? (
+          <Settings
+            push={push.result}
+            onPush={push.set}
+            pendingTotal={pendings.all.length}
+            openDrawer={openDrawer}
+            links={settingsLinks(modules)}
+            go={route.go}
+          />
         ) : (
           <Screens screen={route.screen} modules={modules} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
         )}
@@ -96,7 +103,7 @@ function Screens({
   bar,
   openDrawer,
 }: {
-  readonly screen: Exclude<Screen, { kind: 'device' }>
+  readonly screen: Exclude<Screen, { kind: 'settings' }>
   readonly modules: readonly ModuleSummary[]
   readonly route: Route
   readonly pendings: Pendings
@@ -241,6 +248,21 @@ function Page({
         {children}
       </CenterState>
     </>
+  )
+}
+
+/** What each ENABLED module puts in Settings, in `nav.order`, grouped under its label. */
+function settingsLinks(modules: readonly ModuleSummary[]): readonly SettingsLink[] {
+  return modules.flatMap((module) =>
+    module.status.kind !== 'enabled'
+      ? []
+      : (clientFor(module.id)?.settings ?? []).map((setting) => ({
+          group: module.nav?.label ?? module.id,
+          label: setting.label,
+          description: setting.description,
+          icon: navIcon(setting.icon),
+          path: pathOf({ kind: 'module', id: module.id, rest: setting.rest }),
+        })),
   )
 }
 

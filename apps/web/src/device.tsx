@@ -1,5 +1,7 @@
 /**
- * Device: notifications for this browser, how many devices the machine holds, and the daemon.
+ * Settings: this device — notifications for this browser, how many devices the machine holds, and
+ * the daemon — and then what each module puts here (spec 2026-09-30), a row per screen of its own.
+ * The shell knows no module by name: it lists what `ModuleClient.settings` declares.
  *
  * THE PERMISSION IS REQUESTED FROM THE CLICK AND FROM NOWHERE ELSE. On load it only reads.
  *
@@ -15,6 +17,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { fetchPushPublicKey, postPushSubscription } from './api.ts'
 import { FallbackBar } from './bar.tsx'
 import { Icon } from './icon.tsx'
+import type { ShellIcon } from './icons.ts'
 import { writeSettings } from './pending-db.ts'
 import { enablePush, readPushState, type EnableResult, type PushApi, type PushState } from './push.ts'
 
@@ -32,12 +35,25 @@ export function rememberPush(result: EnableResult): void {
   if (result.sameMachine !== undefined) void writeSettings({ sameMachine: result.sameMachine })
 }
 
-export function Device({
+/** A module's row in Settings, already resolved to a path and an icon by the shell. */
+export interface SettingsLink {
+  readonly group: string
+  readonly label: string
+  readonly description: string | undefined
+  readonly icon: ShellIcon
+  readonly path: string
+}
+
+export function Settings({
   push,
   onPush,
   pendingTotal,
   openDrawer,
+  links,
+  go,
 }: {
+  readonly links: readonly SettingsLink[]
+  readonly go: (path: string) => void
   /** What the last subscription call said: the start-up re-post, or the button here. */
   readonly push: EnableResult | undefined
   readonly onPush: (result: EnableResult) => void
@@ -69,8 +85,34 @@ export function Device({
 
   return (
     <>
-      <FallbackBar title="This device" pendingTotal={pendingTotal} onMenu={openDrawer} />
+      <FallbackBar title="Settings" pendingTotal={pendingTotal} onMenu={openDrawer} />
       <div class="page">
+        {[...new Set(links.map((link) => link.group))].map((group) => (
+          <section key={group} class="page-section">
+            <h2 class="page-sect">{group}</h2>
+            <div class="group">
+              {links
+                .filter((link) => link.group === group)
+                .map((link) => (
+                  <a
+                    key={link.path}
+                    class="cell link"
+                    href={link.path}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      go(link.path)
+                    }}
+                  >
+                    <Icon name={link.icon} />
+                    <span class="k">{link.label}</span>
+                    <Icon name="caret-right" size={14} />
+                    {link.description === undefined ? null : <span class="v">{link.description}</span>}
+                  </a>
+                ))}
+            </div>
+          </section>
+        ))}
+        <h2 class="page-sect">This device</h2>
         <div class="group">
           <div class="cell">
             <Icon name="bell" />

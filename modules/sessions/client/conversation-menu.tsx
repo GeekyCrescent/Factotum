@@ -36,7 +36,6 @@ export function ConversationMenu({
   const [open, setOpen] = useState<Open | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
-  const [title, setTitle] = useState('')
   const close = () => {
     setOpen(undefined)
     setError(undefined)
@@ -64,14 +63,7 @@ export function ConversationMenu({
       {open === 'menu' ? (
         <Sheet id="s-conv-menu" title={nameOf(summary)} onClose={close}>
           <div class="s-menu">
-            <button
-              type="button"
-              class="s-menu-item"
-              onClick={() => {
-                setTitle(summary.title ?? nameOf(summary))
-                setOpen('rename')
-              }}
-            >
+            <button type="button" class="s-menu-item" onClick={() => setOpen('rename')}>
               <Icon name="pencil-simple" size={18} />
               Rename
             </button>
@@ -92,48 +84,101 @@ export function ConversationMenu({
           {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
         </Sheet>
       ) : null}
-      {open === 'rename' ? (
-        <Sheet id="s-rename-title" title="Rename" onClose={close}>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (title.trim() !== '') void act(() => api.post(`sessions/${summary.id}/title`, { title }), onChanged)
-            }}
-          >
-            <label class="s-field">
-              <span>Title</span>
-              <input class="s-input" value={title} maxLength={TITLE_MAX} autoFocus onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
-            </label>
-            {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
-            <div class="s-choice">
-              <button type="button" class="btn decide" onClick={close}>
-                Cancel
-              </button>
-              <button type="submit" class="btn decide primary" disabled={busy || title.trim() === ''}>
-                Save
-              </button>
-            </div>
-          </form>
-        </Sheet>
-      ) : null}
-      {open === 'delete' ? (
-        <ConfirmSheet
-          title="Delete this conversation?"
-          body="Its whole log is deleted for good. The files the agent changed stay as they are."
-          action="Delete"
-          busy={busy}
-          error={error}
+      {open === 'rename' || open === 'delete' ? (
+        <ConversationSheet
+          api={api}
+          target={{ id: summary.id, title: summary.title ?? nameOf(summary) }}
+          kind={open}
           onClose={close}
-          onConfirm={() =>
-            void act(async () => {
-              // A result per id, and a 200 either way: "running" or "unknown" is not a deletion.
-              const done = await api.post<{ results: readonly { outcome: string }[] }>('sessions/remove', { ids: [summary.id] })
-              const outcome = done.results[0]?.outcome
-              if (outcome !== 'removed') throw new Error(outcome === 'running' ? 'It is running: cancel it first.' : 'It could not be deleted.')
-            }, onDeleted)
-          }
+          onDone={open === 'delete' ? onDeleted : onChanged}
         />
       ) : null}
     </>
+  )
+}
+
+/** The conversation a sheet acts on: its id and the title the rename field starts with. */
+export interface SheetTarget {
+  readonly id: string
+  readonly title: string
+}
+
+/**
+ * Renaming or deleting one conversation, as a sheet: from its own `⋯` and from the drawer's
+ * context menu alike, so both say and do the same thing.
+ */
+export function ConversationSheet({
+  api,
+  target,
+  kind,
+  onClose,
+  onDone,
+}: {
+  readonly api: Api
+  readonly target: SheetTarget
+  readonly kind: 'rename' | 'delete'
+  readonly onClose: () => void
+  readonly onDone: () => void
+}) {
+  const [title, setTitle] = useState(target.title)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const act = async (work: () => Promise<unknown>) => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await work()
+      onClose()
+      onDone()
+    } catch (cause: unknown) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (kind === 'delete') {
+    return (
+      <ConfirmSheet
+        title="Delete this conversation?"
+        body="Its whole log is deleted for good. The files the agent changed stay as they are."
+        action="Delete"
+        busy={busy}
+        error={error}
+        onClose={onClose}
+        onConfirm={() =>
+          void act(async () => {
+            // A result per id, and a 200 either way: "running" or "unknown" is not a deletion.
+            const done = await api.post<{ results: readonly { outcome: string }[] }>('sessions/remove', { ids: [target.id] })
+            const outcome = done.results[0]?.outcome
+            if (outcome !== 'removed') throw new Error(outcome === 'running' ? 'It is running: cancel it first.' : 'It could not be deleted.')
+          })
+        }
+      />
+    )
+  }
+  return (
+    <Sheet id="s-rename-title" title="Rename" onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (title.trim() !== '') void act(() => api.post(`sessions/${target.id}/title`, { title }))
+        }}
+      >
+        <label class="s-field">
+          <span>Title</span>
+          <input class="s-input" value={title} maxLength={TITLE_MAX} autoFocus onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+        </label>
+        {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
+        <div class="s-choice">
+          <button type="button" class="btn decide" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" class="btn decide primary" disabled={busy || title.trim() === ''}>
+            Save
+          </button>
+        </div>
+      </form>
+    </Sheet>
   )
 }

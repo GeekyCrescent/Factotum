@@ -150,4 +150,18 @@ function Loading({ view }: { readonly view: ViewProps }) {
   )
 }
 
-export const sessionsClient = { id: 'sessions', View: SessionsView, Drawer: SessionsDrawer, ownsTopBar: true }
+export const sessionsClient = {
+  id: 'sessions',
+  View: SessionsView,
+  Drawer: SessionsDrawer,
+  ownsTopBar: true,
+  // In the shell's Settings (spec 2026-09-30): where projects are added, edited and deleted.
+  settings: [
+    {
+      label: 'Projects',
+      description: 'The folders agents may write in, shared folders, and the history of removed projects.',
+      icon: 'folder-simple',
+      rest: PROJECTS,
+    },
+  ],
+}

@@ -1,8 +1,8 @@
 /**
  * What the URL means, and what to do with the history — pure, so a test can drive it.
  *
- * THE SHELL KNOWS NO MODULE BY NAME, and neither does this: a screen is `/m/<id>/<rest>`, `/device`
- * or `/`. `/` resolves to the first enabled module by `nav.order`, decided by the caller.
+ * THE SHELL KNOWS NO MODULE BY NAME, and neither does this: a screen is `/m/<id>/<rest>`,
+ * `/settings` or `/`. `/device`, the settings page's old address, still leads there. `/` resolves to the first enabled module by `nav.order`, decided by the caller.
  *
  * THE QUERY IS ONE-USE (spec 2026-09-18, §0.17 and supposition 13). A page loads with its query —
  * a notification's `?ask=<token>` — and the shell takes it OUT of the address bar before the first
@@ -15,7 +15,7 @@ import { restOf } from './route.ts'
 
 export type Screen =
   | { readonly kind: 'root' }
-  | { readonly kind: 'device' }
+  | { readonly kind: 'settings' }
   | { readonly kind: 'module'; readonly id: string; readonly rest: string }
   | { readonly kind: 'unknown'; readonly path: string }
 
@@ -36,7 +36,7 @@ const RESERVED = /^\/(modules|push|health)(\/|$)/
 export function screenOf(pathname: string): Screen {
   if (pathname === '/' || pathname === '') return { kind: 'root' }
   if (RESERVED.test(pathname)) return { kind: 'unknown', path: pathname }
-  if (pathname === '/device' || pathname === '/device/') return { kind: 'device' }
+  if (/^\/(settings|device)\/?$/.test(pathname)) return { kind: 'settings' }
   const m = /^\/m\/([^/]+)(?:\/|$)/.exec(pathname)
   if (m !== null) return { kind: 'module', id: decodeURIComponent(m[1] ?? ''), rest: restOf(pathname, m[1] ?? '') }
   return { kind: 'unknown', path: pathname }
@@ -46,8 +46,8 @@ export function pathOf(screen: Screen): string {
   switch (screen.kind) {
     case 'root':
       return '/'
-    case 'device':
-      return '/device'
+    case 'settings':
+      return '/settings'
     case 'module':
       return screen.rest === '' ? `/m/${encodeURIComponent(screen.id)}` : `/m/${encodeURIComponent(screen.id)}/${screen.rest}`
     case 'unknown':

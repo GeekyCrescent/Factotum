@@ -1150,3 +1150,88 @@
 .s-g-picked {
   color: var(--accent-text);
 }
+
+/* --- The context menu of a conversation (spec 2026-09-30) ---------------------- */
+
+.s-ctx {
+  position: fixed;
+  z-index: 40;
+  min-width: 180px;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  box-shadow: 0 8px 24px var(--scrim);
+}
+
+.s-ctx-item {
+  min-height: 36px;
+  padding: 0 var(--space-2h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: var(--text);
+  font-size: var(--text-small);
+  text-align: left;
+}
+
+.s-ctx-item:hover:not(:disabled),
+.s-ctx-item:focus-visible {
+  outline: 0;
+  background: var(--surface-2);
+}
+
+.s-ctx-item:disabled {
+  color: var(--text-3);
+}
+
+.s-ctx-item.s-danger:not(:disabled) {
+  color: var(--err);
+}
+
+/* A long press on a phone must open the menu, not the system's text selection or callout. */
+.s-conv,
+.s-item {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* Choosing: the same compact line, its checkbox where the indent was, so nothing jumps. */
+.s-conv-picking {
+  padding-left: var(--space-2);
+}
+
+.s-pickbox {
+  width: 18px;
+  margin-right: var(--space-2h);
+  display: inline-flex;
+  flex: none;
+}
+
+.s-drawer-tools {
+  flex-wrap: nowrap;
+}
+
+.s-count-picked {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: var(--text-small);
+  white-space: nowrap;
+}
+
+.s-drawer-tools .btn {
+  flex: none;
+  padding: 0 var(--space-2);
+}
+
+.s-drawer-tools .icon-btn {
+  flex: none;
+}

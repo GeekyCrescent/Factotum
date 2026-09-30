@@ -199,7 +199,7 @@
 /* --- Device -------------------------------------------------------------- */
 
 .page {
-  padding: var(--space-2) var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-4) var(--space-6);
   display: grid;
   gap: var(--space-5);
   align-content: start;
@@ -251,4 +251,34 @@
 
 .cell .warn {
   color: var(--ask);
+}
+
+/* --- Settings: a caption over each group, and rows that lead somewhere (spec 2026-09-30) --- */
+
+.page-section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.page-sect {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+
+.page > .page-sect {
+  margin-bottom: calc(var(--space-2) - var(--space-5));
+}
+
+.cell.link {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.cell.link:hover {
+  background: var(--surface-2);
+}
+
+.cell.link > .icon:nth-of-type(2) {
+  color: var(--text-3);
 }

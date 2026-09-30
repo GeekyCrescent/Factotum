@@ -65,6 +65,20 @@ export interface ModuleClient {
    * shell draws a fallback bar above it, so that NO screen leaves the drawer unreachable.
    */
   readonly ownsTopBar?: boolean
+  /**
+   * What the module puts in Settings: one row per entry, leading to `/m/<id>/<rest>` (spec
+   * 2026-09-30). Settings is the shell's page; a module only names where its own screens are.
+   */
+  readonly settings?: readonly ModuleSetting[]
+}
+
+export interface ModuleSetting {
+  readonly label: string
+  readonly description?: string
+  /** A glyph name, resolved like `nav.icon`. */
+  readonly icon?: string
+  /** Where the row leads, inside the module: what follows `/m/<id>/`. */
+  readonly rest: string
 }
 
 export const CLIENTS: readonly ModuleClient[] = [exampleClient, sessionsClient]

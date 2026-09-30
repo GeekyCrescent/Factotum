@@ -1,18 +1,20 @@
 /**
  * What this module puts in the shell's drawer: New session, a search, then Needs you, Running and
- * one group per project with its newest conversations, "Show more", and Manage projects (spec
- * 2026-09-29, D9).
+ * one group per project with its newest conversations and "Show more" (spec 2026-09-29, D9). The
+ * projects themselves are managed from Settings (spec 2026-09-30).
  *
  * Its own `GET projects`, when it becomes visible and every REFRESH_MS while it stays so; a closed
  * drawer on a phone costs nothing. "Show more" pages through `GET sessions?site=`. The search
  * filters what is loaded at once and asks the daemon for the rest (`search-results.tsx`).
  *
- * SELECT turns the rows into checkboxes, for archiving or deleting several at once (D9).
+ * A RIGHT-CLICK (a long press on a phone) on a conversation opens its menu: Select, Rename, Archive,
+ * Delete (spec 2026-09-30). Select starts choosing: from then on a click marks or unmarks instead of
+ * opening, and a bar says how many, with Archive, Delete and Done. Escape leaves it.
  *
  * NO CONSOLE (criterion 41): the pendings it lists may hold tokens, and the search is typed here.
  */
 
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { ProjectsPage, SessionPage, SessionState, SessionSummary } from '../types.ts'
 import type { DrawerProps } from './contract.ts'
 import { messageOf } from './errors.ts'
@@ -20,6 +22,8 @@ import { ago, day } from './format.ts'
 import { history, type Entry, type Group, type Waiting } from './history.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
+import { ContextMenu, useLongPress, type MenuAt } from './context-menu.tsx'
+import { ConversationSheet } from './conversation-menu.tsx'
 import { ConfirmSheet } from './project-forms.tsx'
 import { grantOf, sessionOf, type Pending } from './relevance.ts'
 import { SearchResults } from './search-results.tsx'
@@ -43,7 +47,10 @@ interface RowState {
   readonly picked: ReadonlySet<string>
   readonly onPick: (id: string) => void
   readonly navigate: (rest: string) => void
+  readonly onMenu: (entry: Entry, at: MenuAt) => void
 }
+
+type Acting = { readonly kind: 'rename' | 'delete'; readonly entry: Entry }
 
 export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
   const [page, setPage] = useState<ProjectsPage | undefined>(undefined)
@@ -55,7 +62,14 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [generation, setGeneration] = useState(0)
+  const [menu, setMenu] = useState<{ readonly entry: Entry; readonly at: MenuAt } | undefined>(undefined)
+  const [acting, setActing] = useState<Acting | undefined>(undefined)
   const root = useRef<HTMLDivElement>(null)
+  const closeMenu = useCallback(() => setMenu(undefined), [])
+  const reload = () => {
+    setMore(new Map())
+    setGeneration((n) => n + 1)
+  }
 
   useEffect(() => {
     let live = true
@@ -114,11 +128,29 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
       return copy
     })
 
-  const stopSelecting = () => {
+  const stopSelecting = useCallback(() => {
     setSelecting(false)
     setPicked(new Set())
     setConfirming(false)
     setFailure(undefined)
+  }, [])
+
+  useEffect(() => {
+    if (!selecting) return undefined
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') stopSelecting()
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [selecting, stopSelecting])
+
+  const archiveOne = async (entry: Entry) => {
+    try {
+      await api.post(`sessions/${entry.id}/archive`, { archived: true })
+      reload()
+    } catch (cause: unknown) {
+      setFailure(messageOf(cause))
+    }
   }
 
   /** Runs on the picked ids; `work` returns the ids it could not change. */
@@ -129,8 +161,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
       const refused = await work([...picked])
       if (refused.length > 0) setFailure(`${refused.length} could not be changed: a running conversation is left as it is.`)
       else stopSelecting()
-      setMore(new Map())
-      setGeneration((n) => n + 1)
+      reload()
     } catch (cause: unknown) {
       setFailure(messageOf(cause))
     } finally {
@@ -149,7 +180,7 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
     return done.results.filter((r) => r.outcome !== 'removed').map((r) => r.id)
   }
 
-  const rows: RowState = { rest, now: Date.now(), selecting, picked, onPick, navigate }
+  const rows: RowState = { rest, now: Date.now(), selecting, picked, onPick, navigate, onMenu: (entry, at) => setMenu({ entry, at }) }
 
   return (
     <div class="s-drawer" ref={root}>
@@ -167,33 +198,20 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
           onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
         />
       </label>
-      <div class="s-drawer-tools">
-        {selecting ? (
-          <>
-            <span class="dim-3 num">{picked.size} selected</span>
-            <button type="button" class="btn quiet sm" disabled={busy || picked.size === 0} onClick={() => void onMany(archiveMany)}>
-              Archive
-            </button>
-            <button type="button" class="btn quiet sm s-danger" disabled={busy || picked.size === 0} onClick={() => setConfirming(true)}>
-              Delete
-            </button>
-            <button type="button" class="btn quiet sm" onClick={stopSelecting}>
-              Done
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" class="btn quiet sm" onClick={() => navigate('projects')}>
-              <Icon name="folder-simple" size={14} />
-              Manage projects
-            </button>
-            <button type="button" class="btn quiet sm" onClick={() => setSelecting(true)}>
-              <Icon name="check-square" size={14} />
-              Select
-            </button>
-          </>
-        )}
-      </div>
+      {selecting ? (
+        <div class="s-drawer-tools" role="toolbar" aria-label="Selected conversations">
+          <button type="button" class="icon-btn" aria-label="Done selecting" onClick={stopSelecting}>
+            <Icon name="x" size={16} />
+          </button>
+          <span class="s-count-picked num">{picked.size} selected</span>
+          <button type="button" class="icon-btn" aria-label="Archive selected" title="Archive" disabled={busy || picked.size === 0} onClick={() => void onMany(archiveMany)}>
+            <Icon name="archive" size={18} />
+          </button>
+          <button type="button" class="icon-btn s-danger" aria-label="Delete selected" title="Delete" disabled={busy || picked.size === 0} onClick={() => setConfirming(true)}>
+            <Icon name="trash" size={18} />
+          </button>
+        </div>
+      ) : null}
       {failure === undefined ? null : (
         <p class="s-error" role="alert">
           {failure}
@@ -254,6 +272,34 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
           navigate={navigate}
         />
       ) : null}
+      {menu === undefined ? null : (
+        <ContextMenu at={menu.at} onClose={closeMenu}>
+          <MenuItem
+            icon="check-square"
+            label="Select"
+            disabled={menu.entry.state === 'running'}
+            onChoose={() => {
+              setSelecting(true)
+              setPicked(new Set([menu.entry.id]))
+            }}
+          />
+          <MenuItem icon="pencil-simple" label="Rename" disabled={false} onChoose={() => setActing({ kind: 'rename', entry: menu.entry })} />
+          <MenuItem icon="archive" label="Archive" disabled={menu.entry.state === 'running'} onChoose={() => void archiveOne(menu.entry)} />
+          <MenuItem icon="trash" label="Delete" danger disabled={menu.entry.state === 'running'} onChoose={() => setActing({ kind: 'delete', entry: menu.entry })} />
+        </ContextMenu>
+      )}
+      {acting === undefined ? null : (
+        <ConversationSheet
+          api={api}
+          target={{ id: acting.entry.id, title: acting.entry.title }}
+          kind={acting.kind}
+          onClose={() => setActing(undefined)}
+          onDone={() => {
+            reload()
+            if (acting.kind === 'delete' && rest === acting.entry.id) navigate('new')
+          }}
+        />
+      )}
       {confirming ? (
         <ConfirmSheet
           title={`Delete ${picked.size} conversation${picked.size === 1 ? '' : 's'}?`}
@@ -277,10 +323,38 @@ export function SessionsDrawer({ api, rest, navigate, pending }: DrawerProps) {
 function Row({ entry, compact, rows }: { readonly entry: Entry; readonly compact: boolean; readonly rows: RowState }) {
   const asking = entry.detail !== undefined
   const picked = rows.picked.has(entry.id)
-  const onClick = () => (rows.selecting ? rows.onPick(entry.id) : rows.navigate(entry.id))
-  if (compact && !asking && entry.state !== 'running' && !rows.selecting) {
+  const press = useLongPress((at) => rows.onMenu(entry, at))
+  const onClick = () => {
+    if (press.swallow()) return
+    if (rows.selecting) {
+      // A running conversation cannot be archived or deleted: it is not offered for choosing either.
+      if (entry.state !== 'running') rows.onPick(entry.id)
+      return
+    }
+    rows.navigate(entry.id)
+  }
+  const handlers = {
+    onClick,
+    onContextMenu: press.onContextMenu,
+    onPointerDown: press.onPointerDown,
+    onPointerMove: press.onPointerMove,
+    onPointerUp: press.onPointerUp,
+    onPointerCancel: press.onPointerCancel,
+  }
+  if (compact && !asking && entry.state !== 'running') {
     return (
-      <button type="button" class="s-conv" aria-current={rows.rest === entry.id ? 'page' : undefined} onClick={onClick}>
+      <button
+        type="button"
+        class={rows.selecting ? 's-conv s-conv-picking' : 's-conv'}
+        aria-current={rows.rest === entry.id && !rows.selecting ? 'page' : undefined}
+        aria-pressed={rows.selecting ? picked : undefined}
+        {...handlers}
+      >
+        {rows.selecting ? (
+          <span class={picked ? 's-pickbox s-g-picked' : 's-pickbox s-g-pick'}>
+            <Icon name={picked ? 'check-square' : 'square'} size={16} />
+          </span>
+        ) : null}
         <span class="s-conv-title">{entry.title}</span>
         {entry.state === 'failed' ? <Icon name="x-circle" size={14} /> : null}
         {entry.startedAt === undefined ? null : <span class="s-conv-date num">{day(entry.startedAt, rows.now)}</span>}
@@ -294,7 +368,7 @@ function Row({ entry, compact, rows }: { readonly entry: Entry; readonly compact
       class={`s-item ${toneClass(entry.site, entry.color)}${asking ? ' s-asking' : ''}`}
       aria-current={rows.rest === entry.id && !rows.selecting ? 'page' : undefined}
       aria-pressed={rows.selecting ? picked : undefined}
-      onClick={onClick}
+      {...handlers}
     >
       <span class={`s-g ${rows.selecting ? (picked ? 's-g-picked' : 's-g-pick') : `s-g-${asking ? 'ask' : entry.state}`}`}>
         <Icon name={rows.selecting ? (picked ? 'check-square' : 'square') : asking ? 'hand' : GLYPH[entry.state]} size={18} />
@@ -388,4 +462,25 @@ function waitingOf(pending: readonly Pending[]): Waiting {
     waiting.set(id, { site: text('siteId'), detail: [text('toolName'), text('file')].filter(Boolean).join(' ') || 'Waiting for you' })
   }
   return waiting
+}
+
+function MenuItem({
+  icon,
+  label,
+  danger = false,
+  disabled,
+  onChoose,
+}: {
+  readonly icon: SessionIcon
+  readonly label: string
+  readonly danger?: boolean
+  readonly disabled: boolean
+  readonly onChoose: () => void
+}) {
+  return (
+    <button type="button" role="menuitem" class={danger ? 's-ctx-item s-danger' : 's-ctx-item'} disabled={disabled} onClick={onChoose}>
+      <Icon name={icon} size={16} />
+      {label}
+    </button>
+  )
 }
