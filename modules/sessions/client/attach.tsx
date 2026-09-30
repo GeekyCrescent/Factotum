@@ -42,8 +42,11 @@ export interface AttachControls {
   readonly refuse: (message: string) => void
   readonly remove: (key: string) => void
   readonly retry: (key: string) => void
-  /** After a send went through: every chip goes, and every preview is let go. */
-  readonly clear: () => void
+  /**
+   * After a send went through: THE CHIPS THAT WERE SENT go, with their previews. Only those — a file
+   * dropped while the message was on its way was not in it, and must stay to go with the next one.
+   */
+  readonly clear: (sent: readonly string[]) => void
 }
 
 let counter = 0
@@ -72,7 +75,12 @@ export function useAttachments(api: Api, uploads: UploadsState): AttachControls 
     void api.upload<UploadReply>('uploads', file, { name: file.name === '' ? 'pasted.png' : file.name }).then(
       (reply) =>
         patch(key, () => ({ key, state: 'ready', name: reply.name, bytes: reply.bytes, preview, path: reply.path, image: reply.image })),
-      (cause: unknown) => patch(key, () => ({ key, state: 'failed', name: file.name, bytes: file.size, reason: errorText(cause) })),
+      (cause: unknown) => {
+        // A failed chip keeps no preview, so its URL is let go here — or it would hold the whole file
+        // in memory until the tab closes. A retry makes a new one.
+        if (preview !== undefined) URL.revokeObjectURL(preview)
+        patch(key, () => ({ key, state: 'failed', name: file.name, bytes: file.size, reason: errorText(cause) }))
+      },
     )
   }
 
@@ -112,16 +120,21 @@ export function useAttachments(api: Api, uploads: UploadsState): AttachControls 
     },
     retry: (key) => {
       const file = files.current.get(key)
-      if (file === undefined) return
+      // Only a chip that is still failed: two taps in one tick must not upload it twice.
+      if (file === undefined || current.current.find((item) => item.key === key)?.state !== 'failed') return
+      const pending: Attachment = { key, state: 'uploading', name: file.name, bytes: file.size, preview: undefined }
+      current.current = current.current.map((item) => (item.key === key ? pending : item))
       const preview = file.type.startsWith('image/') || isImageName(file.name) ? URL.createObjectURL(file) : undefined
       patch(key, () => ({ key, state: 'uploading', name: file.name, bytes: file.size, preview }))
       send(key, file, preview)
     },
-    clear: () => {
-      for (const item of current.current) revoke(item)
-      files.current.clear()
+    clear: (sent) => {
+      const gone = new Set(sent)
+      for (const item of current.current) if (gone.has(item.key)) revoke(item)
+      for (const key of gone) files.current.delete(key)
+      current.current = current.current.filter((item) => !gone.has(item.key))
       setNotice(undefined)
-      setItems([])
+      setItems((list) => list.filter((item) => !gone.has(item.key)))
     },
   }
 }

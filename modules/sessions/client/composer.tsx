@@ -94,8 +94,9 @@ export function LaunchComposer({
   const [entryId, setEntryId] = useState(usable[0]?.id ?? '')
   const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text, force) => {
-    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, attach.items), force })
-    attach.clear()
+    const sent = attach.items.filter((item) => item.state === 'ready')
+    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force })
+    attach.clear(sent.map((item) => item.key))
     onLaunched(result.sessionId)
   })
 
@@ -201,8 +202,9 @@ export function ReplyComposer({
 }) {
   const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text, force) => {
-    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, attach.items), force })
-    attach.clear()
+    const sent = attach.items.filter((item) => item.state === 'ready')
+    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent), force })
+    attach.clear(sent.map((item) => item.key))
     onSent()
   })
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)
@@ -303,9 +305,10 @@ function Box({
           autoFocus={autoFocus}
           onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
           // A screenshot on the clipboard is attached; text is pasted as it always was (criterion 15).
+          // A copy from a spreadsheet carries BOTH its text and a picture of it: that is text.
           onPaste={(event) => {
             const files = Array.from(event.clipboardData?.files ?? [])
-            if (files.length === 0) return
+            if (files.length === 0 || (event.clipboardData?.getData('text/plain') ?? '') !== '') return
             event.preventDefault()
             attach.add(files)
           }}

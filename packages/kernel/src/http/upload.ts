@@ -17,9 +17,29 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { ReceivedFile } from '@factotum/core'
+import { errorBody, type ReceivedFile } from '@factotum/core'
 import { incomingDir } from '../config/paths.ts'
 import { drainCapped, refuseTooLarge } from './body.ts'
+
+/**
+ * A write that failed on OUR side (no space, no permission): said on stderr, never silent, and a 500
+ * when there is still a request to answer. When the pipeline already destroyed the request there is
+ * not — draining a dead stream is what once made a 413 take six seconds — so the socket just goes.
+ */
+async function failWrite(req: IncomingMessage, res: ServerResponse, error: unknown): Promise<undefined> {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code ?? 'unknown'
+  console.error(`[kernel] an upload could not be written: ${code}`)
+  if (req.destroyed) {
+    res.destroy()
+    return undefined
+  }
+  const drained = req.complete || (await drainCapped(req))
+  if (!res.headersSent && !res.destroyed) {
+    res.writeHead(500, drained ? { 'content-type': 'application/json' } : { 'content-type': 'application/json', connection: 'close' })
+    res.end(JSON.stringify(errorBody('module-error', 'the upload could not be written on the host')))
+  }
+  return undefined
+}
 
 /** The declared length, when there is a sane one. Node itself refuses a malformed header. */
 function declaredLength(req: IncomingMessage): number | undefined {
@@ -49,7 +69,11 @@ export async function readUploadBody(
   }
 
   const dir = incomingDir(stateDir)
-  await mkdir(dir, { recursive: true })
+  try {
+    await mkdir(dir, { recursive: true })
+  } catch (error) {
+    return failWrite(req, res, error)
+  }
   // Named by the kernel. Nothing from the request — not the name, not the query — forms this path.
   const path = join(dir, `${randomUUID()}.part`)
 
@@ -67,13 +91,22 @@ export async function readUploadBody(
     },
   })
 
+  // Told apart by WHICH STREAM failed, not by the request's state: the pipeline destroys every
+  // stream in it whichever one failed, so a dead request says nothing about who hung up.
+  const sink = createWriteStream(path, { flags: 'wx' })
+  let diskError: unknown
+  sink.once('error', (error) => (diskError = error))
+
   try {
-    await pipeline(req, limit, createWriteStream(path, { flags: 'wx' }))
+    await pipeline(req, limit, sink)
   } catch {
     await rm(path, { force: true })
     // Over the cap without a length (`chunked`): the pipeline has already destroyed the request, so
-    // this 413 may never be read — accepted, criterion 5b. Otherwise the client left: nobody to tell.
+    // this 413 may never be read — accepted, criterion 5b.
     if (over) refuseTooLarge(res, false, tooLarge)
+    // The disk failed: ours, and it must not pass for the client hanging up.
+    else if (diskError !== undefined) await failWrite(req, res, diskError)
+    // The client left: nobody to tell.
     else if (!res.headersSent) res.destroy()
     return undefined
   }

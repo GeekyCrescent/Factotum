@@ -51,8 +51,11 @@ export async function sendFile(res: ServerResponse, file: string, stateDir: stri
 
   let handle: FileHandle
   try {
-    // O_NOFOLLOW: a symlink in the LAST component fails here, whatever it points at.
-    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW)
+    // O_NOFOLLOW: a symlink in the LAST component fails here, whatever it points at. O_NONBLOCK: a
+    // FIFO planted where a file should be would otherwise block this open for ever on a libuv thread
+    // — four of them and every fs call in the daemon stalls. Harmless on a regular file, and anything
+    // else is refused by the `isFile` below.
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   } catch {
     return notFound(res)
   }

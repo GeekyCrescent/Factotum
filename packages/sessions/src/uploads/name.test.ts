@@ -13,11 +13,24 @@ test('a macOS screenshot name loses its spaces and keeps its dots (criterion 12)
 })
 
 test('accents and emoji are replaced, runs of dashes collapse, and nothing dangles', () => {
-  assert.equal(kept('canción.pdf'), 'canci-n.pdf')
+  assert.equal(kept('canción.pdf'), 'cancion.pdf')
+  assert.equal(kept('Él.png'), 'El.png')
   assert.equal(kept('📸 foto.jpg'), 'foto.jpg')
   assert.equal(kept('foto;rm -rf.png'), 'foto-rm-rf.png')
   assert.equal(kept('informe final .docx'), 'informe-final.docx')
   assert.equal(kept('sin extension'), 'sin-extension')
+})
+
+test('a base with no ASCII keeps its extension: the log recognises an image by its name', () => {
+  assert.equal(kept('写真.jpg'), 'file.jpg')
+  assert.equal(kept('📸.png'), 'file.png')
+})
+
+test('sanitising is idempotent: what it keeps, it keeps as it is', () => {
+  for (const raw of ['Captura de pantalla 2026-10-01 a las 9.41.png', '写真.jpg', 'canción.pdf', '...secret.txt', `${'a'.repeat(300)}.png`]) {
+    const once = kept(raw)
+    assert.equal(kept(once), once, raw)
+  }
 })
 
 test('leading dots go, so an upload is never a hidden file', () => {

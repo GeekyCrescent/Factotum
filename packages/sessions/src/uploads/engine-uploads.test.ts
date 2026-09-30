@@ -277,6 +277,8 @@ test('the titler gets the words without the paths, and is not started for files 
   }
 
   await launched(w, one.ref)
+  // A NEGATIVE: there is nothing to poll for, so this waits a margin well past what the titler takes
+  // to write its log line (under 20 ms with the fake) — the one fixed delay here, on purpose.
   await new Promise((resolve) => setTimeout(resolve, 200))
   assert.deepEqual(await calls(), [], 'files alone: no titler')
 

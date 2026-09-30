@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { connect } from 'node:net'
@@ -141,6 +141,25 @@ test('an upload cut halfway leaves nothing behind, not even the temporary file (
     await w.settled
     assert.equal(w.received[0], undefined)
     assert.deepEqual(await w.incoming(), [])
+  } finally {
+    await w.close()
+  }
+})
+
+test('a write that fails on the host is a 500 the client can read, not a cut connection', async () => {
+  const w = await world()
+  try {
+    // `.incoming` is a FILE, so the kernel cannot make its directory: our failure, not the client's.
+    await writeFile(incomingDir(w.stateDir), 'in the way')
+    const quiet = console.error
+    console.error = () => undefined
+    try {
+      assert.equal(await post(w.port, bytes(1024), false), 500)
+    } finally {
+      console.error = quiet
+    }
+    await w.settled
+    assert.equal(w.received[0], undefined)
   } finally {
     await w.close()
   }

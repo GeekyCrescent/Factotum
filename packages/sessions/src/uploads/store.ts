@@ -44,14 +44,19 @@ export function createUploadStore(deps: UploadStoreDeps): UploadStore {
     : { off: `this host's state folder has characters a file reference cannot carry: ${root}` }
   if ('off' in view) log.warn(`uploads are off: ${view.off}`)
 
+  /** Never fatal: a file kept but not sniffed is a file, not a failed upload. */
   async function isImage(path: string): Promise<boolean> {
-    const handle = await open(path, 'r')
     try {
-      const head = Buffer.alloc(SNIFF_BYTES)
-      const { bytesRead } = await handle.read(head, 0, SNIFF_BYTES, 0)
-      return rasterTypeOf(head.subarray(0, bytesRead)) !== undefined
-    } finally {
-      await handle.close()
+      const handle = await open(path, 'r')
+      try {
+        const head = Buffer.alloc(SNIFF_BYTES)
+        const { bytesRead } = await handle.read(head, 0, SNIFF_BYTES, 0)
+        return rasterTypeOf(head.subarray(0, bytesRead)) !== undefined
+      } finally {
+        await handle.close()
+      }
+    } catch {
+      return false
     }
   }
 
@@ -65,9 +70,15 @@ export function createUploadStore(deps: UploadStoreDeps): UploadStore {
       if (!sanitized.ok) return { outcome: 'invalid', reason: sanitized.reason }
       const uploadId = uuidv7(deps.now().getTime())
       const folder = join(root, uploadId)
-      await mkdir(folder, { recursive: true })
       const path = join(folder, sanitized.name)
-      await rename(file.path, path)
+      try {
+        await mkdir(folder, { recursive: true })
+        await rename(file.path, path)
+      } catch (error) {
+        // No empty `uploads/<id>/` left behind; the kernel deletes the received file.
+        await rm(folder, { recursive: true, force: true })
+        throw error
+      }
       return { outcome: 'ok', uploadId, name: sanitized.name, path, bytes: file.bytes, image: await isImage(path) }
     },
 

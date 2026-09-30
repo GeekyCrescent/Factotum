@@ -21,13 +21,29 @@ export type SanitizedName = { readonly ok: true; readonly name: string } | { rea
 
 const OUTSIDE = /[^A-Za-z0-9._-]/gu
 
-function tidy(value: string): string {
+/** What a base name keeps: accents dropped (`canción` → `cancion`), the rest to `-`, nothing dangling. */
+function tidyBase(value: string): string {
   return value
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
     .replace(OUTSIDE, '-')
     .replace(/-+/g, '-')
     .replace(/^[.-]+/, '')
-    .replace(/-+$/, '')
-    .replace(/-+\.(?=[^.]*$)/, '.')
+    .replace(/[.-]+$/, '')
+}
+
+/**
+ * The base and the extension are tidied APART. Together, a base with no ASCII at all — `写真.jpg` —
+ * collapsed into `-.jpg` and then lost its dot to the leading-dot rule, leaving `jpg`: an image that
+ * the log could no longer recognise as one by its name. Now it is `file.jpg`.
+ */
+function tidy(value: string): string {
+  const dot = value.lastIndexOf('.')
+  if (dot <= 0 || dot === value.length - 1) return tidyBase(value)
+  const extension = value.slice(dot + 1).replace(OUTSIDE, '')
+  const base = tidyBase(value.slice(0, dot))
+  if (extension === '') return base
+  return `${base === '' ? 'file' : base}.${extension}`
 }
 
 function cut(name: string): string {
