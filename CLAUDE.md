@@ -70,12 +70,18 @@ module that cannot reach the socket cannot decide the network surface, and the w
 security model depends on that being one decision in one place.
 
 Before you add a field to `ModuleContext`, find the consumer that needs it **today**.
-Binary request/response bodies are known not to fit and are deliberately left out.
 
-Notifications were the other one, and they are the example of how a field gets in: they
-found a consumer (the permission gate asking the owner), and arrived as **one** narrow field,
-`notify`, with the module's id bound by the registry so a module cannot speak as another.
-That is ADR-0008, and it is the precedent to follow — not the precedent to widen.
+Notifications are the example of how a field gets in: they found a consumer (the permission
+gate asking the owner), and arrived as **one** narrow field, `notify`, with the module's id
+bound by the registry so a module cannot speak as another. That is ADR-0008, and it is the
+precedent to follow — not the precedent to widen.
+
+**Files are the example of how something gets in WITHOUT a field.** An upload is a kind of
+route (`uploadRoute`) and a file is a kind of response (`ModuleResponse.file`): the kernel
+writes the bytes, names them, caps them, and decides how a file is served from its first
+bytes. A module gets a path and gives back a path — never a stream (ADR-0012). If you need
+something else to cross, make it that shape: additive optional fields, the kernel keeping
+every decision about the network.
 
 ---
 

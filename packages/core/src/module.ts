@@ -6,9 +6,9 @@
  * spec's risk 6. Files fit without one: an upload is a kind of ROUTE, and a file is a kind of
  * RESPONSE (`http.ts`, ADR-0012) — the contract and the context did not grow.
  *
- * Notifications used to be the other one. They fit now, because they got a consumer — the
- * permission gate asking the owner — and they arrived as a field of `ModuleContext`, not of
- * this interface: `notify` below. See ADR-0008.
+ * Notifications and files were the two things once recorded as not fitting. Notifications got a
+ * consumer — the permission gate asking the owner — and arrived as a field of `ModuleContext`, not
+ * of this interface: `notify` below (ADR-0008). Files got one too, and needed no field at all.
  */
 
 import type { Logger } from './log.ts'
