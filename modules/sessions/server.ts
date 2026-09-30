@@ -157,6 +157,15 @@ function text(body: unknown, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+/**
+ * The owner's text becomes an ARGUMENT of `claude`, and Node refuses an argument holding a NUL by
+ * THROWING inside `spawn`. By then `launch` has already written a `running` meta, so the NUL would
+ * leave a conversation with no process behind it until the next boot reconciles it. Refused here,
+ * before the engine sees it.
+ */
+const HAS_NUL = /\u0000/
+const NUL_REFUSED = 'a message cannot contain a NUL character'
+
 function routeTable(holder: EngineHolder, home: string): RouteTable {
   /**
    * Every route funnels through here, so the empty hole is handled in ONE place.
@@ -321,11 +330,13 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       if (siteId === undefined || entryId === undefined) {
         return invalid('a launch needs a siteId and an entryId')
       }
+      const prompt = text(req.body, 'text') ?? ''
+      if (HAS_NUL.test(prompt)) return invalid(NUL_REFUSED)
       return fromLaunch(
         await engine.launch({
           siteId,
           entryId,
-          text: text(req.body, 'text') ?? '',
+          text: prompt,
           force: body?.force === true,
         }),
       )
@@ -341,6 +352,7 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
     'POST /sessions/:id/reply': withEngine(async (engine, req) => {
       const message = text(req.body, 'text')
       if (message === undefined || message === '') return invalid('a reply needs some text')
+      if (HAS_NUL.test(message)) return invalid(NUL_REFUSED)
       // `force` exactly as `POST /sessions` reads it: resuming onto a dirty or stale repo is
       // refused with the report, and the owner can choose to go over it (criteria 31, 32).
       const body = req.body as { force?: unknown } | null | undefined

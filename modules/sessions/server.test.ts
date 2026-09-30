@@ -244,6 +244,34 @@ test('a reply with no text is a 400', async () => {
   }
 })
 
+test('a NUL in the text of a launch or a reply is a 400, and the engine never sees it', async () => {
+  // The text becomes an argument of `claude`, and Node refuses an argument with a NUL by THROWING
+  // inside `spawn` — by then `launch` has written a running meta with no process behind it.
+  let reached = 0
+  const { table } = await started(
+    fakeEngine({
+      launch: async () => {
+        reached += 1
+        return { outcome: 'started', sessionId: 'x' }
+      },
+      reply: async () => {
+        reached += 1
+        return { outcome: 'started', sessionId: 'x' }
+      },
+    }),
+  )
+  const launched = await call(table, 'POST /sessions', request('POST', '/sessions', { body: { siteId: 'a', entryId: 'free', text: 'a\u0000b' } }))
+  const replied = await call(
+    table,
+    'POST /sessions/:id/reply',
+    request('POST', '/sessions/x/reply', { params: { id: 'x' }, body: { text: 'a\u0000b' } }),
+  )
+  assert.equal(launched.status, 400)
+  assert.equal(replied.status, 400)
+  assert.match((launched.body as ErrorBody).error.message, /NUL/)
+  assert.equal(reached, 0)
+})
+
 // ---------------------------------------------------------------------------
 // The routes that just pass through
 // ---------------------------------------------------------------------------
