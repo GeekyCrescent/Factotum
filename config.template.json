@@ -48,19 +48,30 @@
   },
   "publicOrigin": "https://your-machine.your-tailnet.ts.net",
   "modules": {
-    "example": {
-      "enabled": true,
-      "greeting": "hello from factotum",
-      "tickSeconds": 30
-    },
     "sessions": {
       "enabled": false,
       "sites": [
-        { "id": "notes", "path": "/Users/you/notes" }
+        {
+          "id": "notes",
+          "path": "/Users/you/notes"
+        }
       ],
       "catalog": [
-        { "id": "free", "label": "Free prompt", "invoke": { "kind": "none" } },
-        { "id": "review", "label": "Code review", "invoke": { "kind": "command", "name": "code-review" } }
+        {
+          "id": "free",
+          "label": "Free prompt",
+          "invoke": {
+            "kind": "none"
+          }
+        },
+        {
+          "id": "review",
+          "label": "Code review",
+          "invoke": {
+            "kind": "command",
+            "name": "code-review"
+          }
+        }
       ]
     }
   }

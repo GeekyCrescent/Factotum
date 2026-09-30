@@ -94,10 +94,9 @@ export async function init(deps: InitDeps): Promise<number> {
     environment: deps.env,
     listen: { address: BIND_ADDRESS, port },
     publicOrigin,
-    // Turned on so the walk-through ends with something on the screen. And sessions, since projects
-    // are added from the app now (spec 2026-09-29, D1): a module that is off has no app to add one
-    // from. Everything else defaults to off.
-    modules: { example: { enabled: true }, sessions: { enabled: true, catalog: [FREE_ENTRY] } },
+    // Sessions on, since projects are added from the app (spec 2026-09-29, D1): a module that is off
+    // has no app to add one from. Everything else defaults to off.
+    modules: { sessions: { enabled: true, catalog: [FREE_ENTRY] } },
   }
 
   // VALIDATED WITH THE REAL SCHEMA BEFORE IT TOUCHES THE DISK. Re-implementing the

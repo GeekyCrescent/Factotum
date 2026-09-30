@@ -11,7 +11,9 @@ A module is five things. You rarely need all five.
 | `client.tsx` | The screen itself (see [The screen](#the-screen)) | Nav points at nothing |
 
 The shortest way in is to copy `modules/example/`. It is deliberately useless and
-deliberately complete — it exercises all five so that none of them is untested.
+deliberately complete — it exercises all five so that none of them is untested. It is a
+**template**: it compiles and its tests run, but it is not bundled, so the daemon never loads
+it until you register a copy.
 
 ## Ten minutes
 

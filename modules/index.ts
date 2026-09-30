@@ -7,10 +7,14 @@
  */
 
 import type { AnyModule } from '@factotum/core'
-import { exampleModule } from './example/server.ts'
 import { LOCAL } from './local.ts'
 
-export const BUNDLED: readonly AnyModule[] = [exampleModule]
+/**
+ * `modules/example/` is NOT here: it is the template `docs/writing-a-module.md` tells you to copy,
+ * kept compiling and tested, and never loaded (2026-09-30). The daemon ships with `sessions` alone,
+ * which the composition root appends because it is built by a factory.
+ */
+export const BUNDLED: readonly AnyModule[] = []
 
 export const ALL_MODULES: readonly AnyModule[] = [...BUNDLED, ...LOCAL]
 

@@ -76,10 +76,10 @@ test('the publicOrigin is composed from the FQDN, WITHOUT the trailing dot', asy
   assert.equal((await readConfig(h)).publicOrigin, 'https://mimac.tail1234.ts.net')
 })
 
-test('switches the example module on, so the walk-through ends with something visible', async () => {
+test('the example module is a template, not something init switches on', async () => {
   const h = await home()
   await init({ env: 'prod', home: h, run: withTailscale, out: () => undefined })
-  assert.equal((await readConfig(h)).modules.example.enabled, true)
+  assert.equal('example' in (await readConfig(h)).modules, false)
 })
 
 test('SWITCHES SESSIONS ON with "Free prompt", validated by the module’s own schema (spec 2026-09-29, criterion 7)', async () => {
