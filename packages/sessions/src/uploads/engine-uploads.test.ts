@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, realpath, rename, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -310,4 +310,24 @@ test('a Read of an upload, outside the project, is allowed by the gate', async (
   } finally {
     await w.engine.cancel(id)
   }
+})
+
+test('keeping an upload touches no session and no lock (criterion 3)', async () => {
+  const w = await world({ seed: async (store) => void (await conversation(store, 'work', [{ kind: 'message', role: 'user', text: 'x' }])) })
+  const paths = sessionPaths(w.stateDir)
+  const snapshot = async () => {
+    const out: string[] = []
+    for (const dir of [paths.sessions, paths.locks]) {
+      for (const name of await readdir(dir)) out.push(`${name}:${(await stat(join(dir, name))).mtimeMs}`)
+      out.push(`${dir}:${(await stat(dir)).mtimeMs}`)
+    }
+    return out.sort()
+  }
+  const before = await snapshot()
+  const incoming = join(w.stateDir, '.incoming')
+  await mkdir(incoming, { recursive: true })
+  await writeFile(join(incoming, 'y.part'), PNG)
+  const result = await w.engine.upload({ path: join(incoming, 'y.part'), bytes: PNG.length }, 'y.png')
+  assert.equal(result.outcome, 'ok')
+  assert.deepEqual(await snapshot(), before)
 })

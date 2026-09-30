@@ -41,6 +41,13 @@ export const boundaryPath = z
  * every `:id` of a project in a route is checked against it BEFORE the engine sees it (spec
  * 2026-09-29, criterion 11), and a second copy of the pattern is the copy that drifts.
  */
+/**
+ * The ceiling of one attached file: 20 MiB. THE ONE LITERAL (spec 2026-10-01, D4). The route needs it
+ * at step 8, before the engine exists, so it lives here and goes down from here — to the engine as
+ * `uploadMaxBytes`, and to the screen through `view().uploads.maxBytes`. The screen keeps no copy.
+ */
+export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
 export const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 
 export const siteIdSchema = z.string().regex(SITE_ID_PATTERN, 'a site id must match /^[a-z0-9][a-z0-9-]*$/')

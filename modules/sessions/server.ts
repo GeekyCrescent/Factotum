@@ -20,8 +20,8 @@
  */
 
 import { homedir } from 'node:os'
-import type { FactotumModule, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
-import { sessionsConfigSchema, type SessionsConfig } from './config.ts'
+import { uploadRoute, type FactotumModule, type ModuleContext, type ModuleRequest, type ModuleResponse, type RouteTable } from '@factotum/core'
+import { sessionsConfigSchema, UPLOAD_MAX_BYTES, type SessionsConfig } from './config.ts'
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
 import {
   isSiteId,
@@ -420,6 +420,44 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       }
     }),
 
+    // --- attaching (spec 2026-10-01, D9) ----------------------------------------
+
+    // THE BYTES OF ONE FILE, written by the kernel under `.incoming/` and handed over as a path —
+    // this module never sees the stream (ADR-0012). The name travels in the query and is the
+    // engine's to sanitise. What the engine does not keep, the kernel deletes.
+    'POST /uploads': uploadRoute(
+      UPLOAD_MAX_BYTES,
+      withEngine(async (engine, req) => {
+        if (req.file === undefined) return invalid('this route takes the bytes of one file')
+        const name = req.query['name']
+        if (name === undefined || name === '') return invalid('an upload needs ?name=')
+        // Optional in this module's copy of the engine (design D12); the real one always has it.
+        if (engine.upload === undefined) return STARTING
+        const result = await engine.upload(req.file, name)
+        switch (result.outcome) {
+          case 'ok':
+            return {
+              status: 201,
+              headers: NO_STORE,
+              body: { uploadId: result.uploadId, name: result.name, path: result.path, bytes: result.bytes, image: result.image },
+            }
+          case 'invalid':
+            return invalid(result.reason)
+          case 'off':
+            // Valid, and not possible on this host: a 409, not a 501 — 501 means "disabled by config".
+            return conflict(result.reason, { uploads: { off: result.reason } })
+        }
+      }),
+    ),
+
+    // A FILE, not JSON: the kernel serves it and decides its headers from its bytes (ADR-0012). Only
+    // the form is checked here; whether it exists is the kernel's 404.
+    'GET /uploads/:uploadId/:name': withEngine(async (engine, req) => {
+      if (engine.openUpload === undefined) return STARTING
+      const found = engine.openUpload(req.params['uploadId'] ?? '', req.params['name'] ?? '')
+      return found.kind === 'ok' ? { status: 200, file: found.path } : invalid('that is not an upload')
+    }),
+
     // POST and not DELETE: adding a verb to the contract for one action is exactly the
     // growth it exists to avoid, and cancelling deletes nothing.
     'POST /sessions/:id/cancel': withEngine(async (engine, req) => {
@@ -519,6 +557,7 @@ export function sessionsModule(
         hookUrl,
         notify: ctx.notify,
         titles: ctx.config.titles,
+        uploadMaxBytes: UPLOAD_MAX_BYTES,
       })
       await engine.reconcile()
       holder.engine = engine

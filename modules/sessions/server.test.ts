@@ -139,6 +139,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'timers',
     // The titler's settings (spec 2026-09-30, D9), from the module's one schema.
     'titles',
+    // The ceiling of one upload, the module's one literal (spec 2026-10-01, D4).
+    'uploadMaxBytes',
   ].sort())
   assert.equal(setup.stateDir, '/state/modules/sessions')
   // Three levels above `<root>/<env>/modules/sessions`; this fixture has no env level, so `/`.
@@ -819,4 +821,73 @@ test('GET /search: at least two characters, hits under no-store (criteria 38, 40
   const ok = await call(table, 'GET /search', request('GET', '/search', { query: { q: '  parser ' } }))
   assert.deepEqual([ok.status, ok.body, ok.headers?.['cache-control'], asked], [200, { hits: [] }, 'no-store', 'parser'])
   assert.equal((await call(table, 'GET /search', request('GET', '/search', { query: { q: 'p' } }))).status, 400)
+})
+
+// ---------------------------------------------------------------------------
+// Attaching (spec 2026-10-01, D9)
+// ---------------------------------------------------------------------------
+
+const RECEIVED = { path: '/state/modules/sessions/.incoming/x.part', bytes: 12 }
+
+test('POST /uploads is an upload route with the module ceiling, and passes that ceiling to the engine', async () => {
+  const { table, setup } = await started(fakeEngine())
+  const route = table['POST /uploads'] as (RouteTable[string] & { upload?: { maxBytes: number } }) | undefined
+  assert.equal(route?.upload?.maxBytes, 20 * 1024 * 1024)
+  assert.equal(setup.uploadMaxBytes, 20 * 1024 * 1024)
+})
+
+test('POST /uploads: without the file or without ?name= is a 400 and the engine is not asked', async () => {
+  let asked = 0
+  const { table } = await started(fakeEngine({ upload: async () => ((asked += 1), { outcome: 'invalid', reason: 'x' }) }))
+  assert.equal((await call(table, 'POST /uploads', request('POST', '/uploads', { query: { name: 'a.png' } }))).status, 400)
+  assert.equal((await call(table, 'POST /uploads', request('POST', '/uploads', { file: RECEIVED }))).status, 400)
+  assert.equal(asked, 0)
+})
+
+test('POST /uploads: kept is 201 with its five fields, never cached', async () => {
+  let got: { path: string; name: string } | undefined
+  const { table } = await started(
+    fakeEngine({
+      upload: async (file, name) => {
+        got = { path: file.path, name }
+        return { outcome: 'ok', uploadId: '019a0000-0000-7000-8000-000000000001', name: 'a-b.png', path: '/state/uploads/019a/a-b.png', bytes: 12, image: true }
+      },
+    }),
+  )
+  const response = await call(table, 'POST /uploads', request('POST', '/uploads', { file: RECEIVED, query: { name: 'a b.png' } }))
+  assert.equal(response.status, 201)
+  assert.equal(response.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(response.body, { uploadId: '019a0000-0000-7000-8000-000000000001', name: 'a-b.png', path: '/state/uploads/019a/a-b.png', bytes: 12, image: true })
+  assert.deepEqual(got, { path: RECEIVED.path, name: 'a b.png' })
+})
+
+test('POST /uploads: a name the engine refuses is 400; uploads off is a 409 that says why', async () => {
+  const refused = await started(fakeEngine({ upload: async () => ({ outcome: 'invalid', reason: 'a file name cannot contain a slash' }) }))
+  const bad = await call(refused.table, 'POST /uploads', request('POST', '/uploads', { file: RECEIVED, query: { name: 'a/b.png' } }))
+  assert.equal(bad.status, 400)
+  assert.match((bad.body as ErrorBody).error.message, /slash/)
+
+  const off = await started(fakeEngine({ upload: async () => ({ outcome: 'off', reason: 'spaces in the state folder' }) }))
+  const response = await call(off.table, 'POST /uploads', request('POST', '/uploads', { file: RECEIVED, query: { name: 'a.png' } }))
+  assert.equal(response.status, 409)
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
+  assert.deepEqual((response.body as { uploads: unknown }).uploads, { off: 'spaces in the state folder' })
+})
+
+test('an engine without the upload members (a stale copy) answers 503, not a crash', async () => {
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, 'POST /uploads', request('POST', '/uploads', { file: RECEIVED, query: { name: 'a.png' } }))).status, 503)
+  assert.equal((await call(table, 'GET /uploads/:uploadId/:name', request('GET', '/uploads/x/y', { params: { uploadId: 'x', name: 'y' } }))).status, 503)
+})
+
+test('GET /uploads/:uploadId/:name answers with the FILE for a good one and 400 for a bad form (criterion 13)', async () => {
+  const { table } = await started(
+    fakeEngine({
+      openUpload: (uploadId, name) => (uploadId === 'good' && name === 'a.png' ? { kind: 'ok', path: '/state/uploads/good/a.png' } : { kind: 'invalid' }),
+    }),
+  )
+  const good = await call(table, 'GET /uploads/:uploadId/:name', request('GET', '/uploads/good/a.png', { params: { uploadId: 'good', name: 'a.png' } }))
+  assert.deepEqual(good, { status: 200, file: '/state/uploads/good/a.png' })
+  const bad = await call(table, 'GET /uploads/:uploadId/:name', request('GET', '/uploads/../x', { params: { uploadId: '..', name: 'x' } }))
+  assert.equal(bad.status, 400)
 })
