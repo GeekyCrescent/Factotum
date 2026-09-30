@@ -772,6 +772,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     inspectGrant: folders.inspectGrant,
     answerGrant: unlessStopped(folders.answerGrant),
     updateProject: unlessStopped(folders.updateProject),
+    setLayout: unlessStopped(folders.setLayout),
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),
     removeShared: unlessStopped(folders.removeShared),

@@ -11,9 +11,10 @@ import {
   isValidId,
   readRegistry,
   registryFile,
+  staleLayout,
   type RegistrySeed,
 } from './registry.ts'
-import type { RegistryStore, RegistryView } from './types.ts'
+import type { RegistryEdit, RegistryStore, RegistryView } from './types.ts'
 
 const NOW = () => new Date('2026-09-29T10:00:00.000Z')
 
@@ -330,6 +331,130 @@ test('readRegistry says missing, ok or broken, for the CLI', async () => {
   assert.equal((await readRegistry(join(dir, 'none.json'))).kind, 'missing')
   await writeFile(join(dir, 'ok.json'), JSON.stringify({ version: 1, projects: [], shared: [] }))
   assert.equal((await readRegistry(join(dir, 'ok.json'))).kind, 'ok')
+})
+
+// ---------------------------------------------------------------------------
+// the owner's order and categories
+// ---------------------------------------------------------------------------
+
+const THREE = { version: 1, projects: [{ id: 'a', path: '/Users/me/a' }, { id: 'b', path: '/Users/me/b', name: 'Bee', color: 2 }, { id: 'c', path: '/Users/me/c' }], shared: [] }
+
+async function withFile(content: unknown): Promise<{ file: string; store: RegistryStore }> {
+  const dir = await scratch()
+  const file = registryFile(dir)
+  await writeFile(file, JSON.stringify(content))
+  const store = createRegistryStore({ file, seed: { sites: [], sharedPaths: [] }, now: NOW })
+  await store.load()
+  return { file, store }
+}
+
+const layout = (edit: RegistryEdit) => async () => edit
+
+test('A FILE FROM BEFORE THE CATEGORIES loads with none, and a rename does not add the key', async () => {
+  const { file, store } = await withFile(THREE)
+  const loaded = await store.load()
+  assert.equal(loaded.kind, 'ok')
+  if (loaded.kind !== 'ok') return
+  assert.deepEqual(loaded.registry.categories, [])
+  await store.update(rename('a', 'Ay'))
+  assert.equal('categories' in (await onDisk(file)), false)
+})
+
+test('SET-LAYOUT reorders the projects, files them under categories, and keeps every other field', async () => {
+  const { file, store } = await withFile(THREE)
+  const result = await store.update(
+    layout({
+      kind: 'set-layout',
+      layout: {
+        categories: [{ id: 'work', name: '  Work  ' }, { id: 'home', name: 'Home' }],
+        order: [
+          { id: 'c', category: 'work' },
+          { id: 'b', category: undefined },
+          { id: 'a', category: 'home' },
+        ],
+      },
+    }),
+  )
+  assert.equal(result.kind, 'ok')
+  const disk = (await onDisk(file)) as { projects: unknown[]; categories?: unknown[] }
+  assert.deepEqual(disk.projects, [
+    { id: 'c', path: '/Users/me/c', category: 'work' },
+    { id: 'b', path: '/Users/me/b', name: 'Bee', color: 2 },
+    { id: 'a', path: '/Users/me/a', category: 'home' },
+  ])
+  // Trimmed on the way in: the name is what the header shows.
+  assert.deepEqual(disk.categories, [{ id: 'work', name: 'Work' }, { id: 'home', name: 'Home' }])
+
+  // A rename afterwards keeps the project's category and its place.
+  await store.update(rename('a', 'Ay'))
+  const after = (await onDisk(file)) as { projects: { id: string; category?: string }[] }
+  assert.deepEqual(after.projects.map((p) => [p.id, p.category]), [['c', 'work'], ['b', undefined], ['a', 'home']])
+
+  // And the next start reads it back as it was written.
+  const again = createRegistryStore({ file, seed: { sites: [], sharedPaths: [] }, now: NOW })
+  const loaded = await again.load()
+  assert.deepEqual(loaded.kind === 'ok' ? loaded.registry.categories.map((c) => c.id) : [], ['work', 'home'])
+})
+
+test('a layout is refused WHOLE when it does not fit: stale, twice, unknown, unnamed, too many', async () => {
+  const { file, store } = await withFile(THREE)
+  const before = await readFile(file, 'utf8')
+  const all = (category: string | undefined = undefined) => ['a', 'b', 'c'].map((id) => ({ id, category }))
+  const cases: Array<[RegistryEdit, RegExp]> = [
+    [{ kind: 'set-layout', layout: { categories: [], order: [{ id: 'a', category: undefined }] } }, /reload/],
+    [{ kind: 'set-layout', layout: { categories: [], order: [...all(), { id: 'd', category: undefined }] } }, /reload/],
+    [{ kind: 'set-layout', layout: { categories: [], order: [...all().slice(0, 2), { id: 'a', category: undefined }] } }, /reload/],
+    [{ kind: 'set-layout', layout: { categories: [], order: all('ghost') } }, /no category "ghost"/],
+    [{ kind: 'set-layout', layout: { categories: [{ id: 'x', name: 'X' }, { id: 'x', name: 'Y' }], order: all() } }, /twice/],
+    [{ kind: 'set-layout', layout: { categories: [{ id: 'x', name: '   ' }], order: all() } }, /needs a name/],
+    [{ kind: 'set-layout', layout: { categories: [{ id: 'Not An Id', name: 'X' }], order: all() } }, /category id/],
+    [
+      { kind: 'set-layout', layout: { categories: Array.from({ length: 51 }, (_, i) => ({ id: `c${i}`, name: 'C' })), order: all() } },
+      /50/,
+    ],
+  ]
+  for (const [edit, reason] of cases) {
+    const result = await store.update(layout(edit))
+    assert.equal(result.kind, 'refused')
+    assert.match(result.kind === 'refused' ? result.reason : '', reason)
+  }
+  assert.equal(await readFile(file, 'utf8'), before, 'nothing was written')
+})
+
+test('BAD CATEGORIES degrade: a bad one is skipped and written back; a project never pays for its category', async () => {
+  const typo = { id: 'Bad Id', name: 'Typo' }
+  const { file, store } = await withFile({
+    ...THREE,
+    projects: [{ id: 'a', path: '/Users/me/a', category: 42 }, { id: 'b', path: '/Users/me/b', category: 'work' }],
+    categories: [{ id: 'work', name: 'Work' }, typo, { id: 'work', name: 'Again' }, { id: 'empty', name: '' }],
+  })
+  const loaded = await store.load()
+  assert.equal(loaded.kind, 'ok')
+  if (loaded.kind !== 'ok') return
+  // BOTH projects load: the unreadable category costs `a` its category, not its place.
+  assert.deepEqual(loaded.registry.projects.map((p) => [p.id, p.category]), [['a', undefined], ['b', 'work']])
+  assert.deepEqual(loaded.registry.categories, [{ id: 'work', name: 'Work' }])
+  assert.deepEqual(loaded.skipped.map((s) => [s.list, s.index]), [['categories', 1], ['categories', 2], ['categories', 3]])
+  assert.match(loaded.skipped[1]?.reason ?? '', /already there/)
+
+  await store.update(rename('b', 'Bee'))
+  const disk = (await onDisk(file)) as { categories?: unknown[] }
+  assert.deepEqual(disk.categories, [{ id: 'work', name: 'Work' }, typo, { id: 'work', name: 'Again' }, { id: 'empty', name: '' }])
+})
+
+test('past the ceiling, the extra categories are skipped rather than the file broken', async () => {
+  const categories = Array.from({ length: 52 }, (_, i) => ({ id: `c${i}`, name: `C${i}` }))
+  const { store } = await withFile({ ...THREE, categories })
+  const loaded = await store.load()
+  assert.equal(loaded.kind === 'ok' ? loaded.registry.categories.length : 0, 50)
+  assert.match(loaded.kind === 'ok' ? (loaded.skipped[0]?.reason ?? '') : '', /more than 50/)
+})
+
+test('staleLayout: every project once and no other, or why not', () => {
+  const projects = [{ id: 'a' }, { id: 'b' }]
+  assert.equal(staleLayout(projects, { categories: [], order: [{ id: 'b', category: undefined }, { id: 'a', category: undefined }] }), undefined)
+  assert.match(staleLayout(projects, { categories: [], order: [{ id: 'a', category: undefined }] }) ?? '', /reload/)
+  assert.match(staleLayout(projects, { categories: [], order: [{ id: 'a', category: undefined }, { id: 'a', category: undefined }] }) ?? '', /reload/)
 })
 
 // ---------------------------------------------------------------------------

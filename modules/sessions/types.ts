@@ -84,6 +84,17 @@ export interface ProjectEntry {
   readonly name?: string | undefined
   readonly color?: Color | undefined
   readonly addedAt?: string | undefined
+  /** The id of the owner's category it sits in. One that names no category counts as none. */
+  readonly category?: string | undefined
+}
+
+/**
+ * A group of projects the owner named, for the drawer alone. COSMETIC, like a name or a colour: it
+ * changes nothing an agent can use, so it needs no approval (ADR-0011).
+ */
+export interface CategoryEntry {
+  readonly id: string
+  readonly name: string
 }
 
 export interface SharedEntry {
@@ -92,13 +103,15 @@ export interface SharedEntry {
 }
 
 export interface RegistryView {
+  /** IN THE OWNER'S ORDER: the drawer lists them as they are here. */
   readonly projects: readonly ProjectEntry[]
   readonly shared: readonly SharedEntry[]
+  readonly categories: readonly CategoryEntry[]
 }
 
 /** An entry the reader skipped, said out loud: GET /projects and the projects screen show it. */
 export interface SkippedEntry {
-  readonly list: 'projects' | 'shared'
+  readonly list: 'projects' | 'shared' | 'categories'
   readonly index: number
   readonly reason: string
 }
@@ -115,6 +128,7 @@ export type RegistryEdit =
   | { readonly kind: 'remove-project'; readonly id: string }
   | { readonly kind: 'add-shared'; readonly path: string }
   | { readonly kind: 'remove-shared'; readonly path: string }
+  | { readonly kind: 'set-layout'; readonly layout: ProjectLayout }
 
 export type RegistryLoad =
   | {
@@ -340,6 +354,8 @@ export interface ProjectView {
   /** Not archived. */
   readonly total: number
   readonly archived: number
+  /** Its category's id, as the registry holds it. The client treats one naming none as none. */
+  readonly category: string | undefined
 }
 
 export interface SharedView {
@@ -367,6 +383,8 @@ export interface ProjectsPage {
   readonly home: string
   /** Whether a request can reach a device right now (criterion 10). */
   readonly canRequest: boolean
+  /** The owner's categories, in order. `projects` comes in the owner's order too. */
+  readonly categories: readonly CategoryEntry[]
 }
 
 export interface ProjectRef {
@@ -411,6 +429,16 @@ export interface ProjectRequest {
 export interface ProjectPatch {
   readonly name: string | undefined
   readonly color: Color | undefined
+}
+
+/**
+ * The drawer's whole arrangement, set AT ONCE: the categories in order, and EVERY project once, in
+ * order, with its category. Whole rather than one move at a time, so two screens moving things never
+ * interleave into an order neither asked for: the second is refused as stale and reloads.
+ */
+export interface ProjectLayout {
+  readonly categories: readonly CategoryEntry[]
+  readonly order: readonly { readonly id: string; readonly category: string | undefined }[]
 }
 
 /** Why a request is a 409 rather than a 400: the screen says each differently. */
@@ -478,6 +506,8 @@ export interface SessionEngine {
   readonly inspectGrant: (token: string) => Promise<GrantInspect>
   readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
   readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  /** The order and the categories (see `ProjectLayout`). Cosmetic: no approval. */
+  readonly setLayout: (layout: ProjectLayout) => Promise<ProjectChange>
   readonly removeProject: (id: string) => Promise<ProjectChange>
   readonly removeHistory: (siteId: string) => Promise<ProjectChange>
   readonly removeShared: (path: string) => Promise<ProjectChange>

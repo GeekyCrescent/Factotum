@@ -37,6 +37,7 @@ const project = (id: string, sessions: SessionSummary[], extra: Partial<ProjectV
   sessions,
   total: sessions.length,
   archived: 0,
+  category: undefined,
   ...extra,
 })
 

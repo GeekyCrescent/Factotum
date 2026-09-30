@@ -21,7 +21,7 @@ import { normalize } from 'node:path'
 import type { Logger, Timers } from '@factotum/core'
 import { bounded } from './bounded.ts'
 import { canonicalPath, checkSite, contains, realDisk, type DiskProbe, type Site, type SiteCheck } from './sites.ts'
-import type { Color, EngineSetupView, ProjectEntry, RegistryStore, RegistryView, SharedView, SkippedEntry } from './types.ts'
+import type { CategoryEntry, Color, EngineSetupView, ProjectEntry, RegistryStore, RegistryView, SharedView, SkippedEntry } from './types.ts'
 
 /** How long one folder check may take before the folder counts as missing. */
 export const SITE_CHECK_MS = 5_000
@@ -65,7 +65,9 @@ export interface SiteTable {
   readonly load: () => Promise<void>
   readonly broken: () => string | undefined
   readonly skipped: () => readonly SkippedEntry[]
+  /** In the owner's order. */
   readonly entries: () => readonly ProjectEntry[]
+  readonly categories: () => readonly CategoryEntry[]
   readonly entry: (id: string) => ProjectEntry | undefined
   /** Checks one project again. `undefined`: no such project is registered. */
   readonly refresh: (id: string) => Promise<SiteCheck | undefined>
@@ -91,6 +93,7 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
   const checkMs = deps.checkMs ?? SITE_CHECK_MS
   const projects = new Map<string, ProjectState>()
   let shared: SharedState[] = []
+  let categories: readonly CategoryEntry[] = []
   let gate: readonly Site[] = []
   let brokenReason: string | undefined
   let skipped: readonly SkippedEntry[] = []
@@ -165,6 +168,7 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
     projects.clear()
     for (const entry of registry.projects) projects.set(entry.id, { entry, check: undefined, lastSite: undefined })
     shared = registry.shared.map((s) => ({ path: s.path, check: undefined }))
+    categories = registry.categories
   }
 
   return {
@@ -193,6 +197,7 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
     skipped: () => skipped,
     entries: () => [...projects.values()].map((state) => state.entry),
     entry: (id) => projects.get(id)?.entry,
+    categories: () => categories,
 
     refresh: async (id) => {
       const state = projects.get(id)
@@ -223,7 +228,11 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
         reason: s.check?.status === 'missing' ? s.check.reason : undefined,
       })),
 
-    registryView: () => ({ projects: [...projects.values()].map((state) => state.entry), shared: shared.map((s) => ({ path: s.path })) }),
+    registryView: () => ({
+      projects: [...projects.values()].map((state) => state.entry),
+      shared: shared.map((s) => ({ path: s.path })),
+      categories,
+    }),
 
     apply: async (registry, rebuildShared) => {
       const before = projects
@@ -232,8 +241,10 @@ export function createSiteTable(deps: SiteTableDeps): SiteTable {
         const old = before.get(entry.id)
         fresh.set(entry.id, { entry, check: old?.check, lastSite: old?.lastSite })
       }
+      // Rebuilt in the registry's order, which is the owner's: a Map keeps the order it was filled in.
       projects.clear()
       for (const [id, state] of fresh) projects.set(id, state)
+      categories = registry.categories
       const oldShared = new Map(shared.map((s) => [s.path, s]))
       shared = registry.shared.map((s) => oldShared.get(s.path) ?? { path: s.path, check: undefined })
       await Promise.all([

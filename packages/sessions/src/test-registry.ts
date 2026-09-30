@@ -28,6 +28,7 @@ export function memoryRegistry(
   let view: RegistryView = {
     projects: (initial.sites ?? []).map((site) => ({ id: site.id, path: site.path })),
     shared: (initial.sharedPaths ?? []).map((path) => ({ path })),
+    categories: [],
   }
   let failure: string | undefined
   let writes = 0
@@ -85,5 +86,14 @@ function apply(view: RegistryView, edit: RegistryEdit): RegistryView {
       return { ...view, shared: [...view.shared, { path: edit.path }] }
     case 'remove-shared':
       return { ...view, shared: view.shared.filter((s) => s.path !== edit.path) }
+    case 'set-layout': {
+      // Trusts the engine's check: the real store's own last line is tested in the module.
+      const byId = new Map(view.projects.map((p) => [p.id, p]))
+      const projects = edit.layout.order.flatMap((placed) => {
+        const found = byId.get(placed.id)
+        return found === undefined ? [] : [{ ...found, category: placed.category }]
+      })
+      return { ...view, projects, categories: edit.layout.categories }
+    }
   }
 }
