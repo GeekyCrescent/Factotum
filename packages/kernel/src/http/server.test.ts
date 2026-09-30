@@ -1,15 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { MAX_BODY_BYTES } from '@factotum/core'
+import { DRAIN_MAX_BYTES, MAX_BODY_BYTES, uploadRoute } from '@factotum/core'
+import { connect } from 'node:net'
 import { createServer } from './server.ts'
 import { createStaticSite } from './static.ts'
 import { policyFor } from '../net/policy.ts'
 import { Registry } from '../modules/registry.ts'
-import { statePaths } from '../config/paths.ts'
+import { incomingDir, moduleStateDir, statePaths } from '../config/paths.ts'
 import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
@@ -395,6 +396,169 @@ test('module branch: a handler that throws is 500 module-error, and its message 
     const text = await response.text()
     assert.match(text, /module-error/)
     assert.doesNotMatch(text, /\.ssh/)
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The drain is capped (spec 2026-10-01, criterion 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pushes `total` bytes at a JSON route over a raw socket and reports how many the client managed to
+ * write before the server closed on it. What the SERVER read is at most that; the slack covers the
+ * kernel's socket buffers.
+ */
+async function push(base: string, path: string, total: number): Promise<{ written: number; closed: boolean }> {
+  const { port } = new URL(base)
+  return await new Promise((resolve) => {
+    const socket = connect(Number(port), '127.0.0.1')
+    let written = 0
+    let settled = false
+    const done = (closed: boolean) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve({ written, closed })
+    }
+    socket.on('error', () => done(true))
+    socket.on('close', () => done(true))
+    socket.on('connect', () => {
+      socket.write(`POST ${path} HTTP/1.1\r\nhost: x\r\ncontent-length: ${total}\r\n\r\n`)
+      const chunk = Buffer.alloc(64 * 1024, 0x78)
+      const pump = () => {
+        while (written < total) {
+          written += chunk.length
+          if (!socket.write(chunk)) return void socket.once('drain', pump)
+        }
+      }
+      pump()
+    })
+    setTimeout(() => done(false), 10_000).unref()
+  })
+}
+
+test('a refused body is read at most DRAIN_MAX_BYTES further, then the connection ends (criterion 6)', async () => {
+  const { base, close } = await start({ modules: probeModules() })
+  try {
+    const total = MAX_BODY_BYTES + DRAIN_MAX_BYTES * 3
+    const { written, closed } = await push(base, '/modules/probe/echo', total)
+    assert.equal(closed, true, 'the server must end the connection instead of reading on')
+    const slack = 4 * 1024 * 1024
+    assert.ok(written < MAX_BODY_BYTES + DRAIN_MAX_BYTES + slack, `the client wrote ${written} bytes before the server stopped reading`)
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Upload routes and file responses through the whole server (spec 2026-10-01, B8)
+// ---------------------------------------------------------------------------
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 7, 7, 7])
+
+/** A module that keeps an upload, one that does not, one that throws, and one that serves a file. */
+const uploadModules = (): readonly ComposedModule[] => {
+  let kept = ''
+  return [
+    {
+      module: {
+        id: 'files',
+        routes: (ctx) => ({
+          'POST /keep': uploadRoute(1024, async (req) => {
+            if (req.file === undefined) return { status: 400 }
+            kept = join(ctx.stateDir, 'kept.png')
+            await rename(req.file.path, kept)
+            return { status: 201, body: { bytes: req.file.bytes, query: req.query['name'] ?? null, body: req.body ?? null } }
+          }),
+          'POST /forget': uploadRoute(1024, (req) => ({ status: 200, body: { saw: req.file?.path ?? null } })),
+          'POST /throws': uploadRoute(1024, () => {
+            throw new Error('boom')
+          }),
+          'GET /kept': () => ({ status: 200, file: kept, body: 'ignored', headers: { 'content-type': 'text/html' } }),
+          'GET /outside': () => ({ status: 200, file: '/etc/hosts' }),
+          'GET /x/:id': () => ({ status: 200 }),
+        }),
+      },
+      status: { kind: 'enabled' },
+      config: undefined,
+    },
+  ]
+}
+
+test('an upload route gets the bytes as a file, the module keeps it, and a file response serves it (criterion 5d, 8)', async () => {
+  const { base, home, close } = await start({ modules: uploadModules() })
+  try {
+    const up = await fetch(`${base}/modules/files/keep?name=a.png`, { method: 'POST', body: PNG })
+    assert.equal(up.status, 201)
+    assert.deepEqual(await up.json(), { bytes: PNG.length, query: 'a.png', body: null })
+
+    const stateDir = moduleStateDir(statePaths('prod', home), 'files')
+    assert.deepEqual(await readdir(incomingDir(stateDir)), [], 'nothing left in .incoming/')
+
+    // The module asked for text/html and sent a body: the kernel ignores both and serves the file.
+    const served = await fetch(`${base}/modules/files/kept`)
+    assert.equal(served.status, 200)
+    assert.equal(served.headers.get('content-type'), 'image/png')
+    assert.equal(served.headers.get('x-content-type-options'), 'nosniff')
+    assert.deepEqual(Buffer.from(await served.arrayBuffer()), await readFile(join(stateDir, 'kept.png')))
+  } finally {
+    await close()
+  }
+})
+
+test('what an upload handler does not keep, the kernel deletes — also when it throws', async () => {
+  const { base, home, close } = await start({ modules: uploadModules() })
+  try {
+    const stateDir = moduleStateDir(statePaths('prod', home), 'files')
+    const forgot = await fetch(`${base}/modules/files/forget`, { method: 'POST', body: PNG })
+    assert.equal(forgot.status, 200)
+    const saw = ((await forgot.json()) as { saw: string }).saw
+    assert.ok(saw.startsWith(incomingDir(stateDir)))
+    assert.deepEqual(await readdir(incomingDir(stateDir)), [])
+
+    const threw = await fetch(`${base}/modules/files/throws`, { method: 'POST', body: PNG })
+    assert.equal(threw.status, 500)
+    assert.doesNotMatch(await threw.text(), /boom/)
+    assert.deepEqual(await readdir(incomingDir(stateDir)), [])
+  } finally {
+    await close()
+  }
+})
+
+test('an upload over its route ceiling is refused and nothing reaches the disk', async () => {
+  const { base, home, close } = await start({ modules: uploadModules() })
+  try {
+    const status = await fetch(`${base}/modules/files/keep`, { method: 'POST', body: Buffer.alloc(2048) }).then(
+      (response) => response.status,
+      () => 'cut',
+    )
+    assert.ok(status === 413 || status === 'cut', `got ${status}`)
+    const stateDir = moduleStateDir(statePaths('prod', home), 'files')
+    assert.deepEqual(await readdir(incomingDir(stateDir)).catch(() => []), [])
+  } finally {
+    await close()
+  }
+})
+
+test('a file response outside the module directory is 404 (criterion 8a)', async () => {
+  const { base, close } = await start({ modules: uploadModules() })
+  try {
+    const response = await fetch(`${base}/modules/files/outside`)
+    assert.equal(response.status, 404)
+    assert.doesNotMatch(await response.text(), /localhost/)
+  } finally {
+    await close()
+  }
+})
+
+test('a malformed escape in a parameter is still a 500 module-error, as it was inside dispatch', async () => {
+  const { base, close } = await start({ modules: uploadModules() })
+  try {
+    const response = await fetch(`${base}/modules/files/x/%E0%A4%A`)
+    assert.equal(response.status, 500)
+    assert.match(await response.text(), /module-error/)
   } finally {
     await close()
   }

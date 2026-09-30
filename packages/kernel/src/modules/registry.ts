@@ -7,10 +7,10 @@
  * to its capabilities, moved up one level so that it covers whole modules.
  */
 
-import { mkdir } from 'node:fs/promises'
-import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type NotificationMessage, type Timers } from '@factotum/core'
+import { mkdir, rm } from 'node:fs/promises'
+import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type NotificationMessage, type ReceivedFile, type RouteHandler, type Timers } from '@factotum/core'
 import type { ComposedModule } from '../config/load.ts'
-import { moduleStateDir, type StatePaths } from '../config/paths.ts'
+import { incomingDir, moduleStateDir, type StatePaths } from '../config/paths.ts'
 import type { PushService } from '../push/service.ts'
 import { compileRoutes, buildRequest, matchRoute, type CompiledRoute } from './mount.ts'
 
@@ -40,6 +40,22 @@ export interface RegistryDeps {
   readonly push: Pick<PushService, 'canReach' | 'send'>
 }
 
+/**
+ * Where a request lands, decided BEFORE its body is read (spec 2026-10-01, D2): an upload route reads
+ * its body into a file and every other route reads JSON, so the kernel has to know which first.
+ */
+export type Resolved =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'disabled'; readonly response: ModuleResponse }
+  | { readonly kind: 'no-route'; readonly response: ModuleResponse }
+  | {
+      readonly kind: 'route'
+      readonly handler: RouteHandler
+      readonly params: Record<string, string>
+      /** The module's own directory: where an upload is written and the only place a file is served from. */
+      readonly stateDir: string
+    }
+
 export interface ModuleSummary {
   readonly id: string
   readonly nav?: NavEntry
@@ -54,6 +70,8 @@ interface Entry {
   readonly nav: NavEntry | undefined
   readonly status: ModuleStatus
   readonly routes: readonly CompiledRoute[]
+  /** `undefined` for a module disabled by its config: it never got a directory. */
+  readonly stateDir: string | undefined
   readonly timers: TimerSet
   readonly start: (() => Promise<{ stop: () => Promise<void> | void }>) | undefined
   readonly handle?: { stop: () => Promise<void> | void }
@@ -150,6 +168,7 @@ export class Registry {
           nav: module.nav,
           status,
           routes: [],
+          stateDir: undefined,
           timers,
           start: undefined,
         })
@@ -158,6 +177,9 @@ export class Registry {
 
       const stateDir = moduleStateDir(deps.paths, module.id)
       await mkdir(stateDir, { recursive: true })
+      // What a process that died mid-upload left behind. Nothing in there ever had a name a handler
+      // gave it, so nothing in there is anybody's (spec 2026-10-01, D2).
+      await rm(incomingDir(stateDir), { recursive: true, force: true })
 
       const moduleId = module.id
       const ctx = {
@@ -180,6 +202,7 @@ export class Registry {
         nav: module.nav,
         status,
         routes: module.routes ? compileRoutes(module.id, module.routes(ctx)) : [],
+        stateDir,
         timers,
         start: module.start
           ? async () => await module.start!(ctx)
@@ -259,18 +282,54 @@ export class Registry {
     query: URLSearchParams,
     body: unknown,
   ): Promise<ModuleResponse | undefined> {
+    const resolved = this.resolve(id, method, path)
+    switch (resolved.kind) {
+      case 'none':
+        return undefined
+      case 'disabled':
+      case 'no-route':
+        return resolved.response
+      case 'route':
+        return await Registry.call(resolved, method, path, query, body)
+    }
+  }
+
+  /**
+   * Which handler would answer, WITHOUT calling it. It can throw — `matchRoute` decodes the path's
+   * parameters and a malformed `%` escape throws there — so the server calls it inside the same
+   * `try` as the handler, exactly where `dispatch` used to throw it.
+   */
+  resolve(id: string, method: string, path: string): Resolved {
     const entry = this.#entries.find((candidate) => candidate.id === id)
-    if (entry === undefined) return undefined
+    if (entry === undefined) return { kind: 'none' }
 
     if (entry.status.kind === 'disabled') {
-      return { status: 501, body: { error: { code: 'module-disabled', message: entry.status.reason } } }
+      return {
+        kind: 'disabled',
+        response: { status: 501, body: { error: { code: 'module-disabled', message: entry.status.reason } } },
+      }
     }
 
     const matched = matchRoute(entry.routes, method, path)
-    if (matched === undefined) {
-      return { status: 404, body: { error: { code: 'not-found', message: `no route ${method} ${path} in module "${id}"` } } }
+    if (matched === undefined || entry.stateDir === undefined) {
+      return {
+        kind: 'no-route',
+        response: { status: 404, body: { error: { code: 'not-found', message: `no route ${method} ${path} in module "${id}"` } } },
+      }
     }
 
-    return await matched.handler(buildRequest(method, path, matched.params, query, body))
+    return { kind: 'route', handler: matched.handler, params: matched.params, stateDir: entry.stateDir }
+  }
+
+  /** Calls a resolved route. `file` only for an upload route, and only once its bytes are on disk. */
+  static async call(
+    resolved: Extract<Resolved, { kind: 'route' }>,
+    method: string,
+    path: string,
+    query: URLSearchParams,
+    body: unknown,
+    file?: ReceivedFile,
+  ): Promise<ModuleResponse> {
+    return await resolved.handler(buildRequest(method, path, resolved.params, query, body, file))
   }
 }

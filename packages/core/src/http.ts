@@ -6,10 +6,10 @@
  * upgrade to a WebSocket, opening a surface the kernel never declared. The second is
  * that a plain object can be tested without standing anything up.
  *
- * The cost is recorded rather than paid: binary bodies do not fit. Uploading or
- * serving a file needs a raw stream, and that is exactly what this boundary exists to
- * prevent. When a real consumer shows up, the right shape is a narrow kernel
- * capability (store a blob, serve a blob by id), not handing over the socket.
+ * Files fit now, WITHOUT a stream crossing (ADR-0012). A route made with `uploadRoute` receives
+ * the bytes of one file as a PATH the kernel wrote, capped and named by the kernel; a response can
+ * name a FILE in the module's state directory, and the kernel serves it with headers the module
+ * does not choose. Both are optional fields: nothing that existed before had to change to compile.
  */
 
 /**
@@ -43,14 +43,58 @@ export interface ModuleRequest {
    */
   readonly params: Readonly<Record<string, string>>
   readonly query: Readonly<Record<string, string>>
-  /** Parsed JSON, size-capped by the kernel. `undefined` when there was no body. */
+  /** Parsed JSON, size-capped by the kernel. `undefined` when there was no body, and on an upload. */
   readonly body: unknown
+  /**
+   * Only on a route made with `uploadRoute`: where the kernel put the bytes. Absent everywhere else,
+   * and a handler checks for it rather than trusting that it is there — a test can call it by hand.
+   */
+  readonly file?: ReceivedFile
+}
+
+/** The bytes of one uploaded file, already on disk. */
+export interface ReceivedFile {
+  /**
+   * Absolute, inside `<stateDir>/.incoming/`, named by the kernel. MOVE IT TO KEEP IT: whatever is
+   * still there when the handler returns, the kernel deletes.
+   */
+  readonly path: string
+  readonly bytes: number
 }
 
 export interface ModuleResponse {
   readonly status: number
   readonly body?: unknown
   readonly headers?: Readonly<Record<string, string>>
+  /**
+   * An absolute path inside the module's `stateDir`. When present the kernel serves THAT FILE and
+   * ignores `body` and `headers`: how a file is served — its type, whether it is painted or
+   * downloaded, whether it may run — is decided from its bytes, not by the module (ADR-0012).
+   */
+  readonly file?: string
+}
+
+/** What makes a route an upload route. */
+export interface UploadSpec {
+  /** At most MAX_UPLOAD_BYTES; checked when the daemon starts. */
+  readonly maxBytes: number
+}
+
+/** Still a `RouteHandler` — callable as one — with the one fact the kernel needs before reading. */
+export type UploadRoute = RouteHandler & { readonly upload: UploadSpec }
+
+/**
+ * Marks a handler as receiving the raw bytes of ONE file, up to `maxBytes`. The kernel reads the
+ * body into a file and hands the handler `req.file`; it never hands over the stream.
+ */
+export function uploadRoute(maxBytes: number, handler: RouteHandler): UploadRoute {
+  const route: RouteHandler = (req) => handler(req)
+  return Object.assign(route, { upload: { maxBytes } })
+}
+
+export function isUploadRoute(handler: RouteHandler): handler is UploadRoute {
+  const upload = (handler as Partial<UploadRoute>).upload
+  return typeof upload === 'object' && upload !== null && typeof upload.maxBytes === 'number'
 }
 
 /**
@@ -102,5 +146,15 @@ export function errorBody(code: ErrorCode, message: string): ErrorBody {
   return { error: { code, message } }
 }
 
-/** Bodies above this are refused with 413, draining the socket first. */
+/** JSON bodies above this are refused with 413, draining the socket first. */
 export const MAX_BODY_BYTES = 1_048_576
+
+/** The most an upload route may declare: 32 MiB. A module chooses its own ceiling below it. */
+export const MAX_UPLOAD_BYTES = 33_554_432
+
+/**
+ * The most the kernel reads from a body it has ALREADY REFUSED, before closing the connection.
+ * Draining lets the client read the 413; draining without a cap would let anyone make the daemon
+ * read gigabytes to say no.
+ */
+export const DRAIN_MAX_BYTES = 4_194_304

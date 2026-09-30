@@ -42,6 +42,15 @@ export function moduleStateDir(paths: StatePaths, id: string): string {
   return join(paths.modules, id)
 }
 
+/**
+ * Where the kernel writes an upload before its handler sees it: `<stateDir>/.incoming/`. Inside the
+ * module's own directory, so the handler can keep a file with a `rename` on the same disk — atomic,
+ * which is what keeps a half-written upload from ever having a name (spec 2026-10-01, D2).
+ */
+export function incomingDir(moduleStateDir: string): string {
+  return join(moduleStateDir, '.incoming')
+}
+
 /** Idempotent; called at boot so the first write is not the first failure. */
 export async function ensureStateRoots(paths: StatePaths): Promise<void> {
   await mkdir(paths.modules, { recursive: true })

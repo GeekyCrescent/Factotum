@@ -6,7 +6,7 @@
  * here, from an id the registry has already validated as unique and well-shaped.
  */
 
-import type { ModuleRequest, RouteHandler, RouteTable } from '@factotum/core'
+import { isUploadRoute, MAX_UPLOAD_BYTES, type ModuleRequest, type ReceivedFile, type RouteHandler, type RouteTable } from '@factotum/core'
 import { BootError } from '../errors.ts'
 
 interface Segment {
@@ -69,6 +69,20 @@ export function compileRoutes(moduleId: string, table: RouteTable): readonly Com
         segments.push({ param })
       } else {
         segments.push({ literal: raw })
+      }
+    }
+
+    // An upload route's ceiling is checked here, with the keys, for the same reason: a module that
+    // asks for more than the kernel allows is a programming error, found at start and not on the
+    // first photo (spec 2026-10-01, criterion 7).
+    if (isUploadRoute(handler)) {
+      const { maxBytes } = handler.upload
+      if (!Number.isInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_UPLOAD_BYTES) {
+        throw new BootError(
+          'route-upload-invalid',
+          `module "${moduleId}" declares ${JSON.stringify(key)} as an upload of ${maxBytes} bytes`,
+          `an upload route takes a whole number of bytes above 0 and at most ${MAX_UPLOAD_BYTES}`,
+        )
       }
     }
 
@@ -140,12 +154,15 @@ export function buildRequest(
   params: Record<string, string>,
   query: URLSearchParams,
   body: unknown,
+  file?: ReceivedFile,
 ): ModuleRequest {
-  return {
+  const request: ModuleRequest = {
     method,
     path: path.startsWith('/') ? path : `/${path}`,
     params,
     query: Object.fromEntries(query.entries()),
     body,
   }
+  // Only when there is one: `exactOptionalPropertyTypes`, and a JSON route must not see the key.
+  return file === undefined ? request : { ...request, file }
 }

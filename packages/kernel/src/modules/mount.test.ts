@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { RouteTable } from '@factotum/core'
+import { MAX_UPLOAD_BYTES, uploadRoute, type RouteTable } from '@factotum/core'
 import type { BootError } from '../errors.ts'
-import { compileRoutes, matchRoute } from './mount.ts'
+import { buildRequest, compileRoutes, matchRoute } from './mount.ts'
 
 const ok = () => ({ status: 200 })
 
@@ -93,4 +93,31 @@ test('a nameless parameter aborts', () => {
 test('the root path of a module is a valid key', () => {
   const compiled = routes({ 'GET /': ok })
   assert.ok(matchRoute(compiled, 'GET', '/'))
+})
+
+// --- Upload routes (spec 2026-10-01, criterion 7) --------------------------
+
+test('an upload route within the kernel ceiling compiles, and still matches like any route', () => {
+  const compiled = routes({ 'POST /uploads': uploadRoute(MAX_UPLOAD_BYTES, ok) })
+  assert.ok(matchRoute(compiled, 'POST', '/uploads'))
+})
+
+test('an upload route over the ceiling, at zero, negative or fractional, aborts start with a remedy', () => {
+  for (const maxBytes of [MAX_UPLOAD_BYTES + 1, 0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () => routes({ 'POST /uploads': uploadRoute(maxBytes, ok) }),
+      (error: BootError) => {
+        assert.equal(error.code, 'route-upload-invalid')
+        assert.match(error.remedy, /at most/)
+        return true
+      },
+    )
+  }
+})
+
+test('buildRequest adds `file` only when there is one', () => {
+  const query = new URLSearchParams()
+  assert.equal('file' in buildRequest('POST', '/x', {}, query, undefined), false)
+  const file = { path: '/tmp/a', bytes: 3 }
+  assert.deepEqual(buildRequest('POST', '/x', {}, query, undefined, file).file, file)
 })

@@ -3,7 +3,8 @@
  * kernel knows how to do is generic, and everything specific arrives through here.
  *
  * Five fields, and no more. A sixth needs a consumer that exists TODAY — see the
- * spec's risk 6. Binary request/response bodies are still known not to fit.
+ * spec's risk 6. Files fit without one: an upload is a kind of ROUTE, and a file is a kind of
+ * RESPONSE (`http.ts`, ADR-0012) — the contract and the context did not grow.
  *
  * Notifications used to be the other one. They fit now, because they got a consumer — the
  * permission gate asking the owner — and they arrived as a field of `ModuleContext`, not of
