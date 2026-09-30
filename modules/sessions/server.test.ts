@@ -34,13 +34,14 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     archive: async () => ({ outcome: 'unknown' }),
     remove: async (ids) => ids.map((id) => ({ id, outcome: 'unknown' as const })),
     search: async () => [],
-    projects: async () => ({ projects: [], shared: [], removed: [], registryError: undefined, skipped: [], file: '/state/projects.json', home: '/home', canRequest: false }),
+    projects: async () => ({ projects: [], shared: [], removed: [], registryError: undefined, skipped: [], file: '/state/projects.json', home: '/home', canRequest: false, categories: [] }),
     requestProject: async () => ({ outcome: 'invalid', reason: 'no' }),
     requestShared: async () => ({ outcome: 'invalid', reason: 'no' }),
     requestStatus: async () => ({ status: 'unknown' }),
     inspectGrant: async () => ({ kind: 'unknown' }),
     answerGrant: async () => ({ outcome: 'unknown' }),
     updateProject: async () => ({ outcome: 'unknown' }),
+    setLayout: async () => ({ outcome: 'ok', removedSessions: 0 }),
     removeProject: async () => ({ outcome: 'unknown' }),
     removeHistory: async () => ({ outcome: 'unknown' }),
     removeShared: async () => ({ outcome: 'unknown' }),
@@ -819,4 +820,31 @@ test('GET /search: at least two characters, hits under no-store (criteria 38, 40
   const ok = await call(table, 'GET /search', request('GET', '/search', { query: { q: '  parser ' } }))
   assert.deepEqual([ok.status, ok.body, ok.headers?.['cache-control'], asked], [200, { hits: [] }, 'no-store', 'parser'])
   assert.equal((await call(table, 'GET /search', request('GET', '/search', { query: { q: 'p' } }))).status, 400)
+})
+
+test('POST /project-layout: the shape is checked HERE, the engine gets it clean, and its outcome maps to 200, 400 and 409', async () => {
+  const seen: unknown[] = []
+  const { table } = await started(
+    fakeEngine({
+      setLayout: async (layout) => {
+        seen.push(layout)
+        return { outcome: 'ok', removedSessions: 0 }
+      },
+    }),
+  )
+  const ok = await call(table, 'POST /project-layout', request('POST', '/', { body: { categories: [{ id: 'work', name: ' Work ' }], order: [{ id: 'web', category: 'work' }] } }))
+  assert.equal(ok.status, 200)
+  assert.equal(ok.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(seen, [{ categories: [{ id: 'work', name: 'Work' }], order: [{ id: 'web', category: 'work' }] }])
+
+  const bad = await call(table, 'POST /project-layout', request('POST', '/', { body: { categories: [], order: [{ id: 'web', category: 'ghost' }] } }))
+  assert.equal(bad.status, 400)
+  assert.equal(seen.length, 1, 'a bad shape never reaches the engine')
+
+  // STALE is a 409 with the kernel's `conflict` code: the screen reloads and tries again.
+  const stale = async () => ({ outcome: 'conflict' as const, reason: 'the projects changed since this screen read them; reload and try again' })
+  const { table: other } = await started(fakeEngine({ setLayout: stale }))
+  const refused = await call(other, 'POST /project-layout', request('POST', '/', { body: { categories: [], order: [] } }))
+  assert.equal(refused.status, 409)
+  assert.equal((refused.body as ErrorBody).error.code, 'conflict')
 })

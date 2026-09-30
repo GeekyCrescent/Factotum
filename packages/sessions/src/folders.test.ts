@@ -379,6 +379,51 @@ test('NAME AND COLOUR persist and reach the view; an unknown id is a 404 before 
   assert.deepEqual(await readdir(join(stateDir, 'locks')), [], 'no lock was taken for it')
 })
 
+test('THE ORDER AND THE CATEGORIES persist and reach GET projects in the owner\'s order; no approval, nothing pushed', async () => {
+  const { engine, registry, root, notices } = await world({
+    sites: (r) => ['a', 'b', 'c'].map((id) => ({ id, path: join(r, id) })),
+  })
+  for (const id of ['a', 'b', 'c']) await mkdir(join(root, id))
+  const layout = {
+    categories: [{ id: 'work', name: 'Work' }],
+    order: [
+      { id: 'c', category: 'work' },
+      { id: 'a', category: undefined },
+      { id: 'b', category: 'work' },
+    ],
+  }
+  assert.deepEqual(await engine.setLayout(layout), { outcome: 'ok', removedSessions: 0 })
+  assert.deepEqual(registry.current().categories, [{ id: 'work', name: 'Work' }])
+  const page = await engine.projects()
+  assert.deepEqual(page.projects.map((p) => [p.id, p.category]), [['c', 'work'], ['a', undefined], ['b', 'work']])
+  assert.deepEqual(page.categories, [{ id: 'work', name: 'Work' }])
+  assert.deepEqual(engine.view().sites.map((s) => s.id), ['c', 'a', 'b'])
+  assert.deepEqual(notices, [])
+  // Renaming afterwards keeps both the place and the category.
+  await engine.updateProject('a', { name: 'Ay', color: undefined })
+  assert.deepEqual((await engine.projects()).projects.map((p) => p.id), ['c', 'a', 'b'])
+})
+
+test('A STALE LAYOUT is a conflict and changes nothing: a project missing from it, one too many, one twice', async () => {
+  const { engine, registry } = await world({ sites: (r) => ['a', 'b'].map((id) => ({ id, path: join(r, id) })) })
+  const place = (...ids: string[]) => ({ categories: [], order: ids.map((id) => ({ id, category: undefined })) })
+  for (const layout of [place('a'), place('a', 'b', 'c'), place('a', 'a')]) {
+    const result = await engine.setLayout(layout)
+    assert.equal(result.outcome, 'conflict')
+    assert.match(result.outcome === 'conflict' ? result.reason : '', /reload/)
+  }
+  assert.equal(registry.writes(), 0)
+  // A write that fails is a conflict too, with why.
+  registry.failNextWrite('could not write projects.json: EACCES')
+  assert.deepEqual(await engine.setLayout(place('b', 'a')), { outcome: 'conflict', reason: 'could not write projects.json: EACCES' })
+  assert.deepEqual(registry.current().projects.map((p) => p.id), ['a', 'b'])
+})
+
+test('A BROKEN REGISTRY refuses a layout', async () => {
+  const { engine } = await world({ broken: 'projects.json is not valid JSON' })
+  assert.equal((await engine.setLayout({ categories: [], order: [] })).outcome, 'conflict')
+})
+
 test('DELETING A PROJECT deletes its history, never its folder; the lock says `removing` while it runs (criterion 27)', async () => {
   const { engine, registry, root, stateDir } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
   const web = join(root, 'web')

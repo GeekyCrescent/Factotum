@@ -5,6 +5,7 @@ import {
   isSiteId,
   parseArchived,
   parseIds,
+  parseLayout,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -70,4 +71,30 @@ test('title, archived, ids and the search query', () => {
 test('a site id in a route passes the site rule or it is not one (criterion 11)', () => {
   assert.equal(isSiteId('proyecto-a'), true)
   for (const bad of [undefined, '', '..', 'A', 'a/b', '-a']) assert.equal(isSiteId(bad), false, String(bad))
+})
+
+test('A LAYOUT: names trimmed and required, ids that are ids, nothing twice, no category that is not sent', () => {
+  assert.deepEqual(parseLayout({ categories: [{ id: 'work', name: '  Work ', extra: 1 }], order: [{ id: 'web', category: 'work' }, { id: 'api' }] }), {
+    ok: true,
+    value: { categories: [{ id: 'work', name: 'Work' }], order: [{ id: 'web', category: 'work' }, { id: 'api', category: undefined }] },
+  })
+  assert.deepEqual(parseLayout({ categories: [], order: [] }), { ok: true, value: { categories: [], order: [] } })
+  const refused: Array<[unknown, RegExp]> = [
+    [undefined, /categories/],
+    [{ categories: [], order: 'web' }, /order/],
+    [{ categories: [{ id: 'w', name: '   ' }], order: [] }, /needs a name/],
+    [{ categories: [{ id: 'w', name: 'x'.repeat(41) }], order: [] }, /at most 40/],
+    [{ categories: [{ id: 'W W', name: 'W' }], order: [] }, /category id/],
+    [{ categories: [{ id: 'w', name: 'W' }, { id: 'w', name: 'V' }], order: [] }, /category is there twice/],
+    [{ categories: [], order: [{ id: '../x' }] }, /site id/],
+    [{ categories: [], order: [{ id: 'web' }, { id: 'web' }] }, /project is there twice/],
+    [{ categories: [], order: [{ id: 'web', category: 'ghost' }] }, /no category "ghost"/],
+    [{ categories: Array.from({ length: 51 }, (_, i) => ({ id: `c${i}`, name: 'C' })), order: [] }, /at most 50/],
+    [{ categories: [], order: Array.from({ length: 501 }, (_, i) => ({ id: `p${i}` })) }, /at most 500/],
+  ]
+  for (const [body, message] of refused) {
+    const parsed = parseLayout(body)
+    assert.equal(parsed.ok, false)
+    assert.match(parsed.ok ? '' : parsed.message, message)
+  }
 })

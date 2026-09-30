@@ -27,6 +27,7 @@ import {
   isSiteId,
   parseArchived,
   parseIds,
+  parseLayout,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -267,6 +268,15 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       const patch = parseProjectPatch(req.body)
       if (!patch.ok) return invalid(patch.message)
       return fromChange(await engine.updateProject(id, patch.value))
+    }),
+
+    // The drawer's order and categories, WHOLE (see `ProjectLayout`). Cosmetic, like a name: no
+    // approval. NOT `/projects/layout`: a literal beats a parameter, so a project whose folder is
+    // called `layout` could never be renamed again.
+    'POST /project-layout': withEngine(async (engine, req) => {
+      const layout = parseLayout(req.body)
+      if (!layout.ok) return invalid(layout.message)
+      return fromChange(await engine.setLayout(layout.value))
     }),
 
     // Its history goes, its folder never does (guardrail 7). The name typed on the screen is the

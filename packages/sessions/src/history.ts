@@ -186,6 +186,7 @@ export function createHistory(deps: HistoryDeps): History {
           sessions: status === 'ok' ? [...recent, ...running].map(summaryOf) : [],
           total: active.length,
           archived: all.length - active.length,
+          category: entry.category,
         }
       })
       return {
@@ -197,6 +198,7 @@ export function createHistory(deps: HistoryDeps): History {
         file: deps.registryFile,
         home: deps.home,
         canRequest: deps.canRequest(),
+        categories: table.categories(),
       }
     },
 
