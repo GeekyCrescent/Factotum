@@ -1,6 +1,6 @@
 /**
  * The drawer's history: what waits on the owner, what runs, then every project with its newest
- * conversations, each named by its title or else the first line of its prompt, and a search over
+ * conversations, each named by its title, the titler's, or else the first line of its prompt, and a search over
  * what is loaded (spec 2026-09-29, D9). Pure, so every rule has a test; no DOM (guardrail 11).
  *
  * BUILT FROM THE PROJECTS, not from a page of sessions: `GET projects` gives each project its newest
@@ -24,7 +24,13 @@ export interface Entry {
   /** What the owner calls the project: its name, else its id. */
   readonly siteLabel: string
   readonly color: Color | undefined
+  /** What it is called on the screen: `nameOf`. */
   readonly title: string
+  /**
+   * The OWNER'S title alone, apart from what shows (spec 2026-09-30, D12): the rename dialog needs to
+   * know whether there is one to clear. `undefined` for a waiting entry with no summary loaded.
+   */
+  readonly manualTitle: string | undefined
   readonly startedAt: string | undefined
   readonly state: SessionState
   /** What it asks for, only when it waits on the owner. */
@@ -56,9 +62,41 @@ export function titleOf(prompt: string | undefined): string {
   return line === undefined ? UNTITLED : clip(line, TITLE_CHARS)
 }
 
-/** The owner's title when there is one (D5), else the first line of the prompt. */
-export function nameOf(session: Pick<SessionSummary, 'title' | 'prompt'>): string {
-  return session.title === undefined ? titleOf(session.prompt) : clip(session.title, TITLE_CHARS)
+/**
+ * THREE LAYERS (spec 2026-09-30, D10): the owner's title, else the titler's, else the first line of
+ * the prompt. The one place a conversation's name is decided: drawer, header, menu, search, Details.
+ */
+export function nameOf(session: Pick<SessionSummary, 'title' | 'autoTitle' | 'prompt'>): string {
+  if (session.title !== undefined) return clip(session.title, TITLE_CHARS)
+  if (session.autoTitle !== undefined) return clip(session.autoTitle, TITLE_CHARS)
+  return titleOf(session.prompt)
+}
+
+/**
+ * How long a new conversation keeps asking for its title (D11): longer than the titler's own
+ * deadline (30 s) plus its start. Past it, nothing polls — so an old conversation, which will never
+ * be titled, never does.
+ */
+export const TITLE_WAIT_MS = 45_000
+export const TITLE_POLL_MS = 3_000
+
+export function awaitingTitle(session: Pick<SessionSummary, 'title' | 'autoTitle' | 'startedAt'>, now: number): boolean {
+  if (session.title !== undefined || session.autoTitle !== undefined) return false
+  return now - Date.parse(session.startedAt) < TITLE_WAIT_MS
+}
+
+export type RenameAction = { readonly kind: 'save'; readonly title: string } | { readonly kind: 'clear' } | { readonly kind: 'none' }
+
+/**
+ * What the rename dialog's button does (D12). EMPTY — spaces included, as the daemon reads it — clears
+ * the owner's title when there is one; what the field already said is nothing to save, which is what
+ * keeps "open, save" from turning the titler's title into the owner's.
+ */
+export function renameAction(field: string, initial: string, manualTitle: string | undefined): RenameAction {
+  const wanted = field.trim()
+  if (wanted === '') return manualTitle === undefined ? { kind: 'none' } : { kind: 'clear' }
+  if (wanted === initial.trim()) return { kind: 'none' }
+  return { kind: 'save', title: wanted }
 }
 
 export function history(
@@ -81,6 +119,7 @@ export function history(
       siteLabel: project?.name ?? session.siteId,
       color: project?.color,
       title: nameOf(session),
+      manualTitle: session.title,
       startedAt: session.startedAt,
       state: session.state,
       detail,
@@ -93,7 +132,7 @@ export function history(
     const site = w.site ?? id.slice(0, 8)
     const project = byId.get(site)
     const label = project?.name ?? site
-    return { id, site, siteLabel: label, color: project?.color, title: label, startedAt: undefined, state: 'running', detail: w.detail }
+    return { id, site, siteLabel: label, color: project?.color, title: label, manualTitle: undefined, startedAt: undefined, state: 'running', detail: w.detail }
   })
   const free = newest.filter((s) => !waiting.has(s.id))
   const running = free.filter((s) => s.state === 'running').map((s) => entryOf(s))

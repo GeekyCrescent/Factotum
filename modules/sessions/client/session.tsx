@@ -26,7 +26,7 @@ import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
 import { MenuButton, Strip, TopBar } from './bars.tsx'
 import { ConversationMenu } from './conversation-menu.tsx'
-import { nameOf } from './history.ts'
+import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
 import { askFor, sessionOf, type AskRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
@@ -49,25 +49,37 @@ type Found =
   | { readonly kind: 'gone' }
   | { readonly kind: 'error'; readonly message: string }
 
-/** The conversation's summary, read again every time `generation` moves. */
+/**
+ * The conversation's summary, read again every time `generation` moves — AND, while a new one still
+ * waits for its title, every TITLE_POLL_MS (spec 2026-09-30, D11). `generation` only moves when the
+ * state does, so without this the titler's title would reach the header only when the turn ended.
+ */
 function useSummary(api: Api, id: string, generation: number): Found {
   const [found, setFound] = useState<Found>({ kind: 'loading' })
   useEffect(() => {
     let live = true
-    api
-      .get<{ summary: SessionSummary; project: ProjectRef | undefined }>(`sessions/${id}`)
-      .then((got) => {
-        if (live) setFound({ kind: 'ok', summary: got.summary, project: got.project })
-      })
-      .catch((cause: unknown) => {
-        if (!live) return
-        const error = cause as { status?: number; body?: { missing?: { siteId?: string } } }
-        if (error.status === 409 && typeof error.body?.missing?.siteId === 'string') setFound({ kind: 'missing', siteId: error.body.missing.siteId })
-        else if (error.status === 404 || error.status === 400) setFound({ kind: 'gone' })
-        else setFound((current) => (current.kind === 'ok' ? current : { kind: 'error', message: messageOf(cause) }))
-      })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const read = (): void => {
+      api
+        .get<{ summary: SessionSummary; project: ProjectRef | undefined }>(`sessions/${id}`)
+        .then((got) => {
+          if (!live) return
+          setFound({ kind: 'ok', summary: got.summary, project: got.project })
+          // Bounded: past TITLE_WAIT_MS it stops, so an old conversation never polls at all.
+          if (awaitingTitle(got.summary, Date.now())) timer = setTimeout(read, TITLE_POLL_MS)
+        })
+        .catch((cause: unknown) => {
+          if (!live) return
+          const error = cause as { status?: number; body?: { missing?: { siteId?: string } } }
+          if (error.status === 409 && typeof error.body?.missing?.siteId === 'string') setFound({ kind: 'missing', siteId: error.body.missing.siteId })
+          else if (error.status === 404 || error.status === 400) setFound({ kind: 'gone' })
+          else setFound((current) => (current.kind === 'ok' ? current : { kind: 'error', message: messageOf(cause) }))
+        })
+    }
+    read()
     return () => {
       live = false
+      if (timer !== undefined) clearTimeout(timer)
     }
   }, [api, id, generation])
   return found

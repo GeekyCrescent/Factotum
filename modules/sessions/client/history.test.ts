@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Color, ProjectView, SessionState, SessionSummary } from '../types.ts'
-import { history, nameOf, titleOf, UNTITLED, type Group, type Waiting } from './history.ts'
+import { awaitingTitle, history, nameOf, renameAction, TITLE_WAIT_MS, titleOf, UNTITLED, type Group, type Waiting } from './history.ts'
 
 const session = (
   id: string,
@@ -53,9 +53,53 @@ test('no prompt, or only blank lines, is Untitled', () => {
   assert.equal(titleOf(' \n '), UNTITLED)
 })
 
-test('THE OWNER’S TITLE WINS over the prompt; without one, the prompt (D5)', () => {
-  assert.equal(nameOf({ title: 'Tax return', prompt: 'do my taxes' }), 'Tax return')
-  assert.equal(nameOf({ title: undefined, prompt: 'do my taxes' }), 'do my taxes')
+test('THREE LAYERS: the owner’s title, else the titler’s, else the first line, else Untitled (2026-09-30 crit. 26)', () => {
+  assert.equal(nameOf({ title: 'Tax return', autoTitle: 'Declaración anual', prompt: 'do my taxes' }), 'Tax return')
+  assert.equal(nameOf({ title: undefined, autoTitle: 'Declaración anual', prompt: 'do my taxes' }), 'Declaración anual')
+  assert.equal(nameOf({ title: undefined, autoTitle: undefined, prompt: 'do my taxes' }), 'do my taxes')
+  assert.equal(nameOf({ title: undefined, autoTitle: undefined, prompt: undefined }), UNTITLED)
+})
+
+test('a conversation keeps asking for its title only while one may still come (2026-09-30 D11)', () => {
+  const startedAt = '2026-09-30T10:00:00.000Z'
+  const at = (ms: number) => Date.parse(startedAt) + ms
+  assert.equal(awaitingTitle({ title: undefined, autoTitle: undefined, startedAt }, at(1_000)), true)
+  // Past the window: an old conversation never polls — it will never be titled (assumption 2).
+  assert.equal(awaitingTitle({ title: undefined, autoTitle: undefined, startedAt }, at(TITLE_WAIT_MS)), false)
+  // A title of either kind: nothing to wait for.
+  assert.equal(awaitingTitle({ title: undefined, autoTitle: 'Plan', startedAt }, at(1_000)), false)
+  assert.equal(awaitingTitle({ title: 'Mine', autoTitle: undefined, startedAt }, at(1_000)), false)
+})
+
+test('the rename button: save a change, clear an owner’s title, or nothing (2026-09-30 crit. 29)', () => {
+  // A change is saved.
+  assert.deepEqual(renameAction('New name', 'Plan', undefined), { kind: 'save', title: 'New name' })
+  // What it already said is nothing to save — so opening and saving never turns the titler’s title
+  // into the owner’s.
+  assert.deepEqual(renameAction('Plan', 'Plan', undefined), { kind: 'none' })
+  assert.deepEqual(renameAction('  Plan ', 'Plan', undefined), { kind: 'none' })
+  // Empty, or only spaces, with an owner’s title: clear it and show the automatic one.
+  assert.deepEqual(renameAction('', 'Mine', 'Mine'), { kind: 'clear' })
+  assert.deepEqual(renameAction('   ', 'Mine', 'Mine'), { kind: 'clear' })
+  // Empty with no owner’s title: there is nothing to clear.
+  assert.deepEqual(renameAction('', 'Plan', undefined), { kind: 'none' })
+})
+
+test('an entry carries the owner’s own title apart from the name it shows (2026-09-30 D12)', () => {
+  const groups = history(
+    [project('alpha', [session('a1', 'alpha', '2026-09-29T09:00:00Z', 'first line', 'finished', 'Mine', 'Auto'), session('a2', 'alpha', '2026-09-28T09:00:00Z', 'x', 'finished', undefined, 'Auto')])],
+    new Map(),
+    new Map(),
+    '',
+  )
+  const entries = groups.flatMap((group) => group.entries)
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.title, entry.manualTitle]),
+    [
+      ['a1', 'Mine', 'Mine'],
+      ['a2', 'Auto', undefined],
+    ],
+  )
 })
 
 test('one group per project, in the registry’s order, newest conversation first, named by the project’s name', () => {

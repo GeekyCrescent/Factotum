@@ -10,7 +10,7 @@ import { useState } from 'preact/hooks'
 import type { SessionSummary } from '../types.ts'
 import type { Api } from './contract.ts'
 import { messageOf } from './errors.ts'
-import { nameOf } from './history.ts'
+import { nameOf, renameAction } from './history.ts'
 import { Icon } from './icon.tsx'
 import { ConfirmSheet } from './project-forms.tsx'
 import { Sheet } from './sheet.tsx'
@@ -89,7 +89,7 @@ export function ConversationMenu({
       {open === 'rename' || open === 'delete' ? (
         <ConversationSheet
           api={api}
-          target={{ id: summary.id, title: summary.title ?? nameOf(summary), project: projectLabel }}
+          target={{ id: summary.id, title: summary.title ?? nameOf(summary), project: projectLabel, manualTitle: summary.title }}
           kind={open}
           onClose={close}
           onDone={open === 'delete' ? onDeleted : onChanged}
@@ -105,6 +105,11 @@ export interface SheetTarget {
   readonly title: string
   /** Whose conversation it is, said under the dialog's title. */
   readonly project?: string | undefined
+  /**
+   * The OWNER'S title, apart from what shows (spec 2026-09-30, D12). REQUIRED, so both ways in — the
+   * `⋯` and the drawer's context menu — have to say: it is what lets an empty field clear it.
+   */
+  readonly manualTitle: string | undefined
 }
 
 /**
@@ -125,8 +130,9 @@ export function ConversationSheet({
   readonly onDone: () => void
 }) {
   const [title, setTitle] = useState(target.title)
-  // Nothing to save when it is empty, or when it says what it already said.
-  const canSave = title.trim() !== '' && title.trim() !== target.title.trim()
+  // Save a change, clear the owner's title, or nothing: what it already said is nothing to save, so
+  // opening and saving never turns the titler's title into the owner's (spec 2026-09-30, D12).
+  const action = renameAction(title, target.title, target.manualTitle)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const act = async (work: () => Promise<unknown>) => {
@@ -169,7 +175,9 @@ export function ConversationSheet({
         class="s-dialog"
         onSubmit={(event) => {
           event.preventDefault()
-          if (canSave) void act(() => api.post(`sessions/${target.id}/title`, { title }))
+          if (action.kind === 'none') return
+          // Empty clears the owner's title; the automatic one, or the first line, shows again.
+          void act(() => api.post(`sessions/${target.id}/title`, { title: action.kind === 'save' ? action.title : '' }))
         }}
       >
         {target.project === undefined ? null : (
@@ -194,15 +202,19 @@ export function ConversationSheet({
             onFocus={(e) => (e.target as HTMLInputElement).select()}
             onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
           />
-          <small>Shown in the drawer and at the top of the conversation.</small>
+          <small>
+            {target.manualTitle === undefined
+              ? 'Shown in the drawer and at the top of the conversation.'
+              : 'Shown in the drawer and at the top of the conversation. Leave it empty to use the automatic title.'}
+          </small>
         </label>
         {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
         <div class="s-dialog-acts">
           <button type="button" class="btn" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" class="btn primary" disabled={busy || !canSave}>
-            {busy ? 'Saving…' : 'Save'}
+          <button type="submit" class="btn primary" disabled={busy || action.kind === 'none'}>
+            {busy ? 'Saving…' : action.kind === 'clear' ? 'Use automatic title' : 'Save'}
           </button>
         </div>
       </form>
