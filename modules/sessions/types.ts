@@ -460,13 +460,8 @@ export type ProjectChange =
 
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
-  /**
-   * `force` REQUIRED, not optional — the same rule as `LaunchInput.force`, and here it is about the
-   * compiler link in main.ts: `(id, text, force?) => X` IS assignable to `(id, text) => X`, so an
-   * optional one would let a stale copy of this file compile. Three required parameters are not
-   * assignable to two, and that is what keeps the two declarations honest (ADR-0005).
-   */
-  readonly reply: (id: string, text: string, force: boolean) => Promise<LaunchResult>
+  /** No `force`: freshness is checked once, at launch — never on a later turn. */
+  readonly reply: (id: string, text: string) => Promise<LaunchResult>
   readonly cancel: (id: string) => Promise<void>
   readonly list: (page: Page) => Promise<SessionPage>
   readonly read: (id: string, fromSeq: number) => Promise<EventPage | SiteMissing | InvalidId>

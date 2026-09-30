@@ -353,10 +353,8 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       const message = text(req.body, 'text')
       if (message === undefined || message === '') return invalid('a reply needs some text')
       if (HAS_NUL.test(message)) return invalid(NUL_REFUSED)
-      // `force` exactly as `POST /sessions` reads it: resuming onto a dirty or stale repo is
-      // refused with the report, and the owner can choose to go over it (criteria 31, 32).
-      const body = req.body as { force?: unknown } | null | undefined
-      return fromLaunch(await engine.reply(req.params['id'] ?? '', message, body?.force === true))
+      // No freshness here: it is checked once, at launch (see `reply` in the engine).
+      return fromLaunch(await engine.reply(req.params['id'] ?? '', message))
     }),
 
     /**

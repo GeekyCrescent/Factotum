@@ -187,8 +187,8 @@ export function ReplyComposer({
   readonly onSent: () => void
   readonly goTo: (sessionId: string) => void
 }) {
-  const s = useSend(async (text, force) => {
-    await api.post(`sessions/${sessionId}/reply`, { text, force })
+  const s = useSend(async (text) => {
+    await api.post(`sessions/${sessionId}/reply`, { text })
     onSent()
   })
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)

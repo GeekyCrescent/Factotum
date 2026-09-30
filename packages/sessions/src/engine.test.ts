@@ -516,7 +516,7 @@ test('after stop(), launch, reply and decide all REJECT — no session exists wi
   await engine.stop()
 
   await assert.rejects(() => engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false }), /engine stopped/)
-  await assert.rejects(() => engine.reply('whatever', 'hi', false), /engine stopped/)
+  await assert.rejects(() => engine.reply('whatever', 'hi'), /engine stopped/)
   await assert.rejects(() => engine.decide(payload('x', '/a', '/b')), /engine stopped/)
 })
 
@@ -537,7 +537,7 @@ test('a reply reopens a finished session, bumps its turns and asks for the lock 
   await settle(engine, id)
   assert.equal(await locks.heldBy('work'), undefined)
 
-  const second = await engine.reply(id, QUICK, false)
+  const second = await engine.reply(id, QUICK)
   assert.equal(second.outcome, 'started')
   assert.equal(second.outcome === 'started' ? second.sessionId : '', id)
   assert.equal((await locks.heldBy('work'))?.sessionId, id)
@@ -551,14 +551,14 @@ test('replying to a session that is still running is refused', async () => {
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: 'linger', force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
 
-  const result = await engine.reply(id, 'more', false)
+  const result = await engine.reply(id, 'more')
   assert.match(result.outcome === 'rejected' ? result.reason : '', /still running/)
   await engine.cancel(id)
 })
 
 test('replying to a session nobody has heard of is refused', async () => {
   const { engine } = await world()
-  const result = await engine.reply('019965aa-0000-7000-8000-00000000dead', 'hi', false)
+  const result = await engine.reply('019965aa-0000-7000-8000-00000000dead', 'hi')
   assert.match(result.outcome === 'rejected' ? result.reason : '', /no session/)
 })
 
@@ -575,7 +575,7 @@ test('resuming onto a site another session holds is refused, with that session�
   // Somebody else takes the site in between.
   await locks.acquire('work', 'some-other-session', new Date().toISOString())
 
-  const result = await engine.reply(id, QUICK, false)
+  const result = await engine.reply(id, QUICK)
   assert.equal(result.outcome, 'busy')
   assert.equal(result.outcome === 'busy' ? result.sessionId : '', 'some-other-session')
 })
@@ -861,7 +861,7 @@ test('a session of two turns notifies TWICE — one per end of turn, which is th
   await settle(engine, id)
   await turnOver(locks, 'work')
 
-  await engine.reply(id, QUICK, false)
+  await engine.reply(id, QUICK)
   await settle(engine, id)
   await turnOver(locks, 'work')
 
@@ -1073,13 +1073,13 @@ test('A FULL RUN COUNTS EXACTLY THE NOTICES IT SHOULD, AND NOT ONE MORE (criteri
   await settle(engine, id)
   await turnOver(locks, 'work')
 
-  await engine.reply(id, 'linger', false)
+  await engine.reply(id, 'linger')
   await engine.decide(payload(id, '/etc/passwd', '/work/site')) // a deny: no notice
   await engine.decide(payload(id, '/etc/passwd', '/work/site', 'Read')) // an allow: no notice
   await engine.cancel(id) // cancelled from the phone: no notice
   await turnOver(locks, 'work')
 
-  await engine.reply(id, QUICK, false)
+  await engine.reply(id, QUICK)
   await settle(engine, id)
   await turnOver(locks, 'work')
 
@@ -1131,7 +1131,7 @@ test('resuming with the site path intact still works, and turns go up (criterion
   await settle(engine, id)
   await turnOver(locks, 'work')
 
-  const again = await engine.reply(id, QUICK, false)
+  const again = await engine.reply(id, QUICK)
   assert.equal(again.outcome, 'started')
   await settle(engine, id)
   assert.equal((await store.readMeta(id))?.turns, 2)
@@ -1157,7 +1157,7 @@ test('a site that MOVED under the same id is refused, naming both paths, and not
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const metaBefore = await store.readMeta(id)
 
-  const result = await moved.reply(id, QUICK, false)
+  const result = await moved.reply(id, QUICK)
 
   assert.equal(result.outcome, 'rejected')
   const reason = result.outcome === 'rejected' ? result.reason : ''
@@ -1179,7 +1179,7 @@ test('a meta.json from BEFORE the path was recorded still resumes, and the log s
     return older as typeof meta
   })
 
-  const result = await engine.reply(id, QUICK, false)
+  const result = await engine.reply(id, QUICK)
 
   assert.equal(result.outcome, 'started')
   const texts = (await readPage(engine, id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
@@ -1194,57 +1194,22 @@ async function repoSite(): Promise<{ stateDir: string; siteDir: string }> {
   return { stateDir: join(home, 'state'), siteDir }
 }
 
-test('resuming onto a DIRTY repo is refused with the report, like a launch (criterion 31)', async () => {
+test('resuming onto a DIRTY repo just continues: freshness is checked at launch, not on every turn', async () => {
+  // After the first turn the agent's own edits leave the repo dirty, so a check per reply warned
+  // on every message. The warning belongs to the start of the conversation, once.
   const { stateDir, siteDir } = await repoSite()
   const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
   const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
   const id = launched.outcome === 'started' ? launched.sessionId : ''
   await settle(engine, id)
   await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
-
   await writeFile(join(siteDir, 'dirty-since.txt'), 'someone changed it between turns')
-  const result = await engine.reply(id, QUICK, false)
 
-  assert.equal(result.outcome, 'stale')
-  assert.equal(result.outcome === 'stale' && result.freshness.dirtyFiles.includes('dirty-since.txt'), true)
-})
-
-test('A STALE REPLY LEAVES NO TRACE: meta.json exactly as it was, lock back (criterion 49)', async () => {
-  // In `launch` freshness runs before anything is written. In `reply` the old code had already
-  // set `running` and bumped `turns` by the point a check would go — so a refusal there would
-  // strand a `running` session with no process, and a turn that never happened.
-  const { stateDir, siteDir } = await repoSite()
-  const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
-  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
-  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
-  const id = launched.outcome === 'started' ? launched.sessionId : ''
-  await settle(engine, id)
-  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
-  await writeFile(join(siteDir, 'dirty-since.txt'), 'x')
-  const before = await store.readMeta(id)
-  const eventsBefore = (await readPage(engine, id, 0)).events.length
-
-  await engine.reply(id, QUICK, false)
-
-  assert.deepEqual(await store.readMeta(id), before)
-  assert.equal((await readPage(engine, id, 0)).events.length, eventsBefore)
-  assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('repo'), undefined)
-})
-
-test('`force` resumes over the warning, and the warning is written to the log (criterion 32)', async () => {
-  const { stateDir, siteDir } = await repoSite()
-  const engine = await engineOver(stateDir, [{ id: 'repo', path: siteDir }])
-  const launched = await engine.launch({ siteId: 'repo', entryId: 'free', text: QUICK, force: false })
-  const id = launched.outcome === 'started' ? launched.sessionId : ''
-  await settle(engine, id)
-  await turnOver(new SiteLocks(sessionPaths(stateDir)), 'repo')
-  await writeFile(join(siteDir, 'dirty-since.txt'), 'x')
-
-  const result = await engine.reply(id, QUICK, true)
+  const result = await engine.reply(id, QUICK)
 
   assert.equal(result.outcome, 'started')
   const texts = (await readPage(engine, id, 0)).events.map((e) => (e.kind === 'message' ? e.text : ''))
-  assert.equal(texts.some((t) => /resumed over a freshness warning/.test(t)), true)
+  assert.equal(texts.some((t) => /freshness warning/.test(t)), false)
   await settle(engine, id)
 })
 
@@ -1564,7 +1529,7 @@ test('A CONVERSATION OF A MISSING PROJECT IS NOT READ: site-missing, and it read
 
   await rename(siteDir, `${siteDir}-moved`)
   assert.deepEqual(await engine.read(id, 0), { kind: 'site-missing', siteId: 'work' })
-  const reply = await engine.reply(id, 'more', false)
+  const reply = await engine.reply(id, 'more')
   assert.equal(reply.outcome, 'rejected')
 
   await rename(`${siteDir}-moved`, siteDir)
@@ -1574,7 +1539,7 @@ test('A CONVERSATION OF A MISSING PROJECT IS NOT READ: site-missing, and it read
 test('an id that is not a session id is refused before it becomes a path (criterion 32)', async () => {
   const { engine } = await world()
   assert.deepEqual(await engine.read('../../etc', 0), { kind: 'invalid' })
-  const reply = await engine.reply('../x', 'hi', false)
+  const reply = await engine.reply('../x', 'hi')
   assert.equal(reply.outcome, 'rejected')
 })
 
@@ -1643,7 +1608,7 @@ test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; E
   assert.equal((await engine.rename('../x', 'x')).outcome, 'invalid')
 
   // Another turn: finalize patches the meta again and the title stays.
-  await engine.reply(id, QUICK, false)
+  await engine.reply(id, QUICK)
   await settle(engine, id)
   const summary = await engine.summary(id)
   assert.equal(summary.kind === 'ok' ? summary.summary.title : '', 't'.repeat(80))
@@ -1735,7 +1700,7 @@ test('A REPLY BEHIND A DELETE is rejected “deleted”, gives the lock back, an
   const id = launched.outcome === 'started' ? launched.sessionId : ''
   await settle(engine, id)
 
-  const [reply, removed] = await Promise.all([engine.reply(id, 'one more', true), engine.remove([id])])
+  const [reply, removed] = await Promise.all([engine.reply(id, 'one more'), engine.remove([id])])
   if (removed[0]?.outcome === 'removed') {
     assert.deepEqual(reply, { outcome: 'rejected', reason: 'that conversation was deleted' })
     assert.equal(await locks.heldBy('repo'), undefined, 'the lock came back')
@@ -1914,7 +1879,7 @@ test('TITLER: launch does not wait for it; the title lands later, in the titler�
   // Another turn: finalize patches the meta again, and the title stays (crit. 21).
   await settle(engine, id)
   await turnOver(engineLocks.get(engine)!, 'work')
-  await engine.reply(id, QUICK, false)
+  await engine.reply(id, QUICK)
   await settle(engine, id)
   assert.equal((await store.readMeta(id))?.autoTitle, 'Plan de maratón')
   await turnOver(engineLocks.get(engine)!, 'work')
@@ -1983,7 +1948,7 @@ test('TITLER: a boot’s reconcile and a reply never start it; only a launch doe
   await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
 
   // A reply to the old session, with a text the fake WOULD title (crit. 14).
-  await on.reply(oldId, 'title:ok', false)
+  await on.reply(oldId, 'title:ok')
   await settle(on, oldId)
   await turnOver(new SiteLocks(sessionPaths(stateDir)), 'work')
   await new Promise((resolve) => setTimeout(resolve, 200))
