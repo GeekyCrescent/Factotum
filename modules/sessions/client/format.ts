@@ -114,3 +114,17 @@ export function stateLabel(state: SessionState): string {
 function count(n: number): string {
   return n.toLocaleString('en-US')
 }
+
+/**
+ * A folder as a person reads it: under the home as `~/…`, and when long, cut in the MIDDLE so the
+ * end, the folder's own name, always shows (spec 2026-09-30).
+ */
+export function shortPath(path: string, home: string, max = 48): string {
+  const under = home !== '' && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path
+  if (under.length <= max) return under
+  const parts = under.split('/')
+  const last = parts.at(-1) ?? ''
+  const head = parts.slice(0, 2).join('/')
+  const cut = `${head}/…/${last}`
+  return cut.length < under.length ? cut : under
+}

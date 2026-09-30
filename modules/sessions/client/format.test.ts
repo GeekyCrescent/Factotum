@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ago, clip, clock, day, duration, fileName, isToday, previewText, stateLabel, toolArg } from './format.ts'
+import { ago, clip, clock, day, duration, fileName, isToday, previewText, stateLabel, toolArg, shortPath } from './format.ts'
 
 const NOW = Date.parse('2026-09-19T10:00:00.000Z')
 const before = (ms: number) => new Date(NOW - ms).toISOString()
@@ -77,4 +77,15 @@ test('day: yesterday across a month and a year boundary', () => {
 
 test('day: a date that cannot be read says nothing', () => {
   assert.equal(day('nope', Date.now()), '')
+})
+
+test('shortPath writes the home as ~ and cuts a long path in the middle, keeping the folder’s name', () => {
+  assert.equal(shortPath('/Users/me/code/web', '/Users/me'), '~/code/web')
+  assert.equal(shortPath('/Users/me', '/Users/me'), '~')
+  assert.equal(shortPath('/Users/mesa/x', '/Users/me'), '/Users/mesa/x')
+  assert.equal(shortPath('/tmp/factotum-proyecto-a', '/Users/me'), '/tmp/factotum-proyecto-a')
+  assert.equal(
+    shortPath('/Users/me/Ferro/BWR/Projects/AgendamientoMaqueta/MatildeQuirurgico', '/Users/me', 40),
+    '~/Ferro/…/MatildeQuirurgico',
+  )
 })

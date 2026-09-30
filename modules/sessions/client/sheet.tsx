@@ -6,6 +6,7 @@
 
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
+import { Icon } from './icon.tsx'
 
 export function Sheet({
   id,
@@ -36,9 +37,14 @@ export function Sheet({
       <div class="scrim" onClick={onClose} />
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby={id}>
         <div class="grab" />
-        <h2 id={id} ref={heading} tabIndex={-1}>
-          {title}
-        </h2>
+        <div class="s-sheet-head">
+          <h2 id={id} ref={heading} tabIndex={-1}>
+            {title}
+          </h2>
+          <button type="button" class="icon-btn" aria-label="Close" onClick={onClose}>
+            <Icon name="x" size={18} />
+          </button>
+        </div>
         {children}
       </div>
     </>

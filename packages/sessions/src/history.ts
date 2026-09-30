@@ -41,6 +41,7 @@ export interface HistoryDeps {
   readonly isLive: (id: string) => boolean
   readonly now: () => Date
   readonly registryFile: string
+  readonly home: string
   readonly canRequest: () => boolean
 }
 
@@ -192,6 +193,7 @@ export function createHistory(deps: HistoryDeps): History {
         registryError: table.broken(),
         skipped: table.skipped(),
         file: deps.registryFile,
+        home: deps.home,
         canRequest: deps.canRequest(),
       }
     },

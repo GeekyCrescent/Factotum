@@ -34,7 +34,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     archive: async () => ({ outcome: 'unknown' }),
     remove: async (ids) => ids.map((id) => ({ id, outcome: 'unknown' as const })),
     search: async () => [],
-    projects: async () => ({ projects: [], shared: [], removed: [], registryError: undefined, skipped: [], file: '/state/projects.json', canRequest: false }),
+    projects: async () => ({ projects: [], shared: [], removed: [], registryError: undefined, skipped: [], file: '/state/projects.json', home: '/home', canRequest: false }),
     requestProject: async () => ({ outcome: 'invalid', reason: 'no' }),
     requestShared: async () => ({ outcome: 'invalid', reason: 'no' }),
     requestStatus: async () => ({ status: 'unknown' }),

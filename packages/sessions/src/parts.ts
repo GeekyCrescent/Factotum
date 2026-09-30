@@ -74,6 +74,7 @@ export async function createParts(setup: EngineSetup, deps: PartsDeps, own: Part
     isLive: own.isLive,
     now: setup.now,
     registryFile: setup.registry.file,
+    home: setup.home,
     canRequest: () => setup.notify.canReach(),
   })
 

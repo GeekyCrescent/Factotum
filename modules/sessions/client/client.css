@@ -934,8 +934,11 @@
 /* --- The projects screen -------------------------------------------------------- */
 
 .s-projects {
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-3) var(--space-6);
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-6);
 }
 
 /* Paths are long and have no spaces: they wrap anywhere rather than widen the page. */
@@ -960,80 +963,7 @@
   font-size: var(--text-small);
 }
 
-.s-prow {
-  min-height: 56px;
-  padding: var(--space-2) var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  background: var(--surface);
-}
-
-.s-prow > .icon:first-child {
-  flex: none;
-  color: var(--text-3);
-}
-
-.s-prow-dot {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--project);
-}
-
-.s-prow-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.s-prow-text b {
-  font-weight: 500;
-}
-
-.s-prow-text small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-  font-size: var(--text-small);
-}
-
-.s-prow-text small.dim-3 {
-  color: var(--text-3);
-  font-size: var(--text-caption);
-}
-
 /* --- Forms: a label over its field, fields in the surface colour --------------- */
-
-.s-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  background: var(--surface);
-}
-
-.s-form > .btn {
-  align-self: flex-start;
-}
-
-.s-form-inline {
-  flex-direction: row;
-  align-items: center;
-  padding: var(--space-2);
-}
-
-.s-form-inline .s-input {
-  flex: 1;
-}
 
 .s-row2 {
   display: grid;
@@ -1234,4 +1164,310 @@
 
 .s-drawer-tools .icon-btn {
   flex: none;
+}
+
+/* --- The projects screen, redesigned (2026-09-30): a head, cards, dialogs ------- */
+
+.s-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.s-page-head h1 {
+  font-size: var(--text-page);
+  font-weight: 600;
+}
+
+.s-page-head p,
+.s-section-head p {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+.s-page-head .btn,
+.s-section-head .btn {
+  flex: none;
+}
+
+.s-section {
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+}
+
+.s-section + .s-section {
+  border-top: 1px solid var(--line);
+}
+
+.s-section-title {
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.s-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.s-empty {
+  padding: var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-10);
+  color: var(--text-2);
+  font-size: var(--text-small);
+  text-align: center;
+}
+
+.s-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.s-card {
+  min-height: 72px;
+  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.s-card {
+  position: relative;
+}
+
+.s-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+/* Stretched over the whole card, so anywhere on it opens it; `⋯` sits above. */
+.s-card-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-10);
+}
+
+.s-card:has(.s-card-open:hover) {
+  border-color: var(--line-strong);
+}
+
+.s-card-open:focus-visible {
+  outline: 0;
+}
+
+.s-card:has(.s-card-open:focus-visible) {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-card-more {
+  position: relative;
+  z-index: 1;
+}
+
+/* The folder on its colour, soft; a shared folder (no project) on the accent's. */
+.s-card-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-10);
+  background: var(--project-soft, var(--chip-on));
+  color: var(--project, var(--accent-text));
+}
+
+.s-card-muted {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.s-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.s-card-text b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.s-card-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+.s-card-text small.mono {
+  font-size: var(--text-mono);
+}
+
+.s-card-chevron {
+  flex: none;
+  color: var(--text-3);
+}
+
+.s-badge-pill {
+  flex: none;
+  padding: 2px var(--space-2h);
+  border-radius: 999px;
+  background: var(--chip-on);
+  color: var(--accent-text);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.s-badge-warn {
+  background: var(--ask-bg);
+  color: var(--ask);
+}
+
+/* --- Dialogs: a head with its close, fields with a line of help, actions at the end --- */
+
+.s-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.s-sheet-head h2 {
+  font-size: var(--text-heading);
+  font-weight: 600;
+}
+
+.s-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sheet .s-dialog .s-field {
+  margin-top: 0;
+}
+
+.s-field > span {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.s-field small {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-swatch {
+  display: grid;
+  place-items: center;
+  color: var(--project-on, var(--bg));
+}
+
+.s-disclose {
+  align-self: flex-start;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.s-callout {
+  padding: var(--space-3);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2h);
+  border-radius: var(--radius-10);
+  background: var(--chip-on);
+  color: var(--text);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.s-callout > .icon {
+  flex: none;
+  color: var(--accent-text);
+}
+
+.s-callout-warn {
+  background: var(--ask-bg);
+}
+
+.s-callout-warn > .icon {
+  color: var(--ask);
+}
+
+.s-dialog-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.s-danger-zone {
+  padding-top: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.s-danger-zone div {
+  display: flex;
+  flex-direction: column;
+}
+
+.s-danger-zone b {
+  font-weight: 500;
+}
+
+.s-danger-zone small {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+@media (max-width: 719px) {
+  .s-card-chevron {
+    display: none;
+  }
+
+  .s-page-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .s-section-head .btn {
+    padding: 0 var(--space-3);
+  }
+
+  .s-dialog-acts .btn {
+    flex: 1;
+  }
 }

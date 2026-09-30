@@ -392,6 +392,8 @@ export interface ProjectsPage {
   readonly skipped: readonly SkippedEntry[]
   /** Where `projects.json` is, for the recipe without a phone. */
   readonly file: string
+  /** The daemon's home, so a screen can write paths under it as `~/…`. */
+  readonly home: string
   /** Whether a request can reach a device right now (criterion 10). */
   readonly canRequest: boolean
 }
