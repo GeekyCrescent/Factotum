@@ -23,7 +23,7 @@
  * catching an argument that changes shape — half of what it exists to catch.
  */
 
-import type { Logger, Notifier, Timers } from '@factotum/core'
+import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
 
 // --- Configuration, as it arrives already parsed ---------------------------
 
@@ -181,6 +181,11 @@ export interface EngineSetup {
   readonly notify: Notifier
   /** The titler's settings, parsed by the module's one schema (spec 2026-09-30, D9). */
   readonly titles: TitlesConfig
+  /**
+   * The ceiling of one upload, from the module's one literal (spec 2026-10-01, D4). OPTIONAL so the
+   * setups that predate uploads still compile; without it the engine reports the kernel's ceiling.
+   */
+  readonly uploadMaxBytes?: number
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -366,7 +371,32 @@ export interface EngineSetupView {
     readonly label: string
     readonly disabledReason: string | undefined
   }[]
+  /** Whether this host takes files, and up to how big (spec 2026-10-01, D8, D10). */
+  readonly uploads: UploadsView
 }
+
+// --- Uploads (spec 2026-10-01, D5, D8) ---------------------------------------
+
+/** What the client is told about attaching: the ceiling, or why it is off on this host. */
+export type UploadsView = { readonly maxBytes: number } | { readonly off: string }
+
+export type UploadResult =
+  | {
+      readonly outcome: 'ok'
+      readonly uploadId: string
+      readonly name: string
+      /** Absolute. What goes into the prompt, as `@<path>`. */
+      readonly path: string
+      readonly bytes: number
+      /** One of the four formats a browser may paint, by its first bytes. */
+      readonly image: boolean
+    }
+  | { readonly outcome: 'invalid'; readonly reason: string }
+  | { readonly outcome: 'off'; readonly reason: string }
+
+/** Only the FORM is checked: whether it exists is the kernel's 404 when it serves it. */
+export type UploadLookup = { readonly kind: 'ok'; readonly path: string } | { readonly kind: 'invalid' }
+
 
 // --- Projects, as the screens see them (spec 2026-09-29, D4, D8) -------------
 
@@ -544,6 +574,10 @@ export interface SessionEngine {
   /** One ask by its token, for the approval panel (spec D8). A property, like every member here. */
   readonly inspect: (askId: string) => Promise<InspectResult>
   readonly reconcile: () => Promise<void>
+  // --- uploads (spec 2026-10-01, D5, D9) ---
+  /** Keeps a file the kernel received, under a sanitised name. The kernel deletes it if this does not. */
+  readonly upload: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
+  readonly openUpload: (uploadId: string, name: string) => UploadLookup
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

@@ -19,6 +19,11 @@ export interface SessionPaths {
    * prompt that says "read secrets.env" has nothing there to read even if tools came back.
    */
   readonly titler: string
+  /**
+   * What the owner attached (spec 2026-10-01, D5): `uploads/<uploadId>/<name>`. A sibling of
+   * `sessions/`, not inside a session: on a LAUNCH the file is sent before the session exists.
+   */
+  readonly uploads: string
   readonly lockFile: (siteId: string) => string
   readonly sessionDir: (sessionId: string) => string
   readonly metaFile: (sessionId: string) => string
@@ -36,6 +41,7 @@ export function sessionPaths(stateDir: string): SessionPaths {
     locks,
     sessions,
     titler: join(stateDir, 'titler'),
+    uploads: join(stateDir, 'uploads'),
     lockFile: (siteId) => join(locks, `${siteId}.json`),
     sessionDir,
     metaFile: (sessionId) => join(sessionDir(sessionId), 'meta.json'),

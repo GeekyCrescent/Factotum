@@ -15,7 +15,7 @@ import type { SiteLocks } from './locks.ts'
 import { createGrantTable, type GrantTable } from './permissions/grants.ts'
 import { createSiteTable, type SiteTable } from './projects.ts'
 import type { DiskProbe } from './sites.ts'
-import type { SessionStore } from './store.ts'
+import type { RemoveOutcome, SessionStore } from './store.ts'
 import type { EngineSetup } from './types.ts'
 
 /** The seams of `EngineDeps` these pieces read. */
@@ -33,6 +33,8 @@ export interface PartsOwn {
   readonly liveCount: () => number
   readonly isLive: (id: string) => boolean
   readonly removing: string
+  /** The one way a conversation is deleted, uploads included (spec 2026-10-01, D6). */
+  readonly removeConversation: (id: string) => Promise<RemoveOutcome>
 }
 
 export interface Parts {
@@ -72,6 +74,7 @@ export async function createParts(setup: EngineSetup, deps: PartsDeps, own: Part
     ensureIndex,
     table,
     isLive: own.isLive,
+    removeConversation: own.removeConversation,
     now: setup.now,
     registryFile: setup.registry.file,
     home: setup.home,
@@ -104,6 +107,7 @@ export async function createParts(setup: EngineSetup, deps: PartsDeps, own: Part
     candidateTimeoutMs: deps.candidateTimeoutMs,
     liveCount: own.liveCount,
     isLive: own.isLive,
+    removeConversation: own.removeConversation,
     removing: own.removing,
   })
 

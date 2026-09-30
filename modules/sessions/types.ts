@@ -34,7 +34,7 @@
  * typecheck fail both times.
  */
 
-import type { Logger, Notifier, Timers } from '@factotum/core'
+import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
 
 // --- configuration, already parsed by config.ts ----------------------------
 
@@ -171,6 +171,8 @@ export interface EngineSetup {
   readonly notify: Notifier
   /** The titler's settings, parsed by the module's one schema (spec 2026-09-30, D9). */
   readonly titles: TitlesConfig
+  /** The ceiling of one upload: `UPLOAD_MAX_BYTES` from `config.ts`, the one literal (spec 2026-10-01, D4). */
+  readonly uploadMaxBytes?: number
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -320,7 +322,31 @@ export interface EngineSetupView {
     readonly label: string
     readonly disabledReason: string | undefined
   }[]
+  /**
+   * OPTIONAL HERE, REQUIRED ON THE ENGINE'S SIDE (spec 2026-10-01, D12). A daemon from before uploads
+   * sends no such field, and the screen reads it as data rather than trusting it; the test double of
+   * the engine does not have it either, and must compile untouched (criterion 10).
+   */
+  readonly uploads?: UploadsView
 }
+
+// --- Uploads (spec 2026-10-01, D5, D8) ---------------------------------------
+
+export type UploadsView = { readonly maxBytes: number } | { readonly off: string }
+
+export type UploadResult =
+  | {
+      readonly outcome: 'ok'
+      readonly uploadId: string
+      readonly name: string
+      readonly path: string
+      readonly bytes: number
+      readonly image: boolean
+    }
+  | { readonly outcome: 'invalid'; readonly reason: string }
+  | { readonly outcome: 'off'; readonly reason: string }
+
+export type UploadLookup = { readonly kind: 'ok'; readonly path: string } | { readonly kind: 'invalid' }
 
 // --- Projects, as the screens see them (spec 2026-09-29, D4, D8) -------------
 
@@ -495,6 +521,9 @@ export interface SessionEngine {
   /** One ask by its token, for the approval panel (spec D8). A property, like every member here. */
   readonly inspect: (askId: string) => Promise<InspectResult>
   readonly reconcile: () => Promise<void>
+  // --- uploads (spec 2026-10-01, D9, D12): optional here, like `uploads` above ---
+  readonly upload?: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
+  readonly openUpload?: (uploadId: string, name: string) => UploadLookup
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

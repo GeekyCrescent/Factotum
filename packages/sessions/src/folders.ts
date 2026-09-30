@@ -20,7 +20,7 @@ import type { SiteLocks } from './locks.ts'
 import { MAX_PENDING_GRANTS, type GrantRequest, type GrantTable } from './permissions/grants.ts'
 import type { SiteTable } from './projects.ts'
 import { checkCandidate, type CandidateWorld, type DiskProbe } from './sites.ts'
-import type { SessionStore } from './store.ts'
+import type { RemoveOutcome, SessionStore } from './store.ts'
 import type {
   AnswerGrantResult,
   GrantInspect,
@@ -53,6 +53,8 @@ export interface FoldersDeps {
   readonly candidateTimeoutMs: number | undefined
   readonly liveCount: () => number
   readonly isLive: (id: string) => boolean
+  /** Deletes one conversation and the uploads its owner sent in it (spec 2026-10-01, D6). */
+  readonly removeConversation: (id: string) => Promise<RemoveOutcome>
   /** What a lock holds while its project is deleted (`engine.ts`). */
   readonly removing: string
 }
@@ -260,7 +262,7 @@ export function createFolders(deps: FoldersDeps): Folders {
         await table.apply(result.registry, false)
         let removedSessions = 0
         for (const meta of deps.index.bySite(id)) {
-          if ((await deps.store.remove(meta.id, deps.isLive)) === 'removed') removedSessions += 1
+          if ((await deps.removeConversation(meta.id)) === 'removed') removedSessions += 1
         }
         return { outcome: 'ok', removedSessions }
       } finally {
@@ -275,7 +277,7 @@ export function createFolders(deps: FoldersDeps): Folders {
       if (metas.length === 0) return { outcome: 'unknown' }
       let removedSessions = 0
       for (const meta of metas) {
-        if ((await deps.store.remove(meta.id, deps.isLive)) === 'removed') removedSessions += 1
+        if ((await deps.removeConversation(meta.id)) === 'removed') removedSessions += 1
       }
       return { outcome: 'ok', removedSessions }
     },
