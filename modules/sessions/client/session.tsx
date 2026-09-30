@@ -30,6 +30,14 @@ import { nameOf } from './history.ts'
 import { askFor, sessionOf, type AskRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
+/** The glyph beside the state at the top right. */
+const STATE_GLYPH: Readonly<Record<SessionState, 'check-circle' | 'x-circle' | 'minus-circle' | 'circle-notch'>> = {
+  running: 'circle-notch',
+  finished: 'check-circle',
+  failed: 'x-circle',
+  cancelled: 'minus-circle',
+}
+
 /** How often the cursor asks again while a session is running. */
 const POLL_MS = 1_000
 const ASK = 'ask'
@@ -159,11 +167,18 @@ function Live({
     <div class={summary === undefined ? 's-screen' : `s-screen ${toneClass(summary.siteId, project?.color)}`}>
       <header class="topbar">
         <MenuButton pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
-        <div class="title s-title">
-          <h1>{project?.name ?? summary?.siteId ?? id.slice(0, 8)}</h1>
-          <span class={`s-badge s-state-${state}`}>{stateLabel(state)}</span>
-          {summary === undefined ? null : <p class="s-subtitle">{nameOf(summary)}</p>}
+        {/* Two lines: whose it is, small, over what it is, large. How it stands goes to the right. */}
+        <div class="title s-head">
+          <p class="s-head-project">
+            <Icon name="folder-simple" size={14} />
+            {project?.name ?? summary?.siteId ?? ''}
+          </p>
+          <h1>{summary === undefined ? id.slice(0, 8) : nameOf(summary)}</h1>
         </div>
+        <span class={`s-status s-state-${state}`} title={stateLabel(state)}>
+          <Icon name={STATE_GLYPH[state]} size={14} />
+          <span class="s-status-text">{stateLabel(state)}</span>
+        </span>
         <button
           type="button"
           class="icon-btn"
@@ -178,7 +193,7 @@ function Live({
             Cancel
           </button>
         ) : (
-          <button type="button" class="icon-btn" aria-label="New session" onClick={() => view.navigate('new')}>
+          <button type="button" class="icon-btn s-narrow-only" aria-label="New session" onClick={() => view.navigate('new')}>
             <Icon name="note-pencil" />
           </button>
         )}
@@ -216,6 +231,7 @@ function Live({
           <ReplyComposer
             api={api}
             sessionId={id}
+            project={summary === undefined ? undefined : { id: summary.siteId, label: project?.name ?? summary.siteId, color: project?.color }}
             onSent={restart}
             goTo={(to) => view.navigate(to)}
           />

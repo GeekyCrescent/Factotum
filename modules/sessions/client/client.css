@@ -1471,3 +1471,208 @@
     flex: 1;
   }
 }
+
+/* --- Spec 2026-09-30: actions under an agent's message (Copy) ------------------- */
+
+.s-said-body {
+  min-width: 0;
+}
+
+.s-msg-acts {
+  margin-top: var(--space-1);
+  display: flex;
+  gap: var(--space-1);
+}
+
+.s-msg-act {
+  min-height: 28px;
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
+.s-msg-act:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+/* --- Spec 2026-09-30: the session's bar, in two lines, with its state at the right --- */
+
+.s-head {
+  min-width: 0;
+  flex: 1;
+}
+
+.s-head .s-head-project {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+}
+
+.s-head .s-head-project .icon {
+  color: var(--project, var(--text-3));
+}
+
+.s-head h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* How it stands: a soft pill in the state's colour, with its glyph. */
+.s-status {
+  flex: none;
+  padding: var(--space-1) var(--space-2h);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+
+.s-status.s-state-running .icon {
+  animation: s-spin 1s linear infinite;
+}
+
+@keyframes s-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .s-status.s-state-running .icon {
+    animation: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .topbar .s-narrow-only {
+    display: none;
+  }
+}
+
+/* --- The composer: suggestions above, a boxier box, one row of controls, the keys under --- */
+
+.s-composer {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.s-suggest {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.s-suggest-btn {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+.s-suggest-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.s-dock .composer {
+  border-radius: var(--radius-16);
+}
+
+.s-dock .composer .send {
+  border-radius: var(--radius-10);
+}
+
+.s-plus {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.s-plus:disabled {
+  cursor: not-allowed;
+}
+
+.s-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+
+/* The project of a reply: a label, not a picker. */
+.composer .chip.s-static {
+  border-color: var(--line);
+  cursor: default;
+}
+
+.composer .chip.s-static .icon {
+  color: var(--project, var(--text-3));
+}
+
+.s-keys {
+  padding-left: var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+/* A phone has no Enter to send with, and little room above the keyboard. */
+@media (pointer: coarse) {
+  .s-keys {
+    display: none;
+  }
+}
+
+@media (max-width: 719px) {
+  .s-suggest {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .s-suggest-btn {
+    flex: none;
+  }
+}
+
+/* A phone: the state as its glyph in its colour, the word kept for screen readers. */
+@media (max-width: 719px) {
+  .s-status {
+    padding: var(--space-1);
+  }
+
+  .s-status-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

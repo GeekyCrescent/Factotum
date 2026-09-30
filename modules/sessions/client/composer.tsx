@@ -1,6 +1,13 @@
 /**
  * The composer: launching a session and replying to one, the same box (spec 2026-09-18, criteria
- * 18, 19). It grows with the text up to 40 % of the height, and Ctrl/Cmd+Enter sends.
+ * 18, 19). It grows with the text up to 40 % of the height.
+ *
+ * THE KEYS (2026-09-30): on a computer Enter sends and Shift+Enter breaks the line; on a phone
+ * Enter breaks the line and the button sends, because a phone's Enter is where a person expects a
+ * new line. Ctrl/Cmd+Enter sends everywhere. Never while an input method is composing a word.
+ *
+ * Under the text, one row: `+` (attaching files, not yet: disabled), the project, what to run, and
+ * send. Above the box, three suggestions that do nothing yet, disabled until they get a use.
  *
  * A 409 is read off the body the error carries: `conflict` (the site is busy) and `freshness` (the
  * repo is not clean or not up to date) each get their own notice, and going over a stale repo is
@@ -9,7 +16,7 @@
 
 import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
-import type { EngineSetupView } from '../types.ts'
+import type { Color, EngineSetupView } from '../types.ts'
 import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
@@ -169,11 +176,14 @@ export function LaunchComposer({
 export function ReplyComposer({
   api,
   sessionId,
+  project,
   onSent,
   goTo,
 }: {
   readonly api: Api
   readonly sessionId: string
+  /** The conversation's project, shown as a label in the row: a reply cannot change it. */
+  readonly project: { readonly id: string; readonly label: string; readonly color: Color | undefined } | undefined
   readonly onSent: () => void
   readonly goTo: (sessionId: string) => void
 }) {
@@ -181,6 +191,7 @@ export function ReplyComposer({
     await api.post(`sessions/${sessionId}/reply`, { text, force })
     onSent()
   })
+  const tone = project === undefined ? undefined : toneClass(project.id, project.color)
   return (
     <>
       <Problems
@@ -202,7 +213,15 @@ export function ReplyComposer({
         canSend={!s.busy && s.text.trim() !== ''}
         send={() => void s.go(false)}
         autoFocus={false}
-      />
+        tone={tone}
+      >
+        {project === undefined ? null : (
+          <span class="chip s-pick s-static">
+            <Icon name="folder-simple" size={16} />
+            {project.label}
+          </span>
+        )}
+      </Box>
     </>
   )
 }
@@ -230,34 +249,69 @@ function Box({
   readonly children?: ComponentChildren
 }) {
   return (
-    <form
-      class={tone === undefined ? 'composer' : `composer ${tone}`}
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (canSend) send()
-      }}
-    >
-      <textarea
-        rows={2}
-        value={text}
-        placeholder={placeholder}
-        aria-label={placeholder}
-        autoFocus={autoFocus}
-        onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSend) {
-            event.preventDefault()
-            send()
-          }
+    <div class="s-composer">
+      <Suggestions />
+      <form
+        class={tone === undefined ? 'composer' : `composer ${tone}`}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (canSend) send()
         }}
-      />
-      {children}
-      <button type="submit" class="send" aria-label={label} disabled={!canSend}>
-        <Icon name="arrow-up" size={18} />
-      </button>
-    </form>
+      >
+        <textarea
+          rows={2}
+          value={text}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          autoFocus={autoFocus}
+          onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+            const sends = event.metaKey || event.ctrlKey || window.matchMedia(FINE_POINTER).matches
+            if (!sends) return
+            event.preventDefault()
+            if (canSend) send()
+          }}
+        />
+        <button type="button" class="s-plus" aria-label="Attach files (coming soon)" title="Coming soon" disabled>
+          <Icon name="plus" size={18} />
+        </button>
+        <span class="s-sep" aria-hidden="true" />
+        {children}
+        <button type="submit" class="send" aria-label={label} disabled={!canSend}>
+          <Icon name="arrow-up" size={18} />
+        </button>
+      </form>
+      <p class="s-keys">Enter to send · Shift + Enter for a new line</p>
+    </div>
   )
 }
+
+/** A mouse or a trackpad: Enter sends. A finger: Enter breaks the line. */
+const FINE_POINTER = '(pointer: fine)'
+
+/**
+ * Three things to start from, above the box. None of them works yet, so all three are disabled and
+ * say so; they get a use later (2026-09-30).
+ */
+function Suggestions() {
+  return (
+    <div class="s-suggest" role="group" aria-label="Suggestions (coming soon)">
+      {SUGGESTIONS.map((suggestion) => (
+        <button type="button" key={suggestion.label} class="s-suggest-btn" disabled title="Coming soon">
+          <Icon name={suggestion.icon} size={16} />
+          {suggestion.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const SUGGESTIONS: readonly { readonly label: string; readonly icon: 'folder-open' | 'code' | 'lightning' }[] = [
+  { label: 'Explore the project', icon: 'folder-open' },
+  { label: 'Review code', icon: 'code' },
+  { label: 'Implement a change', icon: 'lightning' },
+]
 
 function Problems({
   problem,

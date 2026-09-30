@@ -7,7 +7,7 @@
  * make room for the error (criterion 17).
  */
 
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import type { SessionEvent } from '../types.ts'
 import { activity, type Activity, type Shown } from './activity.ts'
 import { fold, type Call } from './fold.ts'
@@ -58,8 +58,13 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
       ) : (
         <li class="s-row s-said">
           <span class="s-gut" />
-          <div class="s-msg s-md">
-            <Markdown text={row.text} />
+          <div class="s-said-body">
+            <div class="s-msg s-md">
+              <Markdown text={row.text} />
+            </div>
+            <div class="s-msg-acts">
+              <CopyButton text={row.text} />
+            </div>
           </div>
         </li>
       )
@@ -70,6 +75,51 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
     case 'activity':
       return <ActivityRow row={row} />
   }
+}
+
+/** How long "Copied" stays before it goes back to "Copy". */
+const COPIED_MS = 1_500
+
+/**
+ * The agent's message as it wrote it — the Markdown source, which pastes cleanly anywhere. The
+ * Clipboard API where there is one (a secure context: the tailnet's HTTPS, or loopback); a hidden
+ * textarea and `execCommand` where there is not.
+ */
+function CopyButton({ text }: { readonly text: string }) {
+  const [done, setDone] = useState<'copied' | 'failed' | undefined>(undefined)
+  useEffect(() => {
+    if (done === undefined) return undefined
+    const timer = setTimeout(() => setDone(undefined), COPIED_MS)
+    return () => clearTimeout(timer)
+  }, [done])
+  const copy = async () => {
+    try {
+      if (navigator.clipboard !== undefined) await navigator.clipboard.writeText(text)
+      else copyByHand(text)
+      setDone('copied')
+    } catch {
+      setDone('failed')
+    }
+  }
+  return (
+    <button type="button" class="s-msg-act" onClick={() => void copy()}>
+      <Icon name={done === 'copied' ? 'check' : 'copy'} size={14} />
+      {done === 'copied' ? 'Copied' : done === 'failed' ? 'Could not copy' : 'Copy'}
+    </button>
+  )
+}
+
+function copyByHand(text: string): void {
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  const ok = document.execCommand('copy')
+  area.remove()
+  if (!ok) throw new Error('copy refused')
 }
 
 /** A turn's history, closed to one quiet line: how it ended and when. */
