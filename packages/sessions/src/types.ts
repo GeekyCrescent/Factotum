@@ -291,7 +291,7 @@ export interface SessionPage {
 }
 
 /**
- * The four kinds. Anything the stream carries that is not one of these is dropped.
+ * The five kinds. Anything the stream carries that is not one of these is dropped.
  *
  * Split from `SessionEvent` rather than written as one `Omit<…>`, because `Omit` over
  * a type whose union sits inside an intersection collapses the union and loses the
@@ -300,8 +300,47 @@ export interface SessionPage {
 export type EventInput =
   | { readonly kind: 'message'; readonly role: 'user' | 'assistant'; readonly text: string }
   | { readonly kind: 'tool'; readonly name: string; readonly input: unknown }
-  | { readonly kind: 'result'; readonly name: string; readonly ok: boolean; readonly summary: string }
+  | {
+      readonly kind: 'result'
+      readonly name: string
+      readonly ok: boolean
+      readonly summary: string
+      /**
+       * The subagent whose tool this was, when the GATE wrote it. Never set by the stream.
+       *
+       * `?:` AND `| undefined`, like `InvokeConfig.name`: it is what the schema's `.optional()`
+       * infers, and it keeps every literal written before it existed compiling under
+       * `exactOptionalPropertyTypes`.
+       */
+      readonly task?: string | undefined
+    }
   | { readonly kind: 'state'; readonly state: SessionState; readonly reason: string | undefined }
+  | SubagentEvent
+
+/**
+ * A subagent the agent launched by itself, from the CLI's `task_started` / `task_notification`
+ * (spec 2026-10-01-subagentes-visibles). What it does inside is NOT here, on purpose: only that it
+ * started, and how it ended.
+ */
+export type SubagentEvent =
+  | {
+      readonly kind: 'subagent'
+      readonly phase: 'started'
+      /** The CLI's task id: pairs a start with its end, and a gate result with its subagent. Never shown. */
+      readonly task: string
+      readonly agent: string
+      readonly description: string
+      readonly background: boolean
+    }
+  | {
+      readonly kind: 'subagent'
+      readonly phase: 'ended'
+      readonly task: string
+      readonly ok: boolean
+      readonly status: string
+      /** The subagent's final report, clipped. The only words of its own that reach the log. */
+      readonly summary: string
+    }
 
 export type SessionEvent = { readonly seq: number; readonly at: string } & EventInput
 

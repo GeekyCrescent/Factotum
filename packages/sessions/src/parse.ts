@@ -1,5 +1,5 @@
 /**
- * `stream-json` in, four kinds of event out.
+ * `stream-json` in, five kinds of event out.
  *
  * It does two things that are not translating, and both are inherited as requirements
  * rather than rediscovered:
@@ -16,10 +16,15 @@
  *    A FAILURE IS KEPT, clipped: without it the session cannot be debugged, which is
  *    the one thing the log has to be good for.
  *
- * Anything the stream carries that is not one of the four kinds RETURNS NOTHING. The
+ * Anything the stream carries that is not one of the five kinds RETURNS NOTHING. The
  * CLI measured in block A emits `system` (init, and the hook chatter this very gate
  * generates) and `rate_limit_event`, none of which the spec listed. Dropping the
  * unrecognised is what made two unlisted types cost nothing.
+ *
+ * SUBAGENTS (spec 2026-10-01-subagentes-visibles). Of `system`, exactly two subtypes are read:
+ * `task_started` and `task_notification` of a `local_agent`, which become the fifth kind. And every
+ * line carrying `parent_tool_use_id` is DROPPED: it is the subagent talking, and without this its
+ * words and its tools land in the log as if the main agent had said and done them.
  */
 
 import type { EventInput } from './types.ts'
@@ -113,17 +118,66 @@ interface Block {
  */
 export class StreamTranslator {
   readonly #names = new Map<string, string>()
+  /** The subagents started and not yet ended, by task id. Lives one turn, like the translator. */
+  readonly #tasks = new Set<string>()
 
   translate(message: unknown): readonly EventInput[] {
     if (message === null || typeof message !== 'object') return []
     const record = message as { type?: unknown; subtype?: unknown; message?: unknown; is_error?: unknown; result?: unknown }
 
+    // Before anything else, and before `#names` learns an id: a subagent's call would otherwise leave
+    // an entry its dropped result never clears.
+    if (fromSubagent(record)) return []
     if (record.type === 'assistant') return this.#fromAssistant(record.message)
     if (record.type === 'user') return this.#fromUser(record.message)
     if (record.type === 'result') return this.#fromResult(record)
-    // `system` (including the hook chatter this gate itself causes) and
-    // `rate_limit_event` land here, and so will whatever the CLI adds next.
+    if (record.type === 'system' && record.subtype === 'task_started') return this.#fromTaskStarted(record as TaskLine)
+    if (record.type === 'system' && record.subtype === 'task_notification') return this.#fromTaskNotification(record as TaskLine)
+    // The rest of `system` (including the hook chatter this gate itself causes, and
+    // `task_updated`, which is all a Cancel leaves) and `rate_limit_event` land here,
+    // and so will whatever the CLI adds next.
     return []
+  }
+
+  /**
+   * Built field by field, never spread: `prompt`, `output_file` and `usage` sit on the same line and
+   * must not be able to ride along (the spec's guardrail 3).
+   */
+  #fromTaskStarted(record: TaskLine): readonly EventInput[] {
+    const task = record.task_id
+    if (typeof task !== 'string' || task === '') return []
+    // A Bash the subagent runs in the background is a task too; it is not a subagent.
+    if (record.task_type !== 'local_agent' || record.owned_by_subagent === true) return []
+    if (this.#tasks.has(task)) return []
+    this.#tasks.add(task)
+    return [
+      {
+        kind: 'subagent',
+        phase: 'started',
+        task,
+        agent: typeof record.subagent_type === 'string' ? clip(record.subagent_type, MAX_VALUE_CHARS) : 'agent',
+        description: typeof record.description === 'string' ? clip(record.description, MAX_IDENTIFYING_CHARS) : '',
+        background: record.is_backgrounded === true,
+      },
+    ]
+  }
+
+  #fromTaskNotification(record: TaskLine): readonly EventInput[] {
+    const task = record.task_id
+    if (typeof task !== 'string' || !this.#tasks.has(task)) return []
+    this.#tasks.delete(task)
+    const ok = record.status === 'completed'
+    const summary = typeof record.summary === 'string' ? record.summary : ''
+    return [
+      {
+        kind: 'subagent',
+        phase: 'ended',
+        task,
+        ok,
+        status: typeof record.status === 'string' ? clip(record.status, MAX_VALUE_CHARS) : 'unknown',
+        summary: clip(summary, ok ? MAX_SUMMARY_CHARS : MAX_ERROR_CHARS),
+      },
+    ]
   }
 
   #fromAssistant(message: unknown): readonly EventInput[] {
@@ -176,4 +230,25 @@ function contentOf(message: unknown): readonly Block[] {
   const content = (message as { content?: unknown }).content
   if (typeof content === 'string') return [{ type: 'text', text: content }]
   return Array.isArray(content) ? (content as Block[]) : []
+}
+
+/**
+ * A line the subagent wrote, not the agent the owner is talking to. `null` and absent are the main
+ * agent's, which is what the CLI sends on its own lines (spec 2026-10-01-subagentes, §0.1).
+ */
+function fromSubagent(record: object): boolean {
+  const parent = (record as { parent_tool_use_id?: unknown }).parent_tool_use_id
+  return typeof parent === 'string' && parent !== ''
+}
+
+/** The fields of `task_started` / `task_notification` that are read. Everything else on them is not. */
+interface TaskLine {
+  readonly task_id?: unknown
+  readonly task_type?: unknown
+  readonly owned_by_subagent?: unknown
+  readonly subagent_type?: unknown
+  readonly description?: unknown
+  readonly is_backgrounded?: unknown
+  readonly status?: unknown
+  readonly summary?: unknown
 }

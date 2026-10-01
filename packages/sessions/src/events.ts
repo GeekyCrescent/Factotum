@@ -1,5 +1,5 @@
 /**
- * The four event kinds, and how a line of `events.jsonl` becomes one.
+ * The five event kinds, and how a line of `events.jsonl` becomes one.
  *
  * THE LOG IS THE SOURCE OF TRUTH AND IT IS NEVER REWRITTEN. Everything else — the
  * state a screen shows, what the cursor returns — is derived from it. That is what
@@ -21,8 +21,34 @@ const base = { seq: z.number().int().min(0), at: z.string().min(1) }
 export const sessionEventSchema = z.union([
   z.object({ ...base, kind: z.literal('message'), role: z.enum(['user', 'assistant']), text: z.string() }),
   z.object({ ...base, kind: z.literal('tool'), name: z.string(), input: z.unknown() }),
-  z.object({ ...base, kind: z.literal('result'), name: z.string(), ok: z.boolean(), summary: z.string() }),
+  z.object({
+    ...base,
+    kind: z.literal('result'),
+    name: z.string(),
+    ok: z.boolean(),
+    summary: z.string(),
+    task: z.string().min(1).optional(),
+  }),
   z.object({ ...base, kind: z.literal('state'), state: sessionStateSchema, reason: z.string().optional() }),
+  // The fifth kind (spec 2026-10-01-subagentes-visibles). An old reader drops both, as the header says.
+  z.object({
+    ...base,
+    kind: z.literal('subagent'),
+    phase: z.literal('started'),
+    task: z.string().min(1),
+    agent: z.string(),
+    description: z.string(),
+    background: z.boolean(),
+  }),
+  z.object({
+    ...base,
+    kind: z.literal('subagent'),
+    phase: z.literal('ended'),
+    task: z.string().min(1),
+    ok: z.boolean(),
+    status: z.string(),
+    summary: z.string(),
+  }),
 ])
 
 export function serialize(event: SessionEvent): string {

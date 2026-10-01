@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "tool",
+    "name": "Bash",
+    "input": {
+      "command": "sleep 20 && ls",
+      "description": "Sleep for 20 seconds then list directory contents"
+    }
+  },
+  {
+    "kind": "result",
+    "name": "Bash",
+    "ok": true,
+    "summary": "(Bash completed with no output)"
+  },
+  {
+    "kind": "message",
+    "role": "assistant",
+    "text": "The command `sleep 20 && ls` completed successfully. The sleep ran for 20 seconds, and then `ls` executed but produced no output, which indicates that the current directory is empty (contains no files or directories to list)."
+  }
+]

@@ -25,6 +25,41 @@ test('all four kinds survive a round trip', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The fifth kind, and the gate's `task` on a result (spec 2026-10-01-subagentes, criterion 14)
+// ---------------------------------------------------------------------------
+
+test('a subagent start and end survive a round trip', () => {
+  const events: SessionEvent[] = [
+    {
+      seq: 4,
+      at: 'x',
+      kind: 'subagent',
+      phase: 'started',
+      task: 'a1b2',
+      agent: 'general-purpose',
+      description: 'count files',
+      background: false,
+    },
+    { seq: 5, at: 'x', kind: 'subagent', phase: 'ended', task: 'a1b2', ok: true, status: 'completed', summary: 'done' },
+  ]
+  for (const event of events) assert.deepEqual(parseLine(serialize(event)), event)
+})
+
+test('a result keeps the subagent the gate wrote it for, and one without it has no such key', () => {
+  const withTask: SessionEvent = { seq: 6, at: 'x', kind: 'result', name: 'Write', ok: false, summary: 'denied', task: 'a1b2' }
+  const without: SessionEvent = { seq: 7, at: 'x', kind: 'result', name: 'Write', ok: false, summary: 'denied' }
+  assert.deepEqual(parseLine(serialize(withTask)), withTask)
+  const back = parseLine(serialize(without))
+  assert.deepEqual(back, without)
+  assert.equal(back !== undefined && 'task' in back, false)
+})
+
+test('a subagent event with an empty task id is not an event', () => {
+  const line = JSON.stringify({ seq: 0, at: 'x', kind: 'subagent', phase: 'ended', task: '', ok: true, status: 'completed', summary: '' })
+  assert.equal(parseLine(line), undefined)
+})
+
+// ---------------------------------------------------------------------------
 // Criterion 11: a truncated line is skipped, it does not take anything down
 // ---------------------------------------------------------------------------
 
