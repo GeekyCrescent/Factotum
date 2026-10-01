@@ -16,6 +16,7 @@ import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factot
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
 import { uuidv7 } from './id.ts'
+import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
 import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './lifecycle.ts'
 import { noticeFor } from './notices.ts'
 import { SiteLocks } from './locks.ts'
@@ -125,6 +126,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     now: setup.now,
     log,
   })
+  // Listing folders for `@` references (spec 2026-10-01-referencias-y-tab, D4): one per engine.
+  const lister = createLister({ timers: setup.timers })
 
   /**
    * The uploads a conversation's OWNER sent in it — never a path its agent read or quoted (D6). An
@@ -737,6 +740,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         disabledReason: entry.disabledReason,
       })),
       uploads: uploads.view,
+      files: { maxEntries: MAX_ENTRIES },
     }
   }
 
@@ -813,6 +817,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     search: async (query) => await searchHistory({ index, store, table, ensureIndex, uploadsRoot: uploads.root }, query),
     upload: unlessStopped(uploads.adopt),
     openUpload: uploads.locate,
+    files: async (query) => await listFiles(lister, table, query),
     projects: history.projects,
     requestProject: unlessStopped(folders.requestProject),
     requestShared: unlessStopped(folders.requestShared),
