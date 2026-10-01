@@ -210,7 +210,14 @@ export function QuestionsSheet({
           const other = question.options.length
           return (
             <fieldset key={question.id} class="s-q">
-              <legend class="s-q-text">{question.text}</legend>
+              <legend class="s-q-text">
+                {questions.length > 1 ? (
+                  <span class="s-q-num num" aria-hidden="true">
+                    {qi + 1}
+                  </span>
+                ) : null}
+                <span>{question.text}</span>
+              </legend>
               <div class="s-opts" role={question.multiple ? 'group' : 'radiogroup'} aria-label={question.text}>
                 {question.options.map((option, oi) => {
                   const chosen = isChosen(draft, question.id, option.id)
