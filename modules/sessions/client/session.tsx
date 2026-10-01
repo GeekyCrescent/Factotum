@@ -33,7 +33,7 @@ import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
 import { mayOpenItself } from './overlays.ts'
 import { askedBy, emptyDraft, sheetState, type Draft } from './questions.ts'
 import { QuestionsSheet, useBatch } from './questions-sheet.tsx'
-import { askFor, questionsFor, sessionOf, type AskRef, type QuestionsRef } from './relevance.ts'
+import { askFor, questionsFor, sessionOf, withLogBatches, type AskRef, type QuestionsRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
 /** The glyph beside the state at the top right. */
@@ -177,7 +177,10 @@ function Live({
   const open = running ? openSubagents(rows) : []
   // Questions (spec 2026-10-01-preguntas-con-opciones, D10, D12): the batches this session waits on, and
   // which one the sheet shows. A batch open in the LOG hides "Working…" like an ask, push or no push.
-  const batches = running ? questionsFor(id, view.pending, view.search) : []
+  // The pendings and the URL bring tokens; the LOG says which batches are open, so one with no token
+  // still gets its notice and its sheet, answered by session and batch id (2026-10-02).
+  const openInLog = rows.flatMap((row) => (row.kind === 'questions' && row.end === undefined ? [{ id: row.id, count: row.questions.length }] : []))
+  const batches = running ? withLogBatches(id, questionsFor(id, view.pending, view.search), openInLog) : []
   const [sheetTag, setSheetTag] = useState<string | undefined>(undefined)
   const askingQuestions = running && rows.some((row) => row.kind === 'questions' && row.end === undefined)
   // The batch the sheet showed is gone (answered, and its pending resolved): no overlay without a sheet,
@@ -247,7 +250,17 @@ function Live({
       {showDetails ? <Details id={id} summary={summary} setup={setup} now={Date.now()} /> : null}
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
-        <Log rows={rows} running={running} asking={ask !== undefined} />
+        <Log
+          rows={rows}
+          running={running}
+          asking={ask !== undefined}
+          onOpenQuestions={(batchId) => {
+            const batch = batches.find((b) => b.batch === batchId)
+            if (batch === undefined) return
+            setSheetTag(batch.tag)
+            view.setOverlay(QUESTIONS)
+          }}
+        />
         {/* A subagent at work says so, which, and for how long — also while an ask waits, since it may
             be the one asking. Without one, "Working…" as before. */}
         {open.length > 0 ? <SubagentLines open={open} /> : null}

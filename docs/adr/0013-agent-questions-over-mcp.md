@@ -70,3 +70,14 @@ HTTP with `success`.
   decides the shape.
 - Heartbeat, SSE or stdio.
 - Changing an answer once sent, or retrying an expired batch.
+
+## Amendment (2026-10-02): answering without the token
+
+The first version required the token to answer, like an ask. On the daemon's own machine — which never
+holds tokens — a waiting batch could then not be answered at all, and the owner works from that machine.
+**A question is not an ask:** answering an ask grants a write, answering a question grants nothing the
+agent could not already assume. So a screen may list a session's open batches and answer one by its
+public id (`GET /sessions/:id/questions`, `POST /sessions/:id/questions/:batch/answer`). Any process on
+the machine can do the same — the agent included — and the cost is provenance, not permission: the
+`settled` event says `via: "screen"` or `via: "token"`, and the log shows which. The token still never
+leaves memory and the push, and the permission ask keeps requiring its own.

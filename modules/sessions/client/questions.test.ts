@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { Question } from '../types.ts'
 import type { QuestionsRow } from './fold.ts'
 import {
+  answerPath,
   answeredCount,
   askedBy,
   body,
@@ -190,7 +191,6 @@ test('the area after answering, with the URL still there: "Answered", and the sh
   assert.deepEqual(sheetState({ kind: 'over', how: 'expired' }), { opens: false, notice: 'These questions expired' })
   assert.deepEqual(sheetState({ kind: 'over', how: 'cancelled' }), { opens: false, notice: 'These questions were cancelled' })
   assert.deepEqual(sheetState({ kind: 'unknown' }), { opens: false, notice: 'These questions are over' })
-  assert.deepEqual(sheetState({ kind: 'no-token' }), { opens: false, notice: 'Answer from the notification' })
   assert.deepEqual(sheetState({ kind: 'loading' }), { opens: false, notice: 'Questions for you' })
   assert.deepEqual(sheetState({ kind: 'pending' }), { opens: true, notice: 'Questions for you' })
 })
@@ -265,4 +265,16 @@ test('free text is shown as written; expired, cancelled, shutdown and interrupte
     assert.equal(row.status, status)
     assert.equal(row.tone, 'muted')
   }
+})
+
+test('an answer from a screen without the notification says so', () => {
+  const end = { kind: 'settled' as const, at: 'x', outcome: 'answered' as const, answers: [], via: 'screen' as const }
+  assert.equal(describeRow(rowOf(end), false).status, 'Answered without the notification')
+  assert.equal(describeRow(rowOf({ ...end, via: 'token' }), false).status, 'Answered')
+  assert.equal(describeRow(rowOf({ ...end, via: undefined }), false).status, 'Answered')
+})
+
+test('the answer goes by token when there is one, else by session and batch', () => {
+  assert.equal(answerPath({ token: 'T', sessionId: 's', batch: 'b' }), 'questions/T/answer')
+  assert.equal(answerPath({ sessionId: 's', batch: 'b' }), 'sessions/s/questions/b/answer')
 })

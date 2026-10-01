@@ -35,7 +35,7 @@ import {
   parseSharedRequest,
   parseTitle,
 } from './requests.ts'
-import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, SessionEdit, SessionEngine, SettledHow } from './types.ts'
+import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, QuestionsAnswer, SessionEdit, SessionEngine, SettledHow } from './types.ts'
 
 /**
  * The hole.
@@ -96,6 +96,19 @@ function mcpFailure(body: unknown, text: string): ModuleResponse {
   // No id: it was a notification, and a notification is never answered.
   if (typeof id !== 'string' && typeof id !== 'number') return { status: 202 }
   return { status: 200, body: { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } } }
+}
+
+function fromQuestionsAnswer(result: QuestionsAnswer): ModuleResponse {
+  switch (result.kind) {
+    case 'answered':
+      return { status: 200, headers: NO_STORE, body: { answered: true, first: result.first } }
+    case 'invalid':
+      return invalid(result.reason)
+    case 'over':
+      return conflict(overMessage(result.how), { how: result.how })
+    case 'unknown':
+      return notFound('there are no such questions waiting')
+  }
 }
 
 function overMessage(how: SettledHow): string {
@@ -505,17 +518,30 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
     // The owner's answers. The token is the authorisation, as for an ask; answered twice is a 200.
     'POST /questions/:token/answer': withEngine(async (engine, req) => {
       if (engine.answerQuestions === undefined) return STARTING
-      const result = await engine.answerQuestions(req.params['token'] ?? '', req.body)
-      switch (result.kind) {
-        case 'answered':
-          return { status: 200, headers: NO_STORE, body: { answered: true, first: result.first } }
-        case 'invalid':
-          return invalid(result.reason)
-        case 'over':
-          return conflict(overMessage(result.how), { how: result.how })
-        case 'unknown':
-          return notFound('there are no questions with that token')
+      return fromQuestionsAnswer(await engine.answerQuestions(req.params['token'] ?? '', req.body))
+    }),
+
+    /**
+     * WITHOUT A TOKEN, from a screen (2026-10-02, the owner's call). Answering a question grants
+     * nothing — unlike an ask, which grants a write and keeps its token — so a screen on the daemon's
+     * own machine, which never holds tokens, may read and answer its session's batches by their public
+     * id. The token never leaves through here; the log marks such an answer `via: "screen"`.
+     */
+    'GET /sessions/:id/questions': withEngine(async (engine, req) => {
+      if (engine.sessionQuestions === undefined) return STARTING
+      const batches = await engine.sessionQuestions(req.params['id'] ?? '')
+      return {
+        status: 200,
+        headers: NO_STORE,
+        body: {
+          batches: batches.map((b) => ({ id: b.id, siteId: b.siteId, questions: b.questions, task: b.task ?? null, deadlineAt: b.deadlineAt })),
+        },
       }
+    }),
+
+    'POST /sessions/:id/questions/:batch/answer': withEngine(async (engine, req) => {
+      if (engine.answerSessionQuestions === undefined) return STARTING
+      return fromQuestionsAnswer(await engine.answerSessionQuestions(req.params['id'] ?? '', req.params['batch'] ?? '', req.body))
     }),
 
     // --- attaching (spec 2026-10-01, D9) ----------------------------------------

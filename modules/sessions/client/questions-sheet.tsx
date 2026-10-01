@@ -16,6 +16,7 @@ import { messageOf } from './errors.ts'
 import { createGuard } from './guard.ts'
 import { Icon } from './icon.tsx'
 import {
+  answerPath,
   answeredCount,
   body,
   choose,
@@ -53,9 +54,13 @@ export interface Batch {
 
 const statusOf = (cause: unknown) => (cause as { status?: number } | undefined)?.status
 
-/** Reads the batch once by its token, and answers it. Whatever ends it also ends its pending. */
+/**
+ * Reads the batch once and answers it. With a token (the notification brought it), by the token; WITHOUT
+ * one, by the session and the batch's public id — the screen route (2026-10-02). Whatever ends it also
+ * ends its pending.
+ */
 export function useBatch(api: Api, ref: QuestionsRef, resolvePending: (tag: string) => void): Batch {
-  const [load, setLoad] = useState<BatchLoad>(ref.token === undefined ? { kind: 'no-token' } : { kind: 'loading' })
+  const [load, setLoad] = useState<BatchLoad>({ kind: 'loading' })
   const [info, setInfo] = useState<BatchInfo | undefined>(undefined)
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const resolve = useRef(resolvePending)
@@ -68,16 +73,22 @@ export function useBatch(api: Api, ref: QuestionsRef, resolvePending: (tag: stri
 
   useEffect(() => {
     const token = ref.token
-    if (token === undefined) {
-      setLoad({ kind: 'no-token' })
-      return undefined
-    }
     let live = true
     setLoad({ kind: 'loading' })
-    api
-      .get<BatchInfo>(`questions/${token}`)
+    const read: Promise<BatchInfo | undefined> =
+      token !== undefined
+        ? api.get<BatchInfo>(`questions/${token}`)
+        : api
+            .get<{ batches: readonly Omit<BatchInfo, 'sessionId'>[] }>(`sessions/${ref.sessionId}/questions`)
+            .then((got) => {
+              const found = got.batches.find((b) => b.id === ref.batch)
+              return found === undefined ? undefined : { ...found, sessionId: ref.sessionId }
+            })
+    read
       .then((got) => {
         if (!live) return
+        // Not among the session's open batches any more: it is over, and the log says how.
+        if (got === undefined) return ended({ kind: 'unknown' })
         setInfo(got)
         setLoad({ kind: 'pending' })
       })
@@ -94,9 +105,9 @@ export function useBatch(api: Api, ref: QuestionsRef, resolvePending: (tag: stri
   }, [api, ref.token, ref.tag])
 
   const send = async (draft: Draft) => {
-    if (ref.token === undefined || info === undefined) return
+    if (info === undefined) return
     try {
-      await api.post(`questions/${ref.token}/answer`, body(draft, info.questions))
+      await api.post(answerPath(ref), body(draft, info.questions))
       ended({ kind: 'over', how: 'answered' })
     } catch (cause: unknown) {
       const how = howOf(cause)

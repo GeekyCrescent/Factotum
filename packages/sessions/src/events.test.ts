@@ -104,6 +104,8 @@ test('a questions asked and settled survive a round trip, with and without a tas
     { ...settled, task: 'a1b2' },
     { seq: 10, at: 'x', kind: 'questions', phase: 'settled', id: 'abc', outcome: 'expired' },
     { seq: 11, at: 'x', kind: 'questions', phase: 'settled', id: 'abc', outcome: 'shutdown' },
+    { ...settled, via: 'screen' },
+    { ...settled, via: 'token' },
   ]
   for (const event of events) assert.deepEqual(parseLine(serialize(event)), event)
 })

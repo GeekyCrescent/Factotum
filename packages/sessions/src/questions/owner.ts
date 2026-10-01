@@ -14,10 +14,10 @@
 
 import type { Logger, NotificationMessage, Notifier, Timers } from '@factotum/core'
 import { isSessionId } from '../id.ts'
-import type { EventInput, McpReply, QuestionsAnswer, QuestionsInspect } from '../types.ts'
-import { createBatchTable, type BatchOutcome, type PendingBatch } from './batches.ts'
+import type { EventInput, McpReply, OpenBatch, QuestionsAnswer, QuestionsInspect } from '../types.ts'
+import { createBatchTable, type BatchAnswerResult, type BatchOutcome, type PendingBatch, type SettledHow } from './batches.ts'
 import { handleMcp, NOT_RUNNING, QUALIFIED_TOOL, resultFor, SHUTDOWN_TEXT, toolText, UNREACHABLE, type ToolResult } from './mcp.ts'
-import { parseAnswers, sanitize } from './shape.ts'
+import { parseAnswers, sanitize, type Answer } from './shape.ts'
 
 export interface QuestionsDeps {
   readonly append: (sessionId: string, event: EventInput) => Promise<unknown>
@@ -36,6 +36,9 @@ export interface Questions {
   readonly mcp: (sessionId: string, message: unknown) => Promise<McpReply>
   readonly inspect: (token: string) => Promise<QuestionsInspect>
   readonly answer: (token: string, body: unknown) => Promise<QuestionsAnswer>
+  /** Without a token, from a screen: by session, and by the batch's public id. */
+  readonly inSession: (sessionId: string) => Promise<readonly OpenBatch[]>
+  readonly answerInSession: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
   /**
    * From the gate, AFTER its decision and without touching it (guardrail 6): this tool_use_id is a
    * subagent's. The CLI calls the tool only once the hook answered, so the note is there in time.
@@ -50,6 +53,30 @@ export interface Questions {
   readonly closeAll: (reason: string) => Promise<unknown>
 }
 
+/** The same judgement for both routes: the answer against ITS batch, then the table. */
+function judged(
+  found: PendingBatch | { readonly over: SettledHow } | undefined,
+  body: unknown,
+  answer: (answers: readonly Answer[]) => BatchAnswerResult,
+): QuestionsAnswer {
+  if (found === undefined) return { kind: 'unknown' }
+  if ('over' in found) return found.over === 'answered' ? { kind: 'answered', first: false } : { kind: 'over', how: found.over }
+  const answers = parseAnswers(found.questions, body)
+  if ('error' in answers) return { kind: 'invalid', reason: answers.error }
+  const result = answer(answers)
+  switch (result.kind) {
+    case 'answered':
+      return { kind: 'answered', first: true }
+    case 'already':
+      return { kind: 'answered', first: false }
+    case 'expired':
+    case 'cancelled':
+      return { kind: 'over', how: result.kind }
+    case 'unknown':
+      return { kind: 'unknown' }
+  }
+}
+
 const plural = (n: number): string => `${n} question${n === 1 ? '' : 's'}`
 
 export function createQuestions(deps: QuestionsDeps): Questions {
@@ -62,7 +89,7 @@ export function createQuestions(deps: QuestionsDeps): Questions {
     phase: 'settled',
     id: batch.id,
     outcome: outcome.kind,
-    ...(outcome.kind === 'answered' ? { answers: outcome.answers } : {}),
+    ...(outcome.kind === 'answered' ? { answers: outcome.answers, via: outcome.via } : {}),
     ...(batch.task === undefined ? {} : { task: batch.task }),
   })
 
@@ -133,25 +160,19 @@ export function createQuestions(deps: QuestionsDeps): Questions {
       }
     },
 
-    answer: async (token, body) => {
-      const found = batches.get(token)
-      if (found === undefined) return { kind: 'unknown' }
-      if ('over' in found) return found.over === 'answered' ? { kind: 'answered', first: false } : { kind: 'over', how: found.over }
-      const answers = parseAnswers(found.questions, body)
-      if ('error' in answers) return { kind: 'invalid', reason: answers.error }
-      const result = batches.answer(token, answers)
-      switch (result.kind) {
-        case 'answered':
-          return { kind: 'answered', first: true }
-        case 'already':
-          return { kind: 'answered', first: false }
-        case 'expired':
-        case 'cancelled':
-          return { kind: 'over', how: result.kind }
-        case 'unknown':
-          return { kind: 'unknown' }
-      }
-    },
+    answer: async (token, body) => judged(batches.get(token), body, (answers) => batches.answer(token, answers)),
+
+    inSession: async (sessionId) =>
+      batches.inSession(sessionId).map((batch) => ({
+        id: batch.id,
+        siteId: batch.siteId,
+        questions: batch.questions,
+        task: batch.task,
+        deadlineAt: batch.deadlineAt,
+      })),
+
+    answerInSession: async (sessionId, batchId, body) =>
+      judged(batches.byId(sessionId, batchId), body, (answers) => batches.answerById(sessionId, batchId, answers)),
 
     noteAsker: ({ toolName, toolUseId, agentId, sessionId }) => {
       if (toolName !== QUALIFIED_TOOL || agentId === undefined || typeof toolUseId !== 'string') return

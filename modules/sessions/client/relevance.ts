@@ -154,3 +154,20 @@ export function questionsFor(sessionId: string, pending: readonly Pending[], sea
   if (own.some((ref) => ref.tag === tag)) return own.map((ref) => (ref.tag === tag ? { ...ref, token: url.token } : ref))
   return [...own, { tag, sessionId, batch: url.batch, count: undefined, token: url.token }]
 }
+
+/**
+ * The batches the LOG says are open, added to what the pendings and the URL already gave — without a
+ * token: those are answered from the screen, by session and public id (2026-10-02, the owner's call;
+ * answering a question grants nothing). What the pendings or the URL had keeps its token.
+ */
+export function withLogBatches(
+  sessionId: string,
+  known: readonly QuestionsRef[],
+  open: readonly { readonly id: string; readonly count: number }[],
+): readonly QuestionsRef[] {
+  const have = new Set(known.map((ref) => ref.batch))
+  const added = open
+    .filter((batch) => !have.has(batch.id))
+    .map((batch) => ({ tag: questionsTag(sessionId, batch.id), sessionId, batch: batch.id, count: batch.count }))
+  return [...known, ...added]
+}

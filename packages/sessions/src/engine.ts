@@ -900,5 +900,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     mcp: questions.mcp,
     inspectQuestions: questions.inspect,
     answerQuestions: unlessStopped(questions.answer),
+    sessionQuestions: async (sessionId) => (isSessionId(sessionId) ? await questions.inSession(sessionId) : []),
+    answerSessionQuestions: unlessStopped(questions.answerInSession),
   }
 }

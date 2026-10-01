@@ -2638,3 +2638,20 @@
 .s-qrow-muted .s-sub-end {
   font-style: italic;
 }
+
+/* The status of a batch still waiting opens its sheet from the log. */
+.s-qrow-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.s-qrow-open:focus-visible {
+  outline: 0;
+  border-radius: var(--radius-6);
+  box-shadow: 0 0 0 3px var(--ring);
+}

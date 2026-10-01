@@ -1155,3 +1155,38 @@ test('an engine without the questions members answers STARTING on /questions', a
   assert.equal((await call(table, questionsRead, readQuestions('t'))).status, 503)
   assert.equal((await call(table, questionsAnswer, answerQuestions('t', {}))).status, 503)
 })
+
+// From the screen, without a token (2026-10-02)
+const sessionQuestionsRoute = 'GET /sessions/:id/questions'
+const sessionAnswerRoute = 'POST /sessions/:id/questions/:batch/answer'
+
+test('GET /sessions/:id/questions lists the open batches field by field, never cached; no engine member, STARTING', async () => {
+  const batch = { id: 'b1', siteId: 'demo', questions: pendingBatch.questions, task: undefined, deadlineAt: 'd', token: 'MUST-NOT-LEAVE' }
+  const { table } = await started(fakeEngine({ sessionQuestions: async (id) => (id === 'sid-1' ? [batch] : []) }))
+  const res = await call(table, sessionQuestionsRoute, request('GET', '/sessions/sid-1/questions', { params: { id: 'sid-1' } }))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(res.body, { batches: [{ id: 'b1', siteId: 'demo', questions: pendingBatch.questions, task: null, deadlineAt: 'd' }] })
+  const bare = await started(fakeEngine())
+  assert.equal((await call(bare.table, sessionQuestionsRoute, request('GET', '/sessions/x/questions', { params: { id: 'x' } }))).status, 503)
+})
+
+test('POST /sessions/:id/questions/:batch/answer reaches the engine with the session and the batch, and maps like the token route', async () => {
+  const seen: unknown[] = []
+  const { table } = await started(
+    fakeEngine({
+      answerSessionQuestions: async (id, batchId, body) => {
+        seen.push([id, batchId, body])
+        return batchId === 'b1' ? { kind: 'answered', first: true } : batchId === 'gone' ? { kind: 'over', how: 'expired' } : { kind: 'unknown' }
+      },
+    }),
+  )
+  const answer = (batch: string) => request('POST', `/sessions/sid-1/questions/${batch}/answer`, { params: { id: 'sid-1', batch }, body: { answers: [] } })
+  const ok = await call(table, sessionAnswerRoute, answer('b1'))
+  assert.deepEqual([ok.status, ok.body], [200, { answered: true, first: true }])
+  assert.deepEqual(seen[0], ['sid-1', 'b1', { answers: [] }])
+  const gone = await call(table, sessionAnswerRoute, answer('gone'))
+  assert.equal(gone.status, 409)
+  assert.equal((gone.body as { how: string }).how, 'expired')
+  assert.equal((await call(table, sessionAnswerRoute, answer('nope'))).status, 404)
+})

@@ -39,7 +39,7 @@ test('a batch the owner answers resolves with the answers, and disarms its timer
   const { token, outcome } = batches.open(request())
 
   assert.deepEqual(batches.answer(token, chosen), { kind: 'answered' })
-  assert.deepEqual(await outcome, { kind: 'answered', answers: chosen })
+  assert.deepEqual(await outcome, { kind: 'answered', answers: chosen, via: 'token' })
   assert.equal(t.armed(), 0)
 })
 
@@ -55,7 +55,7 @@ test('answering twice is idempotent: the second changes nothing (criterion 15)',
   const { token, outcome } = batches.open(request())
   batches.answer(token, chosen)
   assert.deepEqual(batches.answer(token, [{ question: 'q1', kind: 'none' }]), { kind: 'already' })
-  assert.deepEqual(await outcome, { kind: 'answered', answers: chosen })
+  assert.deepEqual(await outcome, { kind: 'answered', answers: chosen, via: 'token' })
 })
 
 test('answering after it expired says expired; an unknown token says unknown', () => {
@@ -150,4 +150,46 @@ test('settled tokens older than two windows are forgotten', () => {
   now = new Date('2026-10-01T00:00:05Z')
   batches.open(request()) // opening prunes
   assert.equal(batches.get(old.token), undefined)
+})
+
+// ---------------------------------------------------------------------------
+// From the screen, without a token (2026-10-02): by session and public id. Answering grants nothing,
+// so the token is not needed; the outcome says where the answer came from.
+// ---------------------------------------------------------------------------
+
+test('inSession lists the live batches of one session, without tokens', () => {
+  const { batches } = table()
+  const a = batches.open(request('s1'))
+  batches.open(request('s2'))
+  const listed = batches.inSession('s1')
+  assert.deepEqual(listed.map((b) => b.id), [a.id])
+  assert.equal(JSON.stringify(listed).includes(a.token), false)
+})
+
+test('answerById answers a live batch of THAT session, and says it came from the screen', async () => {
+  const { batches } = table()
+  const { id, outcome } = batches.open(request('s1'))
+  assert.deepEqual(batches.answerById('s2', id, chosen), { kind: 'unknown' }, 'another session cannot')
+  assert.deepEqual(batches.answerById('s1', id, chosen), { kind: 'answered' })
+  assert.deepEqual(await outcome, { kind: 'answered', answers: chosen, via: 'screen' })
+  assert.deepEqual(batches.answerById('s1', id, chosen), { kind: 'already' })
+})
+
+test('byId gives the live batch, how it ended, or nothing; the token route and the id route agree', () => {
+  const { t, batches } = table()
+  const live = batches.open(request('s1'))
+  assert.equal((batches.byId('s1', live.id) as { id: string }).id, live.id)
+  assert.equal(batches.byId('s2', live.id), undefined)
+  assert.equal(batches.byId('s1', 'nope'), undefined)
+  batches.answer(live.token, chosen)
+  assert.deepEqual(batches.byId('s1', live.id), { over: 'answered' })
+  assert.deepEqual(batches.answerById('s1', live.id, chosen), { kind: 'already' })
+
+  const late = batches.open(request('s1'))
+  t.fireAll()
+  assert.deepEqual(batches.answerById('s1', late.id, chosen), { kind: 'expired' })
+  const gone = batches.open(request('s1'))
+  batches.closeSession('s1')
+  assert.deepEqual(batches.byId('s1', gone.id), { over: 'cancelled' })
+  assert.deepEqual(batches.answer(gone.token, chosen), { kind: 'cancelled' })
 })

@@ -193,8 +193,12 @@ questions, ⌘/Ctrl+Enter to send.
 - **Cancel releases it at once**, and so does stopping factotum; the log says which.
 - **A subagent can ask too**, and the sheet and the log say which one.
 - **Without push there are no questions**: the agent is told you cannot be reached and asks in
-  prose, as before. On the daemon's own machine the notification is how you answer, like an ask.
-- **The token that answers it is never written to disk.** It travels in the notification only.
+  prose, as before.
+- **Any screen of the conversation can answer**, the daemon's own machine included, with or without
+  the notification: the notice in the dock or the "Waiting for your answer" row opens the sheet, and
+  Escape closes it without losing what you picked. Unlike an approval, answering a question grants
+  nothing, so it needs no token; the log says *answered without the notification* when that is how it
+  came. The token from the notification is still never written to disk.
 - **In `dev`, `FACTOTUM_ASK_TIMEOUT_SECONDS`** shortens the window — for questions and for the
   permission ask alike — to anything from 30 s up. `prod` ignores it and says so.
 

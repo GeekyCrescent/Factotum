@@ -180,7 +180,6 @@ export function askedBy(task: string | undefined, agents: ReadonlyMap<string, st
 export type BatchLoad =
   | { readonly kind: 'loading' }
   | { readonly kind: 'pending' }
-  | { readonly kind: 'no-token' }
   | { readonly kind: 'over'; readonly how: SettledHow }
   | { readonly kind: 'unknown' }
 
@@ -195,8 +194,6 @@ export function sheetState(load: BatchLoad): { readonly opens: boolean; readonly
       return { opens: true, notice: 'Questions for you' }
     case 'loading':
       return { opens: false, notice: 'Questions for you' }
-    case 'no-token':
-      return { opens: false, notice: 'Answer from the notification' }
     case 'unknown':
       return { opens: false, notice: 'These questions are over' }
     case 'over':
@@ -248,7 +245,8 @@ export function describeRow(row: QuestionsRow, running: boolean): RowView {
   switch (end.outcome) {
     case 'answered':
       return {
-        status: 'Answered',
+        // From a screen with no token: possibly this computer, possibly any process on it (2026-10-02).
+        status: end.via === 'screen' ? 'Answered without the notification' : 'Answered',
         tone: 'ok',
         lines: row.questions.map((q) => ({ question: q.text, ...answerText(q, end.answers?.find((a) => a.question === q.id)) })),
       }
@@ -259,4 +257,9 @@ export function describeRow(row: QuestionsRow, running: boolean): RowView {
     case 'shutdown':
       return { status: 'Factotum stopped', tone: 'muted', lines: [] }
   }
+}
+
+/** Where an answer goes: by the token when the notification brought one, else by session and batch id. */
+export function answerPath(ref: { readonly token?: string; readonly sessionId: string; readonly batch: string }): string {
+  return ref.token === undefined ? `sessions/${ref.sessionId}/questions/${ref.batch}/answer` : `questions/${ref.token}/answer`
 }
