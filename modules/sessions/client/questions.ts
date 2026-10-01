@@ -12,6 +12,7 @@
  */
 
 import type { Answer, Question, SettledHow } from '../types.ts'
+import type { QuestionsRow } from './fold.ts'
 
 interface Entry {
   /** Which of the two the answer is right now. */
@@ -207,5 +208,55 @@ export function sheetState(load: BatchLoad): { readonly opens: boolean; readonly
         case 'cancelled':
           return { opens: false, notice: 'These questions were cancelled' }
       }
+  }
+}
+
+const HOWS: ReadonlySet<unknown> = new Set(['answered', 'expired', 'cancelled'])
+
+/** How a batch ended, from the 409 the route answers with `{ how }`. Read structurally (see `errors.ts`). */
+export function howOf(cause: unknown): SettledHow | undefined {
+  const error = cause as { status?: number; body?: { how?: unknown } } | undefined
+  return error?.status === 409 && HOWS.has(error.body?.how) ? (error.body?.how as SettledHow) : undefined
+}
+
+/** What the drawer says a session waits on, when it is a batch of questions. */
+export function questionsLabel(count: number | undefined): string {
+  if (count === undefined) return 'Questions for you'
+  return count === 1 ? '1 question' : `${count} questions`
+}
+
+// --- the row in the log (design D13) --------------------------------------------
+
+export interface RowView {
+  readonly status: string
+  readonly tone: 'waiting' | 'ok' | 'expired' | 'muted'
+  /** Only for an answered batch: each question with its answer, by LABEL. */
+  readonly lines: readonly { readonly question: string; readonly answer: string; readonly unanswered: boolean }[]
+}
+
+function answerText(question: Question, answer: Answer | undefined): { readonly answer: string; readonly unanswered: boolean } {
+  if (answer === undefined || answer.kind === 'none') return { answer: 'unanswered', unanswered: true }
+  if (answer.kind === 'text') return { answer: `“${answer.text}”`, unanswered: false }
+  const labels = answer.options.map((id) => question.options.find((o) => o.id === id)?.label ?? id)
+  return { answer: labels.join(', '), unanswered: false }
+}
+
+export function describeRow(row: QuestionsRow, running: boolean): RowView {
+  const end = row.end
+  if (end === undefined) return { status: running ? 'Waiting for your answer' : 'Not answered', tone: running ? 'waiting' : 'muted', lines: [] }
+  if (end.kind === 'interrupted') return { status: 'Interrupted', tone: 'muted', lines: [] }
+  switch (end.outcome) {
+    case 'answered':
+      return {
+        status: 'Answered',
+        tone: 'ok',
+        lines: row.questions.map((q) => ({ question: q.text, ...answerText(q, end.answers?.find((a) => a.question === q.id)) })),
+      }
+    case 'expired':
+      return { status: 'Nobody answered in time', tone: 'expired', lines: [] }
+    case 'cancelled':
+      return { status: 'Cancelled with the session', tone: 'muted', lines: [] }
+    case 'shutdown':
+      return { status: 'Factotum stopped', tone: 'muted', lines: [] }
   }
 }

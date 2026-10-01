@@ -2418,3 +2418,223 @@
   flex: none;
   color: var(--text-3);
 }
+
+/* --- Questions the agent asks (questions-sheet.tsx; spec 2026-10-01-preguntas-con-opciones, D12) --- */
+
+.s-q-meta {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
+.s-q-by {
+  color: var(--text-2);
+}
+
+.s-qs {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.s-q {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.s-q-text {
+  padding: 0;
+  margin-bottom: var(--space-2);
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.s-opts {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* Big enough for a thumb: the whole row is the target, never the mark alone. */
+.s-opt {
+  width: 100%;
+  min-height: var(--hit, 44px);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.s-opt:hover {
+  background: var(--surface-2);
+}
+
+.s-opt:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-opt.is-on {
+  border-color: var(--accent);
+  background: var(--chip-on, var(--surface-2));
+}
+
+.s-opt-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--text-3);
+}
+
+.s-opt.is-on .s-opt-mark {
+  color: var(--accent-text);
+}
+
+/* A radio, drawn: there is no circle glyph in the set. */
+.s-radio {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.s-opt.is-on .s-radio {
+  border-width: 5px;
+}
+
+.s-opt-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.s-opt-label {
+  overflow-wrap: anywhere;
+}
+
+/* What choosing it implies: under the label, quieter. */
+.s-opt-desc {
+  color: var(--text-3);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.s-opt-key {
+  flex: none;
+  min-width: 1.5em;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  text-align: center;
+}
+
+/* The digits are for a keyboard; a phone has none to press. */
+@media (pointer: coarse) {
+  .s-opt-key,
+  .s-q-hint {
+    display: none;
+  }
+}
+
+.s-opt-other {
+  border-style: dashed;
+  color: var(--text-2);
+}
+
+.s-q-other {
+  width: 100%;
+  min-height: var(--hit, 44px);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input, inherit);
+  resize: vertical;
+}
+
+.s-q-other:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-q-send {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+/* A batch in the log: who asked, how it ended, and the answers on lines of their own (D13). It is a
+   conversation, not a tool: the text face, and nothing cut. */
+.s-qrow .s-tool {
+  flex-wrap: wrap;
+}
+
+.s-qrow .s-name {
+  font-family: inherit;
+}
+
+.s-qrow .s-arg {
+  font-family: inherit;
+  flex: none;
+}
+
+.s-qrow-answers,
+.s-qrow-asked {
+  flex-basis: 100%;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.s-qrow-q,
+.s-qrow-asked li {
+  color: var(--text-2);
+}
+
+.s-qrow-arrow {
+  color: var(--text-3);
+}
+
+.s-qrow-waiting .s-gut,
+.s-qrow-waiting .s-sub-end {
+  color: var(--ask);
+}
+
+.s-qrow-ok .s-gut {
+  color: var(--ok);
+}
+
+.s-qrow-expired .s-sub-end {
+  color: var(--err);
+}
+
+.s-qrow-muted .s-name,
+.s-qrow-muted .s-arg,
+.s-qrow-muted .s-gut,
+.s-qrow-muted .s-qrow-asked li {
+  color: var(--text-3);
+}
+
+.s-qrow-muted .s-sub-end {
+  font-style: italic;
+}

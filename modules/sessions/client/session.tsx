@@ -30,7 +30,10 @@ import { openSubagents } from './subagents.ts'
 import { MenuButton, Strip, TopBar } from './bars.tsx'
 import { ConversationMenu } from './conversation-menu.tsx'
 import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
-import { askFor, sessionOf, type AskRef } from './relevance.ts'
+import { mayOpenItself } from './overlays.ts'
+import { askedBy, emptyDraft, sheetState, type Draft } from './questions.ts'
+import { QuestionsSheet, useBatch } from './questions-sheet.tsx'
+import { askFor, questionsFor, sessionOf, type AskRef, type QuestionsRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
 /** The glyph beside the state at the top right. */
@@ -44,6 +47,8 @@ const STATE_GLYPH: Readonly<Record<SessionState, 'check-circle' | 'x-circle' | '
 /** How often the cursor asks again while a session is running. */
 const POLL_MS = 1_000
 const ASK = 'ask'
+/** One overlay for every batch: which batch it shows is the screen's (`sheetTag`). */
+const QUESTIONS = 'questions'
 
 type Found =
   | { readonly kind: 'loading' }
@@ -170,6 +175,22 @@ function Live({
   // the same ones, so the two cannot disagree (spec 2026-10-01-subagentes-visibles, D7).
   const rows = useMemo(() => activity(fold(events)), [events])
   const open = running ? openSubagents(rows) : []
+  // Questions (spec 2026-10-01-preguntas-con-opciones, D10, D12): the batches this session waits on, and
+  // which one the sheet shows. A batch open in the LOG hides "Working…" like an ask, push or no push.
+  const batches = running ? questionsFor(id, view.pending, view.search) : []
+  const [sheetTag, setSheetTag] = useState<string | undefined>(undefined)
+  const askingQuestions = running && rows.some((row) => row.kind === 'questions' && row.end === undefined)
+  // The batch the sheet showed is gone (answered, and its pending resolved): no overlay without a sheet,
+  // or an ask arriving next would wait behind nothing.
+  const sheetGone = view.overlay === QUESTIONS && !batches.some((batch) => batch.tag === sheetTag)
+  useEffect(() => {
+    if (sheetGone) view.setOverlay(undefined)
+  }, [sheetGone])
+  const agents = useMemo(() => {
+    const byTask = new Map<string, string>()
+    for (const event of events) if (event.kind === 'subagent' && event.phase === 'started') byTask.set(event.task, event.agent)
+    return byTask
+  }, [events])
 
   const cancel = async () => {
     setCancelError(undefined)
@@ -231,7 +252,7 @@ function Live({
             be the one asking. Without one, "Working…" as before. */}
         {open.length > 0 ? <SubagentLines open={open} /> : null}
         {/* Where the next line will appear, so the eye is already there. Not while it waits on the owner. */}
-        {running && open.length === 0 && ask === undefined ? (
+        {running && open.length === 0 && ask === undefined && !askingQuestions ? (
           <p class="s-working" role="status">
             <Icon name="circle-notch" size={16} />
             {events.length === 0 ? 'Starting the agent…' : 'Working…'}
@@ -249,6 +270,20 @@ function Live({
           </div>
         )}
         {ask === undefined ? null : <AskArea key={ask.tag} view={view} ask={ask} setup={setup} />}
+        {batches.map((batch, index) => (
+          <QuestionsArea
+            key={batch.tag}
+            view={view}
+            batch={batch}
+            agents={agents}
+            first={index === 0}
+            shown={view.overlay === QUESTIONS && sheetTag === batch.tag}
+            show={() => {
+              setSheetTag(batch.tag)
+              view.setOverlay(QUESTIONS)
+            }}
+          />
+        ))}
         {running ? null : (
           <ReplyComposer
             api={api}
@@ -301,14 +336,18 @@ function SubagentLines({ open }: { readonly open: readonly SubagentRow[] }) {
 function AskArea({ view, ask, setup }: { readonly view: ViewProps; readonly ask: AskRef; readonly setup: EngineSetupView }) {
   const { api, overlay, setOverlay, resolvePending } = view
   const { state, answer } = useAsk(api, ask, resolvePending)
-  const opened = useRef(false)
+  // DECIDED ONCE, ON ARRIVAL (spec 2026-10-01-preguntas-con-opciones, D12): with a batch of questions
+  // open, the ask stays a notice until it is tapped — also after the sheet closes. Marked whether or
+  // not it opened, so it never opens itself later over something the owner closed.
+  const decided = useRef(false)
   const close = useCallback(() => setOverlay(undefined), [setOverlay])
   const sitePath = setup.sites.find((site) => site.id === ask.siteId)?.path
 
   useEffect(() => {
-    if (opened.current || state.kind === 'over') return
-    opened.current = true
-    setOverlay(ASK)
+    if (decided.current || state.kind === 'over') return
+    const opens = mayOpenItself(overlay, decided.current)
+    decided.current = true
+    if (opens) setOverlay(ASK)
   }, [state.kind, setOverlay])
 
   return (
@@ -330,6 +369,80 @@ function AskArea({ view, ask, setup }: { readonly view: ViewProps; readonly ask:
       )}
       {overlay === ASK ? <AskPanel ask={ask} state={state} answer={answer} sitePath={sitePath} onClose={close} /> : null}
     </>
+  )
+}
+
+/**
+ * One batch of questions this session waits on: a notice in the dock and, when shown, the sheet. THE
+ * DRAFT LIVES HERE, not in the sheet, so closing the sheet — by an ask, by Escape, by Back — and opening
+ * it again loses nothing. Reloading the page does (accepted, requirements §6).
+ */
+function QuestionsArea({
+  view,
+  batch,
+  agents,
+  first,
+  shown,
+  show,
+}: {
+  readonly view: ViewProps
+  readonly batch: QuestionsRef
+  readonly agents: ReadonlyMap<string, string>
+  /** Only the soonest batch may open itself; the others wait in the dock. */
+  readonly first: boolean
+  readonly shown: boolean
+  readonly show: () => void
+}) {
+  const { api, overlay, setOverlay, resolvePending } = view
+  const { load, info, failure, send } = useBatch(api, batch, resolvePending)
+  const [draft, setDraft] = useState<Draft | undefined>(undefined)
+  const decided = useRef(false)
+  const close = useCallback(() => setOverlay(undefined), [setOverlay])
+  const state = sheetState(load)
+
+  useEffect(() => {
+    if (info !== undefined && draft === undefined) setDraft(emptyDraft(info.questions))
+  }, [info, draft])
+
+  // Decided once, when it can first be shown (design D12), and marked whether or not it opened.
+  useEffect(() => {
+    if (decided.current || !state.opens) return
+    const opens = first && mayOpenItself(overlay, decided.current)
+    decided.current = true
+    if (opens) show()
+  }, [state.opens])
+
+  // Sent, or found over: the sheet goes, and the notice says how it ended.
+  useEffect(() => {
+    if (shown && !state.opens) close()
+  }, [shown, state.opens, close])
+
+  if (shown && state.opens && info !== undefined && draft !== undefined) {
+    return (
+      <QuestionsSheet
+        info={info}
+        draft={draft}
+        setDraft={setDraft}
+        by={askedBy(info.task ?? undefined, agents)}
+        send={async () => await send(draft)}
+        onClose={close}
+      />
+    )
+  }
+  return (
+    <div class={state.opens || load.kind === 'loading' ? 'notice ask' : 'notice'} role="status">
+      <div class="head">
+        <Icon name="list" size={16} />
+        {failure ?? state.notice}
+      </div>
+      {state.opens ? (
+        <div class="acts">
+          <button type="button" class="btn" onClick={show}>
+            Answer
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 

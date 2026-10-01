@@ -11,7 +11,8 @@ import { useEffect, useState } from 'preact/hooks'
 import type { Activity, Shown } from './activity.ts'
 import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
 import { inlineRefs } from './refs.ts'
-import type { Call, SubagentRow } from './fold.ts'
+import type { Call, QuestionsRow, SubagentRow } from './fold.ts'
+import { describeRow, questionsLabel } from './questions.ts'
 import { clock, toolArg } from './format.ts'
 import { outcome } from './subagents.ts'
 import { Icon } from './icon.tsx'
@@ -83,7 +84,51 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
     case 'subagent':
       // Open in the turn that runs: its place is the line under the log, not a row in it.
       return row.end === undefined && running ? null : <SubagentRowView row={row} running={running} />
+    case 'questions':
+      return <QuestionsRowView row={row} running={running} />
   }
+}
+
+/**
+ * A batch of questions the agent asked (spec 2026-10-01-preguntas-con-opciones, D13): who asked, how it
+ * ended, and once answered, each question with what the owner said. Plain text, never Markdown: it is
+ * the agent's (guardrail 4).
+ */
+function QuestionsRowView({ row, running }: { readonly row: QuestionsRow; readonly running: boolean }) {
+  const view = describeRow(row, running)
+  return (
+    <li class={`s-row s-qrow s-qrow-${view.tone}`}>
+      <span class="s-gut">
+        <Icon name={view.tone === 'waiting' ? 'hand' : 'list'} size={16} />
+      </span>
+      <div class="s-tool">
+        <span class="s-name">{row.by === undefined ? 'Asked you' : `${row.by} › asked you`}</span>
+        <span class="s-arg">{questionsLabel(row.questions.length)}</span>
+        <span class="s-sub-end">{view.status}</span>
+        {view.lines.length === 0 ? (
+          view.tone === 'waiting' ? null : (
+            <ul class="s-qrow-asked">
+              {row.questions.map((q) => (
+                <li key={q.id}>{q.text}</li>
+              ))}
+            </ul>
+          )
+        ) : (
+          <ul class="s-qrow-answers">
+            {view.lines.map((line) => (
+              <li key={line.question}>
+                <span class="s-qrow-q">{line.question}</span>
+                <span class="s-qrow-arrow" aria-hidden="true">
+                  {' → '}
+                </span>
+                <span class={line.unanswered ? 's-qrow-a dim-3' : 's-qrow-a'}>{line.answer}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </li>
+  )
 }
 
 /**

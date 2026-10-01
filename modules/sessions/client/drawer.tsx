@@ -46,7 +46,8 @@ import {
   type Layout,
 } from './layout.ts'
 import { ConfirmSheet } from './project-forms.tsx'
-import { grantOf, sessionOf, type Pending } from './relevance.ts'
+import { questionsLabel } from './questions.ts'
+import { grantOf, questionsOf, sessionOf, type Pending } from './relevance.ts'
 import { SearchResults } from './search-results.tsx'
 import { toneClass } from './tone.ts'
 import { useProjectLayout } from './use-layout.ts'
@@ -706,7 +707,10 @@ function waitingOf(pending: readonly Pending[]): Waiting {
     const id = sessionOf(p)
     if (id === undefined || waiting.has(id)) continue
     const text = (key: string) => (typeof p.data[key] === 'string' ? (p.data[key] as string) : undefined)
-    waiting.set(id, { site: text('siteId'), detail: [text('toolName'), text('file')].filter(Boolean).join(' ') || 'Waiting for you' })
+    // A batch of questions says how many (spec 2026-10-01-preguntas-con-opciones, D10); an ask, what it touches.
+    const questions = questionsOf(p)
+    const detail = questions === undefined ? [text('toolName'), text('file')].filter(Boolean).join(' ') : questionsLabel(questions.count)
+    waiting.set(id, { site: text('siteId'), detail: detail || 'Waiting for you' })
   }
   return waiting
 }

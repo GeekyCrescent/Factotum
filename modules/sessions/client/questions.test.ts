@@ -1,13 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Question } from '../types.ts'
+import type { QuestionsRow } from './fold.ts'
 import {
   answeredCount,
   askedBy,
   body,
   choose,
+  describeRow,
   emptyDraft,
+  howOf,
   onKey,
+  questionsLabel,
   sendLabel,
   sheetState,
   textOf,
@@ -189,4 +193,76 @@ test('the area after answering, with the URL still there: "Answered", and the sh
   assert.deepEqual(sheetState({ kind: 'no-token' }), { opens: false, notice: 'Answer from the notification' })
   assert.deepEqual(sheetState({ kind: 'loading' }), { opens: false, notice: 'Questions for you' })
   assert.deepEqual(sheetState({ kind: 'pending' }), { opens: true, notice: 'Questions for you' })
+})
+
+test('a 409 says how the batch ended; anything else says nothing', () => {
+  assert.equal(howOf({ status: 409, body: { how: 'expired' } }), 'expired')
+  assert.equal(howOf({ status: 409, body: { how: 'answered' } }), 'answered')
+  assert.equal(howOf({ status: 409, body: { how: 'sideways' } }), undefined)
+  assert.equal(howOf({ status: 404, body: { how: 'expired' } }), undefined)
+  assert.equal(howOf(new Error('network')), undefined)
+})
+
+test('how many questions, said for the drawer', () => {
+  assert.equal(questionsLabel(1), '1 question')
+  assert.equal(questionsLabel(4), '4 questions')
+  assert.equal(questionsLabel(undefined), 'Questions for you')
+})
+
+// ---------------------------------------------------------------------------
+// The row in the log (design D13)
+// ---------------------------------------------------------------------------
+
+const rowOf = (end: QuestionsRow['end'], by?: string): QuestionsRow => ({
+  kind: 'questions',
+  seq: 1,
+  id: 'b1',
+  questions: [single, multi, third],
+  by,
+  askedAt: '2026-10-01T00:00:00.000Z',
+  end,
+})
+
+test('an open batch in a running session is waiting for the owner', () => {
+  const row = describeRow(rowOf(undefined), true)
+  assert.equal(row.status, 'Waiting for your answer')
+  assert.equal(row.tone, 'waiting')
+  assert.deepEqual(row.lines, [])
+})
+
+test('an answered batch says each question with its answer, by LABEL, and the gaps as unanswered', () => {
+  const row = describeRow(
+    rowOf({
+      kind: 'settled',
+      at: 'x',
+      outcome: 'answered',
+      answers: [
+        { question: 'q1', kind: 'chosen', options: ['g'] },
+        { question: 'q2', kind: 'chosen', options: ['s', 'l'] },
+        { question: 'q3', kind: 'none' },
+      ],
+    }),
+    false,
+  )
+  assert.equal(row.tone, 'ok')
+  assert.deepEqual(row.lines, [
+    { question: 'Which colour?', answer: 'green', unanswered: false },
+    { question: 'Which sizes?', answer: 'S, L', unanswered: false },
+    { question: 'Deploy?', answer: 'unanswered', unanswered: true },
+  ])
+})
+
+test('free text is shown as written; expired, cancelled, shutdown and interrupted are said and muted', () => {
+  const text = describeRow(rowOf({ kind: 'settled', at: 'x', outcome: 'answered', answers: [{ question: 'q1', kind: 'text', text: 'teal' }] }), false)
+  assert.deepEqual(text.lines[0], { question: 'Which colour?', answer: '“teal”', unanswered: false })
+  assert.equal(describeRow(rowOf({ kind: 'settled', at: 'x', outcome: 'expired', answers: undefined }), false).status, 'Nobody answered in time')
+  for (const [end, status] of [
+    [{ kind: 'settled', at: 'x', outcome: 'cancelled', answers: undefined }, 'Cancelled with the session'],
+    [{ kind: 'settled', at: 'x', outcome: 'shutdown', answers: undefined }, 'Factotum stopped'],
+    [{ kind: 'interrupted', at: 'x' }, 'Interrupted'],
+  ] as const) {
+    const row = describeRow(rowOf(end), false)
+    assert.equal(row.status, status)
+    assert.equal(row.tone, 'muted')
+  }
 })
