@@ -46,6 +46,8 @@ interface Row {
 
 type PickerView =
   | { readonly kind: 'closed' }
+  /** A folder asked for and not here yet: nothing to show, and Tab and Enter wait for it. */
+  | { readonly kind: 'loading' }
   | { readonly kind: 'error'; readonly message: string }
   | { readonly kind: 'rows'; readonly rows: readonly Row[]; readonly selected: number; readonly more: number; readonly partial: boolean }
 
@@ -74,9 +76,14 @@ export function usePicker(input: {
   const { api, site, capability, text, setText } = input
   const textarea = useRef<HTMLTextAreaElement>(null)
   const [caret, setCaret] = useState(0)
-  const [listing, setListing] = useState<Listing | undefined>(undefined)
-  const [error, setError] = useState<string | undefined>(undefined)
-  const [selected, setSelected] = useState(0)
+  /**
+   * WHAT CAME BACK, AND FOR WHICH FOLDER. A listing only counts for the folder (and project) it
+   * answers: while another is on its way — a folder just entered, another project chosen — the list is
+   * shut and the keys are the box's, never the old folder's rows under the new query. Within the same
+   * folder it stays, narrowed here by what was typed since, so filtering does not flicker.
+   */
+  const [answer, setAnswer] = useState<{ readonly key: string; readonly folder: string; readonly listing?: Listing; readonly error?: string } | undefined>(undefined)
+  const [selected, setSelected] = useState(-1)
   const [dismissed, setDismissed] = useState<string | undefined>(undefined)
   const order = useRef(latest())
   const pendingCaret = useRef<number | undefined>(undefined)
@@ -91,9 +98,12 @@ export function usePicker(input: {
   const open = request !== undefined && tokenKey !== dismissed
 
   // Ask the daemon for the folder the token points at, a moment after the last key.
-  const requestKey = request === undefined || site === undefined ? undefined : `${site.id}\u0000${request.dir ?? ''}\u0000${request.prefix}`
+  const folderKey = request === undefined || site === undefined ? undefined : `${site.id}\u0000${request.dir ?? ''}`
+  const requestKey = folderKey === undefined || request === undefined ? undefined : `${folderKey}\u0000${request.prefix}`
   useEffect(() => {
-    if (!open || request === undefined || site === undefined) return
+    if (!open || request === undefined || site === undefined || requestKey === undefined) return
+    const key = requestKey
+    const folder = folderKey as string
     const n = order.current.next()
     const timer = setTimeout(() => {
       const query = new URLSearchParams({ site: site.id })
@@ -102,27 +112,25 @@ export function usePicker(input: {
       api.get<Listing>(`files?${query.toString()}`).then(
         (got) => {
           if (!order.current.isLatest(n)) return
-          setListing(got)
-          setError(undefined)
-          setSelected(0)
+          setAnswer({ key, folder, listing: got })
+          setSelected(-1)
         },
         (cause: unknown) => {
-          if (!order.current.isLatest(n)) return
-          setListing(undefined)
-          setError(pickerErrorText(cause))
+          if (order.current.isLatest(n)) setAnswer({ key, folder, error: pickerErrorText(cause) })
         },
       )
     }, ASK_AFTER_MS)
-    return () => clearTimeout(timer)
+    // Closing, a new request or the box going away: whatever is still on its way no longer counts.
+    return () => {
+      clearTimeout(timer)
+      order.current.next()
+    }
     // Keyed by the request's own text: a new token object with the same query asks nothing new.
   }, [open, requestKey])
 
-  // Closing forgets the last folder, so the next `@` never flashes an old one.
-  useEffect(() => {
-    if (open) return
-    setListing(undefined)
-    setError(undefined)
-  }, [open])
+  const typedNow = request?.prefix ?? ''
+  const listing = answer?.listing !== undefined && answer.folder === folderKey ? narrowed(answer.listing, typedNow) : undefined
+  const error = answer?.key === requestKey ? answer?.error : undefined
 
   // A caret the list moved lands after the render that put the new text in place.
   useEffect(() => {
@@ -141,20 +149,26 @@ export function usePicker(input: {
   // just entered keeps «..» and «This folder».
   const typed = token === undefined ? '' : token.query.slice(folderOf(token.query).length)
   const empty = typed !== '' && rows.every((row) => row.kind === 'up' || row.kind === 'this')
-  const current = choosable.includes(selected) ? selected : (choosable[0] ?? -1)
+  // By default the first NAME, not «..» or «This folder»: Enter after `@src/app` picks `app.ts`.
+  const firstName = choosable.find((i) => rows[i]?.kind !== 'up' && rows[i]?.kind !== 'this')
+  const current = choosable.includes(selected) ? selected : (firstName ?? choosable[0] ?? -1)
 
   const view: PickerView = !open
     ? { kind: 'closed' }
     : error !== undefined
       ? { kind: 'error', message: error }
-      : listing === undefined || empty
-        ? { kind: 'closed' }
+      : listing === undefined
+        ? { kind: 'loading' }
+        : empty
+          ? { kind: 'closed' }
         : { kind: 'rows', rows, selected: current, more: listing.more, partial: listing.partial }
 
   /** The token, replaced. Inserting closes it with a space; navigating keeps it open, caret at its end. */
   const replace = (replacement: string, closing: boolean) => {
     if (token === undefined) return
-    const written = closing ? `${replacement} ` : replacement
+    // One space after an inserted reference, unless the text already has a blank there.
+    const next = text[token.end]
+    const written = closing && (next === undefined || !/\s/.test(next)) ? `${replacement} ` : replacement
     pendingCaret.current = token.start + written.length
     setText(text.slice(0, token.start) + written + text.slice(token.end))
   }
@@ -175,10 +189,17 @@ export function usePicker(input: {
   }
 
   const onKey = (event: KeyboardEvent): boolean => {
-    if (view.kind === 'closed' || event.isComposing) return false
+    // `isComposing` is false in Safari on the keydown that commits a word; 229 is that key.
+    if (view.kind === 'closed' || event.isComposing || event.keyCode === 229) return false
     if (event.key === 'Escape') {
       event.preventDefault()
       setDismissed(tokenKey)
+      return true
+    }
+    // Right after going into a folder, before its names arrive: Tab must not leave the box and Enter
+    // must not send a message whose reference is half written.
+    if (view.kind === 'loading' && ((event.key === 'Tab' && !event.shiftKey) || (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey))) {
+      event.preventDefault()
       return true
     }
     if (view.kind !== 'rows') return false
@@ -208,6 +229,13 @@ export function usePicker(input: {
   }
 
   return { textarea, sync, onKey, view, choose, listId, optionId: (row) => `${listId}-${row}` }
+}
+
+/** A folder's listing, narrowed to what was typed after it was asked for. */
+function narrowed(listing: Listing, typed: string): Listing {
+  const want = typed.normalize('NFC').toLowerCase()
+  const keep = (name: string) => name.normalize('NFC').toLowerCase().startsWith(want)
+  return { ...listing, entries: listing.entries.filter((item) => keep(item.name)), shared: listing.shared.filter((item) => keep(item.name)) }
 }
 
 /** The query up to and including its last `/`: the folder part. */
@@ -253,7 +281,7 @@ const ICON: Readonly<Record<RowKind, 'arrow-up' | 'folder-open' | 'folder-simple
 
 export function FilePicker({ picker }: { readonly picker: PickerControls }) {
   const { view } = picker
-  if (view.kind === 'closed') return null
+  if (view.kind === 'closed' || view.kind === 'loading') return null
   if (view.kind === 'error') {
     return (
       <p class="s-picker-note" role="status">

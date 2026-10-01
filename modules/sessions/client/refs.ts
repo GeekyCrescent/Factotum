@@ -53,10 +53,16 @@ export function tokenAt(text: string, caret: number): Token | undefined {
   const lineStart = text.lastIndexOf('\n', caret - 1) + 1
   for (let at = caret - 1; at >= lineStart; at -= 1) {
     if (text[at] !== '@' || (at > 0 && !BLANK.test(text[at - 1] as string))) continue
-    const quoted = text[at + 1] === '"' && caret > at + 1
+    const quoted = text[at + 1] === '"'
+    // The caret between the `@` and its quote is in no token: nothing it could replace is its own.
+    if (quoted && caret <= at + 1) return undefined
     const query = text.slice(at + (quoted ? 2 : 1), caret)
     if (quoted) {
-      if (!query.includes('"')) return { start: at, end: caret, quoted: true, query }
+      // A quote closed before the caret, OR after it on this line, is a finished reference: moving
+      // through one must not reopen the list.
+      const lineEnd = text.indexOf('\n', caret)
+      const after = text.slice(caret, lineEnd < 0 ? text.length : lineEnd)
+      if (!query.includes('"') && !after.includes('"')) return { start: at, end: caret, quoted: true, query }
       continue
     }
     if (BLANK.test(query) || query.includes('"')) continue

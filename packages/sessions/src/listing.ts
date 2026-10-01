@@ -76,7 +76,7 @@ type Read =
 interface Target {
   readonly root: Site
   readonly rootKind: 'site' | 'shared'
-  /** What lies below the root, `''` or starting with the separator. */
+  /** What lies below the root, `''` or starting with the separator (without it only for a root of `/`). */
   readonly below: string
 }
 

@@ -71,6 +71,10 @@ test('quoted, the token takes spaces and ends AT THE CARET, never beyond', () =>
 test('a closed quote is a finished reference, not a token', () => {
   assert.equal(at('@"mi nota.md" and |'), undefined)
   assert.equal(at('@"mi nota.md"|'), undefined)
+  // The caret moving THROUGH a finished reference does not reopen it.
+  assert.equal(at('@"mi nota|.md" más'), undefined)
+  // Between the `@` and its quote, there is no token to replace.
+  assert.equal(at('@|"x y"'), undefined)
 })
 
 // ---------------------------------------------------------------------------
