@@ -27,6 +27,8 @@ import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { agentOf, denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 import { PAGE_SIZE } from './history.ts'
+import { mcpConfig, serializeMcpConfig } from './questions/config.ts'
+import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
@@ -88,6 +90,12 @@ export interface EngineDeps {
   readonly candidateTimeoutMs?: number
   /** How long the titler waits for `claude`. A test cannot wait thirty seconds. */
   readonly titlerTimeoutMs?: number
+}
+
+/** The per-session files the CLI is launched with. */
+interface SessionFiles {
+  readonly settings: string
+  readonly mcp: string
 }
 
 /** What a lock holds while a project is being deleted: not a session id, so nothing mistakes it. */
@@ -197,6 +205,25 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     timers: setup.timers,
     timeoutMs: deps.askTimeoutMs ?? ASK_TIMEOUT_SECONDS * 1000,
   })
+  // The agent's questions to the owner (spec 2026-10-01-preguntas-con-opciones, D5). The SAME window
+  // as an ask: one knob.
+  const questions = createQuestions({
+    append: async (sessionId, event) => await store.append(sessionId, event),
+    siteOf: (sessionId) => live.get(sessionId)?.siteId,
+    isStopped: () => stopped,
+    notify: setup.notify,
+    log,
+    now: setup.now,
+    timers: setup.timers,
+    timeoutMs: deps.askTimeoutMs ?? ASK_TIMEOUT_SECONDS * 1000,
+  })
+
+  /** Closes a session's batches and queues their `settled`. Never rejects: a lost line is logged. */
+  function closeQuestions(sessionId: string): Promise<unknown> {
+    return questions
+      .closeSession(sessionId)
+      .catch((error: unknown) => log.warn(`questions of session ${sessionId} could not be closed in the log: ${error instanceof Error ? error.message : 'error'}`))
+  }
 
   /**
    * Tells the owner a turn ended. FIRE AND FORGET, from all three places that write a terminal
@@ -221,15 +248,22 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   // --- the pieces launch and reply share ----------------------------------
 
-  /** `undefined` when the conversation was deleted in the meantime: nothing is written (crit. 33). */
-  async function writeSettings(sessionId: string): Promise<string | undefined> {
+  /**
+   * The two files the CLI is handed: the hook's settings and the `--mcp-config` of the questions tool
+   * (spec 2026-10-01-preguntas-con-opciones, D4). Both point at the same base URL.
+   * `undefined` when the conversation was deleted in the meantime: nothing is written (crit. 33).
+   */
+  async function writeSessionFiles(sessionId: string): Promise<SessionFiles | undefined> {
     if ((await store.ensureDir(sessionId)) === undefined) return undefined
-    const path = store.settingsFile(sessionId)
     // `hookUrl()` throws while the composition root has not filled the thunk in. That
     // is on purpose and it is the last thing that can go wrong before a subprocess
     // exists: a session launched with an unreachable hook is a session with no gate.
-    await writeFile(path, serializeSettings(hookSettings(setup.hookUrl())), 'utf8')
-    return path
+    const base = setup.hookUrl()
+    const settings = store.settingsFile(sessionId)
+    const mcp = store.mcpConfigFile(sessionId)
+    await writeFile(settings, serializeSettings(hookSettings(base)), 'utf8')
+    await writeFile(mcp, serializeMcpConfig(mcpConfig(base, sessionId)), 'utf8')
+    return { settings, mcp }
   }
 
   /**
@@ -249,6 +283,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   ): Promise<void> {
     if (finalized.has(sessionId)) return
     finalized.add(sessionId)
+    // A process that ended by itself with a batch open (criterion 42): closed, and its `settled`
+    // written BEFORE the terminal state below. After a Cancel there is nothing left to close.
+    await closeQuestions(sessionId)
 
     // The `result` message usually wrote the terminal state already. Appending it
     // again would make the log say the same thing twice.
@@ -286,7 +323,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     site: Site,
     invoke: Invoke,
     text: string,
-    settingsPath: string,
+    files: SessionFiles,
     resume: boolean,
   ): Live {
     /**
@@ -306,7 +343,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       sessionId,
       invoke,
       input: text,
-      settingsPath,
+      settingsPath: files.settings,
+      mcpConfigPath: files.mcp,
       resume,
       cwd: site.path,
       onEvent: async (event) => {
@@ -400,9 +438,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         if (!isFresh(report)) return { outcome: 'stale', freshness: report }
       }
 
-      const settingsPath = await writeSettings(sessionId)
+      const files = await writeSessionFiles(sessionId)
       // A fresh id is never a deleted one; said rather than asserted with a cast.
-      if (settingsPath === undefined) return { outcome: 'rejected', reason: DELETED }
+      if (files === undefined) return { outcome: 'rejected', reason: DELETED }
       await store.create({
         id: sessionId,
         siteId: site.id,
@@ -429,7 +467,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // A catalog entry can launch with no text, and an empty bubble says nothing.
       if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })
 
-      const running = spawnFor(sessionId, site, entry.invoke, input.text, settingsPath, false)
+      const running = spawnFor(sessionId, site, entry.invoke, input.text, files, false)
       await store.patchMeta(sessionId, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(sessionId, { kind: 'state', state: 'running', reason: undefined })
 
@@ -495,8 +533,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // A DELETE THAT RAN SINCE THE CHECKS ABOVE: the tombstone refuses the directory and the
       // missing meta refuses the patch. Either way this is `rejected`, and the `finally` gives the
       // lock back — nothing is made again (criterion 33).
-      const settingsPath = await writeSettings(id)
-      if (settingsPath === undefined) return { outcome: 'rejected', reason: DELETED }
+      const files = await writeSessionFiles(id)
+      if (files === undefined) return { outcome: 'rejected', reason: DELETED }
       finalized.delete(id)
       const reopened = await store.patchMeta(id, (current) => ({
         ...current,
@@ -516,7 +554,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       }
       await store.append(id, { kind: 'message', role: 'user', text })
 
-      const running = spawnFor(id, site, entry.invoke, text, settingsPath, true)
+      const running = spawnFor(id, site, entry.invoke, text, files, true)
       await store.patchMeta(id, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(id, { kind: 'state', state: 'running', reason: undefined })
 
@@ -550,8 +588,13 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       return
     }
 
+    // NO await BETWEEN THESE THREE (spec 2026-10-01-preguntas-con-opciones, D5). Marked, its batches
+    // closed with their `settled` queued, THEN killed: with an await before the kill, the held call
+    // would answer "cancelled" to a CLI still alive, and a process ending in that gap would finish.
     entry.cancelled = true
+    const closing = closeQuestions(id)
     entry.run.kill()
+    await closing
     // WAITING IS NOT OPTIONAL. Criterion 18 says no `claude` descendant is alive
     // afterwards, so returning as soon as the signal was sent would let the screen say
     // "cancelled" while the agent was still writing to the repository — and would let
@@ -618,6 +661,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // exactly the boundary the main agent is (spec 2026-10-01-subagentes-visibles, guardrail 6).
     const task = agentOf(body)
     const target = resolveTarget(body.tool_input, body.cwd)
+    // Who is about to call `ask_owner`, by tool_use_id: the MCP call does not say (requirements §0.3).
+    questions.noteAsker({ toolName: body.tool_name, toolUseId: body.tool_use_id, agentId: task, sessionId: body.session_id })
 
     if (result.decision === 'ask') {
       const preview = previewOf(body.tool_name, body.tool_input)
@@ -780,6 +825,11 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // Every held reply resolves as a deny now, before anything is killed. An ask must not
     // outlive the engine as a promise nobody will ever settle (criterion 22).
     asks.closeAll(SHUTDOWN_REASON)
+    // Every open batch, as `shutdown`. Its `settled` is queued on its session's log NOW, so it lands
+    // before the `cancelled` state the loop below writes (criterion 22).
+    const closingQuestions = questions
+      .closeAll(SHUTDOWN_REASON)
+      .catch((error: unknown) => log.warn(`questions could not be closed in the log: ${error instanceof Error ? error.message : 'error'}`))
     // And every folder request: its approval can no longer be written by anybody.
     grants.closeAll(SHUTDOWN_REASON)
 
@@ -805,6 +855,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       announce(sessionId, entry.siteId, 'cancelled', SHUTDOWN_REASON)
     }
     live.clear()
+    await closingQuestions
   }
 
   /** After `stop`, nothing widens and nothing is deleted: the same rule as launch. */
@@ -846,5 +897,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),
     removeShared: unlessStopped(folders.removeShared),
+    mcp: questions.mcp,
+    inspectQuestions: questions.inspect,
+    answerQuestions: unlessStopped(questions.answer),
   }
 }

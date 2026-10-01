@@ -29,6 +29,8 @@ export interface SessionPaths {
   readonly metaFile: (sessionId: string) => string
   readonly eventsFile: (sessionId: string) => string
   readonly settingsFile: (sessionId: string) => string
+  /** The `--mcp-config` file (spec 2026-10-01-preguntas-con-opciones, D4). */
+  readonly mcpConfigFile: (sessionId: string) => string
 }
 
 export function sessionPaths(stateDir: string): SessionPaths {
@@ -47,5 +49,6 @@ export function sessionPaths(stateDir: string): SessionPaths {
     metaFile: (sessionId) => join(sessionDir(sessionId), 'meta.json'),
     eventsFile: (sessionId) => join(sessionDir(sessionId), 'events.jsonl'),
     settingsFile: (sessionId) => join(sessionDir(sessionId), 'settings.json'),
+    mcpConfigFile: (sessionId) => join(sessionDir(sessionId), 'mcp.json'),
   }
 }

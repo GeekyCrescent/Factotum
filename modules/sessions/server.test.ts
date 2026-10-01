@@ -1014,3 +1014,144 @@ test('GET /files on an engine copy without `files` is STARTING, and still not ca
   assert.equal(res.status, 503)
   assert.equal(res.headers?.['cache-control'], 'no-store')
 })
+
+// ---------------------------------------------------------------------------
+// Questions (spec 2026-10-01-preguntas-con-opciones, D8; criteria 5, 13, 14, 15)
+// ---------------------------------------------------------------------------
+
+const mcpRoute = 'POST /mcp/:sessionId'
+const mcpCall = (sessionId: string, body: unknown) => request('POST', `/mcp/${sessionId}`, { params: { sessionId }, body })
+
+test('POST /mcp hands the session and the message to the engine, and forwards its body', async () => {
+  const seen: unknown[] = []
+  const engine = fakeEngine({
+    mcp: async (sessionId, message) => {
+      seen.push([sessionId, message])
+      return { kind: 'body', body: { jsonrpc: '2.0', id: 1, result: { ok: true } } }
+    },
+  })
+  const { table } = await started(engine)
+  const res = await call(table, mcpRoute, mcpCall('sid-9', { jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, { jsonrpc: '2.0', id: 1, result: { ok: true } })
+  assert.deepEqual(seen, [['sid-9', { jsonrpc: '2.0', id: 1, method: 'tools/list' }]])
+})
+
+test('a notification is a 202 with no body (criterion 5)', async () => {
+  const { table } = await started(fakeEngine({ mcp: async () => ({ kind: 'accepted' }) }))
+  const res = await call(table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', method: 'notifications/initialized' }))
+  assert.equal(res.status, 202)
+  assert.equal(res.body, undefined)
+})
+
+test('an engine that throws gives an isError result with the request id, never a 500; a notification, 202', async () => {
+  const { table } = await started(
+    fakeEngine({
+      mcp: async () => {
+        throw new Error('boom')
+      },
+    }),
+  )
+  const res = await call(table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', id: 'abc', method: 'tools/call' }))
+  assert.equal(res.status, 200)
+  const body = res.body as { id: unknown; result: { isError: boolean; content: { text: string }[] } }
+  assert.equal(body.id, 'abc')
+  assert.equal(body.result.isError, true)
+  assert.match(body.result.content[0]?.text ?? '', /boom/)
+  const note = await call(table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', method: 'x' }))
+  assert.equal(note.status, 202)
+})
+
+test('an engine without mcp still answers the CLI something it can read', async () => {
+  const { table } = await started(fakeEngine())
+  const res = await call(table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', id: 3, method: 'tools/call' }))
+  assert.equal(res.status, 200)
+  assert.equal((res.body as { result: { isError: boolean } }).result.isError, true)
+})
+
+const questionsRead = 'GET /questions/:token'
+const questionsAnswer = 'POST /questions/:token/answer'
+const readQuestions = (token: string) => request('GET', `/questions/${token}`, { params: { token } })
+const answerQuestions = (token: string, body: unknown) => request('POST', `/questions/${token}/answer`, { params: { token }, body })
+
+const pendingBatch = {
+  kind: 'pending' as const,
+  sessionId: 'sid-1',
+  siteId: 'demo',
+  id: 'b1',
+  questions: [{ id: 'q1', text: 'Which?', options: [{ id: 'o1', label: 'a' }, { id: 'o2', label: 'b' }], multiple: false }],
+  task: undefined,
+  deadlineAt: '2026-10-01T01:00:00.000Z',
+}
+
+test('GET /questions/:token: 200 with the whole batch, never cached; 409 with how; 404', async () => {
+  const answers: Record<string, Awaited<ReturnType<NonNullable<SessionEngine['inspectQuestions']>>>> = {
+    live: pendingBatch,
+    gone: { kind: 'over', how: 'expired' },
+  }
+  const { table } = await started(fakeEngine({ inspectQuestions: async (token) => answers[token] ?? { kind: 'unknown' } }))
+
+  const live = await call(table, questionsRead, readQuestions('live'))
+  assert.equal(live.status, 200)
+  assert.equal(live.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(live.body, {
+    sessionId: 'sid-1',
+    siteId: 'demo',
+    id: 'b1',
+    questions: pendingBatch.questions,
+    task: null,
+    deadlineAt: '2026-10-01T01:00:00.000Z',
+  })
+
+  const gone = await call(table, questionsRead, readQuestions('gone'))
+  assert.equal(gone.status, 409)
+  assert.equal((gone.body as { how: string }).how, 'expired')
+
+  const unknown = await call(table, questionsRead, readQuestions('nope'))
+  assert.equal(unknown.status, 404)
+})
+
+test('POST /questions/:token/answer: 200 first, 400 invalid, 409 over, 404 (criteria 13, 14, 15)', async () => {
+  const seen: unknown[] = []
+  const results: Record<string, Awaited<ReturnType<NonNullable<SessionEngine['answerQuestions']>>>> = {
+    fresh: { kind: 'answered', first: true },
+    again: { kind: 'answered', first: false },
+    bad: { kind: 'invalid', reason: '"zz" is not an option of "Which?".' },
+    cancelled: { kind: 'over', how: 'cancelled' },
+    expired: { kind: 'over', how: 'expired' },
+  }
+  const { table } = await started(
+    fakeEngine({
+      answerQuestions: async (token, body) => {
+        seen.push([token, body])
+        return results[token] ?? { kind: 'unknown' }
+      },
+    }),
+  )
+
+  const body = { answers: [{ question: 'q1', kind: 'none' }] }
+  const fresh = await call(table, questionsAnswer, answerQuestions('fresh', body))
+  assert.deepEqual([fresh.status, fresh.body], [200, { answered: true, first: true }])
+  assert.deepEqual(seen[0], ['fresh', body])
+  const again = await call(table, questionsAnswer, answerQuestions('again', body))
+  assert.deepEqual([again.status, again.body], [200, { answered: true, first: false }])
+
+  const bad = await call(table, questionsAnswer, answerQuestions('bad', body))
+  assert.equal(bad.status, 400)
+  assert.match((bad.body as ErrorBody).error.message, /not an option/)
+
+  const cancelled = await call(table, questionsAnswer, answerQuestions('cancelled', body))
+  assert.equal(cancelled.status, 409)
+  assert.equal((cancelled.body as { how: string }).how, 'cancelled')
+  assert.match((cancelled.body as ErrorBody).error.message, /cancelled/)
+  const expired = await call(table, questionsAnswer, answerQuestions('expired', body))
+  assert.match((expired.body as ErrorBody).error.message, /expired/)
+
+  assert.equal((await call(table, questionsAnswer, answerQuestions('nope', body))).status, 404)
+})
+
+test('an engine without the questions members answers STARTING on /questions', async () => {
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, questionsRead, readQuestions('t'))).status, 503)
+  assert.equal((await call(table, questionsAnswer, answerQuestions('t', {}))).status, 503)
+})

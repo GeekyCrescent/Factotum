@@ -35,7 +35,7 @@ import {
   parseSharedRequest,
   parseTitle,
 } from './requests.ts'
-import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, SessionEdit, SessionEngine } from './types.ts'
+import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, SessionEdit, SessionEngine, SettledHow } from './types.ts'
 
 /**
  * The hole.
@@ -81,6 +81,32 @@ function notFound(message: string): ModuleResponse {
 
 function conflict(message: string, extra: Readonly<Record<string, unknown>> = {}): ModuleResponse {
   return { status: 409, headers: NO_STORE, body: { error: { code: 'conflict', message }, ...extra } }
+}
+
+/** Where the CLI calls the questions tool. The session id is in the URL (design D4). */
+const MCP_ROUTE = 'POST /mcp/:sessionId'
+
+/**
+ * The only JSON-RPC this module knows: answering a failure in a shape the agent reads (design D8).
+ * It duplicates a shape the engine also builds — the protocol's, not a rule of factotum's — because
+ * this module cannot import the engine's package (CLAUDE.md §1).
+ */
+function mcpFailure(body: unknown, text: string): ModuleResponse {
+  const id = (body as { id?: unknown } | null | undefined)?.id
+  // No id: it was a notification, and a notification is never answered.
+  if (typeof id !== 'string' && typeof id !== 'number') return { status: 202 }
+  return { status: 200, body: { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } } }
+}
+
+function overMessage(how: SettledHow): string {
+  switch (how) {
+    case 'answered':
+      return 'these questions were already answered'
+    case 'expired':
+      return 'too late: these questions expired, and the agent was told nobody answered'
+    case 'cancelled':
+      return 'these questions were cancelled with their session'
+  }
 }
 
 function fromEdit(result: SessionEdit): ModuleResponse {
@@ -426,6 +452,69 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
           }
         case 'unknown':
           return { status: 404, headers, body: { error: { code: 'not-found', message: 'there is no ask with that token' } } }
+      }
+    }),
+
+    // --- questions the agent asks (spec 2026-10-01-preguntas-con-opciones, D8) ------
+
+    /**
+     * The `ask_owner` tool, for the session in the URL. Called by the CLI, not the client — like the
+     * hook, and reachable like it. It opens batches of ITS session and nothing else: answering needs
+     * the token, which this route never returns. The protocol and the id are the engine's.
+     */
+    [MCP_ROUTE]: async (req: ModuleRequest): Promise<ModuleResponse> => {
+      const engine = holder.engine
+      // Before start(), the same 503 as every route (the hook's too). After it, an engine without the
+      // member still owes the CLI an answer the agent can read.
+      if (engine === undefined) return STARTING
+      if (engine.mcp === undefined) return mcpFailure(req.body, 'factotum cannot ask the owner here; ask in plain text instead.')
+      try {
+        const reply = await engine.mcp(req.params['sessionId'] ?? '', req.body)
+        return reply.kind === 'accepted' ? { status: 202 } : { status: 200, body: reply.body }
+      } catch (error) {
+        return mcpFailure(req.body, `factotum could not ask the owner (${error instanceof Error ? error.message : String(error)}); ask in plain text instead.`)
+      }
+    },
+
+    // One batch BY ITS TOKEN, for the sheet. Authorised like the answer, never a list, NEVER CACHED:
+    // the token is in the URL. Field by field: whatever else the engine returns does not leave.
+    'GET /questions/:token': withEngine(async (engine, req) => {
+      if (engine.inspectQuestions === undefined) return STARTING
+      const found = await engine.inspectQuestions(req.params['token'] ?? '')
+      switch (found.kind) {
+        case 'pending':
+          return {
+            status: 200,
+            headers: NO_STORE,
+            body: {
+              sessionId: found.sessionId,
+              siteId: found.siteId,
+              id: found.id,
+              questions: found.questions,
+              task: found.task ?? null,
+              deadlineAt: found.deadlineAt,
+            },
+          }
+        case 'over':
+          return conflict(overMessage(found.how), { how: found.how })
+        case 'unknown':
+          return notFound('there are no questions with that token')
+      }
+    }),
+
+    // The owner's answers. The token is the authorisation, as for an ask; answered twice is a 200.
+    'POST /questions/:token/answer': withEngine(async (engine, req) => {
+      if (engine.answerQuestions === undefined) return STARTING
+      const result = await engine.answerQuestions(req.params['token'] ?? '', req.body)
+      switch (result.kind) {
+        case 'answered':
+          return { status: 200, headers: NO_STORE, body: { answered: true, first: result.first } }
+        case 'invalid':
+          return invalid(result.reason)
+        case 'over':
+          return conflict(overMessage(result.how), { how: result.how })
+        case 'unknown':
+          return notFound('there are no questions with that token')
       }
     }),
 
