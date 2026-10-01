@@ -7,7 +7,7 @@
  * any call still waiting for its result, and a message.
  */
 
-import type { Answer, Question, QuestionsOutcome, SessionEvent, SessionState } from '../types.ts'
+import type { AnsweredVia, Answer, Question, QuestionsOutcome, SessionEvent, SessionState } from '../types.ts'
 
 export const READ_ONLY: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'LS'])
 export const FOLD_OVER = 5
@@ -57,7 +57,14 @@ export interface QuestionsRow {
   readonly askedAt: string
   /** `undefined` while it waits. A `settled` written after a state CORRECTS an `interrupted`. */
   readonly end:
-    | { readonly kind: 'settled'; readonly at: string; readonly outcome: QuestionsOutcome; readonly answers: readonly Answer[] | undefined }
+    | {
+        readonly kind: 'settled'
+        readonly at: string
+        readonly outcome: QuestionsOutcome
+        readonly answers: readonly Answer[] | undefined
+        /** Where an answer came from; absent in logs written before it existed. */
+        readonly via?: AnsweredVia | undefined
+      }
     | { readonly kind: 'interrupted'; readonly at: string }
     | undefined
 }
@@ -170,7 +177,7 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
         const index = batches.get(event.id)
         const row = index === undefined ? undefined : rows[index]
         if (index === undefined || row?.kind !== 'questions') break
-        rows[index] = { ...row, end: { kind: 'settled', at: event.at, outcome: event.outcome, answers: event.answers } }
+        rows[index] = { ...row, end: { kind: 'settled', at: event.at, outcome: event.outcome, answers: event.answers, via: event.via } }
         waiting.delete(event.id)
         break
       }

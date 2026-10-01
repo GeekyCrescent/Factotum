@@ -40,21 +40,34 @@ export function Log({
   rows,
   running,
   asking,
+  onOpenQuestions,
 }: {
   readonly rows: readonly Shown[]
   readonly running: boolean
   readonly asking: boolean
+  /** Opens the sheet of a batch still waiting, by its public id. */
+  readonly onOpenQuestions?: (batchId: string) => void
 }) {
   return (
     <ol class="s-log">
       {rows.map((row) => (
-        <LogRow key={row.seq} row={row} running={running} asking={asking} />
+        <LogRow key={row.seq} row={row} running={running} asking={asking} onOpenQuestions={onOpenQuestions} />
       ))}
     </ol>
   )
 }
 
-function LogRow({ row, running, asking }: { readonly row: Shown; readonly running: boolean; readonly asking: boolean }) {
+function LogRow({
+  row,
+  running,
+  asking,
+  onOpenQuestions,
+}: {
+  readonly row: Shown
+  readonly running: boolean
+  readonly asking: boolean
+  readonly onOpenQuestions: ((batchId: string) => void) | undefined
+}) {
   switch (row.kind) {
     case 'message':
       // The owner's words: a bubble on the right, as typed. The agent's: the page itself, as Markdown.
@@ -85,7 +98,7 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
       // Open in the turn that runs: its place is the line under the log, not a row in it.
       return row.end === undefined && running ? null : <SubagentRowView row={row} running={running} />
     case 'questions':
-      return <QuestionsRowView row={row} running={running} />
+      return <QuestionsRowView row={row} running={running} onOpen={onOpenQuestions} />
   }
 }
 
@@ -94,8 +107,17 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
  * ended, and once answered, each question with what the owner said. Plain text, never Markdown: it is
  * the agent's (guardrail 4).
  */
-function QuestionsRowView({ row, running }: { readonly row: QuestionsRow; readonly running: boolean }) {
+function QuestionsRowView({
+  row,
+  running,
+  onOpen,
+}: {
+  readonly row: QuestionsRow
+  readonly running: boolean
+  readonly onOpen: ((batchId: string) => void) | undefined
+}) {
   const view = describeRow(row, running)
+  const opens = view.tone === 'waiting' && onOpen !== undefined
   return (
     <li class={`s-row s-qrow s-qrow-${view.tone}`}>
       <span class="s-gut">
@@ -104,7 +126,14 @@ function QuestionsRowView({ row, running }: { readonly row: QuestionsRow; readon
       <div class="s-tool">
         <span class="s-name">{row.by === undefined ? 'Asked you' : `${row.by} › asked you`}</span>
         <span class="s-arg">{questionsLabel(row.questions.length)}</span>
-        <span class="s-sub-end">{view.status}</span>
+        {/* Waiting: the status IS the way in, so the sheet opens from the log too. */}
+        {opens ? (
+          <button type="button" class="s-sub-end s-qrow-open" onClick={() => onOpen(row.id)}>
+            {view.status}
+          </button>
+        ) : (
+          <span class="s-sub-end">{view.status}</span>
+        )}
         {view.lines.length === 0 ? (
           view.tone === 'waiting' ? null : (
             <ul class="s-qrow-asked">

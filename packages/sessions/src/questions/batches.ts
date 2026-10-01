@@ -25,10 +25,17 @@ import type { Timers } from '@factotum/core'
 import type { Answer, Question } from './shape.ts'
 
 export type BatchOutcome =
-  | { readonly kind: 'answered'; readonly answers: readonly Answer[] }
+  | { readonly kind: 'answered'; readonly answers: readonly Answer[]; readonly via: AnsweredVia }
   | { readonly kind: 'expired' }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'shutdown'; readonly reason: string }
+
+/**
+ * Where an answer came from. `token`: a device the push reached (the token is the proof). `screen`: a
+ * screen of this daemon's, by session and public id, with no token — a process on this machine could
+ * have sent it too. Answering grants nothing, so that is allowed; the log says which it was.
+ */
+export type AnsweredVia = 'token' | 'screen'
 
 /** How a batch ended, for whoever arrives late. A shutdown reads as `cancelled`: to them it is the same. */
 export type SettledHow = 'answered' | 'expired' | 'cancelled'
@@ -65,6 +72,14 @@ export interface BatchTable {
   readonly get: (token: string) => PendingBatch | { readonly over: SettledHow } | undefined
   /** The answers are already judged against the batch (`parseAnswers`); this only checks it is alive. */
   readonly answer: (token: string, answers: readonly Answer[]) => BatchAnswerResult
+  /**
+   * WITHOUT A TOKEN, from a screen (2026-10-02, the owner's call): a batch of THIS session by its public
+   * id. A permission ask never gets this — answering one grants a write; answering a question grants
+   * nothing the agent could not already assume.
+   */
+  readonly inSession: (sessionId: string) => readonly PendingBatch[]
+  readonly byId: (sessionId: string, id: string) => PendingBatch | { readonly over: SettledHow } | undefined
+  readonly answerById: (sessionId: string, id: string, answers: readonly Answer[]) => BatchAnswerResult
   /** → `cancelled`, SYNCHRONOUSLY. Returns what it closed so the caller writes the `settled`. */
   readonly closeSession: (sessionId: string) => readonly PendingBatch[]
   /** → `shutdown`. Same contract. */
@@ -98,6 +113,12 @@ export function createBatchTable(deps: BatchTableDeps): BatchTable {
   const live = new Map<string, Live>()
   // How batches that are no longer live ended. Pruned: older than two windows answers nothing useful.
   const settled = new Map<string, { readonly how: SettledHow; readonly at: number }>()
+  // Public id → its token and session, for the screen's route. Pruned with `settled`.
+  const ids = new Map<string, { readonly key: string; readonly sessionId: string }>()
+  const keyOf = (sessionId: string, id: string): string | undefined => {
+    const found = ids.get(id)
+    return found?.sessionId === sessionId ? found.key : undefined
+  }
 
   const settle = (key: string, how: SettledHow, outcome: BatchOutcome): PendingBatch | undefined => {
     const entry = live.get(key)
@@ -112,6 +133,7 @@ export function createBatchTable(deps: BatchTableDeps): BatchTable {
   const prune = (): void => {
     const cutoff = deps.now().getTime() - 2 * deps.timeoutMs
     for (const [key, { at }] of settled) if (at < cutoff) settled.delete(key)
+    for (const [id, { key }] of ids) if (!live.has(key) && !settled.has(key)) ids.delete(id)
   }
 
   const closeWhere = (match: (batch: PendingBatch) => boolean, outcome: BatchOutcome): readonly PendingBatch[] => {
@@ -124,6 +146,24 @@ export function createBatchTable(deps: BatchTableDeps): BatchTable {
     return closed
   }
 
+  function get(key: string): PendingBatch | { readonly over: SettledHow } | undefined {
+    const entry = live.get(key)
+    if (entry !== undefined) return entry.batch
+    const past = settled.get(key)
+    return past === undefined ? undefined : { over: past.how }
+  }
+
+  function answerWith(key: string, answers: readonly Answer[], via: AnsweredVia): BatchAnswerResult {
+    if (live.has(key)) {
+      settle(key, 'answered', { kind: 'answered', answers, via })
+      return { kind: 'answered' }
+    }
+    const past = settled.get(key)
+    if (past === undefined) return { kind: 'unknown' }
+    if (past.how === 'answered') return { kind: 'already' }
+    return { kind: past.how }
+  }
+
   return {
     open: (request) => {
       prune()
@@ -134,25 +174,20 @@ export function createBatchTable(deps: BatchTableDeps): BatchTable {
       const outcome = new Promise<BatchOutcome>((r) => (resolve = r))
       const timer = deps.timers.setTimeout(() => settle(key, 'expired', { kind: 'expired' }), deps.timeoutMs)
       live.set(key, { batch: { ...request, id, deadlineAt }, resolve, timer })
+      ids.set(id, { key, sessionId: request.sessionId })
       return { token: key, id, outcome, deadlineAt }
     },
 
-    get: (key) => {
-      const entry = live.get(key)
-      if (entry !== undefined) return entry.batch
-      const past = settled.get(key)
-      return past === undefined ? undefined : { over: past.how }
+    get,
+    answer: (key, answers) => answerWith(key, answers, 'token'),
+    inSession: (sessionId) => [...live.values()].map((entry) => entry.batch).filter((batch) => batch.sessionId === sessionId),
+    byId: (sessionId, id) => {
+      const key = keyOf(sessionId, id)
+      return key === undefined ? undefined : get(key)
     },
-
-    answer: (key, answers) => {
-      if (live.has(key)) {
-        settle(key, 'answered', { kind: 'answered', answers })
-        return { kind: 'answered' }
-      }
-      const past = settled.get(key)
-      if (past === undefined) return { kind: 'unknown' }
-      if (past.how === 'answered') return { kind: 'already' }
-      return { kind: past.how }
+    answerById: (sessionId, id, answers) => {
+      const key = keyOf(sessionId, id)
+      return key === undefined ? { kind: 'unknown' } : answerWith(key, answers, 'screen')
     },
 
     closeSession: (sessionId) => closeWhere((batch) => batch.sessionId === sessionId, { kind: 'cancelled' }),

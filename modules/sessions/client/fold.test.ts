@@ -281,3 +281,10 @@ test('GUARD: a log without questions gives the same rows as before (criterion 29
   const events = [...reads(2), ...call('Edit'), stateQ('finished')]
   assert.deepEqual(kinds(fold(events)), ['Read', 'Read', 'Edit', 'state'])
 })
+
+test('the settled says where the answer came from', () => {
+  const screen: SessionEvent = { ...settledQ('b9', 'answered'), via: 'screen' } as SessionEvent
+  const row = questionsRow(fold([askedQ('b9'), screen]))
+  assert.ok(row?.kind === 'questions' && row.end?.kind === 'settled')
+  assert.equal(row.end.via, 'screen')
+})

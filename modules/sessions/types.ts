@@ -329,8 +329,21 @@ export type QuestionsEvent =
       readonly id: string
       readonly outcome: QuestionsOutcome
       readonly answers?: readonly Answer[] | undefined
+      /** `token`: from a device the push reached. `screen`: from a screen with no token. */
+      readonly via?: AnsweredVia | undefined
       readonly task?: string | undefined
     }
+
+export type AnsweredVia = 'token' | 'screen'
+
+/** An open batch of a session, read by a screen WITHOUT its token. */
+export interface OpenBatch {
+  readonly id: string
+  readonly siteId: string
+  readonly questions: readonly Question[]
+  readonly task: string | undefined
+  readonly deadlineAt: string
+}
 
 /** How a batch ended, for whoever arrives late. A shutdown reads as `cancelled`. */
 export type SettledHow = 'answered' | 'expired' | 'cancelled'
@@ -684,6 +697,8 @@ export interface SessionEngine {
   readonly mcp?: (sessionId: string, message: unknown) => Promise<McpReply>
   readonly inspectQuestions?: (token: string) => Promise<QuestionsInspect>
   readonly answerQuestions?: (token: string, body: unknown) => Promise<QuestionsAnswer>
+  readonly sessionQuestions?: (sessionId: string) => Promise<readonly OpenBatch[]>
+  readonly answerSessionQuestions?: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

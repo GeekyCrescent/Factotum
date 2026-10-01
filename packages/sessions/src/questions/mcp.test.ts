@@ -151,6 +151,7 @@ test('an answer comes back as labels, in the order of the batch, with unanswered
         { question: 'q3', kind: 'none' },
         { question: 'q4', kind: 'text', text: 'only on Friday' },
       ],
+      via: 'token',
     },
     batch,
   )
@@ -175,6 +176,7 @@ test('every entry carries exactly one of chosen, text or unanswered, and chosen 
         { question: 'q3', kind: 'text', text: 'Cy' },
         { question: 'q4', kind: 'none' },
       ],
+      via: 'screen',
     },
     batch,
   )

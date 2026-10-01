@@ -24,7 +24,7 @@
  */
 
 import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
-import type { SettledHow } from './questions/batches.ts'
+import type { AnsweredVia, SettledHow } from './questions/batches.ts'
 import type { Answer, Question } from './questions/shape.ts'
 
 // --- Configuration, as it arrives already parsed ---------------------------
@@ -368,6 +368,8 @@ export type QuestionsEvent =
       readonly outcome: QuestionsOutcome
       /** Only with `answered`: one per question, in the order of the batch, with ids. */
       readonly answers?: readonly Answer[] | undefined
+      /** Only with `answered`: `token` from a device the push reached, `screen` from a screen without one. */
+      readonly via?: AnsweredVia | undefined
       readonly task?: string | undefined
     }
 
@@ -694,6 +696,15 @@ export type QuestionsInspect =
   | { readonly kind: 'over'; readonly how: SettledHow }
   | { readonly kind: 'unknown' }
 
+/** An open batch of a session, as a screen of this daemon reads it: WITHOUT its token. */
+export interface OpenBatch {
+  readonly id: string
+  readonly siteId: string
+  readonly questions: readonly Question[]
+  readonly task: string | undefined
+  readonly deadlineAt: string
+}
+
 /** Answering a batch. A second answer is `answered` with `first: false`, never `over`. */
 export type QuestionsAnswer =
   | { readonly kind: 'answered'; readonly first: boolean }
@@ -752,6 +763,9 @@ export interface SessionEngine {
   /** By its TOKEN, which is the authorisation, like `inspect` for an ask. */
   readonly inspectQuestions: (token: string) => Promise<QuestionsInspect>
   readonly answerQuestions: (token: string, body: unknown) => Promise<QuestionsAnswer>
+  /** WITHOUT A TOKEN, from a screen (2026-10-02): the open batches of one session, and one answered by id. */
+  readonly sessionQuestions: (sessionId: string) => Promise<readonly OpenBatch[]>
+  readonly answerSessionQuestions: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

@@ -67,6 +67,8 @@ export const sessionEventSchema = z.union([
     id: z.string().min(1),
     outcome: z.enum(['answered', 'expired', 'cancelled', 'shutdown']),
     answers: z.array(answerSchema).optional(),
+    // Where an answer came from (2026-10-02): a device the push reached, or a screen with no token.
+    via: z.enum(['token', 'screen']).optional(),
     task: z.string().min(1).optional(),
   }),
 ])

@@ -487,3 +487,47 @@ test('the gate notes the subagent by tool_use_id; its batch carries the task, th
   await engine.cancel(id)
   await fromMain
 })
+
+// ---------------------------------------------------------------------------
+// From the screen, without a token (2026-10-02)
+// ---------------------------------------------------------------------------
+
+test('a session lists its open batches with no token, and one is answered by its id: the log says from the screen', async () => {
+  const { engine, notices, stateDir } = await world()
+  const id = await quietSession(engine)
+  const held = ask(engine, id, twoQuestions)
+  const { token, batch } = await asked(engine, id, notices)
+
+  const open = await engine.sessionQuestions(id)
+  assert.deepEqual(open.map((b) => b.id), [batch])
+  assert.equal(open[0]?.questions.length, 2)
+  assert.equal(JSON.stringify(open).includes(token), false, 'never the token')
+  assert.deepEqual(await engine.sessionQuestions('not-a-session-id'), [])
+
+  assert.equal((await engine.answerSessionQuestions(id, batch, { answers: [{ question: 'q1', kind: 'chosen', options: ['o9'] }] })).kind, 'invalid')
+  assert.deepEqual(await engine.answerSessionQuestions('019a0000-0000-7000-8000-000000000000', batch, { answers: [] }), { kind: 'unknown' })
+  assert.deepEqual(await engine.answerSessionQuestions(id, batch, { answers: [{ question: 'q1', kind: 'chosen', options: ['o2'] }] }), { kind: 'answered', first: true })
+  const result = JSON.parse(toolResult(await held).content[0]?.text ?? '')
+  assert.deepEqual(result.answers[0], { question: 'Which colour?', chosen: ['green'] })
+
+  await until('settled', async () => (await questionsEvents(engine, id)).length === 2)
+  const closed = (await questionsEvents(engine, id))[1]
+  assert.equal(closed?.kind === 'questions' && closed.phase === 'settled' ? closed.via : '', 'screen')
+  assert.deepEqual(await engine.sessionQuestions(id), [])
+  assert.deepEqual(await engine.answerSessionQuestions(id, batch, { answers: [] }), { kind: 'answered', first: false })
+  assert.equal((await readFile(sessionPaths(stateDir).eventsFile(id), 'utf8')).includes(token), false)
+  await engine.cancel(id)
+})
+
+test('an answer by token is marked as from the token', async () => {
+  const { engine, notices } = await world()
+  const id = await quietSession(engine)
+  const held = ask(engine, id, twoQuestions)
+  const { token } = await asked(engine, id, notices)
+  await engine.answerQuestions(token, { answers: [] })
+  await held
+  await until('settled', async () => (await questionsEvents(engine, id)).length === 2)
+  const closed = (await questionsEvents(engine, id))[1]
+  assert.equal(closed?.kind === 'questions' && closed.phase === 'settled' ? closed.via : '', 'token')
+  await engine.cancel(id)
+})

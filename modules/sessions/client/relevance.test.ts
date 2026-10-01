@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SessionState, SessionSummary } from '../types.ts'
-import { askFor, firstWithSession, grantOf, pickRelevant, questionsFor, questionsOf, resolvedBy, type Pending } from './relevance.ts'
+import { askFor, firstWithSession, grantOf, pickRelevant, questionsFor, questionsOf, resolvedBy, withLogBatches, type Pending } from './relevance.ts'
 
 const TOKEN = 'a'.repeat(43)
 
@@ -178,4 +178,18 @@ test('questionsFor keeps only this session’s batches, the soonest deadline fir
 test('a malformed questions URL is no batch', () => {
   assert.deepEqual(questionsFor('s1', [], `?questions=short&batch=${BATCH}`), [])
   assert.deepEqual(questionsFor('s1', [], `?questions=${TOKEN}&batch=nothex`), [])
+})
+
+test('a batch open in the LOG is a batch to answer even with no pending and no URL: from the screen, without a token (2026-10-02)', () => {
+  const refs = withLogBatches('s1', [], [{ id: BATCH, count: 2 }])
+  assert.deepEqual(refs, [{ tag: `questions:s1:${BATCH}`, sessionId: 's1', batch: BATCH, count: 2 }])
+})
+
+test('withLogBatches adds only what the pendings and the URL do not already have, and keeps their tokens', () => {
+  const known = questionsFor('s1', [questionsPending('s1', BATCH, { questionsId: TOKEN })], '')
+  const refs = withLogBatches('s1', known, [{ id: BATCH, count: 3 }, { id: OTHER, count: 1 }])
+  assert.deepEqual(refs.map((r) => [r.batch, r.token]), [
+    [BATCH, TOKEN],
+    [OTHER, undefined],
+  ])
 })
