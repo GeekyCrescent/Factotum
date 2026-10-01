@@ -37,7 +37,8 @@
 /* Wide screens: the bar above spans the pane; the log and the dock keep to the shell's column. */
 @media (min-width: 1024px) {
   .s-body > *,
-  .s-dock > * {
+  /* Not the scrim and the sheet an area renders here: they cover the window, not the column. */
+  .s-dock > :not(.scrim, .sheet) {
     width: 100%;
     max-width: var(--column, 50rem);
     margin-inline: auto;
@@ -2421,8 +2422,16 @@
 
 /* --- Questions the agent asks (questions-sheet.tsx; spec 2026-10-01-preguntas-con-opciones, D12) --- */
 
+/* Wider than a yes/no dialog: options with a description need the line. */
+@media (min-width: 720px) {
+  .sheet:has(.s-qs) {
+    width: min(560px, calc(100vw - 2 * var(--space-4)));
+    max-height: min(86dvh, 820px);
+  }
+}
+
 .s-q-meta {
-  margin: 0;
+  margin: calc(-1 * var(--space-2)) 0 0;
   color: var(--text-3);
   font-size: var(--text-small);
 }
@@ -2433,34 +2442,62 @@
 
 .s-qs {
   display: grid;
-  gap: var(--space-4);
 }
 
+/* One question per block, a hairline between them. */
 .s-q {
   margin: 0;
-  padding: 0;
+  padding: var(--space-4) 0;
   border: 0;
   min-width: 0;
 }
 
+.s-q + .s-q {
+  border-top: 1px solid var(--line);
+}
+
+.s-q:first-child {
+  padding-top: var(--space-2);
+}
+
 .s-q-text {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   padding: 0;
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   color: var(--text);
-  font-weight: 600;
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.45;
   overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.s-q-num {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  translate: 0 -1px;
 }
 
 .s-opts {
   display: grid;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
 /* Big enough for a thumb: the whole row is the target, never the mark alone. */
 .s-opt {
   width: 100%;
   min-height: var(--hit, 44px);
-  padding: var(--space-2) var(--space-3);
+  padding: 10px var(--space-3);
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -2470,9 +2507,12 @@
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: 120ms;
 }
 
 .s-opt:hover {
+  border-color: var(--line-strong);
   background: var(--surface-2);
 }
 
@@ -2484,6 +2524,11 @@
 .s-opt.is-on {
   border-color: var(--accent);
   background: var(--chip-on, var(--surface-2));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.s-opt.is-on:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--ring);
 }
 
 .s-opt-mark {
@@ -2495,29 +2540,31 @@
 }
 
 .s-opt.is-on .s-opt-mark {
-  color: var(--accent-text);
+  color: var(--accent);
 }
 
 /* A radio, drawn: there is no circle glyph in the set. */
 .s-radio {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border: 1.5px solid currentColor;
   border-radius: 50%;
+  transition: border-width 120ms;
 }
 
 .s-opt.is-on .s-radio {
-  border-width: 5px;
+  border-width: 5.5px;
 }
 
 .s-opt-text {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 1px;
+  gap: 2px;
 }
 
 .s-opt-label {
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -2525,19 +2572,26 @@
 .s-opt-desc {
   color: var(--text-3);
   font-size: var(--text-small);
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .s-opt-key {
   flex: none;
-  min-width: 1.5em;
-  padding: 0 var(--space-1);
+  min-width: 20px;
+  padding: 1px 5px;
   border: 1px solid var(--line);
   border-radius: var(--radius-6);
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   text-align: center;
+  opacity: 0.7;
+}
+
+.s-opt:hover .s-opt-key,
+.s-opt:focus-visible .s-opt-key {
+  opacity: 1;
 }
 
 /* The digits are for a keyboard; a phone has none to press. */
@@ -2550,13 +2604,18 @@
 
 .s-opt-other {
   border-style: dashed;
+  background: none;
   color: var(--text-2);
+}
+
+.s-opt-other .s-opt-label {
+  font-weight: 400;
 }
 
 .s-q-other {
   width: 100%;
   min-height: var(--hit, 44px);
-  padding: var(--space-2) var(--space-3);
+  padding: 10px var(--space-3);
   border: 1px solid var(--accent);
   border-radius: var(--radius-10);
   background: var(--surface);
@@ -2571,12 +2630,31 @@
   box-shadow: 0 0 0 3px var(--ring);
 }
 
+/* Send stays in reach however long the batch is: stuck to the bottom of the sheet as it scrolls. */
 .s-q-send {
+  position: sticky;
+  bottom: calc(-1 * (var(--space-4) + env(safe-area-inset-bottom)));
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * (var(--space-4) + env(safe-area-inset-bottom)));
+  padding: var(--space-3) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-3);
-  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+@media (min-width: 720px) {
+  .s-q-send {
+    bottom: calc(-1 * var(--space-5));
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-3) var(--space-5) var(--space-5);
+    border-radius: 0 0 var(--radius-16) var(--radius-16);
+  }
+}
+
+.s-q-send .btn {
+  min-width: 8rem;
 }
 
 /* A batch in the log: who asked, how it ended, and the answers on lines of their own (D13). It is a
@@ -2654,4 +2732,9 @@
   outline: 0;
   border-radius: var(--radius-6);
   box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-q-hint {
+  margin-right: auto;
+  font-size: var(--text-small);
 }
