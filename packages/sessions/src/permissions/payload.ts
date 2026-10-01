@@ -34,6 +34,20 @@ export const preToolUsePayloadSchema = z.looseObject({
 
 export type PreToolUsePayload = z.infer<typeof preToolUsePayloadSchema>
 
+/**
+ * The subagent a call came from, or `undefined` for the main agent's.
+ *
+ * MEASURED, not documented (spec 2026-10-01-subagentes-visibles, §0.10): CLI 2.1.286 sends
+ * `agent_id` on a subagent's tools, equal to the `task_id` of its `task_started`, and nothing on the
+ * main agent's. Read OUTSIDE the schema on purpose, for the reason in this file's header: declared
+ * there, a malformed one would fail the payload and turn the decision into a deny. It is used only to
+ * say in the log whose call it was; it decides nothing.
+ */
+export function agentOf(payload: PreToolUsePayload): string | undefined {
+  const value = (payload as { agent_id?: unknown }).agent_id
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
 export type Decision = 'allow' | 'deny' | 'ask'
 
 /**

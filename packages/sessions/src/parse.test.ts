@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { clip, redactInput, StreamTranslator, MAX_VALUE_CHARS } from './parse.ts'
+import { clip, redactInput, StreamTranslator, MAX_SUMMARY_CHARS, MAX_VALUE_CHARS } from './parse.ts'
 import type { EventInput } from './types.ts'
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'one-turn-write.jsonl')
@@ -233,4 +233,124 @@ test('a tool_result for a call nobody saw is still recorded, under a generic nam
     message: { content: [{ tool_use_id: 'unknown', type: 'tool_result', content: 'fine' }] },
   })
   assert.equal(event?.kind === 'result' ? event.name : '', 'tool')
+})
+
+// ---------------------------------------------------------------------------
+// Subagents (spec 2026-10-01-subagentes-visibles). The fixtures are the real CLI 2.1.286, trimmed.
+// ---------------------------------------------------------------------------
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures')
+
+function recorded(kind: 'fg' | 'bg'): readonly Record<string, unknown>[] {
+  return readFileSync(join(FIXTURES, `stream-subagent-${kind}-2.1.286.jsonl`), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+function subagentEvents(events: readonly EventInput[]) {
+  return events.filter((e) => e.kind === 'subagent')
+}
+
+test('nothing a line with parent_tool_use_id carries reaches the log: no Bash, no message (criterion 4)', () => {
+  const events = translateAll(recorded('fg'))
+  assert.equal(events.some((e) => e.kind === 'tool' && e.name === 'Bash'), false)
+  assert.equal(events.some((e) => e.kind === 'result' && e.name === 'Bash'), false)
+  const fromSubagent = recorded('fg').filter((m) => typeof m['parent_tool_use_id'] === 'string')
+  assert.ok(fromSubagent.length > 0, 'the fixture has subagent lines to drop')
+  const translator = new StreamTranslator()
+  for (const line of fromSubagent) assert.deepEqual(translator.translate(line), [])
+})
+
+test('task_started becomes ONE subagent start, with what identifies it (criterion 5)', () => {
+  const started = subagentEvents(translateAll(recorded('fg'))).filter((e) => e.phase === 'started')
+  assert.equal(started.length, 1)
+  const [event] = started
+  assert.equal(event?.phase === 'started' ? event.agent : '', 'general-purpose')
+  assert.equal(event?.phase === 'started' ? event.description : '', 'count files')
+  assert.equal(event?.phase === 'started' ? event.background : true, false)
+  assert.equal(event?.task, 'aa871a1008b7b1337')
+})
+
+test('task_notification ends it, ok, with the report clipped like a successful result (criterion 6)', () => {
+  const ended = subagentEvents(translateAll(recorded('fg'))).filter((e) => e.phase === 'ended')
+  assert.equal(ended.length, 1)
+  const [event] = ended
+  assert.equal(event?.phase === 'ended' ? event.ok : false, true)
+  assert.equal(event?.phase === 'ended' ? event.status : '', 'completed')
+  assert.ok((event?.phase === 'ended' ? event.summary : '').startsWith('The current directory is empty.'))
+  assert.ok((event?.phase === 'ended' ? event.summary : 'x'.repeat(999)).length <= MAX_SUMMARY_CHARS + 20)
+})
+
+test('a background subagent says so, and a Bash task its subagent owns is not a subagent (criterion 7)', () => {
+  const events = subagentEvents(translateAll(recorded('bg')))
+  assert.deepEqual(
+    events.map((e) => e.phase),
+    ['started', 'ended'],
+  )
+  const [started] = events
+  assert.equal(started?.phase === 'started' ? started.background : false, true)
+})
+
+test('GUARD: an end whose start was never recognised is nothing (criterion 8)', () => {
+  const translator = new StreamTranslator()
+  const out = translator.translate({ type: 'system', subtype: 'task_notification', task_id: 'never-started', status: 'completed', summary: 'x' })
+  assert.deepEqual(out, [])
+})
+
+test('a status other than completed ends it NOT ok, with the status and a longer summary (criterion 9)', () => {
+  // Synthetic: block A could not make the CLI produce one (tasks §M, A3 (b)).
+  const translator = new StreamTranslator()
+  translator.translate({ type: 'system', subtype: 'task_started', task_id: 't1', task_type: 'local_agent', subagent_type: 'x', description: 'd' })
+  const [event] = translator.translate({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'failed', summary: 'e'.repeat(800) })
+  assert.equal(event?.kind === 'subagent' && event.phase === 'ended' ? event.ok : true, false)
+  assert.equal(event?.kind === 'subagent' && event.phase === 'ended' ? event.status : '', 'failed')
+  assert.equal(event?.kind === 'subagent' && event.phase === 'ended' ? event.summary.length : 0, 800)
+})
+
+test('GUARD: a task_started without a task id, or without a task type, is nothing and does not throw (criterion 10)', () => {
+  const translator = new StreamTranslator()
+  assert.deepEqual(translator.translate({ type: 'system', subtype: 'task_started', task_type: 'local_agent' }), [])
+  assert.deepEqual(translator.translate({ type: 'system', subtype: 'task_started', task_id: 7, task_type: 'local_agent' }), [])
+  assert.deepEqual(translator.translate({ type: 'system', subtype: 'task_started', task_id: 't2' }), [])
+  assert.deepEqual(translator.translate({ type: 'system', subtype: 'task_started', task_id: '', task_type: 'local_agent' }), [])
+})
+
+test('no subagent event carries the prompt, the output file, the usage or the tool_use_id (criterion 11)', () => {
+  const wire = JSON.stringify(subagentEvents([...translateAll(recorded('fg')), ...translateAll(recorded('bg'))]))
+  for (const key of ['prompt', 'output_file', 'usage', 'tool_use_id', 'duration_ms']) {
+    assert.equal(wire.includes(`"${key}"`), false, `${key} must not be stored`)
+  }
+})
+
+test('a second task_started for a task still open is nothing (criterion 13)', () => {
+  const translator = new StreamTranslator()
+  const start = { type: 'system', subtype: 'task_started', task_id: 't3', task_type: 'local_agent', subagent_type: 'x', description: 'd' }
+  assert.equal(translator.translate(start).length, 1)
+  assert.deepEqual(translator.translate(start), [])
+  // …and once it has ended, the same id starting again IS a new one (SendMessage, tasks §M A3 (d)).
+  translator.translate({ type: 'system', subtype: 'task_notification', task_id: 't3', status: 'completed', summary: '' })
+  assert.equal(translator.translate(start).length, 1)
+})
+
+test('GUARD: task_updated is nothing, killed included, so a Cancel leaves no end (criterion 35)', () => {
+  const translator = new StreamTranslator()
+  translator.translate({ type: 'system', subtype: 'task_started', task_id: 't4', task_type: 'local_agent', subagent_type: 'x', description: 'd' })
+  assert.deepEqual(translator.translate({ type: 'system', subtype: 'task_updated', task_id: 't4', patch: { status: 'killed' } }), [])
+})
+
+test('the log does not grow, and nothing the subagent produced survives — compared as events, not phrases (criterion 30)', () => {
+  // What `main`'s translator made of the subagent's own lines, measured before this spec touched
+  // parse.ts (tasks §M, A6). Comparing EVENTS: the subagent's words also appear, legitimately, in the
+  // main agent's `Agent` prompt and its final answer (requirements §0.4).
+  const BEFORE = { fg: { total: 6, fromSubagent: 2 }, bg: { total: 9, fromSubagent: 3 } } as const
+  for (const kind of ['fg', 'bg'] as const) {
+    const before = JSON.parse(readFileSync(join(FIXTURES, `subagent-events-${kind}-before.json`), 'utf8')) as unknown[]
+    assert.equal(before.length, BEFORE[kind].fromSubagent)
+    const now = translateAll(recorded(kind))
+    assert.equal(now.length, BEFORE[kind].total - BEFORE[kind].fromSubagent + 2, `${kind}: out go ${BEFORE[kind].fromSubagent}, in come 2`)
+    for (const gone of before) {
+      assert.equal(now.some((event) => JSON.stringify(event) === JSON.stringify(gone)), false, `${kind} still has ${JSON.stringify(gone)}`)
+    }
+  }
 })

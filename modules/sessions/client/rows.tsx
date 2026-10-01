@@ -8,12 +8,12 @@
  */
 
 import { useEffect, useState } from 'preact/hooks'
-import type { SessionEvent } from '../types.ts'
-import { activity, type Activity, type Shown } from './activity.ts'
+import type { Activity, Shown } from './activity.ts'
 import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
 import { inlineRefs } from './refs.ts'
-import { fold, type Call } from './fold.ts'
+import type { Call, SubagentRow } from './fold.ts'
 import { clock, toolArg } from './format.ts'
+import { outcome } from './subagents.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { Markdown } from './markdown.tsx'
@@ -30,19 +30,23 @@ const GLYPHS: Readonly<Record<string, SessionIcon>> = {
   Bash: 'terminal',
 }
 
-/** `asking`: the session waits on an ask, so its call without a result is waiting for the owner. */
+/**
+ * `rows`: the log already folded (`activity(fold(events))`), because the screen needs the same rows to
+ * know which subagents are open. `asking`: the session waits on an ask, so its call without a result is
+ * waiting for the owner.
+ */
 export function Log({
-  events,
+  rows,
   running,
   asking,
 }: {
-  readonly events: readonly SessionEvent[]
+  readonly rows: readonly Shown[]
   readonly running: boolean
   readonly asking: boolean
 }) {
   return (
     <ol class="s-log">
-      {activity(fold(events)).map((row) => (
+      {rows.map((row) => (
         <LogRow key={row.seq} row={row} running={running} asking={asking} />
       ))}
     </ol>
@@ -76,7 +80,35 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
       return <FoldRow calls={row.calls} names={row.names} running={running} />
     case 'activity':
       return <ActivityRow row={row} />
+    case 'subagent':
+      // Open in the turn that runs: its place is the line under the log, not a row in it.
+      return row.end === undefined && running ? null : <SubagentRowView row={row} running={running} />
   }
+}
+
+/**
+ * A subagent the agent launched, once it is over: what it was, how it ended, and its report, in line
+ * like a call's result (spec 2026-10-01-subagentes-visibles, D6). What it did inside is not here.
+ */
+function SubagentRowView({ row, running }: { readonly row: SubagentRow; readonly running: boolean }) {
+  const { text, tone } = outcome(row, running)
+  const summary = row.end?.kind === 'ended' ? row.end.summary : ''
+  return (
+    <li class={`s-row s-sub s-sub-${tone}`}>
+      <span class="s-gut">
+        <Icon name={tone === 'failed' ? 'x-circle' : 'stack'} size={16} />
+      </span>
+      <div class="s-tool">
+        <span class="s-name">{row.agent}</span>
+        <span class="s-arg">
+          {row.description}
+          {row.background ? ' · background' : ''}
+        </span>
+        <span class="s-sub-end">{text}</span>
+        {summary === '' ? null : <span class="s-res">{summary}</span>}
+      </div>
+    </li>
+  )
 }
 
 /**
@@ -244,7 +276,8 @@ function CallRow({ call, running, asking = false }: { readonly call: Call; reado
         <Icon name={glyph} size={16} />
       </span>
       <div class="s-tool">
-        <span class="s-name">{call.name}</span>
+        {/* A gate decision about a subagent's tool says whose it was (spec 2026-10-01-subagentes, criterion 34). */}
+        <span class="s-name">{call.by === undefined ? call.name : `${call.by} › ${call.name}`}</span>
         <span class="s-arg mono">{toolArg(call.input)}</span>
         {onOwner ? <span class="s-res">waiting for you</span> : null}
         {call.result === undefined || call.result.summary === '' ? null : <span class="s-res">{call.result.summary}</span>}

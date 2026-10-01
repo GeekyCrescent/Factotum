@@ -64,6 +64,49 @@
   }
 }
 
+/* A subagent at work, one line each, where "Working…" would be (spec 2026-10-01-subagentes, D7). The
+   same place, colour and size; a third column for how long it has been going. */
+.s-sublines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.s-subline {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-4) var(--space-1h) var(--space-2);
+  color: var(--accent-text);
+  font-size: var(--text-small);
+}
+
+.s-subline svg {
+  justify-self: center;
+}
+
+.s-subline-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-subline-agent {
+  font-weight: 500;
+}
+
+.s-subline-time {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .s-subline svg {
+    animation: s-spin 0.9s linear infinite;
+  }
+}
+
 @keyframes s-spin {
   to {
     transform: rotate(1turn);
@@ -396,6 +439,43 @@
 .s-fail .s-gut,
 .s-fail .s-res {
   color: var(--err);
+}
+
+/* A subagent, once it is over: how it ended at the end of the line, its report on a line of its own
+   (spec 2026-10-01-subagentes, D6). Failed in the error colour, interrupted quieter than done. */
+.s-sub .s-tool {
+  flex-wrap: wrap;
+}
+
+.s-sub-end {
+  flex: none;
+  font-size: var(--text-small);
+  color: var(--text-3);
+}
+
+.s-sub .s-res {
+  flex-basis: 100%;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.s-sub-failed .s-gut,
+.s-sub-failed .s-sub-end {
+  color: var(--err);
+}
+
+.s-sub-cancelled .s-name,
+.s-sub-cancelled .s-arg,
+.s-sub-cancelled .s-gut {
+  color: var(--text-3);
+}
+
+.s-sub-cancelled .s-sub-end {
+  font-style: italic;
 }
 
 .s-pend .s-gut {

@@ -158,6 +158,25 @@ cannot be referenced, and says so. Up to 200 names per folder: keep typing to na
 Not here: searching the whole project by name or by content, and opening, previewing or editing a
 file from the list.
 
+### Subagents
+
+When the agent hands part of the work to a subagent of its own, the conversation says so: a line
+per subagent where "Working…" would be — its type, what it was asked to do, and how long it has been
+at it. In the background or not, it looks the same. When it ends, the log keeps a row that says how:
+*done in 3m 12s* with its final report under it, *failed* with the reason, or *interrupted*.
+
+- **What it does inside is not kept.** Its messages, its tool calls and their results stay out of
+  the log, for the reason the log never keeps file contents: it would become a copy of the
+  repository. Only its final report, clipped, is kept. Before, a subagent's words showed up as if
+  the agent you are talking to had said them.
+- **The gate still answers for it.** A subagent writes under the same boundary as the agent, and
+  what the gate refuses or you approve shows in the log under its name — *general-purpose › Write* —
+  with the path, never as one of the agent's own calls.
+- **You cannot write until it is over.** The turn is not done while a subagent runs, even one in the
+  background: the box comes back when the whole run has finished.
+- **Cancel stops it with everything else**, and its row says *interrupted*. Replying afterwards
+  starts a new turn; the interrupted one never comes back as running.
+
 ---
 
 ## What "may write here" means, precisely

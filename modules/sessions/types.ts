@@ -259,8 +259,31 @@ export interface SessionPage {
 export type SessionEvent = { readonly seq: number; readonly at: string } & (
   | { readonly kind: 'message'; readonly role: 'user' | 'assistant'; readonly text: string }
   | { readonly kind: 'tool'; readonly name: string; readonly input: unknown }
-  | { readonly kind: 'result'; readonly name: string; readonly ok: boolean; readonly summary: string }
+  | {
+      readonly kind: 'result'
+      readonly name: string
+      readonly ok: boolean
+      readonly summary: string
+      /** The subagent whose tool this was, when the gate wrote it (spec 2026-10-01-subagentes-visibles). */
+      readonly task?: string | undefined
+    }
   | { readonly kind: 'state'; readonly state: SessionState; readonly reason: string | undefined }
+  | {
+      readonly kind: 'subagent'
+      readonly phase: 'started'
+      readonly task: string
+      readonly agent: string
+      readonly description: string
+      readonly background: boolean
+    }
+  | {
+      readonly kind: 'subagent'
+      readonly phase: 'ended'
+      readonly task: string
+      readonly ok: boolean
+      readonly status: string
+      readonly summary: string
+    }
 )
 
 export interface EventPage {

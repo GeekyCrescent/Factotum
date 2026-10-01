@@ -17,6 +17,16 @@
  *                matters: a finalizer that inferred cancellation from the exit status
  *                would call this one "failed: exited with code 143".
  *
+ * SUBAGENTS (spec 2026-10-01-subagentes-visibles). These REPLAY a stream recorded from the real CLI
+ * 2.1.286, next to this script, instead of the made-up session above — so they branch before it:
+ *
+ *   "subagent-bg"     replays `stream-subagent-bg-2.1.286.jsonl` (a background subagent, two
+ *                     `result`s) and exits 0.
+ *   "subagent-kill"   replays `stream-subagent-fg-2.1.286.jsonl` up to and including its
+ *                     `task_started`, then waits. On SIGTERM it writes the one line the real CLI
+ *                     wrote when its group was killed — `task_updated` with `killed`, and NO
+ *                     `task_notification` — and exits 143, like "traps".
+ *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
  * own directory, where no session ever runs, so that file exists only if the titler was started —
@@ -31,7 +41,7 @@
  *   anything else       <title>NO TITLE</title> — so a session test's `quick` titles nothing
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 const prompt = args[args.indexOf('-p') + 1] ?? ''
@@ -60,8 +70,32 @@ if (args.includes('--tools')) {
   } else {
     answer('<title>NO TITLE</title>')
   }
+} else if (prompt.startsWith('subagent-')) {
+  subagent()
 } else {
   session()
+}
+
+function recorded(name) {
+  const file = new URL(`./stream-subagent-${name}-2.1.286.jsonl`, import.meta.url)
+  return readFileSync(file, 'utf8').split('\n').filter((line) => line.trim() !== '')
+}
+
+function subagent() {
+  if (prompt.startsWith('subagent-bg')) {
+    for (const line of recorded('bg')) process.stdout.write(`${line}\n`)
+    return
+  }
+  // subagent-kill
+  const lines = recorded('fg')
+  const started = lines.findIndex((line) => JSON.parse(line).subtype === 'task_started')
+  const taskId = JSON.parse(lines[started]).task_id
+  for (const line of lines.slice(0, started + 1)) process.stdout.write(`${line}\n`)
+  process.on('SIGTERM', () => {
+    emit({ type: 'system', subtype: 'task_updated', task_id: taskId, patch: { status: 'killed', end_time: Date.now() } })
+    process.stdout.write('', () => process.exit(143))
+  })
+  setTimeout(() => emit({ type: 'result', subtype: 'success', result: 'late' }), 60_000)
 }
 
 function session() {

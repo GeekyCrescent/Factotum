@@ -24,7 +24,7 @@ import { sessionPaths } from './paths.ts'
 import { createAskTable, type AnswerResult as TableAnswer } from './permissions/asks.ts'
 import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
 import { previewOf, type AskPreview } from './permissions/preview.ts'
-import { denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
+import { agentOf, denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 import { PAGE_SIZE } from './history.ts'
 import { createParts } from './parts.ts'
@@ -38,6 +38,7 @@ import { createUploadStore } from './uploads/store.ts'
 import type {
   EngineSetup,
   EngineSetupView,
+  EventInput,
   EventPage,
   HookDecision,
   InspectResult,
@@ -613,22 +614,21 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       canAsk: setup.notify.canReach(),
     })
 
+    // Whose call this was. Only for the log — `decidePure` never sees it, so a subagent is held to
+    // exactly the boundary the main agent is (spec 2026-10-01-subagentes-visibles, guardrail 6).
+    const task = agentOf(body)
+    const target = resolveTarget(body.tool_input, body.cwd)
+
     if (result.decision === 'ask') {
-      const target = resolveTarget(body.tool_input, body.cwd)
       const preview = previewOf(body.tool_name, body.tool_input)
-      return await askTheOwner(body.session_id, meta.siteId, body.tool_name, target, preview, result.reason)
+      return await askTheOwner(body.session_id, meta.siteId, body.tool_name, target, preview, result.reason, task)
     }
 
     if (result.decision === 'deny') {
       // The reason goes into the log as well as back to the agent, so the owner finds
       // out at the time rather than from the diff. An ALLOW writes nothing: a gate
       // that narrates its successes is a gate nobody reads (criterion 2).
-      await store.append(body.session_id, {
-        kind: 'result',
-        name: body.tool_name,
-        ok: false,
-        summary: `denied: ${result.reason}`,
-      })
+      await store.append(body.session_id, gateResult(body.tool_name, false, `denied: ${result.reason}`, task, target))
     }
 
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: result.decision, permissionDecisionReason: result.reason } }
@@ -655,6 +655,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     target: string | undefined,
     preview: AskPreview | null,
     boundaryReason: string,
+    task: string | undefined,
   ): Promise<HookDecision> {
     const { id, outcome, deadlineAt } = asks.open({ sessionId, toolName, target: target ?? '', preview })
     const file = target === undefined ? 'a file' : basename(target)
@@ -697,8 +698,24 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       }
     })()
 
-    await store.append(sessionId, { kind: 'result', name: toolName, ok, summary })
+    await store.append(sessionId, gateResult(toolName, ok, summary, task, target))
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }
+  }
+
+  /**
+   * What the gate writes to the log about a call. For the MAIN agent it is what it always was, byte for
+   * byte: its own call is already in the log, path and all. A SUBAGENT's call is not (the translator
+   * drops its lines), so the result says whose it was and what it touched — otherwise the owner reads
+   * "approved by the owner" with no idea what was approved (spec 2026-10-01-subagentes, criterion 37).
+   *
+   * The path goes in front only when the summary does not already say it: a refusal's reason names it
+   * ("writes outside work: /x"), an approval does not. Without a path there is no result to write at
+   * all — the gate allows a write it cannot place. The prefix is for the log; the CLI is told the same.
+   */
+  function gateResult(name: string, ok: boolean, summary: string, task: string | undefined, target: string | undefined): EventInput {
+    if (task === undefined) return { kind: 'result', name, ok, summary }
+    const said = target === undefined || summary.includes(target) ? summary : `${target}: ${summary}`
+    return { kind: 'result', name, ok, summary: said, task }
   }
 
   /** The owner's answer. The id is the only authorisation there is (spec §5). */

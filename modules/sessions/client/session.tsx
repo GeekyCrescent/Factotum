@@ -14,16 +14,19 @@
  * NO CONSOLE (criterion 37): the ask token passes through here.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { EngineSetupView, EventPage, ProjectRef, SessionEvent, SessionState, SessionSummary } from '../types.ts'
+import { activity } from './activity.ts'
 import { AskPanel, useAsk } from './ask-panel.tsx'
 import { ReplyComposer } from './composer.tsx'
 import type { Api, ViewProps } from './contract.ts'
 import { messageOf } from './errors.ts'
 import { Details } from './details.tsx'
-import { stateLabel } from './format.ts'
+import { fold, type SubagentRow } from './fold.ts'
+import { duration, stateLabel } from './format.ts'
 import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
+import { openSubagents } from './subagents.ts'
 import { MenuButton, Strip, TopBar } from './bars.tsx'
 import { ConversationMenu } from './conversation-menu.tsx'
 import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
@@ -163,6 +166,10 @@ function Live({
   const withSite = found === undefined || found.siteId !== undefined || summary === undefined ? found : { ...found, siteId: summary.siteId }
   const ask = running ? withSite : undefined
   const end = useScrollToEnd(events.length)
+  // Folded once, here: the log paints these rows and the line under it reads the open subagents from
+  // the same ones, so the two cannot disagree (spec 2026-10-01-subagentes-visibles, D7).
+  const rows = useMemo(() => activity(fold(events)), [events])
+  const open = running ? openSubagents(rows) : []
 
   const cancel = async () => {
     setCancelError(undefined)
@@ -219,9 +226,12 @@ function Live({
       {showDetails ? <Details id={id} summary={summary} setup={setup} now={Date.now()} /> : null}
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
-        <Log events={events} running={running} asking={ask !== undefined} />
+        <Log rows={rows} running={running} asking={ask !== undefined} />
+        {/* A subagent at work says so, which, and for how long — also while an ask waits, since it may
+            be the one asking. Without one, "Working…" as before. */}
+        {open.length > 0 ? <SubagentLines open={open} /> : null}
         {/* Where the next line will appear, so the eye is already there. Not while it waits on the owner. */}
-        {running && ask === undefined ? (
+        {running && open.length === 0 && ask === undefined ? (
           <p class="s-working" role="status">
             <Icon name="circle-notch" size={16} />
             {events.length === 0 ? 'Starting the agent…' : 'Working…'}
@@ -251,6 +261,39 @@ function Live({
         )}
       </div>
     </div>
+  )
+}
+
+/** How often the time on a subagent line moves. */
+const TICK_MS = 1_000
+
+/**
+ * One line per subagent at work: which, what for, and for how long (spec 2026-10-01-subagentes, D7).
+ * The only component here with a timer, and only while it has a line to keep; the time counts from
+ * the subagent's start in the log, so a reload does not reset it. The time is hidden from a screen
+ * reader, which would otherwise read it out every second.
+ */
+function SubagentLines({ open }: { readonly open: readonly SubagentRow[] }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <ul class="s-sublines" role="status">
+      {open.map((row) => (
+        <li key={row.seq} class="s-subline">
+          <Icon name="circle-notch" size={16} />
+          <span class="s-subline-what">
+            <span class="s-subline-agent">{row.agent}</span> · {row.description}
+            {row.background ? ' · background' : ''}
+          </span>
+          <span class="s-subline-time num" aria-hidden="true">
+            {duration(row.startedAt, undefined, now)}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
