@@ -26,6 +26,8 @@ import { canSend, uploadsOf, withRefs } from './attachments.ts'
 import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
+import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
+import { filesOf } from './refs.ts'
 import { toneClass } from './tone.ts'
 
 /** The same question whether it starts a session or carries one on. */
@@ -99,6 +101,8 @@ export function LaunchComposer({
     attach.clear(sent.map((item) => item.key))
     onLaunched(result.sessionId)
   })
+  // `@` lists the project chosen in the select; changing it re-reads the token (criterion 24).
+  const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
 
   if (sites.length === 0) {
     return (
@@ -154,6 +158,7 @@ export function LaunchComposer({
         attach={attach}
         canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: entryId !== '' })}
         send={() => void s.go(false)}
+        picker={picker}
         autoFocus
         tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
       >
@@ -207,6 +212,8 @@ export function ReplyComposer({
     attach.clear(sent.map((item) => item.key))
     onSent()
   })
+  const site = project === undefined ? undefined : setup.sites.find((candidate) => candidate.id === project.id)
+  const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)
   return (
     <>
@@ -229,6 +236,7 @@ export function ReplyComposer({
         attach={attach}
         canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: true })}
         send={() => void s.go(false)}
+        picker={picker}
         autoFocus={false}
         tone={tone}
       >
@@ -251,6 +259,7 @@ function Box({
   attach,
   canSend,
   send,
+  picker,
   autoFocus,
   tone,
   children,
@@ -262,6 +271,8 @@ function Box({
   readonly attach: AttachControls
   readonly canSend: boolean
   readonly send: () => void
+  /** The `@` list (spec 2026-10-01-referencias-y-tab, D9): it is asked about every key first. */
+  readonly picker: PickerControls
   readonly autoFocus: boolean
   /** The project's colour class, where the screen around it does not already set one (launching). */
   readonly tone?: string | undefined
@@ -273,6 +284,7 @@ function Box({
     <div class="s-composer">
       <Suggestions />
       <Chips attach={attach} />
+      <FilePicker picker={picker} />
       <form
         class={classes}
         onSubmit={(event) => {
@@ -298,12 +310,23 @@ function Box({
         }}
       >
         <textarea
+          ref={picker.textarea}
           rows={2}
           value={text}
           placeholder={placeholder}
           aria-label={placeholder}
           autoFocus={autoFocus}
-          onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
+          aria-autocomplete="list"
+          aria-controls={picker.view.kind === 'rows' ? picker.listId : undefined}
+          aria-expanded={picker.view.kind === 'rows'}
+          aria-activedescendant={picker.view.kind === 'rows' && picker.view.selected >= 0 ? picker.optionId(picker.view.selected) : undefined}
+          onInput={(event) => {
+            setText((event.target as HTMLTextAreaElement).value)
+            picker.sync()
+          }}
+          onClick={picker.sync}
+          onKeyUp={picker.sync}
+          onFocus={picker.sync}
           // A screenshot on the clipboard is attached; text is pasted as it always was (criterion 15).
           // A copy from a spreadsheet carries BOTH its text and a picture of it: that is text.
           onPaste={(event) => {
@@ -313,6 +336,8 @@ function Box({
             attach.add(files)
           }}
           onKeyDown={(event) => {
+            // The `@` list first: with it open, Tab, the arrows, Enter and Esc are its (criteria 20, 21).
+            if (picker.onKey(event)) return
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
             const sends = event.metaKey || event.ctrlKey || window.matchMedia(FINE_POINTER).matches
             if (!sends) return

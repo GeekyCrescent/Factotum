@@ -9,6 +9,7 @@ import {
   pickerErrorText,
   refText,
   requestOf,
+  tabOf,
   tokenAt,
   tokenText,
   type InlinePiece,
@@ -225,4 +226,31 @@ test('a failed listing says what happened in one line', () => {
   assert.equal(pickerErrorText(new TypeError('fetch failed')), 'Could not reach Factotum.')
   assert.equal(pickerErrorText({ status: 400 }), 'That path cannot be listed.')
   assert.equal(pickerErrorText({ status: 418 }), 'Could not list that folder (418).')
+})
+
+// ---------------------------------------------------------------------------
+// tabOf: Tab over a whole listing, shared folders included (criterion 20)
+// ---------------------------------------------------------------------------
+
+const rootListing: Listing = {
+  root: { kind: 'site', path: SITE },
+  dir: SITE,
+  entries: [dir('docs'), dir('src'), file('Makefile')],
+  shared: [{ path: '/Users/me/factotum-shared', name: 'factotum-shared' }],
+  more: 0,
+  partial: false,
+}
+
+test('Tab enters a shared folder by its absolute path', () => {
+  assert.deepEqual(tabOf(rootListing, 'fac'), { kind: 'rewrite', query: '/Users/me/factotum-shared/' })
+})
+
+test('Tab enters a folder, inserts a file closed, and extends a shared prefix', () => {
+  assert.deepEqual(tabOf(rootListing, 'sr'), { kind: 'rewrite', query: 'src/' })
+  assert.deepEqual(tabOf(rootListing, 'Ma'), { kind: 'insert', text: '@"Makefile"' })
+  const docs: Listing = { ...rootListing, dir: `${SITE}/docs`, entries: [file('mi nota.md'), file('mi otra.md')], shared: [] }
+  assert.deepEqual(tabOf(docs, 'docs/m'), { kind: 'rewrite', query: 'docs/mi ' })
+  assert.equal(tabOf(docs, 'docs/zz'), undefined)
+  const quoted: Listing = { ...docs, entries: [file('di "hola".md')] }
+  assert.equal(tabOf(quoted, 'docs/di'), undefined)
 })

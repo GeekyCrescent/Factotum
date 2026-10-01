@@ -151,6 +151,29 @@ export function completion(prefix: string, entries: readonly ListingEntry[]): Co
   return shared.length > prefix.length ? { kind: 'extend', text: shared } : undefined
 }
 
+/** What Tab does to a token: insert a reference, closed; rewrite the query, open; or nothing. */
+export type TabResult = { readonly kind: 'insert'; readonly text: string } | { readonly kind: 'rewrite'; readonly query: string } | undefined
+
+/**
+ * Tab over a listing, for the query being typed. The shared folders at the project's top count as
+ * folders: entering one jumps to its absolute path (found in the browser, 2026-10-01: without them,
+ * `@fac` + Tab did nothing).
+ */
+export function tabOf(listing: Listing, query: string): TabResult {
+  const folder = query.slice(0, query.lastIndexOf('/') + 1)
+  const shared = listing.shared.map((item): ListingEntry => ({ name: item.name, kind: 'dir' }))
+  const done = completion(query.slice(folder.length), [...listing.entries, ...shared])
+  if (done === undefined) return undefined
+  if (done.kind === 'insert') {
+    const text = refText(listing, done.entry)
+    return text === undefined ? undefined : { kind: 'insert', text }
+  }
+  if (done.kind === 'extend') return { kind: 'rewrite', query: `${folder}${done.text}` }
+  const isEntry = listing.entries.some((item) => item.kind === 'dir' && item.name === done.name)
+  const into = isEntry ? undefined : listing.shared.find((item) => item.name === done.name)
+  return { kind: 'rewrite', query: into === undefined ? `${folder}${done.name}/` : `${into.path}/` }
+}
+
 /**
  * A token the box rewrites WITHOUT closing it: Tab that enters or extends, «..», a tap on a folder.
  * Once quoted it stays quoted until it is inserted: dropping the quote halfway would split it.
