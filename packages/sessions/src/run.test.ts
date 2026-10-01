@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildArgs } from './run.ts'
 
-const base = { sessionId: 'sid-1', input: 'do the thing', settingsPath: '/state/settings.json' }
+const base = { sessionId: 'sid-1', input: 'do the thing', settingsPath: '/state/settings.json', mcpConfigPath: '/state/mcp.json' }
 
 function argsFor(invoke: Parameters<typeof buildArgs>[0]['invoke'], resume: boolean): readonly string[] {
   return buildArgs({ ...base, invoke, resume })
@@ -68,7 +68,19 @@ test('the argv is EXACTLY this, so nothing can be slipped in unnoticed', () => {
     'manual',
     '--settings',
     '/state/settings.json',
+    '--mcp-config',
+    '/state/mcp.json',
   ])
+})
+
+test('the MCP config is passed, and NEVER --strict-mcp-config, so the owner’s own servers still arrive', () => {
+  // Criterion 3 of spec 2026-10-01-preguntas-con-opciones. `--strict-mcp-config` would drop every
+  // server the owner configured, silently: the session would only have factotum's.
+  for (const resume of [false, true]) {
+    const args = argsFor({ kind: 'none' }, resume)
+    assert.equal(args[args.indexOf('--mcp-config') + 1], '/state/mcp.json')
+    assert.equal(args.includes('--strict-mcp-config'), false)
+  }
 })
 
 test('and on a resume the only difference is how the session is named', () => {

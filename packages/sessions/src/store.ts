@@ -380,6 +380,10 @@ export class SessionStore {
     return this.#paths.settingsFile(id)
   }
 
+  mcpConfigFile(id: string): string {
+    return this.#paths.mcpConfigFile(id)
+  }
+
   async ensureRoots(): Promise<void> {
     await mkdir(this.#paths.locks, { recursive: true })
     await mkdir(this.#paths.sessions, { recursive: true })

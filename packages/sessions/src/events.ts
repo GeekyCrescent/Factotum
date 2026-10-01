@@ -1,15 +1,16 @@
 /**
- * The five event kinds, and how a line of `events.jsonl` becomes one.
+ * The six event kinds, and how a line of `events.jsonl` becomes one.
  *
  * THE LOG IS THE SOURCE OF TRUTH AND IT IS NEVER REWRITTEN. Everything else — the
  * state a screen shows, what the cursor returns — is derived from it. That is what
  * makes "close the tab, come back in ten minutes" cost nothing to support.
  *
- * Adding a fifth kind is meant to be cheap: what `parseLine` does not recognise it
+ * Adding a kind is meant to be cheap: what `parseLine` does not recognise it
  * DROPS, so an old client reading a newer log skips forward instead of falling over.
  */
 
 import { z } from 'zod'
+import { answerSchema, MAX_QUESTIONS, questionSchema } from './questions/shape.ts'
 import type { SessionEvent, SessionState } from './types.ts'
 
 export const SESSION_STATES = ['running', 'finished', 'failed', 'cancelled'] as const
@@ -48,6 +49,25 @@ export const sessionEventSchema = z.union([
     ok: z.boolean(),
     status: z.string(),
     summary: z.string(),
+  }),
+  // The sixth kind (spec 2026-10-01-preguntas-con-opciones, D6). The daemon writes it, never the stream.
+  // The batch as sanitised and the answers WITH IDS: the log pairs them with their `asked`.
+  z.object({
+    ...base,
+    kind: z.literal('questions'),
+    phase: z.literal('asked'),
+    id: z.string().min(1),
+    questions: z.array(questionSchema).min(1).max(MAX_QUESTIONS),
+    task: z.string().min(1).optional(),
+  }),
+  z.object({
+    ...base,
+    kind: z.literal('questions'),
+    phase: z.literal('settled'),
+    id: z.string().min(1),
+    outcome: z.enum(['answered', 'expired', 'cancelled', 'shutdown']),
+    answers: z.array(answerSchema).optional(),
+    task: z.string().min(1).optional(),
   }),
 ])
 

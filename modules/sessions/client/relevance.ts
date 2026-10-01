@@ -8,7 +8,7 @@
  * worker keeps it without `askId` (design D12).
  */
 
-import { askTokenFrom } from '../ask-token.ts'
+import { askTokenFrom, questionsTokenFrom } from '../ask-token.ts'
 import type { SessionSummary } from '../types.ts'
 
 export interface Pending {
@@ -87,13 +87,70 @@ export interface AskRef {
   readonly file?: string
 }
 
+/** Pendings that are NOT a permission ask, though they may carry a session: questions, folder requests. */
+const NOT_AN_ASK: ReadonlySet<unknown> = new Set(['questions', 'grant'])
+
 /** The ask a session is waiting on: its pending if there is one, else the token the page loaded with. */
 export function askFor(sessionId: string, pending: readonly Pending[], search: string): AskRef | undefined {
-  const own = pending.find((p) => sessionOf(p) === sessionId)
+  // A batch of questions has a session too: without this it would open the permission panel with no
+  // token (spec 2026-10-01-preguntas-con-opciones, criterion 32).
+  const own = pending.find((p) => sessionOf(p) === sessionId && !NOT_AN_ASK.has(p.data['kind']))
   if (own !== undefined) {
     const text = (key: string) => (typeof own.data[key] === 'string' ? { [key]: own.data[key] as string } : {})
     return { tag: own.tag, sessionId, ...text('askId'), ...text('siteId'), ...text('toolName'), ...text('file') }
   }
   const token = askTokenFrom(search)
   return token === undefined ? undefined : { tag: `ask:${sessionId}`, askId: token, sessionId }
+}
+
+// --- questions (spec 2026-10-01-preguntas-con-opciones, D10) ---------------------
+
+/** A batch of questions a session is waiting on. Its tag is `questions:<sessionId>:<batch>`. */
+export interface QuestionsRef {
+  readonly tag: string
+  readonly sessionId: string
+  /** The batch's PUBLIC id, the one in the log. Authorises nothing. */
+  readonly batch: string
+  /** How many questions, when the pending says. A batch known only from the URL does not. */
+  readonly count: number | undefined
+  /** The capability. Absent where this device keeps no tokens and the URL did not bring it. */
+  readonly token?: string
+}
+
+export function questionsOf(pending: Pending): QuestionsRef | undefined {
+  const sessionId = sessionOf(pending)
+  const batch = pending.data['batch']
+  if (pending.data['kind'] !== 'questions' || sessionId === undefined || typeof batch !== 'string') return undefined
+  const count = pending.data['count']
+  const token = pending.data['questionsId']
+  return {
+    tag: pending.tag,
+    sessionId,
+    batch,
+    count: typeof count === 'number' ? count : undefined,
+    ...(typeof token === 'string' ? { token } : {}),
+  }
+}
+
+const questionsTag = (sessionId: string, batch: string): string => `questions:${sessionId}:${batch}`
+
+/**
+ * Every batch the session is waiting on, the soonest deadline first.
+ *
+ * THE URL'S TOKEN IS MERGED INTO ITS PENDING, not ranked against it. On the daemon's own machine the
+ * worker drops the token from the kept pending, so "the pending first" (as `askFor` does) would let a
+ * pending without a token hide the token the notification brought, and the Mac could not answer
+ * (criterion 34). The `batch` in the URL says which pending it is (criterion 40).
+ */
+export function questionsFor(sessionId: string, pending: readonly Pending[], search: string): readonly QuestionsRef[] {
+  const own = [...pending]
+    .filter((p) => p.data['kind'] === 'questions' && sessionOf(p) === sessionId)
+    .sort((a, b) => (a.until < b.until ? -1 : a.until > b.until ? 1 : 0))
+    .map(questionsOf)
+    .filter((ref): ref is QuestionsRef => ref !== undefined)
+  const url = questionsTokenFrom(search)
+  if (url === undefined) return own
+  const tag = questionsTag(sessionId, url.batch)
+  if (own.some((ref) => ref.tag === tag)) return own.map((ref) => (ref.tag === tag ? { ...ref, token: url.token } : ref))
+  return [...own, { tag, sessionId, batch: url.batch, count: undefined, token: url.token }]
 }

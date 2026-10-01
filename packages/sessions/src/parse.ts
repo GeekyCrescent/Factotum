@@ -27,6 +27,7 @@
  * words and its tools land in the log as if the main agent had said and done them.
  */
 
+import { QUALIFIED_TOOL } from './questions/mcp.ts'
 import type { EventInput } from './types.ts'
 
 /** Generous: this is the conversation, which is the thing the owner actually reads. */
@@ -191,6 +192,10 @@ export class StreamTranslator {
       }
       if (block.type === 'tool_use' && typeof block.name === 'string') {
         if (typeof block.id === 'string') this.#names.set(block.id, block.name)
+        // The questions tool is recorded by the daemon as a `questions` event, batch and answers
+        // included; the call and its result would say it twice (criterion 28). Its name is still
+        // learned above, so its result is recognised and dropped too.
+        if (block.name === QUALIFIED_TOOL) continue
         events.push({ kind: 'tool', name: block.name, input: redactInput(block.input) })
       }
     }
@@ -204,6 +209,7 @@ export class StreamTranslator {
       if (block.type !== 'tool_result') continue
       const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : ''
       const name = this.#names.get(id) ?? 'tool'
+      if (name === QUALIFIED_TOOL) continue
       const ok = block.is_error !== true
       const body = textOf(block.content)
       events.push({

@@ -23,6 +23,7 @@ import { install, uninstall } from './install.ts'
 import { qrCommand } from './qr-command.ts'
 import { siteCommand, stripEnvFlag } from './site-command.ts'
 import { pushCommand } from './push-command.ts'
+import { askTimeoutFrom } from './ask-timeout.ts'
 
 const USAGE = `factotum ${VERSION}
 
@@ -131,6 +132,11 @@ function installRoot(): string {
 const engineFactory: CreateEngine = createEngine
 
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
+  // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
+  // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
+  const engineDeps = askTimeoutFrom(env, process.env, (message) => console.warn(message))
+  const launchEngine: CreateEngine = async (setup) => await createEngine(setup, engineDeps)
+
   /**
    * Where the hook can reach this daemon, as a thunk.
    *
@@ -156,7 +162,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   try {
     handle = await boot({
       env,
-      modules: [...ALL_MODULES, sessionsModule(engineFactory, hookUrl, { installRoot: installRoot() })],
+      modules: [...ALL_MODULES, sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() })],
       version: VERSION,
       site: createStaticSite(siteRoot()),
     })

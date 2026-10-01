@@ -7,7 +7,7 @@
  * any call still waiting for its result, and a message.
  */
 
-import type { SessionEvent, SessionState } from '../types.ts'
+import type { Answer, Question, QuestionsOutcome, SessionEvent, SessionState } from '../types.ts'
 
 export const READ_ONLY: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'LS'])
 export const FOLD_OVER = 5
@@ -43,12 +43,32 @@ export interface SubagentRow {
     | undefined
 }
 
+/**
+ * A batch of questions the agent put to the owner (spec 2026-10-01-preguntas-con-opciones, D13): where it
+ * was asked, and how it ended. Paired by the batch's public id, never by order.
+ */
+export interface QuestionsRow {
+  readonly kind: 'questions'
+  readonly seq: number
+  readonly id: string
+  readonly questions: readonly Question[]
+  /** The subagent's type when one asked ("subagent" when its start is not in the log); the main agent, none. */
+  readonly by: string | undefined
+  readonly askedAt: string
+  /** `undefined` while it waits. A `settled` written after a state CORRECTS an `interrupted`. */
+  readonly end:
+    | { readonly kind: 'settled'; readonly at: string; readonly outcome: QuestionsOutcome; readonly answers: readonly Answer[] | undefined }
+    | { readonly kind: 'interrupted'; readonly at: string }
+    | undefined
+}
+
 export type Row =
   | { readonly kind: 'message'; readonly seq: number; readonly role: 'user' | 'assistant'; readonly text: string }
   | Call
   | { readonly kind: 'fold'; readonly seq: number; readonly calls: readonly Call[]; readonly names: readonly string[] }
   | { readonly kind: 'state'; readonly seq: number; readonly at: string; readonly state: SessionState; readonly reason: string | undefined }
   | SubagentRow
+  | QuestionsRow
 
 export function fold(events: readonly SessionEvent[]): readonly Row[] {
   const rows: Row[] = []
@@ -86,6 +106,10 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
   const agents = new Map<string, string>()
   for (const event of events) if (event.kind === 'subagent' && event.phase === 'started') agents.set(event.task, event.agent)
   const hidden = subagentCalls(events)
+  // Questions: every batch's row by its id, and the ones still waiting. A `settled` finds its row here
+  // even after a state closed it as interrupted (criterion 41).
+  const batches = new Map<string, number>()
+  const waiting = new Set<string>()
   events.forEach((event, at) => {
     if (hidden.has(at)) return
     switch (event.kind) {
@@ -101,6 +125,12 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
           if (row?.kind === 'subagent') rows[index] = { ...row, end: { kind: 'interrupted', at: event.at } }
         }
         openTasks.clear()
+        for (const id of waiting) {
+          const index = batches.get(id)
+          const row = index === undefined ? undefined : rows[index]
+          if (index !== undefined && row?.kind === 'questions') rows[index] = { ...row, end: { kind: 'interrupted', at: event.at } }
+        }
+        waiting.clear()
         rows.push({ kind: 'state', seq: event.seq, at: event.at, state: event.state, reason: event.reason })
         break
       case 'subagent':
@@ -128,6 +158,22 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
           openTasks.delete(event.task)
         }
         break
+      case 'questions': {
+        if (event.phase === 'asked') {
+          if (batches.has(event.id)) break
+          batches.set(event.id, rows.length)
+          waiting.add(event.id)
+          const by = event.task === undefined ? undefined : (agents.get(event.task) ?? 'subagent')
+          rows.push({ kind: 'questions', seq: event.seq, id: event.id, questions: event.questions, by, askedAt: event.at, end: undefined })
+          break
+        }
+        const index = batches.get(event.id)
+        const row = index === undefined ? undefined : rows[index]
+        if (index === undefined || row?.kind !== 'questions') break
+        rows[index] = { ...row, end: { kind: 'settled', at: event.at, outcome: event.outcome, answers: event.answers } }
+        waiting.delete(event.id)
+        break
+      }
       case 'tool':
         open.set(event.name, [...(open.get(event.name) ?? []), rows.length])
         rows.push({ kind: 'call', seq: event.seq, name: event.name, input: event.input, result: undefined })

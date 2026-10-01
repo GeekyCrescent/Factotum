@@ -25,3 +25,19 @@ export function withoutAskToken(pathname: string, search: string): string {
   const rest = params.toString()
   return rest === '' ? pathname : `${pathname}?${rest}`
 }
+
+/** The public id of a batch: 16 bytes, hex (spec 2026-10-01-preguntas-con-opciones, D2). */
+const BATCH = /^[0-9a-f]{32}$/
+
+/**
+ * `?questions=<token>&batch=<id>` → both; anything malformed → `undefined`. The batch travels with
+ * the token so the screen can tell WHICH pending the token belongs to without matching tokens (D10).
+ * No `withoutQuestionsToken`: the router already drops the whole query before the first render.
+ */
+export function questionsTokenFrom(search: string): { readonly token: string; readonly batch: string } | undefined {
+  const params = new URLSearchParams(search)
+  const token = params.get('questions')
+  const batch = params.get('batch')
+  if (token === null || batch === null || !TOKEN.test(token) || !BATCH.test(batch)) return undefined
+  return { token, batch }
+}

@@ -27,6 +27,12 @@
  *                     wrote when its group was killed — `task_updated` with `killed`, and NO
  *                     `task_notification` — and exits 143, like "traps".
  *
+ * QUESTIONS (spec 2026-10-01-preguntas-con-opciones, criterion 42). Also branches before `session()`:
+ *
+ *   "ask-then-exit"   waits until its session's log (next to the `--settings` file) holds a
+ *                     `questions` `asked` — the test plays the MCP call — and then ends its turn and
+ *                     exits 0 WITHOUT waiting for the answer: a process that ends with a batch open.
+ *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
  * own directory, where no session ever runs, so that file exists only if the titler was started —
@@ -41,7 +47,8 @@
  *   anything else       <title>NO TITLE</title> — so a session test's `quick` titles nothing
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 const args = process.argv.slice(2)
 const prompt = args[args.indexOf('-p') + 1] ?? ''
@@ -72,8 +79,24 @@ if (args.includes('--tools')) {
   }
 } else if (prompt.startsWith('subagent-')) {
   subagent()
+} else if (prompt.startsWith('ask-then-exit')) {
+  askThenExit()
 } else {
   session()
+}
+
+function askThenExit() {
+  emit({ type: 'system', subtype: 'init', tools: ['mcp__factotum__ask_owner'] })
+  const log = join(dirname(args[args.indexOf('--settings') + 1] ?? '.'), 'events.jsonl')
+  const started = Date.now()
+  const poll = setInterval(() => {
+    const text = existsSync(log) ? readFileSync(log, 'utf8') : ''
+    if (!text.includes('"phase":"asked"') && Date.now() - started < 10_000) return
+    clearInterval(poll)
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'leaving' }] } })
+    emit({ type: 'result', subtype: 'success', result: 'leaving' })
+    process.stdout.write('', () => process.exit(0))
+  }, 20)
 }
 
 function recorded(name) {

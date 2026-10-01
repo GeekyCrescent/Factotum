@@ -20,6 +20,8 @@ export interface BuildArgsInput {
   readonly invoke: Invoke
   readonly input: string
   readonly settingsPath: string
+  /** REQUIRED: a session without the questions tool is not a mode, it is an oversight (D4). */
+  readonly mcpConfigPath: string
   /** Second turn and beyond. */
   readonly resume: boolean
 }
@@ -61,6 +63,12 @@ export function buildArgs(opts: BuildArgsInput): readonly string[] {
     // anything the owner configured.
     '--settings',
     opts.settingsPath,
+    // The `ask_owner` tool (spec 2026-10-01-preguntas-con-opciones, D4). ADDITIONAL, like `--settings`:
+    // NEVER `--strict-mcp-config`, which would drop every MCP server the owner configured, silently
+    // (the predecessor wrote it down in `agent/mcp-config.ts`). The titler uses it, and rightly: it
+    // must have no tools.
+    '--mcp-config',
+    opts.mcpConfigPath,
   ]
 
   // Same reasoning one step along: the thread already knows which agent it is, so

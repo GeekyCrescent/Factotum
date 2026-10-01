@@ -284,7 +284,77 @@ export type SessionEvent = { readonly seq: number; readonly at: string } & (
       readonly status: string
       readonly summary: string
     }
+  | QuestionsEvent
 )
+
+// --- Questions the agent asks the owner (spec 2026-10-01-preguntas-con-opciones, D6 bis) ---
+//
+// DECLARED AGAIN, BY HAND: a module cannot import `packages/sessions` (CLAUDE.md §1), and the client
+// takes its types from here. The engine's copy is built from its zod schema (`questions/shape.ts`); the
+// assignment in `packages/cli/src/main.ts` ties the two.
+
+export interface QuestionOption {
+  readonly id: string
+  readonly label: string
+  readonly description?: string | undefined
+}
+
+export interface Question {
+  readonly id: string
+  readonly text: string
+  readonly options: readonly QuestionOption[]
+  readonly multiple: boolean
+}
+
+/** Exactly one of three shapes. Zero options chosen is `none`, never an empty `chosen`. */
+export type Answer =
+  | { readonly question: string; readonly kind: 'chosen'; readonly options: readonly string[] }
+  | { readonly question: string; readonly kind: 'text'; readonly text: string }
+  | { readonly question: string; readonly kind: 'none' }
+
+export type QuestionsOutcome = 'answered' | 'expired' | 'cancelled' | 'shutdown'
+
+export type QuestionsEvent =
+  | {
+      readonly kind: 'questions'
+      readonly phase: 'asked'
+      /** The batch's PUBLIC id. The token that answers it is never in the log. */
+      readonly id: string
+      readonly questions: readonly Question[]
+      readonly task?: string | undefined
+    }
+  | {
+      readonly kind: 'questions'
+      readonly phase: 'settled'
+      readonly id: string
+      readonly outcome: QuestionsOutcome
+      readonly answers?: readonly Answer[] | undefined
+      readonly task?: string | undefined
+    }
+
+/** How a batch ended, for whoever arrives late. A shutdown reads as `cancelled`. */
+export type SettledHow = 'answered' | 'expired' | 'cancelled'
+
+export type McpReply = { readonly kind: 'body'; readonly body: unknown } | { readonly kind: 'accepted' }
+
+export type QuestionsInspect =
+  | {
+      readonly kind: 'pending'
+      readonly sessionId: string
+      readonly siteId: string
+      readonly id: string
+      readonly questions: readonly Question[]
+      readonly task: string | undefined
+      readonly deadlineAt: string
+    }
+  | { readonly kind: 'over'; readonly how: SettledHow }
+  | { readonly kind: 'unknown' }
+
+export type QuestionsAnswer =
+  | { readonly kind: 'answered'; readonly first: boolean }
+  | { readonly kind: 'invalid'; readonly reason: string }
+  | { readonly kind: 'over'; readonly how: SettledHow }
+  | { readonly kind: 'unknown' }
 
 export interface EventPage {
   readonly events: readonly SessionEvent[]
@@ -610,6 +680,10 @@ export interface SessionEngine {
   readonly openUpload?: (uploadId: string, name: string) => UploadLookup
   // --- references (spec 2026-10-01-referencias-y-tab, D6): optional here, like `files` above ---
   readonly files?: (query: FilesQuery) => Promise<FilesResult>
+  // --- questions (spec 2026-10-01-preguntas-con-opciones, D6 bis): optional here, required in the engine ---
+  readonly mcp?: (sessionId: string, message: unknown) => Promise<McpReply>
+  readonly inspectQuestions?: (token: string) => Promise<QuestionsInspect>
+  readonly answerQuestions?: (token: string, body: unknown) => Promise<QuestionsAnswer>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

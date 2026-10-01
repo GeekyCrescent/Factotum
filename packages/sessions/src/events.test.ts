@@ -60,6 +60,69 @@ test('a subagent event with an empty task id is not an event', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The sixth kind (spec 2026-10-01-preguntas-con-opciones, criterion 25)
+// ---------------------------------------------------------------------------
+
+const asked: SessionEvent = {
+  seq: 8,
+  at: 'x',
+  kind: 'questions',
+  phase: 'asked',
+  id: '0123456789abcdef0123456789abcdef',
+  questions: [
+    {
+      id: 'q1',
+      text: 'Which colour?',
+      options: [
+        { id: 'o1', label: 'red', description: 'warm' },
+        { id: 'o2', label: 'green' },
+      ],
+      multiple: false,
+    },
+    { id: 'q2', text: 'Which sizes?', options: [{ id: 's', label: 'S' }, { id: 'm', label: 'M' }], multiple: true },
+  ],
+}
+
+const settled: SessionEvent = {
+  seq: 9,
+  at: 'x',
+  kind: 'questions',
+  phase: 'settled',
+  id: '0123456789abcdef0123456789abcdef',
+  outcome: 'answered',
+  answers: [
+    { question: 'q1', kind: 'text', text: 'blue, actually' },
+    { question: 'q2', kind: 'chosen', options: ['s', 'm'] },
+  ],
+}
+
+test('a questions asked and settled survive a round trip, with and without a task', () => {
+  const events: SessionEvent[] = [
+    asked,
+    settled,
+    { ...asked, task: 'a1b2' },
+    { ...settled, task: 'a1b2' },
+    { seq: 10, at: 'x', kind: 'questions', phase: 'settled', id: 'abc', outcome: 'expired' },
+    { seq: 11, at: 'x', kind: 'questions', phase: 'settled', id: 'abc', outcome: 'shutdown' },
+  ]
+  for (const event of events) assert.deepEqual(parseLine(serialize(event)), event)
+})
+
+test('a questions event without a task has no task key after the round trip', () => {
+  for (const event of [asked, settled]) {
+    const back = parseLine(serialize(event))
+    assert.notEqual(back, undefined)
+    assert.equal(back !== undefined && 'task' in back, false)
+  }
+})
+
+test('a questions asked with no questions, or a settled with an unknown outcome, is not an event', () => {
+  assert.equal(parseLine(JSON.stringify({ ...asked, questions: [] })), undefined)
+  assert.equal(parseLine(JSON.stringify({ ...settled, outcome: 'maybe' })), undefined)
+  assert.equal(parseLine(JSON.stringify({ ...asked, id: '' })), undefined)
+})
+
+// ---------------------------------------------------------------------------
 // Criterion 11: a truncated line is skipped, it does not take anything down
 // ---------------------------------------------------------------------------
 

@@ -354,3 +354,28 @@ test('the log does not grow, and nothing the subagent produced survives — comp
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// Questions (spec 2026-10-01-preguntas-con-opciones, criterion 28). The fixture is the real CLI
+// 2.1.286 calling `mcp__factotum__ask_owner` (tasks A1), trimmed to its assistant/user/result lines.
+// ---------------------------------------------------------------------------
+
+test('the ask_owner call and its result give no tool and no result: the questions event is the record', () => {
+  const lines = readFileSync(join(FIXTURES, 'ask-owner-2.1.286.jsonl'), 'utf8').split('\n').filter((l) => l.trim() !== '')
+  const translator = new StreamTranslator()
+  const events = lines.flatMap((line) => translator.translate(JSON.parse(line)))
+  assert.equal(events.some((e) => e.kind === 'tool'), false, JSON.stringify(events))
+  assert.equal(events.some((e) => e.kind === 'result'), false, JSON.stringify(events))
+  // Everything else still arrives: the agent's text after the answer, and the end of the turn.
+  assert.equal(events.some((e) => e.kind === 'message'), true)
+  assert.equal(events.at(-1)?.kind, 'state')
+})
+
+test('a tool of another MCP server still gives its tool and result', () => {
+  const translator = new StreamTranslator()
+  const events = [
+    ...translator.translate({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'mcp__jarvis__preguntar', input: {} }] } }),
+    ...translator.translate({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
+  ]
+  assert.deepEqual(events.map((e) => e.kind), ['tool', 'result'])
+})

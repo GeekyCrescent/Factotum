@@ -24,6 +24,8 @@
  */
 
 import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
+import type { SettledHow } from './questions/batches.ts'
+import type { Answer, Question } from './questions/shape.ts'
 
 // --- Configuration, as it arrives already parsed ---------------------------
 
@@ -291,7 +293,7 @@ export interface SessionPage {
 }
 
 /**
- * The five kinds. Anything the stream carries that is not one of these is dropped.
+ * The six kinds. Anything the stream carries that is not one of these is dropped.
  *
  * Split from `SessionEvent` rather than written as one `Omit<…>`, because `Omit` over
  * a type whose union sits inside an intersection collapses the union and loses the
@@ -316,6 +318,7 @@ export type EventInput =
     }
   | { readonly kind: 'state'; readonly state: SessionState; readonly reason: string | undefined }
   | SubagentEvent
+  | QuestionsEvent
 
 /**
  * A subagent the agent launched by itself, from the CLI's `task_started` / `task_notification`
@@ -341,6 +344,34 @@ export type SubagentEvent =
       /** The subagent's final report, clipped. The only words of its own that reach the log. */
       readonly summary: string
     }
+
+/**
+ * A batch of questions the agent put to the owner, and how it ended (spec 2026-10-01-preguntas-con-opciones,
+ * D6). The DAEMON writes it, not the stream: it is the record of the call, which the stream no longer carries.
+ *
+ * `id` is the batch's PUBLIC id. The token that authorises an answer is never here (criterion 27).
+ * `task?: … | undefined` for the reason given on `result.task`.
+ */
+export type QuestionsEvent =
+  | {
+      readonly kind: 'questions'
+      readonly phase: 'asked'
+      readonly id: string
+      readonly questions: readonly Question[]
+      /** The subagent that asked. Absent for the main agent. */
+      readonly task?: string | undefined
+    }
+  | {
+      readonly kind: 'questions'
+      readonly phase: 'settled'
+      readonly id: string
+      readonly outcome: QuestionsOutcome
+      /** Only with `answered`: one per question, in the order of the batch, with ids. */
+      readonly answers?: readonly Answer[] | undefined
+      readonly task?: string | undefined
+    }
+
+export type QuestionsOutcome = 'answered' | 'expired' | 'cancelled' | 'shutdown'
 
 export type SessionEvent = { readonly seq: number; readonly at: string } & EventInput
 
@@ -643,6 +674,33 @@ export type ProjectChange =
   | { readonly outcome: 'conflict'; readonly reason: string }
   | { readonly outcome: 'invalid'; readonly reason: string }
 
+// --- Questions the agent asks the owner (spec 2026-10-01-preguntas-con-opciones, D5) ---
+
+/** What the MCP route answers: a JSON-RPC body, or a 202 with nothing for a notification. */
+export type McpReply = { readonly kind: 'body'; readonly body: unknown } | { readonly kind: 'accepted' }
+
+/** One batch BY ITS TOKEN, for the sheet. Never a list. `over` says how it ended. */
+export type QuestionsInspect =
+  | {
+      readonly kind: 'pending'
+      readonly sessionId: string
+      readonly siteId: string
+      /** The batch's public id, the one in the log. */
+      readonly id: string
+      readonly questions: readonly Question[]
+      readonly task: string | undefined
+      readonly deadlineAt: string
+    }
+  | { readonly kind: 'over'; readonly how: SettledHow }
+  | { readonly kind: 'unknown' }
+
+/** Answering a batch. A second answer is `answered` with `first: false`, never `over`. */
+export type QuestionsAnswer =
+  | { readonly kind: 'answered'; readonly first: boolean }
+  | { readonly kind: 'invalid'; readonly reason: string }
+  | { readonly kind: 'over'; readonly how: SettledHow }
+  | { readonly kind: 'unknown' }
+
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
@@ -688,6 +746,12 @@ export interface SessionEngine {
   // --- references (spec 2026-10-01-referencias-y-tab, D5) ---
   /** Names and kinds in one folder of the project or of a shared folder. Read only. */
   readonly files: (query: FilesQuery) => Promise<FilesResult>
+  // --- questions (spec 2026-10-01-preguntas-con-opciones, D5). REQUIRED here, optional in the module ---
+  /** One JSON-RPC message from the CLI, for the session in the URL. Never throws for the agent's sake. */
+  readonly mcp: (sessionId: string, message: unknown) => Promise<McpReply>
+  /** By its TOKEN, which is the authorisation, like `inspect` for an ask. */
+  readonly inspectQuestions: (token: string) => Promise<QuestionsInspect>
+  readonly answerQuestions: (token: string, body: unknown) => Promise<QuestionsAnswer>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }
