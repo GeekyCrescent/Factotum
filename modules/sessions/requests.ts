@@ -8,11 +8,11 @@
  * not name a lock file never gets that far: 400.
  */
 
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { z } from 'zod'
 import { boundaryPath, siteIdSchema } from './config.ts'
 import { CATEGORIES_MAX, categoryIdSchema, colorSchema, NAME_MAX } from './registry.ts'
-import type { Color, ProjectLayout } from './types.ts'
+import type { Color, FilesQuery, ProjectLayout } from './types.ts'
 
 /** How many conversations one delete may name (criterion 34). */
 export const REMOVE_MAX = 100
@@ -159,4 +159,36 @@ export function parseQuery(q: string | undefined): Parsed<string> {
 
 export function isSiteId(value: string | undefined): value is string {
   return value !== undefined && siteIdSchema.safeParse(value).success
+}
+
+/** The longest filter worth sending: a name, not a path (spec 2026-10-01-referencias-y-tab, D6). */
+export const PREFIX_MAX = 255
+
+const HAS_NUL = /\u0000/
+
+/**
+ * `GET /files`: the FORM of the folder asked for, here like every path (design D1). The rule is
+ * `boundaryPath`'s — absolute, no `..` — plus what a listing adds: no `.` segment, no NUL, nothing
+ * `normalize` would change, no trailing slash. Nothing is repaired: a path that needs repairing was
+ * built by hand, and the screen never builds one. The message is this route's own: a `dir` is not a
+ * site, and `boundaryPath` says "a site path".
+ */
+export function parseFilesQuery(query: Readonly<Record<string, string | undefined>>): Parsed<FilesQuery> {
+  const siteId = query['site']
+  if (!isSiteId(siteId)) return { ok: false, message: 'that is not a project id' }
+  const dir = query['dir']
+  if (dir !== undefined && !isFolderPath(dir)) {
+    return { ok: false, message: 'dir must be an absolute folder path, written plainly: no ".", "..", "//" or trailing "/"' }
+  }
+  const prefix = query['prefix'] ?? ''
+  if (prefix.length > PREFIX_MAX || prefix.includes('/') || HAS_NUL.test(prefix)) {
+    return { ok: false, message: `a prefix is part of one name: no "/", at most ${PREFIX_MAX} characters` }
+  }
+  return { ok: true, value: { siteId, dir, prefix } }
+}
+
+function isFolderPath(dir: string): boolean {
+  if (!boundaryPath.safeParse(dir).success || HAS_NUL.test(dir)) return false
+  if (dir.split('/').includes('.')) return false
+  return normalize(dir) === dir && (dir === '/' || !dir.endsWith('/'))
 }

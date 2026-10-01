@@ -387,7 +387,50 @@ export interface EngineSetupView {
   }[]
   /** Whether this host takes files, and up to how big (spec 2026-10-01, D8, D10). */
   readonly uploads: UploadsView
+  /** Whether this host lists project folders for `@` references (spec 2026-10-01-referencias-y-tab, D5). */
+  readonly files: FilesView
 }
+
+// --- Listing a folder for `@` references (spec 2026-10-01-referencias-y-tab, D5) ---
+
+export interface FilesView {
+  readonly maxEntries: number
+}
+
+export interface FilesQuery {
+  readonly siteId: string
+  /** Absolute, its FORM already checked by the module (D1). `undefined`: the project's root. */
+  readonly dir: string | undefined
+  readonly prefix: string
+}
+
+export interface ListingEntry {
+  readonly name: string
+  readonly kind: 'dir' | 'file'
+}
+
+export interface Listing {
+  /** Where `dir` hangs from. A site's references are relative to `root.path`; a shared one's, absolute. */
+  readonly root: { readonly kind: 'site' | 'shared'; readonly path: string }
+  /** Absolute, in the root's DECLARED spelling (D2): never `/private/tmp` for a root declared under `/tmp`. */
+  readonly dir: string
+  readonly entries: readonly ListingEntry[]
+  /** The shared folders outside the project, only at the project's root; empty everywhere else. */
+  readonly shared: readonly { readonly path: string; readonly name: string }[]
+  /** How many matched and did not fit. */
+  readonly more: number
+  /** The read stopped before the end of a very large folder. */
+  readonly partial: boolean
+}
+
+/** NO `invalid`: the form is the module's (D1). Outside, hidden, absent and not-a-folder are ONE answer. */
+export type FilesResult =
+  | { readonly outcome: 'ok'; readonly listing: Listing }
+  | { readonly outcome: 'unknown' }
+  | { readonly outcome: 'missing'; readonly siteId: string }
+  | { readonly outcome: 'outside' }
+  | { readonly outcome: 'unreadable'; readonly reason: string }
+  | { readonly outcome: 'timeout' }
 
 // --- Uploads (spec 2026-10-01, D5, D8) ---------------------------------------
 
@@ -603,6 +646,9 @@ export interface SessionEngine {
   /** Keeps a file the kernel received, under a sanitised name. The kernel deletes it if this does not. */
   readonly upload: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
   readonly openUpload: (uploadId: string, name: string) => UploadLookup
+  // --- references (spec 2026-10-01-referencias-y-tab, D5) ---
+  /** Names and kinds in one folder of the project or of a shared folder. Read only. */
+  readonly files: (query: FilesQuery) => Promise<FilesResult>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

@@ -342,7 +342,43 @@ export interface EngineSetupView {
    * the engine does not have it either, and must compile untouched (criterion 10).
    */
   readonly uploads?: UploadsView
+  /** Optional for the same reason as `uploads` (spec 2026-10-01-referencias-y-tab, D6; criterion 17). */
+  readonly files?: FilesView
 }
+
+// --- Listing a folder for `@` references (spec 2026-10-01-referencias-y-tab, D5, D6) -------------
+
+export interface FilesView {
+  readonly maxEntries: number
+}
+
+export interface FilesQuery {
+  readonly siteId: string
+  readonly dir: string | undefined
+  readonly prefix: string
+}
+
+export interface ListingEntry {
+  readonly name: string
+  readonly kind: 'dir' | 'file'
+}
+
+export interface Listing {
+  readonly root: { readonly kind: 'site' | 'shared'; readonly path: string }
+  readonly dir: string
+  readonly entries: readonly ListingEntry[]
+  readonly shared: readonly { readonly path: string; readonly name: string }[]
+  readonly more: number
+  readonly partial: boolean
+}
+
+export type FilesResult =
+  | { readonly outcome: 'ok'; readonly listing: Listing }
+  | { readonly outcome: 'unknown' }
+  | { readonly outcome: 'missing'; readonly siteId: string }
+  | { readonly outcome: 'outside' }
+  | { readonly outcome: 'unreadable'; readonly reason: string }
+  | { readonly outcome: 'timeout' }
 
 // --- Uploads (spec 2026-10-01, D5, D8) ---------------------------------------
 
@@ -549,6 +585,8 @@ export interface SessionEngine {
   // --- uploads (spec 2026-10-01, D9, D12): optional here, like `uploads` above ---
   readonly upload?: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
   readonly openUpload?: (uploadId: string, name: string) => UploadLookup
+  // --- references (spec 2026-10-01-referencias-y-tab, D6): optional here, like `files` above ---
+  readonly files?: (query: FilesQuery) => Promise<FilesResult>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

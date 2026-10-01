@@ -2097,3 +2097,101 @@
 .s-cat + .s-project {
   margin-top: var(--space-4);
 }
+
+/* --- References with @ (spec 2026-10-01-referencias-y-tab, D8, D10) ------- */
+
+/* The list above the box: in the flow, so it pushes nothing off screen; never wider than it (crit. 27). */
+.s-picker {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  box-shadow: 0 8px 24px var(--scrim);
+  overflow: hidden;
+}
+
+.s-picker-list {
+  max-height: min(40vh, 18rem);
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.s-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-6);
+  color: var(--text);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.s-picker-row .icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.s-picker-row:hover,
+.s-picker-on {
+  background: var(--surface-2);
+}
+
+.s-picker-off {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.s-picker-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-picker-hint {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-picker-more,
+.s-picker-note {
+  margin: 0;
+  padding: var(--space-1h) var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-picker-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  color: var(--err);
+  font-size: var(--text-small);
+}
+
+/* A reference in the owner's bubble: a small chip inside the sentence, never a link. */
+.s-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  max-width: 100%;
+  padding: 0 0.4em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+  background: var(--surface);
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+
+.s-ref .icon {
+  flex: none;
+  color: var(--text-3);
+}

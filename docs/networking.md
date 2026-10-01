@@ -145,6 +145,8 @@ not being on 443 — which is exactly what changed.
 - **`Host` is not checked**, so **DNS rebinding is not covered.** Declared, not
   forgotten. Since attachments ([ADR-0012](adr/0012-binary-bodies-as-a-route-kind.md)), what
   sits behind that gap includes the photos and documents you uploaded, not only history text.
+  Since `@` references, it also includes the **names** of the files in your projects and shared
+  folders (`GET /modules/sessions/files`: names and kinds, never contents).
 - **There is no rate limit.**
 - **It does not stop a process on this machine from subscribing a device of its own** to
   push notifications (`POST /push/subscriptions` with no `Origin`). See *What leaves the

@@ -26,6 +26,7 @@ import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts
 import {
   isSiteId,
   parseArchived,
+  parseFilesQuery,
   parseIds,
   parseLayout,
   parseProjectPatch,
@@ -464,6 +465,36 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       if (engine.openUpload === undefined) return STARTING
       const found = engine.openUpload(req.params['uploadId'] ?? '', req.params['name'] ?? '')
       return found.kind === 'ok' ? { status: 200, file: found.path } : invalid('that is not an upload')
+    }),
+
+    // --- references (spec 2026-10-01-referencias-y-tab, D6) -----------------------
+
+    // NAMES AND KINDS in one folder of the project or of a shared folder, for an `@` in the box. The
+    // form of `dir` is checked here (D1); the boundary, on the real path, is the engine's (D2). Outside,
+    // hidden and absent are one 404, so this cannot be used to ask what lies beyond the boundary.
+    'GET /files': withEngine(async (engine, req) => {
+      const query = parseFilesQuery(req.query)
+      if (!query.ok) return invalid(query.message)
+      // Optional in this module's copy of the engine (D12 of 2026-10-01). STARTING carries no headers
+      // and every route shares it: NO_STORE is added here, not to the constant (criterion 16).
+      if (engine.files === undefined) return { ...STARTING, headers: NO_STORE }
+      const result = await engine.files(query.value)
+      switch (result.outcome) {
+        case 'ok':
+          return { status: 200, headers: NO_STORE, body: result.listing }
+        case 'unknown':
+          return notFound('there is no such project')
+        case 'missing':
+          return siteMissing(result.siteId)
+        case 'outside':
+          return notFound('no such folder')
+        case 'unreadable':
+          return conflict(result.reason, { files: { unreadable: true } })
+        case 'timeout':
+          // A 409 and not a 503: the kernel's codes are a closed list, and `conflict` is "valid, and
+          // cannot be honoured in the current state" (D6).
+          return conflict('reading that folder took too long', { files: { timeout: true } })
+      }
     }),
 
     // POST and not DELETE: adding a verb to the contract for one action is exactly the

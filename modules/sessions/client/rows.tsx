@@ -11,6 +11,7 @@ import { useEffect, useState } from 'preact/hooks'
 import type { SessionEvent } from '../types.ts'
 import { activity, type Activity, type Shown } from './activity.ts'
 import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
+import { inlineRefs } from './refs.ts'
 import { fold, type Call } from './fold.ts'
 import { clock, toolArg } from './format.ts'
 import { Icon } from './icon.tsx'
@@ -85,14 +86,20 @@ function LogRow({ row, running, asking }: { readonly row: Shown; readonly runnin
  */
 function OwnerMessage({ text }: { readonly text: string }) {
   const pieces = splitRefs(text)
-  if (!pieces.some((piece) => piece.kind === 'ref')) return <div class="s-msg">{text}</div>
+  if (!pieces.some((piece) => piece.kind === 'ref')) {
+    return (
+      <div class="s-msg">
+        <InlineText text={text} />
+      </div>
+    )
+  }
   const words = pieces.filter((piece) => piece.kind === 'text')
   const files = pieces.filter((piece): piece is Extract<Piece, { kind: 'ref' }> => piece.kind === 'ref')
   return (
     <div class="s-user-body">
       {words.map((piece, i) => (
         <div key={i} class="s-msg">
-          {piece.text}
+          <InlineText text={piece.text} />
         </div>
       ))}
       <ul class="s-sent-files" aria-label="Attached files">
@@ -103,6 +110,31 @@ function OwnerMessage({ text }: { readonly text: string }) {
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * The owner's words with each `@` reference to a project file shown as a small chip, in the flow of
+ * the sentence (spec 2026-10-01-referencias-y-tab, D10). Only what the `@` list writes is a reference
+ * (`inlineRefs`); everything else, `@factotum/core` included, stays the text it was. No click: opening
+ * a file is out of scope.
+ */
+function InlineText({ text }: { readonly text: string }) {
+  const pieces = inlineRefs(text)
+  if (!pieces.some((piece) => piece.kind === 'ref')) return <>{text}</>
+  return (
+    <>
+      {pieces.map((piece, i) =>
+        piece.kind === 'text' ? (
+          piece.text
+        ) : (
+          <span key={i} class="s-ref" title={piece.raw}>
+            <Icon name={piece.dir ? 'folder-simple' : 'file-text'} size={14} />
+            {piece.dir ? `${piece.name}/` : piece.name}
+          </span>
+        ),
+      )}
+    </>
   )
 }
 
