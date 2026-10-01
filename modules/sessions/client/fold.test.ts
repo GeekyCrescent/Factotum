@@ -198,3 +198,86 @@ test("a gate result written before its subagent's start still carries the subage
 test('a repeated start for a task still open adds no second row', () => {
   assert.equal(subRows(fold([started('t1'), started('t1'), ended('t1')])).length, 1)
 })
+
+// ---------------------------------------------------------------------------
+// Questions (spec 2026-10-01-preguntas-con-opciones, D13; criteria 24, 29, 41)
+// ---------------------------------------------------------------------------
+
+const batchQuestions = [{ id: 'q1', text: 'Which colour?', options: [{ id: 'r', label: 'red' }, { id: 'g', label: 'green' }], multiple: false }]
+const askedQ = (id: string, task?: string): SessionEvent => ({
+  seq: seq++,
+  at,
+  kind: 'questions',
+  phase: 'asked',
+  id,
+  questions: batchQuestions,
+  ...(task === undefined ? {} : { task }),
+})
+const settledQ = (id: string, outcome: 'answered' | 'expired' | 'cancelled' | 'shutdown'): SessionEvent => ({
+  seq: seq++,
+  at: '2026-09-19T10:05:00.000Z',
+  kind: 'questions',
+  phase: 'settled',
+  id,
+  outcome,
+  ...(outcome === 'answered' ? { answers: [{ question: 'q1', kind: 'chosen' as const, options: ['g'] }] } : {}),
+})
+const stateQ = (state: 'running' | 'finished' | 'cancelled'): SessionEvent => ({ seq: seq++, at: '2026-09-19T10:09:00.000Z', kind: 'state', state, reason: undefined })
+const questionsRow = (rows: readonly Row[]) => rows.find((r) => r.kind === 'questions')
+
+test('an asked batch is one open row, where it was asked', () => {
+  const rows = fold([...reads(1), askedQ('b1')])
+  assert.deepEqual(kinds(rows), ['Read', 'questions'])
+  const row = questionsRow(rows)
+  assert.ok(row?.kind === 'questions')
+  assert.equal(row.id, 'b1')
+  assert.equal(row.end, undefined)
+  assert.equal(row.by, undefined)
+  assert.equal(row.questions.length, 1)
+})
+
+test('its settled closes it with the outcome, and the answers when answered', () => {
+  for (const outcome of ['answered', 'expired', 'cancelled', 'shutdown'] as const) {
+    const rows = fold([askedQ('b1'), settledQ('b1', outcome)])
+    assert.equal(rows.length, 1, outcome)
+    const row = questionsRow(rows)
+    assert.ok(row?.kind === 'questions' && row.end?.kind === 'settled', outcome)
+    assert.equal(row.end.outcome, outcome)
+    assert.deepEqual(row.end.answers, outcome === 'answered' ? [{ question: 'q1', kind: 'chosen', options: ['g'] }] : undefined)
+  }
+})
+
+test('a state closes a batch still open as interrupted', () => {
+  const row = questionsRow(fold([askedQ('b1'), stateQ('cancelled')]))
+  assert.ok(row?.kind === 'questions')
+  assert.equal(row.end?.kind, 'interrupted')
+})
+
+test('a settled AFTER the state corrects the interrupted row: the written outcome wins (criterion 41)', () => {
+  const row = questionsRow(fold([askedQ('b1'), stateQ('finished'), settledQ('b1', 'answered')]))
+  assert.ok(row?.kind === 'questions' && row.end?.kind === 'settled')
+  assert.equal(row.end.outcome, 'answered')
+})
+
+test('two batches are paired by id, not by order', () => {
+  const rows = fold([askedQ('b1'), askedQ('b2'), settledQ('b2', 'expired'), settledQ('b1', 'answered')])
+  const ends = rows.filter((r) => r.kind === 'questions').map((r) => (r.kind === 'questions' && r.end?.kind === 'settled' ? `${r.id}:${r.end.outcome}` : ''))
+  assert.deepEqual(ends, ['b1:answered', 'b2:expired'])
+})
+
+test('a subagent’s batch says its type when its start is in the log, "subagent" when not (criterion 24)', () => {
+  const started: SessionEvent = { seq: seq++, at, kind: 'subagent', phase: 'started', task: 'a1', agent: 'general-purpose', description: 'ask', background: false }
+  const known = fold([started, askedQ('b1', 'a1')]).find((r) => r.kind === 'questions')
+  assert.equal(known?.kind === 'questions' ? known.by : '', 'general-purpose')
+  const unknown = fold([askedQ('b2', 'zz')]).find((r) => r.kind === 'questions')
+  assert.equal(unknown?.kind === 'questions' ? unknown.by : '', 'subagent')
+})
+
+test('a settled with no asked in the log adds nothing', () => {
+  assert.deepEqual(kinds(fold([...reads(1), settledQ('ghost', 'answered')])), ['Read'])
+})
+
+test('GUARD: a log without questions gives the same rows as before (criterion 29)', () => {
+  const events = [...reads(2), ...call('Edit'), stateQ('finished')]
+  assert.deepEqual(kinds(fold(events)), ['Read', 'Read', 'Edit', 'state'])
+})

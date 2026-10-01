@@ -233,6 +233,33 @@ test('A FOLDER REQUEST’S TOKEN (grantId) IS DROPPED ON THIS MACHINE TOO, and t
   assert.equal(away.store.rows.get('sessions:grant:REQ')?.data['grantId'], 'TOKEN', 'kept on another device')
 })
 
+// Questions (spec 2026-10-01-preguntas-con-opciones, D10, criterion 32): a third token, `questionsId`,
+// dropped on this machine like the other two.
+const questions = () =>
+  envelope({
+    title: 'questions',
+    body: 'demo · 2 questions',
+    path: '/m/sessions/019a?questions=TOKEN&batch=B1',
+    tag: 'questions:019a:B1',
+    data: { kind: 'questions', questionsId: 'TOKEN', batch: 'B1', sessionId: '019a', siteId: 'demo', count: 2 },
+    until: FUTURE,
+  })
+
+test('A QUESTIONS TOKEN (questionsId) IS DROPPED ON THIS MACHINE TOO, and kept on another device', async () => {
+  for (const settings of [{ sameMachine: true }, {}]) {
+    const w = await worker({ store: memoryStore(settings) })
+    await w.dispatch('push', pushEvent(questions()))
+    const row = w.store.rows.get('sessions:questions:019a:B1')
+    assert.ok(row, `still pending with ${JSON.stringify(settings)}`)
+    assert.equal('questionsId' in row.data, false, `no token with ${JSON.stringify(settings)}`)
+    assert.equal(row.data['batch'], 'B1')
+    assert.equal(row.path, '/m/sessions/019a')
+  }
+  const away = await worker({ store: memoryStore({ sameMachine: false }) })
+  await away.dispatch('push', pushEvent(questions()))
+  assert.equal(away.store.rows.get('sessions:questions:019a:B1')?.data['questionsId'], 'TOKEN', 'kept on another device')
+})
+
 test('open windows are told a pending arrived, by key', async () => {
   const w = await worker({ windows: [`${ORIGIN}/m/example`], store: memoryStore({ sameMachine: false }) })
   await w.dispatch('push', pushEvent(ask()))

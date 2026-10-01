@@ -64,11 +64,13 @@ async function keepPending(moduleId, message) {
     const settings = await store.settings()
     const data = Object.assign({}, message.data)
     // The token stays on the device ONLY when the daemon said this is not its machine. Unknown
-    // counts as its machine: the safe side (design D12). Two tokens: an ask's, and a folder
-    // request's (spec 2026-09-29, D3), which is an ask with no session.
+    // counts as its machine: the safe side (design D12). Three tokens: an ask's, a folder
+    // request's (spec 2026-09-29, D3), which is an ask with no session, and a batch of questions'
+    // (spec 2026-10-01-preguntas-con-opciones, D10).
     if (settings.sameMachine !== false) {
       delete data.askId
       delete data.grantId
+      delete data.questionsId
     }
     const path = typeof message.path === 'string' ? message.path.split('?')[0] : '/'
     const key = `${moduleId}:${message.tag}`
