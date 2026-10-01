@@ -136,6 +136,28 @@ message and 20 MB each; any kind of file.
 - A state folder whose path has a space in it cannot carry a reference, so attaching is off
   there, and the box says why.
 
+### Referencing project files
+
+Type `@` in the box (at the start, or after a space) and the project's folder opens above it, as in
+a terminal: **Tab** completes a name and goes into a folder, the arrows choose, **Enter** inserts,
+**Esc** closes. On a phone, tap a folder to go in, a file to insert it, `..` to go up. Typing
+filters the folder you are in. What is inserted is plain text in your sentence, and the agent's
+`claude` reads the file it names without spending a tool:
+
+- `@src/app.ts` for a file of the project, relative to its folder;
+- `@docs/` for a folder (the agent gets its listing; *This folder* inserts it);
+- `@/path/to/notes/x.md` inside a shared folder, which shows at the top of the list;
+- `@"docs/my notes.md"` in quotes when the path has a space, or when a file has no plain
+  extension (`@"Makefile"`, `@".env"`) — so the log can show it as a chip again.
+
+What the list never shows: `.git`, `node_modules`, `.next`, `dist`, `.DS_Store`, and anything
+outside the project and the shared folders — a symlink that points out of them is not listed.
+Hidden files (`.something`) appear when what you type starts with a dot. A name with a `"` in it
+cannot be referenced, and says so. Up to 200 names per folder: keep typing to narrow.
+
+Not here: searching the whole project by name or by content, and opening, previewing or editing a
+file from the list.
+
 ---
 
 ## What "may write here" means, precisely
