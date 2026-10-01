@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { ErrorBody, ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
 import { sessionsConfigSchema } from './config.ts'
 import { sessionsModule } from './server.ts'
-import type { CreateEngine, EngineSetup, LaunchResult, SessionEngine } from './types.ts'
+import type { CreateEngine, EngineSetup, FilesQuery, FilesResult, LaunchResult, SessionEngine } from './types.ts'
 
 /**
  * A double, not the real engine. Importing the real one from this directory is exactly
@@ -918,4 +918,99 @@ test('POST /project-layout: the shape is checked HERE, the engine gets it clean,
   const refused = await call(other, 'POST /project-layout', request('POST', '/', { body: { categories: [], order: [] } }))
   assert.equal(refused.status, 409)
   assert.equal((refused.body as ErrorBody).error.code, 'conflict')
+})
+
+// ---------------------------------------------------------------------------
+// GET /files (spec 2026-10-01-referencias-y-tab, D6; criteria 7, 13–16)
+// ---------------------------------------------------------------------------
+
+const LISTING = {
+  root: { kind: 'site' as const, path: '/work' },
+  dir: '/work',
+  entries: [{ name: 'src', kind: 'dir' as const }],
+  shared: [],
+  more: 0,
+  partial: false,
+}
+
+test('GET /files answers each outcome with its status, and never lets it be cached (criteria 13–16)', async () => {
+  const cases: readonly [FilesResult, number][] = [
+    [{ outcome: 'ok', listing: LISTING }, 200],
+    [{ outcome: 'unknown' }, 404],
+    [{ outcome: 'missing', siteId: 'work' }, 409],
+    [{ outcome: 'outside' }, 404],
+    [{ outcome: 'unreadable', reason: 'cannot read that folder' }, 409],
+    [{ outcome: 'timeout' }, 409],
+  ]
+  for (const [result, status] of cases) {
+    const { table } = await started(fakeEngine({ files: async () => result }))
+    const res = await call(table, 'GET /files', request('GET', '/files', { query: { site: 'work' } }))
+    assert.equal(res.status, status, result.outcome)
+    assert.equal(res.headers?.['cache-control'], 'no-store', result.outcome)
+  }
+})
+
+test('GET /files says which 409 it is', async () => {
+  const body = async (result: FilesResult) => {
+    const { table } = await started(fakeEngine({ files: async () => result }))
+    return (await call(table, 'GET /files', request('GET', '/files', { query: { site: 'work' } }))).body as Record<string, unknown>
+  }
+  assert.deepEqual((await body({ outcome: 'missing', siteId: 'work' }))['missing'], { siteId: 'work' })
+  assert.deepEqual((await body({ outcome: 'unreadable', reason: 'x' }))['files'], { unreadable: true })
+  assert.deepEqual((await body({ outcome: 'timeout' }))['files'], { timeout: true })
+  assert.deepEqual(await body({ outcome: 'ok', listing: LISTING }), LISTING)
+})
+
+test('GET /files hands the engine the query it checked', async () => {
+  let seen: FilesQuery | undefined
+  const { table } = await started(
+    fakeEngine({
+      files: async (query) => {
+        seen = query
+        return { outcome: 'outside' }
+      },
+    }),
+  )
+  await call(table, 'GET /files', request('GET', '/files', { query: { site: 'work', dir: '/work/src', prefix: 'ap' } }))
+  assert.deepEqual(seen, { siteId: 'work', dir: '/work/src', prefix: 'ap' })
+  await call(table, 'GET /files', request('GET', '/files', { query: { site: 'work' } }))
+  assert.deepEqual(seen, { siteId: 'work', dir: undefined, prefix: '' })
+})
+
+test('GET /files refuses a malformed query before the engine sees it (criteria 7, 13)', async () => {
+  let calls = 0
+  const { table } = await started(
+    fakeEngine({
+      files: async () => {
+        calls += 1
+        return { outcome: 'outside' }
+      },
+    }),
+  )
+  const bad: Readonly<Record<string, string>>[] = [
+    {},
+    { site: 'Not An Id' },
+    { site: 'work', dir: '' },
+    { site: 'work', dir: 'relative/path' },
+    { site: 'work', dir: '/work/../etc' },
+    { site: 'work', dir: '/work/./src' },
+    { site: 'work', dir: '/work//src' },
+    { site: 'work', dir: '/work/src/' },
+    { site: 'work', dir: '/work/s\u0000rc' },
+    { site: 'work', prefix: 'a/b' },
+    { site: 'work', prefix: 'x'.repeat(256) },
+  ]
+  for (const query of bad) {
+    const res = await call(table, 'GET /files', request('GET', '/files', { query }))
+    assert.equal(res.status, 400, JSON.stringify(query))
+    assert.equal(res.headers?.['cache-control'], 'no-store')
+  }
+  assert.equal(calls, 0)
+})
+
+test('GET /files on an engine copy without `files` is STARTING, and still not cached (criterion 16)', async () => {
+  const { table } = await started(fakeEngine())
+  const res = await call(table, 'GET /files', request('GET', '/files', { query: { site: 'work' } }))
+  assert.equal(res.status, 503)
+  assert.equal(res.headers?.['cache-control'], 'no-store')
 })
