@@ -177,6 +177,29 @@ at it. In the background or not, it looks the same. When it ends, the log keeps 
 - **Cancel stops it with everything else**, and its row says *interrupted*. Replying afterwards
   starts a new turn; the interrupted one never comes back as running.
 
+### Questions
+
+The agent can ask you a batch of decisions with options you tap, instead of asking in prose: one to
+six questions, each with two to six options and a description under each, one option or several,
+and "Other…" for an answer in your words. It arrives as a notification that says the project and
+how many questions — never the questions themselves — and as a notice in the conversation. You can
+send with gaps: what you leave blank reaches the agent as *unanswered*, and it is told that means
+nobody chose. On a computer the sheet works from the keyboard: ↑/↓, 1–6, Space or Enter, Tab between
+questions, ⌘/Ctrl+Enter to send.
+
+- **The window is the ask's**, a little under an hour. If nobody answers, the log says so and the
+  agent is told there is no decision and to end its turn; the session finishes normally and you carry
+  on by writing. Nothing is cancelled for you.
+- **Cancel releases it at once**, and so does stopping factotum; the log says which.
+- **A subagent can ask too**, and the sheet and the log say which one.
+- **Without push there are no questions**: the agent is told you cannot be reached and asks in
+  prose, as before. On the daemon's own machine the notification is how you answer, like an ask.
+- **The token that answers it is never written to disk.** It travels in the notification only.
+- **In `dev`, `FACTOTUM_ASK_TIMEOUT_SECONDS`** shortens the window — for questions and for the
+  permission ask alike — to anything from 30 s up. `prod` ignores it and says so.
+
+Why it is an MCP tool served by this module, and what it depends on in the CLI: ADR-0013.
+
 ---
 
 ## What "may write here" means, precisely
