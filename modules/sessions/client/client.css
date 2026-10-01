@@ -597,6 +597,149 @@
   color: var(--text-3);
 }
 
+/* --- The project, chosen in a sheet (project-pick.tsx) ------------------- */
+
+.s-pp-btn {
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.s-pp-btn:focus-visible {
+  outline: 0;
+}
+
+.s-pp-btn .s-pp-name {
+  max-width: 11rem;
+}
+
+.s-pp-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--project, var(--text-3));
+}
+
+.s-pp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-pp-search {
+  margin: 0;
+}
+
+/* The label's ring is the focus; the field's own would be a box inside the box. */
+.s-pp-search input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+/* The filters scroll sideways on a narrow screen instead of wrapping into a wall of chips. */
+.s-pp-scopes {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 3px;
+  margin: -3px;
+}
+
+.s-pp-scopes .chip {
+  flex: none;
+  cursor: pointer;
+}
+
+.s-pp-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.s-pp-group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.s-pp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-small);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.s-pp-count {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.s-pp-rows {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+
+.s-pp-row {
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.s-pp-row:hover {
+  background: var(--surface-2);
+}
+
+.s-pp-row:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-pp-row[aria-current='true'] {
+  background: var(--project-soft, var(--surface-2));
+}
+
+.s-pp-row > .icon {
+  flex: none;
+  color: var(--project, var(--accent));
+}
+
+.s-pp-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.s-pp-text .s-pp-name {
+  font-weight: 500;
+}
+
+.s-pp-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
 
 .s-detail {
   color: var(--text-2);

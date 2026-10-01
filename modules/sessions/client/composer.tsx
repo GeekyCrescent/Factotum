@@ -6,7 +6,8 @@
  * Enter breaks the line and the button sends, because a phone's Enter is where a person expects a
  * new line. Ctrl/Cmd+Enter sends everywhere. Never while an input method is composing a word.
  *
- * Under the text, one row: `+` (attaching files), the project, what to run, and send. Above the box,
+ * Under the text, one row: `+` (attaching files), the project (a sheet, `project-pick.tsx`), what to
+ * run, and send. Above the box,
  * three suggestions that do nothing yet, disabled until they get a use.
  *
  * ATTACHING (spec 2026-10-01, D10): chips above the box, `+` in the row, and a file dropped on the box
@@ -19,7 +20,7 @@
  */
 
 import type { ComponentChildren } from 'preact'
-import { useState } from 'preact/hooks'
+import { useCallback, useState } from 'preact/hooks'
 import type { Color, EngineSetupView } from '../types.ts'
 import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls } from './attach.tsx'
 import { canSend, uploadsOf, withRefs } from './attachments.ts'
@@ -27,6 +28,7 @@ import type { Api } from './contract.ts'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
+import { ProjectButton, ProjectSheet, useArrangement } from './project-pick.tsx'
 import { filesOf } from './refs.ts'
 import { toneClass } from './tone.ts'
 
@@ -103,6 +105,10 @@ export function LaunchComposer({
   })
   // `@` lists the project chosen in the select; changing it re-reads the token (criterion 24).
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
+  // The project's sheet, with the drawer's categories; outside the box's form, so none of its styles reach it.
+  const arrangement = useArrangement(api)
+  const [choosing, setChoosing] = useState(false)
+  const stopChoosing = useCallback(() => setChoosing(false), [])
 
   if (sites.length === 0) {
     return (
@@ -162,17 +168,13 @@ export function LaunchComposer({
         autoFocus
         tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
       >
-        <label class="chip s-pick">
-          <Icon name="folder-simple" size={16} />
-          <select aria-label="Project" value={siteId} onChange={(e) => setSiteId((e.target as HTMLSelectElement).value)}>
-            {sites.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name ?? s.id}
-              </option>
-            ))}
-          </select>
-          <Icon name="caret-down" size={12} />
-        </label>
+        <ProjectButton
+          site={site}
+          onOpen={() => {
+            arrangement.load()
+            setChoosing(true)
+          }}
+        />
         <label class="chip s-pick">
           <select aria-label="What to run" value={entryId} onChange={(e) => setEntryId((e.target as HTMLSelectElement).value)}>
             {usable.map((entry) => (
@@ -184,6 +186,18 @@ export function LaunchComposer({
           <Icon name="caret-down" size={12} />
         </label>
       </Box>
+      {choosing ? (
+        <ProjectSheet
+          sites={sites}
+          value={siteId}
+          loaded={arrangement.loaded}
+          onClose={stopChoosing}
+          onPick={(id) => {
+            setSiteId(id)
+            setChoosing(false)
+          }}
+        />
+      ) : null}
     </>
   )
 }
