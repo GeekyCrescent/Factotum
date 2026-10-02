@@ -2738,3 +2738,73 @@
   margin-right: auto;
   font-size: var(--text-small);
 }
+
+/* Background services (spec 2026-10-02-servicios-en-segundo-plano, D15). The row in the log reads like a
+   subagent's and opens its sheet; the lines under the log reuse the subagents' lines as buttons. */
+.s-svc-open {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.s-svc-open:focus-visible,
+.s-svcline:focus-visible {
+  outline: 0;
+  border-radius: var(--radius-6);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.s-svc-running .s-gut,
+.s-svc.s-sub-running .s-gut {
+  color: var(--accent-text);
+}
+
+.s-svcline {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.s-svc-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  margin: 0;
+}
+
+.s-svc-meta {
+  margin: var(--space-1h) 0 0;
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.s-svc-out {
+  max-height: 50vh;
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius-6);
+  background: var(--surface-2);
+  font-size: var(--text-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.s-svc-ask {
+  margin: 0 auto 0 0;
+  font-size: var(--text-small);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .s-svc.s-sub-running .s-gut svg {
+    animation: s-spin 0.9s linear infinite;
+  }
+}
