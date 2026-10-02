@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { pageIntent } from './new-tab.ts'
 import { historyStep, locationOf, navigateTarget, onLoad, overlayOf, screenOf, type HistoryState, type Screen } from './router.ts'
 
 export interface Route {
@@ -14,7 +15,10 @@ export interface Route {
   readonly overlay: string | undefined
   /** The query the page loaded with, until the first navigation. `''` after it (design D4). */
   readonly search: string
-  /** To another screen. With an overlay on top, its entry is replaced, so Back skips it. */
+  /**
+   * To another screen. With an overlay on top, its entry is replaced, so Back skips it. Called from a
+   * ⌘-click, it opens a new tab instead (`new-tab.ts`) — unless `replace`, which is never a choice.
+   */
   readonly go: (path: string, options?: { readonly replace?: boolean }) => void
   /** Where `/` lands: replaces the entry and keeps the query for the screen it lands on. */
   readonly land: (path: string) => void
@@ -50,6 +54,11 @@ export function useRoute(initialSearch: string): Route {
     }
     return {
       go: (to: string, options?: { readonly replace?: boolean }) => {
+        // ⌘-click: the destination opens in a tab of its own and this one stays as it was.
+        if (options?.replace !== true && pageIntent.take()) {
+          window.open(to, '_blank', 'noopener')
+          return
+        }
         apply(to, options?.replace === true)
         setSearch('')
       },
