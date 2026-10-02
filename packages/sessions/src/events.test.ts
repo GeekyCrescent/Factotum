@@ -180,3 +180,49 @@ test('running is the only state that is not terminal', () => {
   assert.equal(isTerminal('failed'), true)
   assert.equal(isTerminal('cancelled'), true)
 })
+
+// The seventh kind (spec 2026-10-02-servicios-en-segundo-plano, D12; criteria 31, 33)
+
+const serviceStarted: SessionEvent = {
+  seq: 20,
+  at: 'x',
+  kind: 'service',
+  phase: 'started',
+  id: 's1',
+  command: 'python3 -m http.server 8765',
+  description: 'static server',
+  cwd: '/work/repo',
+  maxMinutes: 480,
+  pid: 4242,
+  task: 'a1b2',
+}
+
+test('a service started and ended survive a round trip, with every optional field and without', () => {
+  const events: SessionEvent[] = [
+    serviceStarted,
+    { seq: 21, at: 'x', kind: 'service', phase: 'started', id: 's2', command: 'x', cwd: '/w', maxMinutes: 1, pid: 7 },
+    { seq: 22, at: 'x', kind: 'service', phase: 'ended', id: 's1', outcome: 'failed', code: 1 },
+    { seq: 23, at: 'x', kind: 'service', phase: 'ended', id: 's2', outcome: 'failed', signal: 'SIGSEGV' },
+    { seq: 24, at: 'x', kind: 'service', phase: 'ended', id: 's3', outcome: 'stopped', by: 'owner' },
+    { seq: 25, at: 'x', kind: 'service', phase: 'ended', id: 's4', outcome: 'shutdown', reason: 'factotum restarted' },
+  ]
+  for (const event of events) assert.deepEqual(parseLine(serialize(event)), event)
+})
+
+test('a service event that does not fit is not an event: unknown outcome, no pid, empty id, zero minutes', () => {
+  const ended = { seq: 1, at: 'x', kind: 'service', phase: 'ended', id: 's1', outcome: 'stopped' }
+  assert.equal(parseLine(JSON.stringify({ ...ended, outcome: 'vanished' })), undefined)
+  assert.equal(parseLine(JSON.stringify({ ...ended, id: '' })), undefined)
+  assert.equal(parseLine(JSON.stringify({ ...ended, by: 'someone' })), undefined)
+  const { pid: _pid, ...noPid } = serviceStarted as Extract<SessionEvent, { kind: 'service'; phase: 'started' }>
+  assert.equal(parseLine(JSON.stringify(noPid)), undefined)
+  assert.equal(parseLine(JSON.stringify({ ...serviceStarted, maxMinutes: 0 })), undefined)
+})
+
+test('a reader that does not know a kind drops that line and keeps reading (criterion 33)', () => {
+  const text = [serialize(message), JSON.stringify({ seq: 1, at: 'x', kind: 'eighth', what: 'from the future' }), serialize({ ...message, seq: 2 })].join('\n')
+  assert.deepEqual(
+    parseLog(text).map((event) => event.seq),
+    [0, 2],
+  )
+})

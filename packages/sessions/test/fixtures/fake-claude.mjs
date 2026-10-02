@@ -32,6 +32,8 @@
  *   "ask-then-exit"   waits until its session's log (next to the `--settings` file) holds a
  *                     `questions` `asked` — the test plays the MCP call — and then ends its turn and
  *                     exits 0 WITHOUT waiting for the answer: a process that ends with a batch open.
+ *   "service-then-exit" the same, waiting for a `service` event instead: the test plays `start_service`,
+ *                     and the turn ends with the service still running (spec 2026-10-02, criterion 16).
  *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
@@ -81,17 +83,19 @@ if (args.includes('--tools')) {
   subagent()
 } else if (prompt.startsWith('ask-then-exit')) {
   askThenExit()
+} else if (prompt.startsWith('service-then-exit')) {
+  askThenExit('"kind":"service"')
 } else {
   session()
 }
 
-function askThenExit() {
+function askThenExit(needle = '"phase":"asked"') {
   emit({ type: 'system', subtype: 'init', tools: ['mcp__factotum__ask_owner'] })
   const log = join(dirname(args[args.indexOf('--settings') + 1] ?? '.'), 'events.jsonl')
   const started = Date.now()
   const poll = setInterval(() => {
     const text = existsSync(log) ? readFileSync(log, 'utf8') : ''
-    if (!text.includes('"phase":"asked"') && Date.now() - started < 10_000) return
+    if (!text.includes(needle) && Date.now() - started < 10_000) return
     clearInterval(poll)
     emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'leaving' }] } })
     emit({ type: 'result', subtype: 'success', result: 'leaving' })

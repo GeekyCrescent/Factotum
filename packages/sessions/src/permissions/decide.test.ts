@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { decide, isWritingTool, resolveTarget } from './decide.ts'
+import { BACKGROUND_REDIRECT } from '../services/shape.ts'
 import type { Site } from '../sites.ts'
 
 const SITE: Site = { id: 'work', path: '/work/site', realPath: '/work/site', isRepo: true }
@@ -247,4 +248,31 @@ test('SAME INPUT, SAME ANSWER: canAsk is data, not a call (criterion 12)', () =>
   const input = { file_path: '/etc/hosts' }
   const first = decideWith(true, 'Write', input)
   for (let i = 0; i < 50; i++) assert.deepEqual(decideWith(true, 'Write', input), first)
+})
+
+// ---------------------------------------------------------------------------
+// Background Bash is redirected (spec 2026-10-02-servicios-en-segundo-plano, D9; criterion 12)
+// ---------------------------------------------------------------------------
+
+test('Bash with run_in_background: true is DENIED with the redirect, quietly', () => {
+  assert.deepEqual(ask('Bash', { command: 'python3 -m http.server 8765', run_in_background: true }), {
+    decision: 'deny',
+    reason: BACKGROUND_REDIRECT,
+    quiet: true,
+  })
+})
+
+test('the redirect is a deny even when someone could be asked: there is nothing for the owner to decide', () => {
+  const result = decide({ toolName: 'Bash', toolInput: { command: 'x', run_in_background: true }, cwd: CWD, site: SITE, canAsk: true })
+  assert.equal(result.decision, 'deny')
+})
+
+test('run_in_background false, absent, the STRING "true", or no object at all: the decision of today', () => {
+  for (const input of [{ command: 'ls', run_in_background: false }, { command: 'ls' }, { command: 'ls', run_in_background: 'true' }, null, 'ls']) {
+    assert.deepEqual(ask('Bash', input), { decision: 'allow', reason: 'reading does not propagate' })
+  }
+})
+
+test('only Bash: another tool with run_in_background is not touched', () => {
+  assert.equal(ask('Agent', { prompt: 'x', run_in_background: true }).decision, 'allow')
 })

@@ -26,6 +26,7 @@
 import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
 import type { AnsweredVia, SettledHow } from './questions/batches.ts'
 import type { Answer, Question } from './questions/shape.ts'
+import type { ServiceOutcome, ServiceView, StoppedBy } from './services/shape.ts'
 
 // --- Configuration, as it arrives already parsed ---------------------------
 
@@ -293,7 +294,7 @@ export interface SessionPage {
 }
 
 /**
- * The six kinds. Anything the stream carries that is not one of these is dropped.
+ * The seven kinds. Anything the stream carries that is not one of these is dropped.
  *
  * Split from `SessionEvent` rather than written as one `Omit<…>`, because `Omit` over
  * a type whose union sits inside an intersection collapses the union and loses the
@@ -319,6 +320,7 @@ export type EventInput =
   | { readonly kind: 'state'; readonly state: SessionState; readonly reason: string | undefined }
   | SubagentEvent
   | QuestionsEvent
+  | ServiceEvent
 
 /**
  * A subagent the agent launched by itself, from the CLI's `task_started` / `task_notification`
@@ -374,6 +376,46 @@ export type QuestionsEvent =
     }
 
 export type QuestionsOutcome = 'answered' | 'expired' | 'cancelled' | 'shutdown'
+
+/**
+ * A background service the agent started, and how it ended (spec 2026-10-02-servicios-en-segundo-plano, D12).
+ * The DAEMON writes it — `services/table.ts` is the only writer of `ended` — and it never carries the
+ * service's output (criterion 30). `?: … | undefined` for the reason given on `result.task`.
+ */
+export type ServiceEvent =
+  | {
+      readonly kind: 'service'
+      readonly phase: 'started'
+      /** `s1`, `s2`… per session: the agent repeats it in later turns. */
+      readonly id: string
+      /** Clipped to MAX_LOGGED_COMMAND_CHARS, like any tool's input. */
+      readonly command: string
+      readonly description?: string | undefined
+      readonly cwd: string
+      readonly maxMinutes: number
+      readonly pid: number
+      /** The subagent that started it. Absent for the main agent. */
+      readonly task?: string | undefined
+    }
+  | {
+      readonly kind: 'service'
+      readonly phase: 'ended'
+      readonly id: string
+      readonly outcome: ServiceOutcome
+      /** Only with `stopped`: who asked. */
+      readonly by?: StoppedBy | undefined
+      readonly code?: number | undefined
+      readonly signal?: string | undefined
+      readonly reason?: string | undefined
+    }
+
+export type { ServiceOutcome, ServiceView, StoppedBy }
+
+/** What the owner's output route answers: the service and its last lines (criterion 36). */
+export interface ServiceOutput {
+  readonly view: ServiceView
+  readonly lines: readonly string[]
+}
 
 export type SessionEvent = { readonly seq: number; readonly at: string } & EventInput
 
@@ -766,6 +808,11 @@ export interface SessionEngine {
   /** WITHOUT A TOKEN, from a screen (2026-10-02): the open batches of one session, and one answered by id. */
   readonly sessionQuestions: (sessionId: string) => Promise<readonly OpenBatch[]>
   readonly answerSessionQuestions: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
+  // --- background services (spec 2026-10-02-servicios-en-segundo-plano, D13): the owner's, so no turn needed ---
+  /** A service of the session, running or ended, with its last lines. `undefined`: no such service there. */
+  readonly readService: (sessionId: string, id: string, lines: number) => Promise<ServiceOutput | undefined>
+  /** Stops it as the owner; an ended one comes back as it ended. `undefined`: no such service there. */
+  readonly stopService: (sessionId: string, id: string) => Promise<ServiceView | undefined>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

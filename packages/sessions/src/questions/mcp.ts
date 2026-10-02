@@ -1,6 +1,8 @@
 /**
- * The one MCP tool factotum serves, `ask_owner`, over the sessions module's route (spec
- * 2026-10-01-preguntas-con-opciones, D3). Three JSON-RPC messages and nothing else: no SDK, no new
+ * The MCP server factotum serves over the sessions module's route: `ask_owner` (spec
+ * 2026-10-01-preguntas-con-opciones, D3) and the background services' tools, which arrive as DATA (spec
+ * 2026-10-02-servicios-en-segundo-plano, D7) — this file does not import `services/`, and `services/tools.ts`
+ * imports `toolText` from here, so there is no cycle. Three JSON-RPC messages and nothing else: no SDK, no new
  * dependency — the predecessor (Jarvis) measured that `initialize`, `tools/list` and `tools/call` are all
  * the CLI needs to call a tool.
  *
@@ -52,9 +54,21 @@ export interface ToolResult {
   readonly isError?: true
 }
 
+/** A tool as `tools/list` describes it. */
+export interface McpTool {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: unknown
+}
+
 export interface McpDeps {
   /** Opens the batch, tells the owner and HOLDS until it settles. The engine's; never on the facade. */
   readonly askOwner: (input: { sessionId: string; toolUseId: string | undefined; raw: unknown }) => Promise<ToolResult>
+  /** The services' tools, listed after `ask_owner`, and the one function that runs any of them. */
+  readonly services: {
+    readonly tools: readonly McpTool[]
+    readonly call: (input: { sessionId: string; toolUseId: string | undefined; name: string; raw: unknown }) => Promise<ToolResult>
+  }
 }
 
 /**
@@ -100,7 +114,7 @@ const INPUT_SCHEMA = {
   required: ['questions'],
 } as const
 
-const TOOL = {
+const TOOL: McpTool = {
   name: TOOL_NAME,
   description:
     'Ask the owner one or more decisions with options they can tap, instead of asking in plain text. ' +
@@ -174,18 +188,27 @@ export async function handleMcp(deps: McpDeps, sessionId: string, message: unkno
     case 'ping':
       return result(id, {})
     case 'tools/list':
-      return result(id, { tools: [TOOL] })
+      return result(id, { tools: [TOOL, ...deps.services.tools] })
     case 'tools/call': {
-      if (params?.name !== TOOL_NAME) return failure(id, -32602, `this session has no tool called ${String(params?.name)}`)
-      const toolUseId = record(params._meta)?.['claudecode/toolUseId']
+      const name = params?.name
+      const isAsk = name === TOOL_NAME
+      if (!isAsk && !deps.services.tools.some((tool) => tool.name === name)) {
+        return failure(id, -32602, `this session has no tool called ${String(name)}`)
+      }
+      const rawId = record(params?._meta)?.['claudecode/toolUseId']
+      const toolUseId = typeof rawId === 'string' ? rawId : undefined
       try {
         return result(
           id,
-          await deps.askOwner({ sessionId, toolUseId: typeof toolUseId === 'string' ? toolUseId : undefined, raw: params.arguments }),
+          isAsk
+            ? await deps.askOwner({ sessionId, toolUseId, raw: params?.arguments })
+            : await deps.services.call({ sessionId, toolUseId, name: String(name), raw: params?.arguments }),
         )
       } catch (error) {
         const why = error instanceof Error ? error.message : 'unknown error'
-        return result(id, toolText(`factotum could not ask the owner (${why}); ask in plain text instead.`, true))
+        // A failed service tool must not tell the agent to ask in plain text (guardrail 9 of 2026-10-02).
+        const text = isAsk ? `factotum could not ask the owner (${why}); ask in plain text instead.` : `factotum could not run ${String(name)} (${why}).`
+        return result(id, toolText(text, true))
       }
     }
     default:

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { clip, redactInput, StreamTranslator, MAX_SUMMARY_CHARS, MAX_VALUE_CHARS } from './parse.ts'
 import type { EventInput } from './types.ts'
+import { SERVICE_OUTPUT_SUMMARY } from './services/shape.ts'
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'one-turn-write.jsonl')
 
@@ -378,4 +379,69 @@ test('a tool of another MCP server still gives its tool and result', () => {
     ...translator.translate({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
   ]
   assert.deepEqual(events.map((e) => e.kind), ['tool', 'result'])
+})
+
+// ---------------------------------------------------------------------------
+// Background services (spec 2026-10-02-servicios-en-segundo-plano, D11; criteria 14, 30). The fixture is
+// CLI 2.1.287 with the gate's redirect (tasks A3): a background Bash, its deny, `start_service`, its result.
+// ---------------------------------------------------------------------------
+
+test('the redirected Bash and start_service leave no tool and no result: the service row is the record', () => {
+  const lines = readFileSync(join(FIXTURES, 'background-redirect-2.1.287.jsonl'), 'utf8').split('\n').filter((l) => l.trim() !== '')
+  const translator = new StreamTranslator()
+  assert.deepEqual(
+    lines.flatMap((line) => translator.translate(JSON.parse(line))),
+    [],
+  )
+})
+
+const call = (id: string, name: string, input: unknown) => ({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id, name, input }] },
+})
+const answer = (id: string, text: string, isError = false) => ({
+  type: 'user',
+  message: { content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }], is_error: isError }] },
+})
+
+test('service_output: its tool goes in, its result ONLY as the fixed summary — never the output (criterion 30)', () => {
+  const translator = new StreamTranslator()
+  const events = [
+    ...translator.translate(call('t1', 'mcp__factotum__service_output', { id: 's1' })),
+    ...translator.translate(answer('t1', 'running since 12:00\nCENTINELA-31337 GET / 200')),
+    ...translator.translate(call('t2', 'mcp__factotum__service_output', { id: 's9' })),
+    ...translator.translate(answer('t2', 'no service s9 in this session', true)),
+  ]
+  assert.deepEqual(events, [
+    { kind: 'tool', name: 'mcp__factotum__service_output', input: { id: 's1' } },
+    { kind: 'result', name: 'mcp__factotum__service_output', ok: true, summary: SERVICE_OUTPUT_SUMMARY },
+    { kind: 'tool', name: 'mcp__factotum__service_output', input: { id: 's9' } },
+    { kind: 'result', name: 'mcp__factotum__service_output', ok: false, summary: SERVICE_OUTPUT_SUMMARY },
+  ])
+  assert.equal(JSON.stringify(events).includes('CENTINELA'), false)
+})
+
+test('stop_service and list_services go in like any tool: their text is state, not output', () => {
+  const translator = new StreamTranslator()
+  const events = [
+    ...translator.translate(call('t1', 'mcp__factotum__stop_service', { id: 's1' })),
+    ...translator.translate(answer('t1', 's1 stopped')),
+    ...translator.translate(call('t2', 'mcp__factotum__list_services', {})),
+    ...translator.translate(answer('t2', 's1 stopped')),
+  ]
+  assert.deepEqual(
+    events.map((e) => (e.kind === 'result' ? e.summary : e.kind)),
+    ['tool', 's1 stopped', 'tool', 's1 stopped'],
+  )
+})
+
+test('a foreground Bash, and a Bash whose run_in_background is not literally true, still go in', () => {
+  const translator = new StreamTranslator()
+  const events = [
+    ...translator.translate(call('t1', 'Bash', { command: 'ls' })),
+    ...translator.translate(answer('t1', 'a b')),
+    ...translator.translate(call('t2', 'Bash', { command: 'ls', run_in_background: 'true' })),
+    ...translator.translate(answer('t2', 'a b')),
+  ]
+  assert.equal(events.length, 4)
 })

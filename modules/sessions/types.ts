@@ -285,6 +285,7 @@ export type SessionEvent = { readonly seq: number; readonly at: string } & (
       readonly summary: string
     }
   | QuestionsEvent
+  | ServiceEvent
 )
 
 // --- Questions the agent asks the owner (spec 2026-10-01-preguntas-con-opciones, D6 bis) ---
@@ -335,6 +336,60 @@ export type QuestionsEvent =
     }
 
 export type AnsweredVia = 'token' | 'screen'
+
+// --- Background services (spec 2026-10-02-servicios-en-segundo-plano, D12 bis) ---
+//
+// DECLARED AGAIN, BY HAND, for the reason above: the engine's copy is `services/shape.ts` and the seventh
+// event kind in its `types.ts`; the assignment in `packages/cli/src/main.ts` ties them.
+
+export type ServiceOutcome = 'exited' | 'failed' | 'stopped' | 'timeout' | 'cancelled' | 'shutdown'
+export type StoppedBy = 'owner' | 'agent'
+
+export type ServiceEvent =
+  | {
+      readonly kind: 'service'
+      readonly phase: 'started'
+      readonly id: string
+      readonly command: string
+      readonly description?: string | undefined
+      readonly cwd: string
+      readonly maxMinutes: number
+      readonly pid: number
+      readonly task?: string | undefined
+    }
+  | {
+      readonly kind: 'service'
+      readonly phase: 'ended'
+      readonly id: string
+      readonly outcome: ServiceOutcome
+      readonly by?: StoppedBy | undefined
+      readonly code?: number | undefined
+      readonly signal?: string | undefined
+      readonly reason?: string | undefined
+    }
+
+/** One service, running or ended, as the owner's routes answer it. */
+export interface ServiceView {
+  readonly id: string
+  readonly command: string
+  readonly description: string | undefined
+  readonly cwd: string
+  readonly pid: number
+  readonly maxMinutes: number
+  readonly startedAt: string
+  readonly task: string | undefined
+  readonly state: 'running' | ServiceOutcome
+  readonly endedAt: string | undefined
+  readonly by: StoppedBy | undefined
+  readonly code: number | undefined
+  readonly signal: string | undefined
+  readonly reason: string | undefined
+}
+
+export interface ServiceOutput {
+  readonly view: ServiceView
+  readonly lines: readonly string[]
+}
 
 /** An open batch of a session, read by a screen WITHOUT its token. */
 export interface OpenBatch {
@@ -699,6 +754,9 @@ export interface SessionEngine {
   readonly answerQuestions?: (token: string, body: unknown) => Promise<QuestionsAnswer>
   readonly sessionQuestions?: (sessionId: string) => Promise<readonly OpenBatch[]>
   readonly answerSessionQuestions?: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
+  // --- background services (spec 2026-10-02, D13): optional here, required in the engine ---
+  readonly readService?: (sessionId: string, id: string, lines: number) => Promise<ServiceOutput | undefined>
+  readonly stopService?: (sessionId: string, id: string) => Promise<ServiceView | undefined>
   readonly view: () => EngineSetupView
   readonly stop: () => Promise<void>
 }

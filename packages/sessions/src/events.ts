@@ -1,5 +1,5 @@
 /**
- * The six event kinds, and how a line of `events.jsonl` becomes one.
+ * The seven event kinds, and how a line of `events.jsonl` becomes one.
  *
  * THE LOG IS THE SOURCE OF TRUTH AND IT IS NEVER REWRITTEN. Everything else — the
  * state a screen shows, what the cursor returns — is derived from it. That is what
@@ -11,6 +11,7 @@
 
 import { z } from 'zod'
 import { answerSchema, MAX_QUESTIONS, questionSchema } from './questions/shape.ts'
+import { SERVICE_OUTCOMES } from './services/shape.ts'
 import type { SessionEvent, SessionState } from './types.ts'
 
 export const SESSION_STATES = ['running', 'finished', 'failed', 'cancelled'] as const
@@ -70,6 +71,31 @@ export const sessionEventSchema = z.union([
     // Where an answer came from (2026-10-02): a device the push reached, or a screen with no token.
     via: z.enum(['token', 'screen']).optional(),
     task: z.string().min(1).optional(),
+  }),
+  // The seventh kind (spec 2026-10-02-servicios-en-segundo-plano, D12). The daemon writes it, never the
+  // stream, and it NEVER carries the service's output (criterion 30): only what was run and how it ended.
+  z.object({
+    ...base,
+    kind: z.literal('service'),
+    phase: z.literal('started'),
+    id: z.string().min(1),
+    command: z.string(),
+    description: z.string().optional(),
+    cwd: z.string(),
+    maxMinutes: z.number().int().positive(),
+    pid: z.number().int().positive(),
+    task: z.string().min(1).optional(),
+  }),
+  z.object({
+    ...base,
+    kind: z.literal('service'),
+    phase: z.literal('ended'),
+    id: z.string().min(1),
+    outcome: z.enum(SERVICE_OUTCOMES),
+    by: z.enum(['owner', 'agent']).optional(),
+    code: z.number().int().optional(),
+    signal: z.string().optional(),
+    reason: z.string().optional(),
   }),
 ])
 

@@ -30,3 +30,11 @@ test('two roots never meet, which is how dev and prod keep separate sessions', (
   const prod = sessionPaths('/home/.factotum/prod/modules/sessions')
   assert.notEqual(dev.lockFile('work'), prod.lockFile('work'))
 })
+
+test('the services registry is one file for the daemon; a service output lives INSIDE its session (spec 2026-10-02, D6)', () => {
+  const paths = sessionPaths(ROOT)
+  const id = '019965aa-0000-7000-8000-000000000001'
+  assert.equal(paths.servicesRegistry, join(ROOT, 'services.json'))
+  // Inside the session's directory, so deleting the session takes the output along (criterion 22).
+  assert.equal(paths.servicesDir(id), join(ROOT, 'sessions', id, 'services'))
+})
