@@ -193,6 +193,18 @@ function fromLaunch(result: LaunchResult): ModuleResponse {
   }
 }
 
+/** The engine's DEFAULT_LINES and MAX_LINES (`services/shape.ts`), declared again: a module cannot import it. */
+const SERVICE_LINES = 50
+const MAX_SERVICE_LINES = 200
+
+/** `?lines=`: absent is the default, over the ceiling is clipped, anything but a positive integer is a 400. */
+function parseServiceLines(raw: string | undefined): { ok: true; value: number } | { ok: false; message: string } {
+  if (raw === undefined) return { ok: true, value: SERVICE_LINES }
+  const value = Number(raw)
+  if (!/^\d+$/.test(raw) || !Number.isInteger(value) || value < 1) return { ok: false, message: `lines must be a whole number from 1 to ${MAX_SERVICE_LINES}` }
+  return { ok: true, value: Math.min(value, MAX_SERVICE_LINES) }
+}
+
 function text(body: unknown, key: string): string | undefined {
   const value = (body as Record<string, unknown> | null | undefined)?.[key]
   return typeof value === 'string' ? value : undefined
@@ -480,12 +492,13 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       // Before start(), the same 503 as every route (the hook's too). After it, an engine without the
       // member still owes the CLI an answer the agent can read.
       if (engine === undefined) return STARTING
-      if (engine.mcp === undefined) return mcpFailure(req.body, 'factotum cannot ask the owner here; ask in plain text instead.')
+      // Neutral: the server holds the questions' tool AND the services' (spec 2026-10-02, D13).
+      if (engine.mcp === undefined) return mcpFailure(req.body, "factotum's tools are not available here.")
       try {
         const reply = await engine.mcp(req.params['sessionId'] ?? '', req.body)
         return reply.kind === 'accepted' ? { status: 202 } : { status: 200, body: reply.body }
       } catch (error) {
-        return mcpFailure(req.body, `factotum could not ask the owner (${error instanceof Error ? error.message : String(error)}); ask in plain text instead.`)
+        return mcpFailure(req.body, `factotum could not run the tool (${error instanceof Error ? error.message : String(error)}).`)
       }
     },
 
@@ -542,6 +555,26 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
     'POST /sessions/:id/questions/:batch/answer': withEngine(async (engine, req) => {
       if (engine.answerSessionQuestions === undefined) return STARTING
       return fromQuestionsAnswer(await engine.answerSessionQuestions(req.params['id'] ?? '', req.params['batch'] ?? '', req.body))
+    }),
+
+    // --- background services (spec 2026-10-02-servicios-en-segundo-plano, D13) ------
+    //
+    // The OWNER's: no running turn needed, unlike the agent's tools (criterion 40). An ended service is
+    // answered too (criterion 39); one that never existed in THIS session is a 404 (criterion 8). Neither
+    // launches anything: starting a service is the agent's (§2, out). POST for stopping, like cancel.
+
+    'GET /sessions/:id/services/:serviceId/output': withEngine(async (engine, req) => {
+      const lines = parseServiceLines(req.query['lines'])
+      if (!lines.ok) return invalid(lines.message)
+      if (engine.readService === undefined) return STARTING
+      const found = await engine.readService(req.params['id'] ?? '', req.params['serviceId'] ?? '', lines.value)
+      return found === undefined ? notFound('there is no such service in that session') : { status: 200, headers: NO_STORE, body: found }
+    }),
+
+    'POST /sessions/:id/services/:serviceId/stop': withEngine(async (engine, req) => {
+      if (engine.stopService === undefined) return STARTING
+      const view = await engine.stopService(req.params['id'] ?? '', req.params['serviceId'] ?? '')
+      return view === undefined ? notFound('there is no such service in that session') : { status: 200, headers: NO_STORE, body: view }
     }),
 
     // --- attaching (spec 2026-10-01, D9) ----------------------------------------

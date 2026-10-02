@@ -7,7 +7,7 @@
  * any call still waiting for its result, and a message.
  */
 
-import type { AnsweredVia, Answer, Question, QuestionsOutcome, SessionEvent, SessionState } from '../types.ts'
+import type { AnsweredVia, Answer, Question, QuestionsOutcome, ServiceOutcome, SessionEvent, SessionState } from '../types.ts'
 
 export const READ_ONLY: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'LS'])
 export const FOLD_OVER = 5
@@ -69,6 +69,32 @@ export interface QuestionsRow {
     | undefined
 }
 
+/**
+ * A background service the agent started (spec 2026-10-02-servicios-en-segundo-plano, D14): where it was
+ * launched, and how it ended. Paired by id. A STATE DOES NOT CLOSE IT — a service outlives its turn; only
+ * its `ended` does, and the daemon writes one for every way it can end.
+ */
+export interface ServiceRow {
+  readonly kind: 'service'
+  /** The start's: `rows.tsx` keys by it. */
+  readonly seq: number
+  readonly id: string
+  readonly command: string
+  readonly description: string | undefined
+  readonly startedAt: string
+  /** The TYPE of the subagent that started it ("subagent" when its start is not in the log); the main agent, none. */
+  readonly by: string | undefined
+  readonly end:
+    | {
+        readonly outcome: ServiceOutcome
+        readonly at: string
+        readonly code?: number | undefined
+        readonly signal?: string | undefined
+        readonly reason?: string | undefined
+      }
+    | undefined
+}
+
 export type Row =
   | { readonly kind: 'message'; readonly seq: number; readonly role: 'user' | 'assistant'; readonly text: string }
   | Call
@@ -76,6 +102,7 @@ export type Row =
   | { readonly kind: 'state'; readonly seq: number; readonly at: string; readonly state: SessionState; readonly reason: string | undefined }
   | SubagentRow
   | QuestionsRow
+  | ServiceRow
 
 export function fold(events: readonly SessionEvent[]): readonly Row[] {
   const rows: Row[] = []
@@ -117,6 +144,8 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
   // even after a state closed it as interrupted (criterion 41).
   const batches = new Map<string, number>()
   const waiting = new Set<string>()
+  // Services: every row by its id. Nothing but its own `ended` closes one.
+  const servicesById = new Map<string, number>()
   events.forEach((event, at) => {
     if (hidden.has(at)) return
     switch (event.kind) {
@@ -179,6 +208,20 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
         if (index === undefined || row?.kind !== 'questions') break
         rows[index] = { ...row, end: { kind: 'settled', at: event.at, outcome: event.outcome, answers: event.answers, via: event.via } }
         waiting.delete(event.id)
+        break
+      }
+      case 'service': {
+        if (event.phase === 'started') {
+          if (servicesById.has(event.id)) break
+          servicesById.set(event.id, rows.length)
+          const by = event.task === undefined ? undefined : (agents.get(event.task) ?? 'subagent')
+          rows.push({ kind: 'service', seq: event.seq, id: event.id, command: event.command, description: event.description, startedAt: event.at, by, end: undefined })
+          break
+        }
+        const index = servicesById.get(event.id)
+        const row = index === undefined ? undefined : rows[index]
+        if (index === undefined || row?.kind !== 'service' || row.end !== undefined) break
+        rows[index] = { ...row, end: { outcome: event.outcome, at: event.at, code: event.code, signal: event.signal, reason: event.reason } }
         break
       }
       case 'tool':

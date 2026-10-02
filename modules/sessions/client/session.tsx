@@ -7,9 +7,10 @@
  * the ones on the first page of a list (criterion 36). A conversation of a project whose folder is
  * missing is not read: the screen says so and shows no log (criterion 25).
  *
- * THE LOG IS THE CURSOR. `GET sessions/:id/events?fromSeq=` every POLL_MS while it runs; a
- * reconnect is the same request with a different number, so nothing is buffered and nothing is
- * de-duplicated. Polling stops the moment it is over, and a reply starts it again.
+ * THE LOG IS THE CURSOR. `GET sessions/:id/events?fromSeq=` every POLL_MS while it runs — or while a
+ * background service it started is alive (spec 2026-10-02, criterion 35); a reconnect is the same
+ * request with a different number, so nothing is buffered and nothing is de-duplicated. Polling stops
+ * the moment it is over, and a reply starts it again.
  *
  * NO CONSOLE (criterion 37): the ask token passes through here.
  */
@@ -22,11 +23,13 @@ import { ReplyComposer } from './composer.tsx'
 import type { Api, ViewProps } from './contract.ts'
 import { messageOf } from './errors.ts'
 import { Details } from './details.tsx'
-import { fold, type SubagentRow } from './fold.ts'
+import { fold, type ServiceRow, type SubagentRow } from './fold.ts'
 import { duration, stateLabel } from './format.ts'
 import { Icon } from './icon.tsx'
 import { Log } from './rows.tsx'
 import { openSubagents } from './subagents.ts'
+import { hasLiveService, liveServices } from './services.ts'
+import { ServicesSheet } from './services-sheet.tsx'
 import { MenuButton, Strip, TopBar } from './bars.tsx'
 import { ConversationMenu } from './conversation-menu.tsx'
 import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
@@ -46,9 +49,13 @@ const STATE_GLYPH: Readonly<Record<SessionState, 'check-circle' | 'x-circle' | '
 
 /** How often the cursor asks again while a session is running. */
 const POLL_MS = 1_000
+/** After a failed read, while a service is alive (spec 2026-10-02, criterion 35). */
+const RETRY_MS = 5_000
 const ASK = 'ask'
 /** One overlay for every batch: which batch it shows is the screen's (`sheetTag`). */
 const QUESTIONS = 'questions'
+/** A service's sheet; which one is the screen's (`serviceId`). */
+const SERVICE = 'service'
 
 type Found =
   | { readonly kind: 'loading' }
@@ -158,7 +165,7 @@ function Live({
   readonly onChanged: () => void
 }) {
   const { api } = view
-  const { events, state, error, restart } = useEvents(api, id, onChanged)
+  const { events, state, error, restart, reread } = useEvents(api, id, onChanged)
   const [cancelError, setCancelError] = useState<string | undefined>(undefined)
   const [showDetails, setShowDetails] = useState(false)
   const running = state === 'running'
@@ -175,6 +182,13 @@ function Live({
   // the same ones, so the two cannot disagree (spec 2026-10-01-subagentes-visibles, D7).
   const rows = useMemo(() => activity(fold(events)), [events])
   const open = running ? openSubagents(rows) : []
+  // Alive whatever the session does: a service outlives its turn (spec 2026-10-02, D15).
+  const services = liveServices(rows)
+  const [serviceId, setServiceId] = useState<string | undefined>(undefined)
+  const openService = (target: string) => {
+    setServiceId(target)
+    view.setOverlay(SERVICE)
+  }
   // Questions (spec 2026-10-01-preguntas-con-opciones, D10, D12): the batches this session waits on, and
   // which one the sheet shows. A batch open in the LOG hides "Working…" like an ask, push or no push.
   // The pendings and the URL bring tokens; the LOG says which batches are open, so one with no token
@@ -260,7 +274,9 @@ function Live({
             setSheetTag(batch.tag)
             view.setOverlay(QUESTIONS)
           }}
+          onOpenService={openService}
         />
+        {services.length > 0 ? <ServiceLines live={services} onOpen={openService} /> : null}
         {/* A subagent at work says so, which, and for how long — also while an ask waits, since it may
             be the one asking. Without one, "Working…" as before. */}
         {open.length > 0 ? <SubagentLines open={open} /> : null}
@@ -283,6 +299,9 @@ function Live({
           </div>
         )}
         {ask === undefined ? null : <AskArea key={ask.tag} view={view} ask={ask} setup={setup} />}
+        {view.overlay === SERVICE && serviceId !== undefined ? (
+          <ServicesSheet api={api} sessionId={id} serviceId={serviceId} onClose={() => view.setOverlay(undefined)} onStopped={reread} />
+        ) : null}
         {batches.map((batch, index) => (
           <QuestionsArea
             key={batch.tag}
@@ -339,6 +358,36 @@ function SubagentLines({ open }: { readonly open: readonly SubagentRow[] }) {
           <span class="s-subline-time num" aria-hidden="true">
             {duration(row.startedAt, undefined, now)}
           </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * One line per live service, under the log, ALSO with the session at rest (criterion 35): what it is and
+ * for how long. A tap opens its sheet — never Stop directly: a stray tap would kill a long copy
+ * (requirements §7, open question 2).
+ */
+function ServiceLines({ live, onOpen }: { readonly live: readonly ServiceRow[]; readonly onOpen: (serviceId: string) => void }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <ul class="s-sublines s-svclines">
+      {live.map((row) => (
+        <li key={row.seq}>
+          <button type="button" class="s-subline s-svcline" onClick={() => onOpen(row.id)}>
+            <Icon name="terminal" size={16} />
+            <span class="s-subline-what">
+              <span class="s-subline-agent">{row.id}</span> · {row.description ?? row.command}
+            </span>
+            <span class="s-subline-time num" aria-hidden="true">
+              {duration(row.startedAt, undefined, now)}
+            </span>
+          </button>
         </li>
       ))}
     </ul>
@@ -467,6 +516,8 @@ function useEvents(api: Api, id: string, onChanged: () => void) {
   /** Bumped by a reply or a cancel, which is what restarts the polling a finished session stopped. */
   const [generation, setGeneration] = useState(0)
   const cursor = useRef(0)
+  /** Every event so far, for the poll's own question: is a service still alive? */
+  const seen = useRef<readonly SessionEvent[]>([])
   const last = useRef<SessionState | undefined>(undefined)
   const changed = useRef(onChanged)
   changed.current = onChanged
@@ -480,15 +531,20 @@ function useEvents(api: Api, id: string, onChanged: () => void) {
         if (!live) return
         if (page.events.length > 0) {
           cursor.current = page.nextSeq
-          setEvents((previous) => [...previous, ...page.events])
+          seen.current = [...seen.current, ...page.events]
+          setEvents(seen.current)
         }
         setState(page.state)
         setError(undefined)
         if (last.current !== undefined && last.current !== page.state) changed.current()
         last.current = page.state
-        if (page.state === 'running') timer = setTimeout(() => void poll(), POLL_MS)
+        // A live service keeps the log moving after the turn: its `ended` has to arrive (criterion 35).
+        if (page.state === 'running' || hasLiveService(seen.current)) timer = setTimeout(() => void poll(), POLL_MS)
       } catch (cause: unknown) {
-        if (live) setError(messageOf(cause))
+        if (!live) return
+        setError(messageOf(cause))
+        // A session at rest has no reply to restart its poll: with a service alive, try again, slower.
+        if (hasLiveService(seen.current)) timer = setTimeout(() => void poll(), RETRY_MS)
       }
     }
     void poll()
@@ -504,7 +560,10 @@ function useEvents(api: Api, id: string, onChanged: () => void) {
     changed.current()
   }, [])
 
-  return { events, state, error, restart }
+  /** Reads again WITHOUT claiming the session runs: a service the owner stopped has an `ended` to show. */
+  const reread = useCallback(() => setGeneration((n) => n + 1), [])
+
+  return { events, state, error, restart, reread }
 }
 
 /** Keeps the end of the log in view while new rows arrive, unless the owner scrolled up to read. */

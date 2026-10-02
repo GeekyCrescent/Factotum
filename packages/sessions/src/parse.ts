@@ -28,6 +28,7 @@
  */
 
 import { QUALIFIED_TOOL } from './questions/mcp.ts'
+import { isBackgroundBash, QUALIFIED_OUTPUT, QUALIFIED_START, SERVICE_OUTPUT_SUMMARY } from './services/shape.ts'
 import type { EventInput } from './types.ts'
 
 /** Generous: this is the conversation, which is the thing the owner actually reads. */
@@ -119,6 +120,12 @@ interface Block {
  */
 export class StreamTranslator {
   readonly #names = new Map<string, string>()
+  /**
+   * Calls whose tool AND result stay out of the log, by id: `ask_owner` (the `questions` event is the
+   * record), `start_service` (the `service` event is) and a background `Bash` the gate redirected — its
+   * deny is the agent being pointed elsewhere, not something that happened (spec 2026-10-02, D11).
+   */
+  readonly #dropped = new Set<string>()
   /** The subagents started and not yet ended, by task id. Lives one turn, like the translator. */
   readonly #tasks = new Set<string>()
 
@@ -193,9 +200,12 @@ export class StreamTranslator {
       if (block.type === 'tool_use' && typeof block.name === 'string') {
         if (typeof block.id === 'string') this.#names.set(block.id, block.name)
         // The questions tool is recorded by the daemon as a `questions` event, batch and answers
-        // included; the call and its result would say it twice (criterion 28). Its name is still
-        // learned above, so its result is recognised and dropped too.
-        if (block.name === QUALIFIED_TOOL) continue
+        // included; the call and its result would say it twice (criterion 28). The same for a service
+        // started, and a background Bash is not a call that ran. Remembered, so the result goes too.
+        if (block.name === QUALIFIED_TOOL || block.name === QUALIFIED_START || isBackgroundBash(block.name, block.input)) {
+          if (typeof block.id === 'string') this.#dropped.add(block.id)
+          continue
+        }
         events.push({ kind: 'tool', name: block.name, input: redactInput(block.input) })
       }
     }
@@ -209,8 +219,14 @@ export class StreamTranslator {
       if (block.type !== 'tool_result') continue
       const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : ''
       const name = this.#names.get(id) ?? 'tool'
-      if (name === QUALIFIED_TOOL) continue
+      if (this.#dropped.delete(id) || name === QUALIFIED_TOOL) continue
       const ok = block.is_error !== true
+      // A service's output is the disk's, NEVER the log's (criterion 30): what Claude read stays out, and
+      // the owner still sees that it read. Fixed even for a failure, so no shape of it can leak.
+      if (name === QUALIFIED_OUTPUT) {
+        events.push({ kind: 'result', name, ok, summary: SERVICE_OUTPUT_SUMMARY })
+        continue
+      }
       const body = textOf(block.content)
       events.push({
         kind: 'result',

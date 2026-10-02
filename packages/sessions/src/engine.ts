@@ -27,11 +27,14 @@ import { previewOf, type AskPreview } from './permissions/preview.ts'
 import { agentOf, denyBody, preToolUsePayloadSchema } from './permissions/payload.ts'
 import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 import { PAGE_SIZE } from './history.ts'
+import { createCallers } from './callers.ts'
 import { mcpConfig, serializeMcpConfig } from './questions/config.ts'
+import { handleMcp } from './questions/mcp.ts'
 import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
+import { createServices, type ServiceSeams } from './services/wire.ts'
 import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore, type RemoveOutcome } from './store.ts'
 import { createTitler } from './titler/index.ts'
@@ -90,6 +93,8 @@ export interface EngineDeps {
   readonly candidateTimeoutMs?: number
   /** How long the titler waits for `claude`. A test cannot wait thirty seconds. */
   readonly titlerTimeoutMs?: number
+  /** The services' shell and registry, so a test runs `/bin/sh` and can hold a start (spec 2026-10-02). */
+  readonly serviceSeams?: ServiceSeams
 }
 
 /** The per-session files the CLI is launched with. */
@@ -157,10 +162,14 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   /**
    * THE ONE WAY A CONVERSATION IS DELETED (D6): the history, a removed project and a removed project's
    * leftovers all come through here. The events are read in `store.read`'s own turn, before
-   * `store.remove` takes its: a conversation that may be deleted is not live, so nothing writes to its
-   * log in between — and a reply that starts in between makes `remove` answer `running`.
+   * `store.remove` takes its: a conversation that may be deleted is not live, so its agent writes
+   * nothing in between — only its services' `ended`, stopped first so no process outlives the folder
+   * (spec 2026-10-02, criterion 22). A reply that starts in between makes `remove` answer `running`.
    */
   async function removeConversation(id: string): Promise<RemoveOutcome> {
+    // A conversation that cannot be deleted keeps its services (criterion 22).
+    if (isLive(id) || (await store.readMeta(id))?.state === 'running') return 'running'
+    await services.table.stopSession(id, 'stopped')
     const owned = await ownerUploadsOf(id)
     const outcome = await store.remove(id, isLive)
     if (outcome === 'removed') await uploads.forget(owned)
@@ -205,6 +214,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     timers: setup.timers,
     timeoutMs: deps.askTimeoutMs ?? ASK_TIMEOUT_SECONDS * 1000,
   })
+  // Who made a call, by tool_use_id: the gate notes, `ask_owner` and `start_service` take (spec 2026-10-02, D8).
+  const callers = createCallers()
   // The agent's questions to the owner (spec 2026-10-01-preguntas-con-opciones, D5). The SAME window
   // as an ask: one knob.
   const questions = createQuestions({
@@ -216,6 +227,21 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     now: setup.now,
     timers: setup.timers,
     timeoutMs: deps.askTimeoutMs ?? ASK_TIMEOUT_SECONDS * 1000,
+    callers,
+  })
+  // Background services (spec 2026-10-02-servicios-en-segundo-plano, D10): all in `services/`, wired once.
+  // `services`, never `table`: that is `createParts`'.
+  const services = createServices({
+    store: { append: async (id, event) => await store.append(id, event), read: async (id, from) => await store.read(id, from) },
+    paths,
+    timers: setup.timers,
+    now: setup.now,
+    log,
+    callers,
+    liveSiteId: (sessionId) => live.get(sessionId)?.siteId,
+    lastSite: (siteId) => table.lastSite(siteId),
+    isStopped: () => stopped,
+    ...(deps.serviceSeams !== undefined ? { seams: deps.serviceSeams } : {}),
   })
 
   /** Closes a session's batches and queues their `settled`. Never rejects: a lost line is logged. */
@@ -286,6 +312,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // A process that ended by itself with a batch open (criterion 42): closed, and its `settled`
     // written BEFORE the terminal state below. After a Cancel there is nothing left to close.
     await closeQuestions(sessionId)
+    // A `start_service` half way when the CLI died: its `started` and `ended` go before the state (criterion 43).
+    await services.table.pending(sessionId)
 
     // The `result` message usually wrote the terminal state already. Appending it
     // again would make the log say the same thing twice.
@@ -338,6 +366,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
      * `finalize`, which runs when the lock is actually being released.
      */
     let reported: { state: SessionState; reason: string | undefined } | undefined
+    // A Cancel left the session `closing` for services; a new turn may start them again (D5).
+    services.table.reopen(sessionId)
 
     const run = runAgent({
       sessionId,
@@ -583,6 +613,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // in which case reconciliation owns it and has already closed it.
       const meta = await store.readMeta(id)
       if (meta?.state === 'running') {
+        await services.table.stopSession(id, 'cancelled')
         await finalize(id, meta.siteId, 'cancelled', 'cancelled while nothing was running', false)
       }
       return
@@ -592,7 +623,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // closed with their `settled` queued, THEN killed: with an await before the kill, the held call
     // would answer "cancelled" to a CLI still alive, and a process ending in that gap would finish.
     entry.cancelled = true
-    const closing = closeQuestions(id)
+    // Its services too: their `ended` queued now, before the kill; the promise also waits for their deaths.
+    const closing = Promise.all([closeQuestions(id), services.table.stopSession(id, 'cancelled')])
     entry.run.kill()
     await closing
     // WAITING IS NOT OPTIONAL. Criterion 18 says no `claude` descendant is alive
@@ -662,14 +694,15 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     const task = agentOf(body)
     const target = resolveTarget(body.tool_input, body.cwd)
     // Who is about to call `ask_owner`, by tool_use_id: the MCP call does not say (requirements §0.3).
-    questions.noteAsker({ toolName: body.tool_name, toolUseId: body.tool_use_id, agentId: task, sessionId: body.session_id })
+    callers.note({ toolName: body.tool_name, toolUseId: body.tool_use_id, agentId: task, sessionId: body.session_id })
 
     if (result.decision === 'ask') {
       const preview = previewOf(body.tool_name, body.tool_input)
       return await askTheOwner(body.session_id, meta.siteId, body.tool_name, target, preview, result.reason, task)
     }
 
-    if (result.decision === 'deny') {
+    // A `quiet` deny is a redirect, not a boundary hit: the agent is told, the log is not (spec 2026-10-02, D9).
+    if (result.decision === 'deny' && result.quiet !== true) {
       // The reason goes into the log as well as back to the agent, so the owner finds
       // out at the time rather than from the diff. An ALLOW writes nothing: a gate
       // that narrates its successes is a gate nobody reads (criterion 2).
@@ -789,6 +822,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // notices reconcile raises are NOT awaited — `announce` never is — or a slow push service
     // could get the whole module disabled at boot (spec D7).
     await reconcileLocks({ store, locks, log, now: setup.now, announce })
+    // AFTER the locks (D6): what the last daemon's services left is killed and closed. Never throws.
+    await services.reconcile()
     // AFTER reconciling, so a session a crash left `running` is read as the `failed` it now is.
     await ensureIndex()
   }
@@ -832,6 +867,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       .catch((error: unknown) => log.warn(`questions could not be closed in the log: ${error instanceof Error ? error.message : 'error'}`))
     // And every folder request: its approval can no longer be written by anybody.
     grants.closeAll(SHUTDOWN_REASON)
+    // Every service, SIGTERM with no rescue; its `ended` before the `cancelled` below. Waits for the WRITES
+    // only, never a death (spec 2026-10-02, criteria 24, 43, 44); the next start's reconcile kills the rest.
+    await services.table.stopAll(SHUTDOWN_REASON)
 
     for (const [sessionId, entry] of live) {
       try {
@@ -897,10 +935,13 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),
     removeShared: unlessStopped(folders.removeShared),
-    mcp: questions.mcp,
+    // Mounted HERE: the questions' tool and the services' on one server (spec 2026-10-02, D7).
+    mcp: async (sessionId, message) => await handleMcp({ askOwner: questions.askOwner, services: services.mcp }, sessionId, message),
     inspectQuestions: questions.inspect,
     answerQuestions: unlessStopped(questions.answer),
     sessionQuestions: async (sessionId) => (isSessionId(sessionId) ? await questions.inSession(sessionId) : []),
     answerSessionQuestions: unlessStopped(questions.answerInSession),
+    readService: async (sessionId, id, lines) => (isSessionId(sessionId) ? await services.table.read(sessionId, id, lines) : undefined),
+    stopService: unlessStopped(async (sessionId, id) => (isSessionId(sessionId) ? await services.table.stop(sessionId, id, 'owner') : undefined)),
   }
 }

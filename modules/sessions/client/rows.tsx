@@ -11,10 +11,11 @@ import { useEffect, useState } from 'preact/hooks'
 import type { Activity, Shown } from './activity.ts'
 import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
 import { inlineRefs } from './refs.ts'
-import type { Call, QuestionsRow, SubagentRow } from './fold.ts'
+import type { Call, QuestionsRow, ServiceRow, SubagentRow } from './fold.ts'
 import { describeRow, questionsLabel } from './questions.ts'
 import { clock, toolArg } from './format.ts'
 import { outcome } from './subagents.ts'
+import { serviceOutcome } from './services.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
 import { Markdown } from './markdown.tsx'
@@ -41,17 +42,20 @@ export function Log({
   running,
   asking,
   onOpenQuestions,
+  onOpenService,
 }: {
   readonly rows: readonly Shown[]
   readonly running: boolean
   readonly asking: boolean
   /** Opens the sheet of a batch still waiting, by its public id. */
   readonly onOpenQuestions?: (batchId: string) => void
+  /** Opens a service's sheet, by its id (spec 2026-10-02, D15). */
+  readonly onOpenService?: (serviceId: string) => void
 }) {
   return (
     <ol class="s-log">
       {rows.map((row) => (
-        <LogRow key={row.seq} row={row} running={running} asking={asking} onOpenQuestions={onOpenQuestions} />
+        <LogRow key={row.seq} row={row} running={running} asking={asking} onOpenQuestions={onOpenQuestions} onOpenService={onOpenService} />
       ))}
     </ol>
   )
@@ -62,11 +66,13 @@ function LogRow({
   running,
   asking,
   onOpenQuestions,
+  onOpenService,
 }: {
   readonly row: Shown
   readonly running: boolean
   readonly asking: boolean
   readonly onOpenQuestions: ((batchId: string) => void) | undefined
+  readonly onOpenService: ((serviceId: string) => void) | undefined
 }) {
   switch (row.kind) {
     case 'message':
@@ -99,7 +105,47 @@ function LogRow({
       return row.end === undefined && running ? null : <SubagentRowView row={row} running={running} />
     case 'questions':
       return <QuestionsRowView row={row} running={running} onOpen={onOpenQuestions} />
+    case 'service':
+      return <ServiceRowView row={row} onOpen={onOpenService} />
   }
+}
+
+/**
+ * A background service the agent started (spec 2026-10-02-servicios-en-segundo-plano, D15): where it was
+ * launched, what it is, and how it stands — `running` with its time until its `ended` arrives, whatever the
+ * session does. The whole row opens its sheet. Plain text: the command is the agent's.
+ */
+function ServiceRowView({ row, onOpen }: { readonly row: ServiceRow; readonly onOpen: ((serviceId: string) => void) | undefined }) {
+  // The log repaints only when an event arrives; a live row keeps its own clock, like the lines under it.
+  const [now, setNow] = useState(Date.now())
+  const alive = row.end === undefined
+  useEffect(() => {
+    if (!alive) return undefined
+    const timer = setInterval(() => setNow(Date.now()), ROW_TICK_MS)
+    return () => clearInterval(timer)
+  }, [alive])
+  const { text, tone } = serviceOutcome(row, now)
+  const what = (
+    <>
+      <span class="s-name">{row.by === undefined ? 'Service' : `${row.by} › service`}</span>
+      <span class={row.description === undefined ? 's-arg mono' : 's-arg'}>{row.description ?? row.command}</span>
+      <span class="s-sub-end">{text}</span>
+    </>
+  )
+  return (
+    <li class={`s-row s-sub s-svc s-sub-${tone}`}>
+      <span class="s-gut">
+        <Icon name={tone === 'failed' ? 'x-circle' : tone === 'running' ? 'circle-notch' : 'terminal'} size={16} />
+      </span>
+      {onOpen === undefined ? (
+        <div class="s-tool">{what}</div>
+      ) : (
+        <button type="button" class="s-tool s-svc-open" onClick={() => onOpen(row.id)}>
+          {what}
+        </button>
+      )}
+    </li>
+  )
 }
 
 /**
@@ -266,6 +312,9 @@ function SentFile({ uploadId, name, image }: { readonly uploadId: string; readon
     </a>
   )
 }
+
+/** How often a live service row moves its time. */
+const ROW_TICK_MS = 1_000
 
 /** How long "Copied" stays before it goes back to "Copy". */
 const COPIED_MS = 1_500

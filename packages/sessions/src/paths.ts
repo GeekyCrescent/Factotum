@@ -31,6 +31,13 @@ export interface SessionPaths {
   readonly settingsFile: (sessionId: string) => string
   /** The `--mcp-config` file (spec 2026-10-01-preguntas-con-opciones, D4). */
   readonly mcpConfigFile: (sessionId: string) => string
+  /**
+   * The live background services of the WHOLE daemon (spec 2026-10-02-servicios-en-segundo-plano, D6): one
+   * list, so the next start finds them without walking every session.
+   */
+  readonly servicesRegistry: string
+  /** A session's service output. INSIDE its directory, so deleting the session takes it along (criterion 22). */
+  readonly servicesDir: (sessionId: string) => string
 }
 
 export function sessionPaths(stateDir: string): SessionPaths {
@@ -50,5 +57,7 @@ export function sessionPaths(stateDir: string): SessionPaths {
     eventsFile: (sessionId) => join(sessionDir(sessionId), 'events.jsonl'),
     settingsFile: (sessionId) => join(sessionDir(sessionId), 'settings.json'),
     mcpConfigFile: (sessionId) => join(sessionDir(sessionId), 'mcp.json'),
+    servicesRegistry: join(stateDir, 'services.json'),
+    servicesDir: (sessionId) => join(sessionDir(sessionId), 'services'),
   }
 }

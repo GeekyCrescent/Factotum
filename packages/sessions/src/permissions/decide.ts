@@ -19,6 +19,7 @@
  * this gate gave before.
  */
 
+import { BACKGROUND_REDIRECT, isBackgroundBash } from '../services/shape.ts'
 import { insideSite, resolveAgainst, type Site } from '../sites.ts'
 import type { Decision } from './payload.ts'
 
@@ -52,6 +53,11 @@ export interface DecideInput {
 export interface DecisionResult {
   readonly decision: Decision
   readonly reason: string
+  /**
+   * A deny the log does not record (spec 2026-10-02-servicios-en-segundo-plano, D9; criterion 13): the
+   * redirect of a background `Bash` is the agent being pointed elsewhere, not a boundary it hit.
+   */
+  readonly quiet?: true
 }
 
 /**
@@ -87,6 +93,12 @@ export function resolveTarget(toolInput: unknown, cwd: string): string | undefin
 }
 
 export function decide(input: DecideInput): DecisionResult {
+  // BEFORE the boundary, and ALWAYS deny, never ask: the CLI kills a background Bash when the turn ends
+  // (requirements §0.1), so the only useful answer is where to go instead. Nothing for the owner to decide.
+  if (isBackgroundBash(input.toolName, input.toolInput)) {
+    return { decision: 'deny', reason: BACKGROUND_REDIRECT, quiet: true }
+  }
+
   if (!isWritingTool(input.toolName)) {
     return { decision: 'allow', reason: 'reading does not propagate' }
   }

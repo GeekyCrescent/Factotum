@@ -11,11 +11,20 @@ import {
   toolText,
   UNREACHABLE,
   type McpDeps,
+  type McpTool,
   type ToolResult,
 } from './mcp.ts'
 import { MAX_OPTIONS, MAX_QUESTIONS, type Question } from './shape.ts'
 
 const ok: ToolResult = toolText('fine', false)
+
+/** No services: the questions' tests see exactly the server they always saw. */
+const NO_SERVICES: McpDeps['services'] = {
+  tools: [],
+  call: async () => {
+    throw new Error('no service tool should be called here')
+  },
+}
 
 function deps(answer: ToolResult = ok) {
   const calls: { sessionId: string; toolUseId: string | undefined; raw: unknown }[] = []
@@ -24,6 +33,7 @@ function deps(answer: ToolResult = ok) {
       calls.push(input)
       return answer
     },
+    services: NO_SERVICES,
   }
   return { d, calls }
 }
@@ -123,11 +133,74 @@ test('askOwner throwing becomes an isError result the agent can read, never a th
     askOwner: async () => {
       throw new Error('disk full')
     },
+    services: NO_SERVICES,
   }
   const body = bodyOf(await handleMcp(d, 's', call({})))
   const result = body.result as ToolResult
   assert.equal(result.isError, true)
   assert.match(result.content[0]?.text ?? '', /could not ask/)
+})
+
+// ---------------------------------------------------------------------------
+// The services' tools arrive as DATA (spec 2026-10-02-servicios-en-segundo-plano, D7; criterion 4)
+// ---------------------------------------------------------------------------
+
+const SERVICE_TOOL: McpTool = { name: 'start_service', description: 'start one', inputSchema: { type: 'object' } }
+
+function withServices(answer: ToolResult = ok) {
+  const calls: { sessionId: string; toolUseId: string | undefined; name: string; raw: unknown }[] = []
+  const asked: unknown[] = []
+  const d: McpDeps = {
+    askOwner: async (input) => (asked.push(input), ok),
+    services: {
+      tools: [SERVICE_TOOL, { ...SERVICE_TOOL, name: 'service_output' }],
+      call: async (input) => (calls.push(input), answer),
+    },
+  }
+  return { d, calls, asked }
+}
+
+test('tools/list gives ask_owner FIRST and then every service tool, as handed', async () => {
+  const body = bodyOf(await handleMcp(withServices().d, 's', { jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+  const tools = (body.result as { tools: McpTool[] }).tools
+  assert.deepEqual(
+    tools.map((t) => t.name),
+    ['ask_owner', 'start_service', 'service_output'],
+  )
+  assert.deepEqual(tools[1], SERVICE_TOOL)
+})
+
+test('tools/call of a service tool goes to services.call with the session, the name, the args and the toolUseId', async () => {
+  const { d, calls, asked } = withServices()
+  const body = bodyOf(
+    await handleMcp(d, 'sess-1', { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'service_output', arguments: { id: 's1' }, _meta: { 'claudecode/toolUseId': 'tu9' } } }),
+  )
+  assert.deepEqual(calls, [{ sessionId: 'sess-1', toolUseId: 'tu9', name: 'service_output', raw: { id: 's1' } }])
+  assert.equal(asked.length, 0)
+  assert.deepEqual(body.result, ok)
+})
+
+test('a service tool throwing is an isError result that does not talk about asking', async () => {
+  const d: McpDeps = {
+    askOwner: async () => ok,
+    services: {
+      tools: [SERVICE_TOOL],
+      call: async () => {
+        throw new Error('EIO')
+      },
+    },
+  }
+  const result = bodyOf(await handleMcp(d, 's', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'start_service', arguments: {} } })).result as ToolResult
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /could not run start_service \(EIO\)/)
+  assert.doesNotMatch(result.content[0]?.text ?? '', /ask/)
+})
+
+test('a name that is in neither list is still -32602', async () => {
+  const { d, calls } = withServices()
+  const body = bodyOf(await handleMcp(d, 's', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'stop_everything', arguments: {} } }))
+  assert.equal((body.error as { code: number }).code, -32602)
+  assert.equal(calls.length, 0)
 })
 
 // ---------------------------------------------------------------------------

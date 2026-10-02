@@ -13,10 +13,11 @@
  */
 
 import type { Logger, NotificationMessage, Notifier, Timers } from '@factotum/core'
+import type { Callers } from '../callers.ts'
 import { isSessionId } from '../id.ts'
-import type { EventInput, McpReply, OpenBatch, QuestionsAnswer, QuestionsInspect } from '../types.ts'
+import type { EventInput, OpenBatch, QuestionsAnswer, QuestionsInspect } from '../types.ts'
 import { createBatchTable, type BatchAnswerResult, type BatchOutcome, type PendingBatch, type SettledHow } from './batches.ts'
-import { handleMcp, NOT_RUNNING, QUALIFIED_TOOL, resultFor, SHUTDOWN_TEXT, toolText, UNREACHABLE, type ToolResult } from './mcp.ts'
+import { NOT_RUNNING, resultFor, SHUTDOWN_TEXT, toolText, UNREACHABLE, type McpDeps, type ToolResult } from './mcp.ts'
 import { parseAnswers, sanitize, type Answer } from './shape.ts'
 
 export interface QuestionsDeps {
@@ -30,20 +31,18 @@ export interface QuestionsDeps {
   readonly timers: Timers
   /** The permissions' window: one knob (design D5). */
   readonly timeoutMs: number
+  /** Who made a call, shared with the services (spec 2026-10-02, D8). The gate notes; this takes and cleans. */
+  readonly callers: Callers
 }
 
 export interface Questions {
-  readonly mcp: (sessionId: string, message: unknown) => Promise<McpReply>
+  /** The held call. The ENGINE mounts `handleMcp` with it and the services' tools (spec 2026-10-02, D7). */
+  readonly askOwner: McpDeps['askOwner']
   readonly inspect: (token: string) => Promise<QuestionsInspect>
   readonly answer: (token: string, body: unknown) => Promise<QuestionsAnswer>
   /** Without a token, from a screen: by session, and by the batch's public id. */
   readonly inSession: (sessionId: string) => Promise<readonly OpenBatch[]>
   readonly answerInSession: (sessionId: string, batchId: string, body: unknown) => Promise<QuestionsAnswer>
-  /**
-   * From the gate, AFTER its decision and without touching it (guardrail 6): this tool_use_id is a
-   * subagent's. The CLI calls the tool only once the hook answered, so the note is there in time.
-   */
-  readonly noteAsker: (input: { toolName: string; toolUseId: unknown; agentId: string | undefined; sessionId: string }) => void
   /**
    * Cancel, or a process that ended: closes the session's batches NOW and queues their `settled`.
    * Returns the writes, NOT awaited by the call itself — the caller decides when to wait.
@@ -81,8 +80,6 @@ const plural = (n: number): string => `${n} question${n === 1 ? '' : 's'}`
 
 export function createQuestions(deps: QuestionsDeps): Questions {
   const batches = createBatchTable({ now: deps.now, timers: deps.timers, timeoutMs: deps.timeoutMs })
-  /** tool_use_id → the subagent that made the call. Cleared when read, and when its session ends. */
-  const askers = new Map<string, { readonly agentId: string; readonly sessionId: string }>()
 
   const settledEvent = (batch: PendingBatch, outcome: BatchOutcome): EventInput => ({
     kind: 'questions',
@@ -121,9 +118,7 @@ export function createQuestions(deps: QuestionsDeps): Questions {
     const questions = sanitize(input.raw)
     if ('error' in questions) return toolText(questions.error, true)
 
-    const noted = input.toolUseId === undefined ? undefined : askers.get(input.toolUseId)
-    if (input.toolUseId !== undefined) askers.delete(input.toolUseId)
-    const task = noted?.sessionId === input.sessionId ? noted.agentId : undefined
+    const task = deps.callers.take(input.toolUseId, input.sessionId)
 
     const { token, id, outcome, deadlineAt } = batches.open({ sessionId: input.sessionId, siteId, questions, task })
     const batch: PendingBatch = { id, sessionId: input.sessionId, siteId, questions, task, deadlineAt }
@@ -143,7 +138,7 @@ export function createQuestions(deps: QuestionsDeps): Questions {
   }
 
   return {
-    mcp: async (sessionId, message) => await handleMcp({ askOwner }, sessionId, message),
+    askOwner,
 
     inspect: async (token) => {
       const found = batches.get(token)
@@ -174,18 +169,13 @@ export function createQuestions(deps: QuestionsDeps): Questions {
     answerInSession: async (sessionId, batchId, body) =>
       judged(batches.byId(sessionId, batchId), body, (answers) => batches.answerById(sessionId, batchId, answers)),
 
-    noteAsker: ({ toolName, toolUseId, agentId, sessionId }) => {
-      if (toolName !== QUALIFIED_TOOL || agentId === undefined || typeof toolUseId !== 'string') return
-      askers.set(toolUseId, { agentId, sessionId })
-    },
-
     closeSession: (sessionId) => {
-      for (const [toolUseId, asker] of askers) if (asker.sessionId === sessionId) askers.delete(toolUseId)
+      deps.callers.forgetSession(sessionId)
       return writeClosed(batches.closeSession(sessionId), { kind: 'cancelled' })
     },
 
     closeAll: (reason) => {
-      askers.clear()
+      deps.callers.clear()
       return writeClosed(batches.closeAll(reason), { kind: 'shutdown', reason })
     },
   }

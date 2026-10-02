@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { ErrorBody, ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
 import { sessionsConfigSchema } from './config.ts'
 import { sessionsModule } from './server.ts'
-import type { CreateEngine, EngineSetup, FilesQuery, FilesResult, LaunchResult, SessionEngine } from './types.ts'
+import type { CreateEngine, EngineSetup, FilesQuery, FilesResult, LaunchResult, ServiceView, SessionEngine } from './types.ts'
 
 /**
  * A double, not the real engine. Importing the real one from this directory is exactly
@@ -1189,4 +1189,71 @@ test('POST /sessions/:id/questions/:batch/answer reaches the engine with the ses
   assert.equal(gone.status, 409)
   assert.equal((gone.body as { how: string }).how, 'expired')
   assert.equal((await call(table, sessionAnswerRoute, answer('nope'))).status, 404)
+})
+
+// ---------------------------------------------------------------------------
+// Background services: the owner's two routes (spec 2026-10-02-servicios-en-segundo-plano, D13)
+// ---------------------------------------------------------------------------
+
+const serviceView: ServiceView = {
+  id: 's1',
+  command: 'python3 -m http.server 8765',
+  description: undefined,
+  cwd: '/work',
+  pid: 4242,
+  maxMinutes: 480,
+  startedAt: '2026-10-02T12:00:00.000Z',
+  task: undefined,
+  state: 'exited',
+  endedAt: '2026-10-02T12:05:00.000Z',
+  by: undefined,
+  code: 0,
+  signal: undefined,
+  reason: undefined,
+}
+const outputRoute = 'GET /sessions/:id/services/:serviceId/output'
+const stopRoute = 'POST /sessions/:id/services/:serviceId/stop'
+const readOutput = (lines?: string) =>
+  request('GET', '/sessions/sid-1/services/s1/output', { params: { id: 'sid-1', serviceId: 's1' }, query: lines === undefined ? {} : { lines } })
+
+test('GET …/output answers the view and the lines, also of one that ended, never cached (criterion 39)', async () => {
+  const calls: unknown[][] = []
+  const { table } = await started(fakeEngine({ readService: async (...args) => (calls.push(args), { view: serviceView, lines: ['GET / 200'] }) }))
+  const res = await call(table, outputRoute, readOutput())
+  assert.equal(res.status, 200)
+  assert.equal(res.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(res.body, { view: serviceView, lines: ['GET / 200'] })
+  assert.deepEqual(calls, [['sid-1', 's1', 50]])
+  await call(table, outputRoute, readOutput('500'))
+  assert.deepEqual(calls[1], ['sid-1', 's1', 200], 'over the ceiling is clipped')
+})
+
+test('GET …/output: lines that is not a positive integer is 400; a service that never existed there is 404', async () => {
+  const { table } = await started(fakeEngine({ readService: async () => undefined }))
+  for (const lines of ['0', '-3', 'ten', '2.5']) assert.equal((await call(table, outputRoute, readOutput(lines))).status, 400, lines)
+  assert.equal((await call(table, outputRoute, readOutput())).status, 404)
+})
+
+test('POST …/stop answers the final view; 404 when there is no such service; never cached', async () => {
+  const { table } = await started(fakeEngine({ stopService: async (_id, serviceId) => (serviceId === 's1' ? { ...serviceView, state: 'stopped', by: 'owner' } : undefined) }))
+  const stop = (serviceId: string) => request('POST', `/sessions/sid-1/services/${serviceId}/stop`, { params: { id: 'sid-1', serviceId } })
+  const res = await call(table, stopRoute, stop('s1'))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers?.['cache-control'], 'no-store')
+  assert.equal((res.body as ServiceView).state, 'stopped')
+  assert.equal((await call(table, stopRoute, stop('s9'))).status, 404)
+})
+
+test('an engine without the services members answers like one still starting', async () => {
+  const { table } = await started(fakeEngine())
+  assert.equal((await call(table, outputRoute, readOutput())).status, 503)
+})
+
+test('the MCP fallbacks no longer talk about asking: they cover every tool (D13)', async () => {
+  const withoutMcp = await started(fakeEngine())
+  const none = await call(withoutMcp.table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', id: 3, method: 'tools/call' }))
+  assert.match((none.body as { result: { content: { text: string }[] } }).result.content[0]?.text ?? '', /factotum's tools are not available here/)
+  const throwing = await started(fakeEngine({ mcp: async () => Promise.reject(new Error('boom')) }))
+  const failed = await call(throwing.table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', id: 3, method: 'tools/call' }))
+  assert.match((failed.body as { result: { content: { text: string }[] } }).result.content[0]?.text ?? '', /factotum could not run the tool \(boom\)/)
 })
