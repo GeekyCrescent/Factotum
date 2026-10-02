@@ -204,6 +204,32 @@ questions, ⌘/Ctrl+Enter to send.
 
 Why it is an MCP tool served by this module, and what it depends on in the CLI: ADR-0013.
 
+### Background services
+
+Ask the agent for something that must keep running — a dev server, a long copy — and it survives the
+end of the turn. The CLI kills its own background shells when a turn ends, so factotum runs them
+instead: the agent calls `start_service`, and a background `Bash` is turned away with a message that
+points it there (it never shows in the log). The conversation gets a row where the service was started,
+and a line under the log for every one still alive — also when the conversation is at rest. Tap either
+for the last 50 lines of its output, Refresh, and **Stop**, which asks first.
+
+- **It lives until** it ends by itself, you or the agent stop it, its limit runs out (8 hours unless the
+  agent asked for less or more, at most 24), you cancel or delete the conversation, or factotum stops.
+  After a restart the row says *stopped by restart*; it is never started again for you.
+- **A later turn can read it.** "How is the server doing?" makes the agent call `service_output`; it
+  sees the real lines. The agent's service tools only work while its turn runs; yours always do.
+- **The output stays on disk**, in the conversation's folder, at most two files of 1 MiB, and is deleted
+  with the conversation. The log keeps what was run and how it ended, never what it printed — unless the
+  agent quotes it in its answer.
+- **It does not hold the project.** A new conversation or a reply starts while a service runs; two
+  servers on one port is the command's problem, and its row says *failed* with the error.
+- **It runs in your login shell, interactive**, so it finds what your terminal finds (`pnpm`, your node
+  version). Its first lines may be your prompt's start-up noise.
+- **`nohup … &` in an ordinary command is not caught**, and factotum cannot see or stop what it starts.
+  The agent is told not to; Cancel still stops it with the agent.
+
+Why the daemon owns them, and what the MCP route trusts: ADR-0014.
+
 ---
 
 ## What "may write here" means, precisely
