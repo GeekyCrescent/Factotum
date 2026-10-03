@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The drawer's mark (Mark in drawer.tsx, styled in shell.css), with the colours of tokens.css
+       written out: a favicon cannot read the page's variables. Strokes a little heavier, for 16 px. -->
+  <style>
+    .tile { fill: oklch(0.22 0.01 265); }
+    .prompt { fill: none; stroke: oklch(0.985 0.002 265); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+    .cursor { fill: oklch(0.48 0.17 268); }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: oklch(0.955 0.003 265); }
+      .prompt { stroke: oklch(0.165 0.006 265); }
+      .cursor { fill: oklch(0.55 0.17 268); }
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="9" />
+  <path class="prompt" d="M10 10.5 15.5 16 10 21.5" />
+  <rect class="cursor" x="17.5" y="19" width="6.5" height="3.4" rx="1.7" />
+</svg>

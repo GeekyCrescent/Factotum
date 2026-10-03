@@ -90,6 +90,17 @@ test('index.html links THE FILE THAT EXISTS, with the extension that types it', 
   await readPublic(MANIFEST)
 })
 
+test('the tab has an icon: index.html links a favicon that exists, as SVG', async () => {
+  // Without it the browser asks for /favicon.ico, gets the shell's HTML, and draws a blank tab.
+  const html = await readFile(join(WEB, 'index.html'), 'utf8')
+  const href = /<link rel="icon" type="image\/svg\+xml" href="([^"]+)"/.exec(html)?.[1]
+  assert.equal(href, '/favicon.svg')
+  const svg = (await readPublic('favicon.svg')).toString('utf8')
+  assert.match(svg, /^<svg[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/)
+  // It follows the browser's scheme, like the drawer's mark does.
+  assert.match(svg, /prefers-color-scheme: dark/)
+})
+
 test('registration is guarded by isSecureContext, so plain HTTP does not throw', async () => {
   // Over http (`pnpm dev`, or the bind with serve down) `register` rejects. Without
   // the guard that is an unhandled rejection on every single load.
