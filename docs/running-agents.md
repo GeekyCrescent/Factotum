@@ -136,6 +136,43 @@ message and 20 MB each; any kind of file.
 - A state folder whose path has a space in it cannot carry a reference, so attaching is off
   there, and the box says why.
 
+### Dictation
+
+**The audio is sent to Groq to be transcribed.** It is off until you give the host a key, and if you
+would rather nothing you say leaves your machine, leave it off.
+
+The microphone sits beside `+` in the box, both when launching and when replying. Tap it, speak, tap
+it again: the text lands at the end of the box, after whatever is there — including what you typed while
+it was transcribing — and **it is not sent**. Read it, fix it, send it. Up to 90 seconds per recording.
+
+To switch it on, put a [Groq](https://console.groq.com) API key in a file and point the sessions
+module at it:
+
+```sh
+printf '%s' 'gsk_…' > ~/.factotum/prod/groq-api-key && chmod 600 ~/.factotum/prod/groq-api-key
+```
+
+```json
+"sessions": {
+  "dictation": {
+    "apiKeyFile": "/Users/you/.factotum/prod/groq-api-key",
+    "vocabulary": ["Factotum", "the names you say often"]
+  }
+}
+```
+
+- **`apiKeyFile`** is an absolute path; `~` is not expanded. The key is read once, when factotum starts.
+- **`vocabulary`** (optional, up to 30 terms) biases the transcription towards words it would get wrong:
+  project names, people, jargon. **A few terms do better than many** — put the ones you say most first;
+  what does not fit the budget is dropped from the end, with a warning in the log.
+- **`language`** (optional, a two-letter code like `"es"`). Without it the language is detected; with
+  Spanish, English and a mix of both, setting it made no difference.
+- **`model`** (optional) defaults to `whisper-large-v3-turbo`.
+
+A mistake in the block switches dictation off — never the sessions — and tapping the microphone says
+why. So does a host without the block, a refused microphone, or a page that is not on https. Recording
+silence sends nothing: the provider invents a sentence over silence, so the phone does not ask it.
+
 ### Referencing project files
 
 Type `@` in the box (at the start, or after a space) and the project's folder opens above it, as in
@@ -262,7 +299,7 @@ alarm that sounds when nothing is wrong gets silenced rather than read.
 
 ---
 
-## The ten things this does NOT guarantee
+## The eleven things this does NOT guarantee
 
 Every one of these is a real limit, not a caveat.
 
@@ -313,6 +350,12 @@ slowly, but it grows.
 password because it binds to a private address. Before this feature, the worst someone
 else on your tailnet could do was read a `ping`. Now they can run code as you. If you
 share your tailnet, this is the paragraph that matters.
+
+**11. A recording is readable on disk while it is being transcribed.** The kernel writes the audio
+to `<state>/modules/sessions/.incoming/` with your umask — usually `0644` in a `0755` folder — and deletes
+it before answering, including when transcription fails. For those seconds, another user of the same
+machine could read it ([ADR-0015](adr/0015-dictation-in-the-sessions-module.md)).
+
 
 ---
 

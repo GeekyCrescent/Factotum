@@ -25,6 +25,7 @@ import type { Color, EngineSetupView } from '../types.ts'
 import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls } from './attach.tsx'
 import { canSend, uploadsOf, withRefs } from './attachments.ts'
 import type { Api } from './contract.ts'
+import { DictateButton, DictationNotice, useComposerDictation, type DictationControls } from './dictate.tsx'
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
@@ -101,10 +102,13 @@ export function LaunchComposer({
     const sent = attach.items.filter((item) => item.state === 'ready')
     const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force })
     attach.clear(sent.map((item) => item.key))
+    dictation.clear()
     onLaunched(result.sessionId)
   })
   // `@` lists the project chosen in the select; changing it re-reads the token (criterion 24).
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
+  // Before the early return below: a hook is called on every render or on none.
+  const dictation = useComposerDictation(api, s.text, s.setText, picker.textarea)
   // The project's sheet, with the drawer's categories; outside the box's form, so none of its styles reach it.
   const arrangement = useArrangement(api)
   const [choosing, setChoosing] = useState(false)
@@ -162,9 +166,10 @@ export function LaunchComposer({
         placeholder={ASK_WHAT}
         label="Launch"
         attach={attach}
-        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: entryId !== '' })}
+        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: entryId !== '' }) && !dictation.busy}
         send={() => void s.go(false)}
         picker={picker}
+        dictation={dictation}
         autoFocus
         tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
       >
@@ -224,10 +229,12 @@ export function ReplyComposer({
     const sent = attach.items.filter((item) => item.state === 'ready')
     await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent) })
     attach.clear(sent.map((item) => item.key))
+    dictation.clear()
     onSent()
   })
   const site = project === undefined ? undefined : setup.sites.find((candidate) => candidate.id === project.id)
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
+  const dictation = useComposerDictation(api, s.text, s.setText, picker.textarea)
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)
   return (
     <>
@@ -248,9 +255,10 @@ export function ReplyComposer({
         placeholder={ASK_WHAT}
         label="Reply"
         attach={attach}
-        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: true })}
+        canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: true }) && !dictation.busy}
         send={() => void s.go(false)}
         picker={picker}
+        dictation={dictation}
         autoFocus={false}
         tone={tone}
       >
@@ -274,6 +282,7 @@ function Box({
   canSend,
   send,
   picker,
+  dictation,
   autoFocus,
   tone,
   children,
@@ -287,6 +296,8 @@ function Box({
   readonly send: () => void
   /** The `@` list (spec 2026-10-01-referencias-y-tab, D9): it is asked about every key first. */
   readonly picker: PickerControls
+  /** Dictation (spec 2026-10-03): the mic beside `+`, and its notice above the box. */
+  readonly dictation: DictationControls
   readonly autoFocus: boolean
   /** The project's colour class, where the screen around it does not already set one (launching). */
   readonly tone?: string | undefined
@@ -298,6 +309,7 @@ function Box({
     <div class="s-composer">
       <Suggestions />
       <Chips attach={attach} />
+      <DictationNotice dictation={dictation} />
       <FilePicker picker={picker} />
       <form
         class={classes}
@@ -360,6 +372,7 @@ function Box({
           }}
         />
         <AttachButton attach={attach} />
+        <DictateButton dictation={dictation} />
         <span class="s-sep" aria-hidden="true" />
         {children}
         <button type="submit" class="send" aria-label={label} disabled={!canSend}>

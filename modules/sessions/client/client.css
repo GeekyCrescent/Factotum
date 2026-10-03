@@ -2808,3 +2808,63 @@
     animation: s-spin 0.9s linear infinite;
   }
 }
+
+/* --- Dictation (spec 2026-10-03-dictado-por-voz, D10) ------------------------------------------ */
+
+/* Looks like `+` (36 px), but the target is 44 px: the ::after reaches 4 px past each edge (criterion 31). */
+.s-mic {
+  position: relative;
+  flex: none;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 var(--space-1h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.s-mic::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+.s-mic:hover {
+  color: var(--text);
+}
+
+.s-mic-recording {
+  border-color: var(--err);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.s-mic-recording:hover {
+  color: var(--err);
+}
+
+.s-mic-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-small);
+}
+
+.s-mic:disabled {
+  cursor: default;
+}
+
+.s-mic-spin {
+  display: inline-grid;
+  animation: s-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .s-mic-spin {
+    animation: none;
+  }
+}

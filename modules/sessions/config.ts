@@ -104,6 +104,11 @@ export const sessionsConfigSchema = z
      * back WITHOUT parsing it, so the fields' own defaults would never apply — and tsc says so.
      */
     titles: titlesSchema.prefault({}),
+    /**
+     * Dictation (spec 2026-10-03, D3). Interpreted in start() by `dictation/config.ts`, NEVER here: a typo
+     * in it must switch off dictation, not sessions — and a failure of this schema takes the whole fragment.
+     */
+    dictation: z.unknown().optional(),
   })
   // Duplicate ids are refused here rather than resolved somewhere later: two sites
   // with one id means two directories sharing one lock, which is the one thing the
