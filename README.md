@@ -128,14 +128,17 @@ and on the screen. Reading is never asked about. Sessions persist to an append-o
 so you can close the tab and come back; conversations can be renamed, archived, deleted
 and searched, message text included.
 
-**One project, one lock, one session at a time**, which is what lets you run an agent per
-project at once. A session belongs to exactly one project, so if several of them need to
-write the same place (a notes vault is the usual case), share it once, from the app.
+**One project, one lock, one session at a time** — unless you turn on *Several sessions at
+once* for that project, which a notes vault full of short questions wants and a code
+repository does not (ADR-0016). That is what lets you run an agent per project at once. A
+session belongs to exactly one project, so if several of them need to write the same place
+(a notes vault is the usual case), share it once, from the app.
 
 Every session may write there, on top of its own project. **Nothing launches into a
 shared folder and nothing locks it**: two agents can touch the same file at the same time.
 That is the trade for having them run in parallel; the alternative is one project big
-enough to contain everything, which is one lock and therefore one agent.
+enough to contain everything, which is one lock and therefore one agent — or several, with
+the switch on, and the same trade inside it.
 
 **`Bash` is not checked against that boundary, and this is not containment.**
 [docs/running-agents.md](docs/running-agents.md) lists all ten limits, and it is worth

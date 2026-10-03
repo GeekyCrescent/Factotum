@@ -56,9 +56,10 @@ skipped, said, and kept in the file as it was.
 
 ### Shared folders, and what they cost
 
-A session belongs to **one** project, and a project holds **one** lock: that pairing is
-what lets you run an agent per project at the same time, and it is also why several
-agents cannot write one shared directory by declaring it in each of them.
+A session belongs to **one** project, and a project holds **one** lock — unless it allows
+several sessions at once (below). That pairing is what lets you run an agent per project
+at the same time, and it is also why several agents cannot write one shared directory by
+declaring it in each of them.
 
 For that, share it once, from Projects (*Shared folders*), with the same approval on the
 phone. Every session may then write there, in addition to its own project. Shared
@@ -73,6 +74,23 @@ index).
 The alternative, if that trade is wrong for you, is one project containing everything.
 That keeps a single lock over the whole tree, which means one agent at a time. Both are
 legitimate; pick the one that matches how you work.
+
+### Several sessions at once in one project
+
+A project can opt out of its lock: **Projects → Edit → *Several sessions at once***. With
+it on, any number of sessions run there together, launched or replied to, and none is a
+`409` for the others. It is off for every project until you turn it on, and changing it
+asks for no approval — it moves no boundary: each session still writes only in that
+project and the shared folders (ADR-0016).
+
+What it costs is the same as a shared folder: **nothing keeps two agents apart.** Two
+sessions editing one file, the last write wins, silently. That is fine for a notes vault
+full of unrelated short questions; keep it off for a code repository.
+
+- **Turning it off stops nobody.** The running ones carry on; until the last ends, a new
+  launch or reply there is a `409` naming the oldest.
+- **A launch beside running siblings skips the freshness check**, because their edits make
+  the tree dirty every time. The first line of its log says so.
 
 ### The catalog
 
@@ -314,7 +332,8 @@ credentials. The gate is a control, not a sandbox. A tool-permission prefix like
 `Bash(git push:*)` is escaped by `cd x && git push`.
 
 **3. There is no isolation between concurrent sessions** beyond one lock per site. Two
-sessions in two different sites share everything else.
+sessions in two different sites share everything else, and in a project that allows
+several sessions at once, two sessions in the SAME site share even that.
 
 **4. There is no reversibility beyond git.** There is no worktree per session; what an
 agent writes inside a site is reviewed with `git diff` and undone with `git checkout`.
@@ -385,6 +404,6 @@ machine could read it ([ADR-0015](adr/0015-dictation-in-the-sessions-module.md))
 | `sessions` disabled in `factotum doctor` | The config fragment is wrong; the reason is printed |
 | A project marked *Folder missing* | Its folder is not there. It launches nothing until it is back; the others are fine |
 | Add project answers *no device can approve* | No phone is subscribed. Subscribe one in Device, or add it by hand with the daemon stopped |
-| `409` when launching | The site already has a live session, or it is a git repo that is dirty or behind. The screen offers to go to the session, cancel it, or launch anyway |
+| `409` when launching | The site already has a live session (and does not allow several at once, or you just turned that off), or it is a git repo that is dirty or behind. The screen offers to go to the session, cancel it, or launch anyway |
 | A session `failed` right after a restart | It was running when the daemon stopped. The log is intact up to the last event that was written |
 | A denied write you did not expect | The site is probably narrower than the job. Widen the site rather than widening the gate |
