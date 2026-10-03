@@ -68,6 +68,10 @@ export const projectEntrySchema = siteSchema.extend({
   // COSMETIC, SO IT NEVER COSTS THE PROJECT: a category the reader cannot use is dropped, and the
   // project loads without one. Skipping the entry over it would take away where an agent may write.
   category: categoryIdSchema.optional().catch(undefined),
+  // SEVERAL SESSIONS AT ONCE (spec 2026-10-03-varias-sesiones-por-proyecto, D5). `true` or nothing:
+  // anything else — a `false`, a "yes" typed by hand — reads as off and the project still loads, and
+  // the next write drops the key. `z.boolean()` would keep a hand-typed `false` for ever.
+  concurrent: z.literal(true).optional().catch(undefined),
 })
 
 export const sharedEntrySchema = z.object({ path: boundaryPath, addedAt: z.string().optional() })
@@ -339,7 +343,10 @@ function apply(current: Registry, edit: RegistryEdit, at: string): Registry | st
     case 'set-project': {
       const found = current.projects.find((p) => p.id === edit.id)
       if (found === undefined) return `no project "${edit.id}"`
-      const entry = projectEntrySchema.safeParse({ ...found, name: edit.name, color: edit.color })
+      // `name` and `color` are rewritten WHOLE, as always; `concurrent` is kept when not sent, so a
+      // client that does not know it turns nothing off. `false` drops the key (stripUndefined below).
+      const concurrent = edit.concurrent === undefined ? found.concurrent : edit.concurrent ? true : undefined
+      const entry = projectEntrySchema.safeParse({ ...found, name: edit.name, color: edit.color, concurrent })
       if (!entry.success) return describe(entry.error)
       return { ...current, projects: current.projects.map((p) => (p.id === edit.id ? stripUndefined(entry.data) : p)) }
     }

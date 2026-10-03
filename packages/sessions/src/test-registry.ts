@@ -79,7 +79,16 @@ function apply(view: RegistryView, edit: RegistryEdit): RegistryView {
     case 'add-project':
       return { ...view, projects: [...view.projects, { id: edit.id, path: edit.path, name: edit.name, color: edit.color }] }
     case 'set-project':
-      return { ...view, projects: view.projects.map((p) => (p.id === edit.id ? { ...p, name: edit.name, color: edit.color } : p)) }
+      // The real store's rule for `concurrent` (spec 2026-10-03, D5): not sent keeps it, false drops it.
+      return {
+        ...view,
+        projects: view.projects.map((p) => {
+          if (p.id !== edit.id) return p
+          const { concurrent: kept, ...rest } = p
+          const concurrent = edit.concurrent === undefined ? kept : edit.concurrent ? true : undefined
+          return { ...rest, name: edit.name, color: edit.color, ...(concurrent === true ? { concurrent } : {}) }
+        }),
+      }
     case 'remove-project':
       return { ...view, projects: view.projects.filter((p) => p.id !== edit.id) }
     case 'add-shared':

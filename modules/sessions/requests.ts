@@ -52,6 +52,8 @@ const projectRequestSchema = z.object({
 const projectPatchSchema = z.object({
   name: nameSchema.optional(),
   color: colorSchema.optional(),
+  // Several sessions at once (spec 2026-10-03-varias-sesiones-por-proyecto, D5). Not sent = unchanged.
+  concurrent: z.boolean().optional(),
 })
 
 /** A category's name: trimmed, and REQUIRED — a header with nothing in it is not one to find. */
@@ -107,10 +109,12 @@ export function parseSharedRequest(body: unknown, home: string): Parsed<string> 
   return parsed.success ? { ok: true, value: parsed.data.path } : { ok: false, message: first(parsed.error) }
 }
 
-export function parseProjectPatch(body: unknown): Parsed<{ name: string | undefined; color: Color | undefined }> {
+export function parseProjectPatch(
+  body: unknown,
+): Parsed<{ name: string | undefined; color: Color | undefined; concurrent: boolean | undefined }> {
   const parsed = projectPatchSchema.safeParse(record(body))
   if (!parsed.success) return { ok: false, message: first(parsed.error) }
-  return { ok: true, value: { name: parsed.data.name, color: parsed.data.color } }
+  return { ok: true, value: { name: parsed.data.name, color: parsed.data.color, concurrent: parsed.data.concurrent } }
 }
 
 /**

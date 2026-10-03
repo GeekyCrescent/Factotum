@@ -238,7 +238,9 @@ export function createFolders(deps: FoldersDeps): Folders {
       // Looked up BEFORE anything else (criterion 11): an unknown id is a 404, whatever the body.
       if (table.entry(id) === undefined) return { outcome: 'unknown' }
       const result = await registry.update(async (current) =>
-        current.projects.some((p) => p.id === id) ? { kind: 'set-project', id, name: patch.name, color: patch.color } : { refused: `no project "${id}"` },
+        current.projects.some((p) => p.id === id)
+          ? { kind: 'set-project', id, name: patch.name, color: patch.color, concurrent: patch.concurrent }
+          : { refused: `no project "${id}"` },
       )
       if (result.kind !== 'ok') return change(result.reason)
       await table.apply(result.registry, false)
@@ -268,7 +270,8 @@ export function createFolders(deps: FoldersDeps): Folders {
      */
     removeProject: async (id) => {
       if (table.entry(id) === undefined) return { outcome: 'unknown' }
-      const acquired = await deps.locks.acquire(id, deps.removing, deps.now().toISOString())
+      // EXCLUSIVE, always: it loses to any session, one or N (spec 2026-10-03, criterion 16).
+      const acquired = await deps.locks.acquire(id, deps.removing, deps.now().toISOString(), () => 'exclusive')
       if (!acquired.ok) {
         return change(acquired.heldBy === undefined ? `project "${id}" is locked and the lock cannot be read` : 'a session is running in that project')
       }
@@ -284,7 +287,7 @@ export function createFolders(deps: FoldersDeps): Folders {
         }
         return { outcome: 'ok', removedSessions }
       } finally {
-        await deps.locks.release(id)
+        await deps.locks.release(id, deps.removing)
       }
     },
 

@@ -16,6 +16,12 @@ test('the lock is per SITE, because the lock is what makes a site exclusive', ()
   assert.equal(sessionPaths(ROOT).lockFile('work'), join(ROOT, 'locks', 'work.json'))
 })
 
+test('the new layout: one directory per site, one file per holder (spec 2026-10-03, D2)', () => {
+  const paths = sessionPaths(ROOT)
+  assert.equal(paths.lockDir('work'), join(ROOT, 'locks', 'work'))
+  assert.equal(paths.holderFile('work', 's1'), join(ROOT, 'locks', 'work', 's1.json'))
+})
+
 test('a session owns a directory with its three files', () => {
   const paths = sessionPaths(ROOT)
   const id = '019965aa-0000-7000-8000-000000000001'

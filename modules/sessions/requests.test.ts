@@ -52,9 +52,15 @@ test('a shared request is a path and only a path', () => {
 })
 
 test('a patch sets a name and a colour, and empty clears the name', () => {
-  assert.deepEqual(parseProjectPatch({ name: ' A ', color: 1 }), { ok: true, value: { name: 'A', color: 1 } })
-  assert.deepEqual(parseProjectPatch({ name: '' }), { ok: true, value: { name: undefined, color: undefined } })
+  assert.deepEqual(parseProjectPatch({ name: ' A ', color: 1 }), { ok: true, value: { name: 'A', color: 1, concurrent: undefined } })
+  assert.deepEqual(parseProjectPatch({ name: '' }), { ok: true, value: { name: undefined, color: undefined, concurrent: undefined } })
   assert.equal(parseProjectPatch({ color: 0 }).ok, false)
+})
+
+test('a patch carries concurrent as a boolean, leaves it out when not sent, and refuses anything else (criterion 15)', () => {
+  assert.deepEqual(parseProjectPatch({ name: 'A', concurrent: true }), { ok: true, value: { name: 'A', color: undefined, concurrent: true } })
+  assert.deepEqual(parseProjectPatch({ concurrent: false }), { ok: true, value: { name: undefined, color: undefined, concurrent: false } })
+  assert.equal(parseProjectPatch({ concurrent: 'yes' }).ok, false)
 })
 
 test('title, archived, ids and the search query', () => {

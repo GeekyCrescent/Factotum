@@ -453,13 +453,63 @@ test('A LAUNCH WHILE A PROJECT IS BEING REMOVED is refused “being removed”; 
   await locks.acquire('web', REMOVING, new Date().toISOString())
   const refused = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
   assert.deepEqual(refused, { outcome: 'rejected', reason: 'this project is being removed' })
-  await locks.release('web')
+  await locks.release('web', REMOVING)
 
   const live = await engine.launch({ siteId: 'web', entryId: 'free', text: 'linger', force: false })
   const liveId = live.outcome === 'started' ? live.sessionId : ''
   const busy = await engine.removeProject('web')
   assert.equal(busy.outcome, 'conflict')
   await engine.cancel(liveId)
+})
+
+test('THE SWITCH persists with the whole body, a rename keeps it, false drops it, and the view says so (criterion 12)', async () => {
+  const { engine, registry, root } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+
+  assert.equal((await engine.updateProject('web', { name: 'Web', color: 3, concurrent: true })).outcome, 'ok')
+  assert.deepEqual(registry.current().projects[0], { id: 'web', path: join(root, 'web'), name: 'Web', color: 3, concurrent: true })
+  assert.equal((await engine.projects()).projects[0]?.concurrent, true)
+
+  await engine.updateProject('web', { name: 'Web app', color: 3 })
+  assert.equal(registry.current().projects[0]?.concurrent, true, 'a body without it changes nothing')
+
+  await engine.updateProject('web', { name: 'Web app', color: 3, concurrent: false })
+  assert.equal('concurrent' in (registry.current().projects[0] ?? {}), false)
+  assert.equal((await engine.projects()).projects[0]?.concurrent, false)
+})
+
+test('the patch is WHOLE for name and colour: { concurrent } alone clears them, as any partial patch always did', async () => {
+  const { engine, registry, root } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+  await engine.updateProject('web', { name: 'Web', color: 3 })
+
+  await engine.updateProject('web', { name: undefined, color: undefined, concurrent: true })
+
+  const project = registry.current().projects[0]
+  assert.deepEqual([project?.name, project?.color, project?.concurrent], [undefined, undefined, true])
+})
+
+test('DELETING a concurrent project with ONE or THREE live sessions is a 409; a shared launch while deleting is “being removed” (criterion 16)', async () => {
+  const { engine, root, stateDir } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+  await engine.updateProject('web', { name: undefined, color: undefined, concurrent: true })
+  const linger = async () => {
+    const launched = await engine.launch({ siteId: 'web', entryId: 'free', text: 'linger', force: false })
+    assert.equal(launched.outcome, 'started')
+    return launched.outcome === 'started' ? launched.sessionId : ''
+  }
+
+  const ids = [await linger()]
+  assert.deepEqual(await engine.removeProject('web'), { outcome: 'conflict', reason: 'a session is running in that project' })
+  ids.push(await linger(), await linger())
+  assert.deepEqual(await engine.removeProject('web'), { outcome: 'conflict', reason: 'a session is running in that project' })
+  for (const id of ids) await engine.cancel(id)
+
+  const locks = new SiteLocks(sessionPaths(stateDir))
+  await locks.acquire('web', REMOVING, new Date().toISOString())
+  const refused = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
+  assert.deepEqual(refused, { outcome: 'rejected', reason: 'this project is being removed' })
+  await locks.release('web', REMOVING)
 })
 
 test('REMOVED PROJECTS: “Delete history” deletes their conversations; a registered id or an unknown one is a 404 (criterion 28)', async () => {

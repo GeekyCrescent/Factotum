@@ -11,7 +11,10 @@ import { join } from 'node:path'
 
 export interface SessionPaths {
   readonly root: string
-  /** One file per SITE, not per session: the lock is what makes a site exclusive. */
+  /**
+   * One DIRECTORY per site, one file per holder (spec 2026-10-03-varias-sesiones-por-proyecto, D2). A
+   * site whose project allows several sessions at once holds several; any other holds at most one.
+   */
   readonly locks: string
   readonly sessions: string
   /**
@@ -24,7 +27,16 @@ export interface SessionPaths {
    * `sessions/`, not inside a session: on a LAUNCH the file is sent before the session exists.
    */
   readonly uploads: string
+  /**
+   * THE OLD LAYOUT, one file per site (`locks/<siteId>.json`). Nothing writes it any more; it is read
+   * and released so a daemon from before the change leaves nothing behind. Kept under its name so the
+   * tests that write it — an unreadable lock, a lock of the old layout — still do.
+   */
   readonly lockFile: (siteId: string) => string
+  /** `locks/<siteId>/`: the holders of one site. Never collides with `lockFile` — a site id has no dot. */
+  readonly lockDir: (siteId: string) => string
+  /** `locks/<siteId>/<holderId>.json`: one holder — a session id, or `removing`. */
+  readonly holderFile: (siteId: string, holderId: string) => string
   readonly sessionDir: (sessionId: string) => string
   readonly metaFile: (sessionId: string) => string
   readonly eventsFile: (sessionId: string) => string
@@ -52,6 +64,8 @@ export function sessionPaths(stateDir: string): SessionPaths {
     titler: join(stateDir, 'titler'),
     uploads: join(stateDir, 'uploads'),
     lockFile: (siteId) => join(locks, `${siteId}.json`),
+    lockDir: (siteId) => join(locks, siteId),
+    holderFile: (siteId, holderId) => join(locks, siteId, `${holderId}.json`),
     sessionDir,
     metaFile: (sessionId) => join(sessionDir(sessionId), 'meta.json'),
     eventsFile: (sessionId) => join(sessionDir(sessionId), 'events.jsonl'),

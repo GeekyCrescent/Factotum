@@ -482,3 +482,62 @@ test('colorOf accepts the six tones and nothing else', () => {
   assert.equal(colorOf(0), undefined)
   assert.equal(colorOf('2'), undefined)
 })
+
+// ---------------------------------------------------------------------------
+// concurrent (spec 2026-10-03-varias-sesiones-por-proyecto, D5)
+// ---------------------------------------------------------------------------
+
+type DiskProject = { id: string; concurrent?: unknown; name?: unknown; color?: unknown }
+
+async function projectOnDisk(file: string, id: string): Promise<DiskProject | undefined> {
+  return ((await onDisk(file)).projects as DiskProject[]).find((p) => p.id === id)
+}
+
+const setConcurrent = (id: string, concurrent: boolean | undefined) => async (current: RegistryView) => {
+  const found = current.projects.find((p) => p.id === id)
+  return { kind: 'set-project' as const, id, name: found?.name, color: found?.color, concurrent }
+}
+
+test('set-project with concurrent: true stores it and keeps the name and the colour (criterion 12)', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(setConcurrent('b', true))
+  assert.deepEqual(await projectOnDisk(file, 'b'), { id: 'b', path: '/Users/me/b', name: 'Bee', color: 2, concurrent: true })
+})
+
+test('a set-project WITHOUT concurrent keeps what is there: a rename does not turn it off (criterion 12)', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(setConcurrent('a', true))
+  await store.update(rename('a', 'Ay'))
+  assert.equal((await projectOnDisk(file, 'a'))?.concurrent, true)
+})
+
+test('concurrent: false REMOVES the key — on disk there is true or nothing (criterion 12)', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(setConcurrent('a', true))
+  await store.update(setConcurrent('a', false))
+  assert.equal('concurrent' in ((await projectOnDisk(file, 'a')) ?? {}), false)
+})
+
+test('anything but true on disk reads as off, the project loads, and the next write drops it (criterion 15)', async () => {
+  const content = {
+    version: 1,
+    projects: [
+      { id: 'a', path: '/Users/me/a', concurrent: 'yes' },
+      { id: 'b', path: '/Users/me/b', concurrent: false },
+    ],
+    shared: [],
+  }
+  const { file, store } = await withFile(content)
+  const loaded = await store.load()
+  assert.equal(loaded.kind, 'ok')
+  if (loaded.kind !== 'ok') return
+  assert.deepEqual(loaded.registry.projects.map((p) => [p.id, p.concurrent]), [['a', undefined], ['b', undefined]])
+  await store.update(rename('b', 'Bee'))
+  assert.equal('concurrent' in ((await projectOnDisk(file, 'b')) ?? {}), false)
+})
+
+test('the patch is WHOLE for name and colour: a set-project with only concurrent clears them, as any partial one did', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(async () => ({ kind: 'set-project' as const, id: 'b', name: undefined, color: undefined, concurrent: true }))
+  assert.deepEqual(await projectOnDisk(file, 'b'), { id: 'b', path: '/Users/me/b', concurrent: true })
+})

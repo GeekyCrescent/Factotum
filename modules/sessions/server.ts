@@ -317,7 +317,9 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       return { status: 200, headers: NO_STORE, body: status }
     }),
 
-    // Name and colour: nothing an agent can use, so no approval (guardrail 4).
+    // Name and colour: nothing an agent can use, so no approval (guardrail 4). Nor does `concurrent`
+    // need one: several sessions at once moves no boundary — each still writes only in this project
+    // and the shared folders (spec 2026-10-03-varias-sesiones-por-proyecto, criterion 14).
     'POST /projects/:id': withEngine(async (engine, req) => {
       const id = req.params['id']
       if (!isSiteId(id)) return invalid('that is not a project id')
