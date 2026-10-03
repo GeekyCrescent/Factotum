@@ -232,6 +232,21 @@ test('a disk error in one acquire does not break the site queue for the next (cr
   assert.deepEqual(await locks.acquire('work', 's2', AT, SHARED), { ok: true })
 })
 
+test('a site directory that cannot be READ fails CLOSED: acquire rejects instead of seeing no holders', async () => {
+  const { paths, locks } = await fresh()
+  await locks.acquire('work', 's1', AT)
+  const { chmod } = await import('node:fs/promises')
+  await chmod(paths.lockDir('work'), 0o000)
+  try {
+    await assert.rejects(() => locks.acquire('work', 's2', AT), /EACCES/)
+    await assert.rejects(() => locks.holders('work'), /EACCES/)
+  } finally {
+    await chmod(paths.lockDir('work'), 0o755)
+  }
+  // And the queue survived it.
+  assert.equal((await locks.acquire('work', 's3', AT)).ok, false)
+})
+
 test('all() lists one entry per holder in the new layout, and drops an empty site directory', async () => {
   const { paths, locks } = await fresh()
   await locks.acquire('work', 's1', AT, SHARED)

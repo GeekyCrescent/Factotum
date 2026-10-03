@@ -1724,6 +1724,26 @@
   box-shadow: 0 0 0 3px var(--ring);
 }
 
+/* Forced colours drop box-shadow and repaint backgrounds: give the track a border and the focus a real outline. */
+@media (forced-colors: active) {
+  .s-switch span {
+    border: 1px solid CanvasText;
+  }
+
+  .s-switch span::after {
+    background: CanvasText;
+  }
+
+  .s-switch[aria-checked='true'] span {
+    background: Highlight;
+  }
+
+  .s-switch:focus-visible span {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .s-switch span {
     transition: background-color 160ms ease;

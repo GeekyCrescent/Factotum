@@ -307,6 +307,19 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   }
 
   /**
+   * The lock of a launch or a reply that never reached its agent. A failure here is LOGGED: thrown from
+   * a `finally`, it would replace the real outcome or the real error. The lock it leaves closes the
+   * project until the next start, which is the side that fails safe.
+   */
+  async function giveBack(siteId: string, holderId: string): Promise<void> {
+    try {
+      await locks.release(siteId, holderId)
+    } catch (error) {
+      log.warn(`the lock of ${holderId} on "${siteId}" could not be released; the next start will: ${error instanceof Error ? error.message : 'error'}`)
+    }
+  }
+
+  /**
    * Terminal state, in the order design D9 requires: the meta FIRST, the lock LAST.
    *
    * Dying between the two leaves a lock too many, which reconciliation cleans up on
@@ -345,8 +358,15 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // the same end again. Before the lock: `turnOver` in the tests waits on the lock.
     if (notify) announce(sessionId, siteId, state, reason)
     // ITS lock only: in a project with several sessions the siblings keep theirs (criterion 10).
-    await locks.release(siteId, sessionId)
-    live.delete(sessionId)
+    // A release that fails is LOGGED, not thrown: the meta is already terminal, so the lock left behind
+    // is row 4 of the next boot's reconcile — and `live` must lose the session either way.
+    try {
+      await locks.release(siteId, sessionId)
+    } catch (error) {
+      log.warn(`the lock of session ${sessionId} could not be released; the next start will: ${error instanceof Error ? error.message : 'error'}`)
+    } finally {
+      live.delete(sessionId)
+    }
   }
 
   function stateOf(
@@ -481,7 +501,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // THE OTHER HOLDERS of this project's lock, counted right after winning it (spec 2026-10-03, D7).
       // Not `live`: a session enters it only after its own `git fetch`, so two launches a second apart
       // would both count none. Only possible in a concurrent project — an exclusive acquire lost.
-      const siblings = (await locks.holders(site.id)).length - 1
+      // Never below 0: a directory read that failed (EMFILE) must fail TOWARDS checking, not skip it unsaid.
+      const siblings = Math.max(0, (await locks.holders(site.id)).length - 1)
       // With siblings the tree is dirty with THEIR edits, and the warning would fire every time — the
       // reason `reply` does not check either. What is not checked is said, in the log, below.
       const checks = site.isRepo && siblings === 0
@@ -539,7 +560,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       titler.start(sessionId, stripRefs(input.text, uploads.root))
       return { outcome: 'started', sessionId }
     } finally {
-      if (!handedOver) await locks.release(input.siteId, sessionId)
+      if (!handedOver) await giveBack(input.siteId, sessionId)
     }
   }
 
@@ -620,7 +641,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       handedOver = true
       return { outcome: 'started', sessionId: id }
     } finally {
-      if (!handedOver) await locks.release(meta.siteId, id)
+      if (!handedOver) await giveBack(meta.siteId, id)
     }
   }
 

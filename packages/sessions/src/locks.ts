@@ -306,12 +306,19 @@ export class SiteLocks {
     }
   }
 
+  /**
+   * FAILS CLOSED. Only "there is no directory" means no holders: `ENOENT`, or `ENOTDIR` when a file
+   * sits where it should be (the `mkdir` that follows then fails loudly). Anything else — `EMFILE`,
+   * `EACCES`, `EIO` — THROWS: read as "nobody here", it would grant an exclusive lock next to a live
+   * session, or a launch inside a project being deleted. `#readLegacy` takes the same stance.
+   */
   async #readHolders(siteId: string): Promise<HolderRead> {
     let names: string[]
     try {
       names = await readdir(this.#paths.lockDir(siteId))
-    } catch {
-      return { ids: [], byId: new Map(), readable: [] }
+    } catch (error) {
+      if (codeOf(error) === 'ENOENT' || codeOf(error) === 'ENOTDIR') return { ids: [], byId: new Map(), readable: [] }
+      throw error
     }
     const byId = new Map<string, LockInfo | undefined>()
     for (const name of names) {

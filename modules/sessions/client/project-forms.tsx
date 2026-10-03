@@ -202,7 +202,6 @@ export function AddFolderDialog({
   )
 }
 
-/** Name and colour, and — at the bottom, apart — deleting the project. */
 /**
  * Several sessions at once (spec 2026-10-03-varias-sesiones-por-proyecto, D9). A real switch — a
  * button with `role="switch"` — because there was none in the client to reuse. The help says the two
@@ -227,6 +226,7 @@ function ConcurrentSwitch({ on, onToggle }: { readonly on: boolean; readonly onT
   )
 }
 
+/** Name, colour and several sessions at once, and — at the bottom, apart — deleting the project. */
 export function EditProjectDialog({
   id,
   name,
