@@ -3,7 +3,7 @@
  *
  * Phosphor Icons, MIT (c) 2023 Phosphor Icons — paths copied from @phosphor-icons/core 2.1.1 (the six
  * added by spec 2026-09-29, and the three for ordering projects, from @phosphor-icons/react 2.1.10,
- * same paths),
+ * same paths; and `microphone` and `stop` for dictation, spec 2026-10-03, from @phosphor-icons/core 2.1.1),
  * weights noted per glyph, with every coordinate ROUNDED TO ONE DECIMAL: on a 256-unit grid drawn at
  * 20 px the difference is under a hundredth of a pixel, and it keeps the bundle under its ceiling
  * (spec 2026-09-18, criterion 30). Copied, not installed: a package for ~20 paths is the dependency this
@@ -49,6 +49,8 @@ export const ICONS = {
   'dots-six-vertical': 'M108,60A16,16,0,1,1,92,44,16,16,0,0,1,108,60Zm56,16a16,16,0,1,0-16-16A16,16,0,0,0,164,76ZM92,112a16,16,0,1,0,16,16A16,16,0,0,0,92,112Zm72,0a16,16,0,1,0,16,16A16,16,0,0,0,164,112ZM92,180a16,16,0,1,0,16,16A16,16,0,0,0,92,180Zm72,0a16,16,0,1,0,16,16A16,16,0,0,0,164,180Z', // bold
   'folder-simple-plus': 'M216,72H130.7L102.9,51.2a16.1,16.1,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.9A15.1,15.1,0,0,0,232,200.9V88A16,16,0,0,0,216,72Zm0,128H40V64H93.3L123.2,86.4A8,8,0,0,0,128,88h88Zm-56-56a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V152H104a8,8,0,0,1,0-16h16V120a8,8,0,0,1,16,0v16h16A8,8,0,0,1,160,144Z', // regular
   'folder-open': 'M245,110.6A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.7L102.9,51.2a16.1,16.1,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208h0a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.6-5.5l28.5-85.5A16.1,16.1,0,0,0,245,110.6ZM93.3,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.8a16,16,0,0,0-15.2,10.9L40,158.7V64Zm112,136H43.1l26.7-80H232Z', // regular
+  'microphone': 'M128,176a48,48,0,0,0,48-48V64a48,48,0,0,0-96,0v64A48,48,0,0,0,128,176ZM96,64a32,32,0,0,1,64,0v64a32,32,0,0,1-64,0Zm40,143.6V240a8,8,0,0,1-16,0V207.6A80.1,80.1,0,0,1,48,128a8,8,0,0,1,16,0,64,64,0,0,0,128,0,8,8,0,0,1,16,0A80.1,80.1,0,0,1,136,207.6Z', // regular — spec 2026-10-03 (dictation)
+  'stop': 'M200,40H56A16,16,0,0,0,40,56V200a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,160H56V56H200V200Z', // regular — spec 2026-10-03 (dictation)
 } as const
 
 export type SessionIcon = keyof typeof ICONS
