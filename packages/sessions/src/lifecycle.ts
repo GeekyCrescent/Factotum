@@ -23,7 +23,7 @@
  */
 
 import type { Logger } from '@factotum/core'
-import { isAlive, type LockInfo } from './locks.ts'
+import { isAlive, type LockEntry } from './locks.ts'
 import type { SessionStore } from './store.ts'
 import type { SessionState } from './types.ts'
 
@@ -34,10 +34,14 @@ import type { SessionState } from './types.ts'
  * function honest — it walks and it releases, it never acquires — and it lets a test
  * watch the ORDER of the release against the kill, which is the one thing about this
  * function that is easy to get wrong and impossible to notice.
+ *
+ * The unit is ONE LOCK, not one site (spec 2026-10-03-varias-sesiones-por-proyecto, D3): a project
+ * that allows several sessions at once holds one lock per session, and each is released alone.
  */
 export interface LockTable {
-  readonly all: () => Promise<readonly { readonly siteId: string; readonly info: LockInfo | undefined }[]>
-  readonly release: (siteId: string) => Promise<void>
+  readonly all: () => Promise<readonly LockEntry[]>
+  /** The lock being processed, whichever layout it is in. */
+  readonly releaseEntry: (entry: LockEntry) => Promise<void>
 }
 
 export interface ReconcileDeps {
@@ -74,7 +78,7 @@ function killGroupDefault(pid: number): void {
 }
 
 /**
- * Startup reconciliation, walking `locks/`.
+ * Startup reconciliation, walking `locks/`, ONE LOCK AT A TIME.
  *
  * Every row below is one row of the design's table, in its order, and the ORDER WITHIN
  * A ROW IS THE PART THAT MATTERS: for a live orphan the group is killed FIRST, the
@@ -85,29 +89,36 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
   const alive = deps.alive ?? isAlive
   const kill = deps.killGroup ?? killGroupDefault
   const at = deps.now().toISOString()
+  const entries = await deps.locks.all()
 
-  for (const { siteId, info } of await deps.locks.all()) {
-    // ROW 1 — another daemon owns this environment. Touch NOTHING and stop.
-    //
-    // It should not be reachable: two daemons on one environment collide on the port
-    // first. If it ever is, fighting over locks is the worst available move, so this
-    // gives up loudly instead. (A pid the operating system has since handed to an
-    // unrelated process would look alive here. That is the known cost of asking about
-    // a pid, it is the same cost the predecessor pays, and the port is the real mutual
-    // exclusion — this is a second opinion, not the mechanism.)
-    if (info !== undefined && alive(info.pid)) {
-      deps.log.warn(
-        `lock on site "${siteId}" is held by live pid ${info.pid}; another daemon may own ` +
-          'this environment, so nothing was reconciled',
-      )
-      return
-    }
+  // ROW 1 — another daemon owns this environment. Touch NOTHING and stop.
+  //
+  // A PASS OF ITS OWN, BEFORE ANY OTHER ROW. With several locks, checking it inside the loop could
+  // give up after some locks were already released — "nothing" would have been "some" (criterion 20).
+  //
+  // It should not be reachable: two daemons on one environment collide on the port
+  // first. If it ever is, fighting over locks is the worst available move, so this
+  // gives up loudly instead. (A pid the operating system has since handed to an
+  // unrelated process would look alive here. That is the known cost of asking about
+  // a pid, it is the same cost the predecessor pays, and the port is the real mutual
+  // exclusion — this is a second opinion, not the mechanism.)
+  const held = entries.find((entry) => entry.info !== undefined && alive(entry.info.pid))
+  if (held?.info !== undefined) {
+    deps.log.warn(
+      `lock on site "${held.siteId}" is held by live pid ${held.info.pid}; another daemon may own ` +
+        'this environment, so nothing was reconciled',
+    )
+    return
+  }
+
+  for (const entry of entries) {
+    const { siteId, info } = entry
 
     // ROW 6 — a lock with no readable holder. Nothing can be said about a session, so
     // release and move on.
     if (info === undefined) {
       deps.log.warn(`released an unreadable lock on site "${siteId}"`)
-      await deps.locks.release(siteId)
+      await deps.locks.releaseEntry(entry)
       continue
     }
 
@@ -119,14 +130,14 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
       deps.log.warn(
         `released the lock on site "${siteId}": session ${info.sessionId} has no readable meta.json`,
       )
-      await deps.locks.release(siteId)
+      await deps.locks.releaseEntry(entry)
       continue
     }
 
     // ROW 4 — already terminal. The daemon died between writing the state and
     // releasing the lock. Orphan lock, nothing else to do.
     if (meta.state !== 'running') {
-      await deps.locks.release(siteId)
+      await deps.locks.releaseEntry(entry)
       continue
     }
 
@@ -160,6 +171,6 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
     deps.announce?.(info.sessionId, siteId, 'failed', reason)
 
     // LAST. Always last.
-    await deps.locks.release(siteId)
+    await deps.locks.releaseEntry(entry)
   }
 }

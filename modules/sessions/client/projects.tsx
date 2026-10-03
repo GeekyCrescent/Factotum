@@ -373,10 +373,11 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
           id={open.project.id}
           name={open.project.name}
           color={open.project.color}
+          concurrent={open.project.concurrent}
           onClose={close}
           onDelete={() => setOpen({ kind: 'delete', project: open.project })}
-          onSave={async (name: string | undefined, color: Color | undefined) => {
-            await api.post(`projects/${open.project.id}`, { name: name ?? '', color })
+          onSave={async (name: string | undefined, color: Color | undefined, concurrent: boolean) => {
+            await api.post(`projects/${open.project.id}`, { name: name ?? '', color, concurrent })
             setOpen(undefined)
             await refresh()
           }}

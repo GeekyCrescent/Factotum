@@ -202,11 +202,36 @@ export function AddFolderDialog({
   )
 }
 
-/** Name and colour, and — at the bottom, apart — deleting the project. */
+/**
+ * Several sessions at once (spec 2026-10-03-varias-sesiones-por-proyecto, D9). A real switch — a
+ * button with `role="switch"` — because there was none in the client to reuse. The help says the two
+ * things the owner accepted: agents may overwrite each other, and turning it off stops nobody.
+ */
+function ConcurrentSwitch({ on, onToggle }: { readonly on: boolean; readonly onToggle: (on: boolean) => void }) {
+  return (
+    <div class="s-toggle">
+      <div>
+        <b id="s-concurrent-label">Several sessions at once</b>
+        <small id="s-concurrent-help">
+          Several agents can work here at the same time, and may overwrite each other if they edit the same file. Turning it off
+          does not stop the ones already running.
+        </small>
+      </div>
+      <button type="button" class="s-switch" role="switch" aria-checked={on} aria-labelledby="s-concurrent-label"
+        aria-describedby="s-concurrent-help"
+        onClick={() => onToggle(!on)}>
+        <span aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
+/** Name, colour and several sessions at once, and — at the bottom, apart — deleting the project. */
 export function EditProjectDialog({
   id,
   name,
   color,
+  concurrent,
   onSave,
   onDelete,
   onClose,
@@ -214,12 +239,14 @@ export function EditProjectDialog({
   readonly id: string
   readonly name: string | undefined
   readonly color: Color | undefined
-  readonly onSave: (name: string | undefined, color: Color | undefined) => Promise<void>
+  readonly concurrent: boolean
+  readonly onSave: (name: string | undefined, color: Color | undefined, concurrent: boolean) => Promise<void>
   readonly onDelete: () => void
   readonly onClose: () => void
 }) {
   const [draft, setDraft] = useState(name ?? '')
   const [tone, setTone] = useState<Color | undefined>(color)
+  const [several, setSeveral] = useState(concurrent)
   const { busy, error, submit } = useSubmit()
   return (
     <Sheet id="s-edit-project" title={`Edit ${name ?? id}`} onClose={onClose}>
@@ -227,7 +254,7 @@ export function EditProjectDialog({
         class="s-dialog"
         onSubmit={(event) => {
           event.preventDefault()
-          void submit(() => onSave(draft.trim() === '' ? undefined : draft.trim(), tone))
+          void submit(() => onSave(draft.trim() === '' ? undefined : draft.trim(), tone, several))
         }}
       >
         <label class="s-field">
@@ -238,6 +265,7 @@ export function EditProjectDialog({
           <span>Color</span>
           <ColorPicker value={tone} onPick={setTone} />
         </div>
+        <ConcurrentSwitch on={several} onToggle={setSeveral} />
         {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
         <Buttons busy={busy} disabled={false} action="Save" onCancel={onClose} />
         <div class="s-danger-zone">

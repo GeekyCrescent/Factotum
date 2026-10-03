@@ -38,6 +38,7 @@ const project = (id: string, sessions: SessionSummary[], extra: Partial<ProjectV
   total: sessions.length,
   archived: 0,
   category: undefined,
+  concurrent: false,
   ...extra,
 })
 

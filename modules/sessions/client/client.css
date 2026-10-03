@@ -1654,6 +1654,106 @@
   gap: var(--space-2);
 }
 
+/* Several sessions at once (spec 2026-10-03): the words on the left, the switch on the right. */
+.s-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.s-toggle div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.s-toggle b {
+  font-weight: 500;
+}
+
+.s-toggle small {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+/* The hit area is the full --hit; the track inside it is smaller. */
+.s-switch {
+  flex: none;
+  display: grid;
+  align-items: center;
+  width: 52px;
+  min-height: var(--hit);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.s-switch span {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--line-strong);
+}
+
+.s-switch span::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.s-switch[aria-checked='true'] span {
+  background: var(--accent);
+}
+
+.s-switch[aria-checked='true'] span::after {
+  transform: translateX(18px);
+}
+
+.s-switch:focus-visible {
+  outline: 0;
+}
+
+.s-switch:focus-visible span {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Forced colours drop box-shadow and repaint backgrounds: give the track a border and the focus a real outline. */
+@media (forced-colors: active) {
+  .s-switch span {
+    border: 1px solid CanvasText;
+  }
+
+  .s-switch span::after {
+    background: CanvasText;
+  }
+
+  .s-switch[aria-checked='true'] span {
+    background: Highlight;
+  }
+
+  .s-switch:focus-visible span {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .s-switch span {
+    transition: background-color 160ms ease;
+  }
+
+  .s-switch span::after {
+    transition: transform 160ms ease;
+  }
+}
+
 .s-danger-zone {
   padding-top: var(--space-4);
   display: flex;

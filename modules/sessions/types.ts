@@ -86,6 +86,11 @@ export interface ProjectEntry {
   readonly addedAt?: string | undefined
   /** The id of the owner's category it sits in. One that names no category counts as none. */
   readonly category?: string | undefined
+  /**
+   * Several sessions at once in this project (spec 2026-10-03-varias-sesiones-por-proyecto). `true` or
+   * absent: on disk a project that does not allow it has no key at all.
+   */
+  readonly concurrent?: true | undefined
 }
 
 /**
@@ -124,7 +129,14 @@ export type RegistryEdit =
       readonly name?: string | undefined
       readonly color?: Color | undefined
     }
-  | { readonly kind: 'set-project'; readonly id: string; readonly name?: string | undefined; readonly color?: Color | undefined }
+  | {
+      readonly kind: 'set-project'
+      readonly id: string
+      readonly name?: string | undefined
+      readonly color?: Color | undefined
+      /** `undefined` KEEPS what is there, unlike `name` and `color` (spec 2026-10-03-varias-sesiones-por-proyecto, D5). */
+      readonly concurrent?: boolean | undefined
+    }
   | { readonly kind: 'remove-project'; readonly id: string }
   | { readonly kind: 'add-shared'; readonly path: string }
   | { readonly kind: 'remove-shared'; readonly path: string }
@@ -579,6 +591,8 @@ export interface ProjectView {
   readonly archived: number
   /** Its category's id, as the registry holds it. The client treats one naming none as none. */
   readonly category: string | undefined
+  /** Several sessions at once allowed here (spec 2026-10-03-varias-sesiones-por-proyecto, D9). */
+  readonly concurrent: boolean
 }
 
 export interface SharedView {
@@ -652,6 +666,8 @@ export interface ProjectRequest {
 export interface ProjectPatch {
   readonly name: string | undefined
   readonly color: Color | undefined
+  /** `undefined` leaves it as it is: a client that does not send it changes nothing. */
+  readonly concurrent?: boolean | undefined
 }
 
 /**

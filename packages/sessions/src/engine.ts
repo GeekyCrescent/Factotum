@@ -14,12 +14,12 @@ import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
-import { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
+import { checkFreshness, describeFreshness, isFresh, type FreshnessDeps } from './freshness.ts'
 import { uuidv7 } from './id.ts'
 import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
 import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './lifecycle.ts'
 import { noticeFor } from './notices.ts'
-import { SiteLocks } from './locks.ts'
+import { REMOVING_HOLDER, SiteLocks, type LockMode } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { createAskTable, type AnswerResult as TableAnswer } from './permissions/asks.ts'
 import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
@@ -42,6 +42,7 @@ import { ownerUploadIds, promptOf, stripRefs } from './uploads/refs.ts'
 import { createUploadStore } from './uploads/store.ts'
 import type {
   EngineSetup,
+  FreshnessReport,
   EngineSetupView,
   EventInput,
   EventPage,
@@ -95,6 +96,8 @@ export interface EngineDeps {
   readonly titlerTimeoutMs?: number
   /** The services' shell and registry, so a test runs `/bin/sh` and can hold a start (spec 2026-10-02). */
   readonly serviceSeams?: ServiceSeams
+  /** The freshness check `launch` runs, so a test can hold one without a network (spec 2026-10-03, D7). */
+  readonly freshness?: (deps: FreshnessDeps) => Promise<FreshnessReport>
 }
 
 /** The per-session files the CLI is launched with. */
@@ -104,7 +107,7 @@ interface SessionFiles {
 }
 
 /** What a lock holds while a project is being deleted: not a session id, so nothing mistakes it. */
-export const REMOVING = 'removing'
+export const REMOVING = REMOVING_HOLDER
 
 interface Live {
   readonly run: AgentRun
@@ -127,7 +130,18 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const paths = sessionPaths(setup.stateDir)
   const store = new SessionStore(paths, setup.now)
   const locks = new SiteLocks(paths)
+  const freshness = deps.freshness ?? checkFreshness
   await store.ensureRoots()
+
+  /**
+   * How a launch or a reply in this project asks for its lock (spec 2026-10-03, D4). A THUNK, read
+   * inside the lock's queue, so a switch turned a moment ago is the one that counts. A project that is
+   * not registered is exclusive: nothing widens by accident.
+   */
+  const modeFor =
+    (siteId: string) =>
+    (): LockMode =>
+      table.entry(siteId)?.concurrent === true ? 'shared' : 'exclusive'
 
   const live = new Map<string, Live>()
   const isLive = (id: string): boolean => live.has(id)
@@ -293,6 +307,19 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   }
 
   /**
+   * The lock of a launch or a reply that never reached its agent. A failure here is LOGGED: thrown from
+   * a `finally`, it would replace the real outcome or the real error. The lock it leaves closes the
+   * project until the next start, which is the side that fails safe.
+   */
+  async function giveBack(siteId: string, holderId: string): Promise<void> {
+    try {
+      await locks.release(siteId, holderId)
+    } catch (error) {
+      log.warn(`the lock of ${holderId} on "${siteId}" could not be released; the next start will: ${error instanceof Error ? error.message : 'error'}`)
+    }
+  }
+
+  /**
    * Terminal state, in the order design D9 requires: the meta FIRST, the lock LAST.
    *
    * Dying between the two leaves a lock too many, which reconciliation cleans up on
@@ -330,8 +357,16 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // AFTER the meta: a crash from here on leaves a terminal meta, so reconcile does not announce
     // the same end again. Before the lock: `turnOver` in the tests waits on the lock.
     if (notify) announce(sessionId, siteId, state, reason)
-    await locks.release(siteId)
-    live.delete(sessionId)
+    // ITS lock only: in a project with several sessions the siblings keep theirs (criterion 10).
+    // A release that fails is LOGGED, not thrown: the meta is already terminal, so the lock left behind
+    // is row 4 of the next boot's reconcile — and `live` must lose the session either way.
+    try {
+      await locks.release(siteId, sessionId)
+    } catch (error) {
+      log.warn(`the lock of session ${sessionId} could not be released; the next start will: ${error instanceof Error ? error.message : 'error'}`)
+    } finally {
+      live.delete(sessionId)
+    }
   }
 
   function stateOf(
@@ -443,7 +478,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     if (!entry.ok) return { outcome: 'rejected', reason: entry.reason }
 
     const sessionId = uuidv7(setup.now().getTime())
-    const acquired = await locks.acquire(input.siteId, sessionId, setup.now().toISOString())
+    const acquired = await locks.acquire(input.siteId, sessionId, setup.now().toISOString(), modeFor(input.siteId))
     if (!acquired.ok) {
       const holder = acquired.heldBy
       if (holder === undefined) {
@@ -463,8 +498,16 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // that follows hands the screen a session id with no session behind it.
     let handedOver = false
     try {
-      if (site.isRepo && !input.force) {
-        const report = await checkFreshness({ cwd: site.path, timers: setup.timers })
+      // THE OTHER HOLDERS of this project's lock, counted right after winning it (spec 2026-10-03, D7).
+      // Not `live`: a session enters it only after its own `git fetch`, so two launches a second apart
+      // would both count none. Only possible in a concurrent project — an exclusive acquire lost.
+      // Never below 0: a directory read that failed (EMFILE) must fail TOWARDS checking, not skip it unsaid.
+      const siblings = Math.max(0, (await locks.holders(site.id)).length - 1)
+      // With siblings the tree is dirty with THEIR edits, and the warning would fire every time — the
+      // reason `reply` does not check either. What is not checked is said, in the log, below.
+      const checks = site.isRepo && siblings === 0
+      if (checks && !input.force) {
+        const report = await freshness({ cwd: site.path, timers: setup.timers })
         if (!isFresh(report)) return { outcome: 'stale', freshness: report }
       }
 
@@ -483,8 +526,15 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         prompt: promptOf(input.text, uploads.root).slice(0, PROMPT_CHARS),
       })
 
-      if (site.isRepo && input.force) {
-        const report = await checkFreshness({ cwd: site.path, timers: setup.timers })
+      if (site.isRepo && siblings > 0) {
+        await store.append(sessionId, {
+          kind: 'message',
+          role: 'user',
+          text: `freshness not checked: ${siblings} other session(s) are running in this project`,
+        })
+      }
+      if (checks && input.force) {
+        const report = await freshness({ cwd: site.path, timers: setup.timers })
         // The report becomes the first thing in the log, so "I launched over a warning"
         // is recoverable later rather than a thing the owner has to remember.
         await store.append(sessionId, {
@@ -510,7 +560,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       titler.start(sessionId, stripRefs(input.text, uploads.root))
       return { outcome: 'started', sessionId }
     } finally {
-      if (!handedOver) await locks.release(input.siteId)
+      if (!handedOver) await giveBack(input.siteId, sessionId)
     }
   }
 
@@ -546,7 +596,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // The lock is ASKED FOR AGAIN. Holding it across a finished session would block the
     // site for ever; not asking would let a second turn work on a site another session
     // has changed underneath it. So resuming can be refused, exactly like launching.
-    const acquired = await locks.acquire(meta.siteId, id, setup.now().toISOString())
+    const acquired = await locks.acquire(meta.siteId, id, setup.now().toISOString(), modeFor(meta.siteId))
     if (!acquired.ok) {
       const holder = acquired.heldBy
       if (holder === undefined) {
@@ -591,7 +641,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       handedOver = true
       return { outcome: 'started', sessionId: id }
     } finally {
-      if (!handedOver) await locks.release(meta.siteId)
+      if (!handedOver) await giveBack(meta.siteId, id)
     }
   }
 

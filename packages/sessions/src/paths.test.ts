@@ -12,8 +12,14 @@ test('every path hangs off the root it was handed, and nothing composes one from
   assert.equal(paths.sessions, join(ROOT, 'sessions'))
 })
 
-test('the lock is per SITE, because the lock is what makes a site exclusive', () => {
+test('lockFile is the OLD layout, one file per site: still read and released, never written', () => {
   assert.equal(sessionPaths(ROOT).lockFile('work'), join(ROOT, 'locks', 'work.json'))
+})
+
+test('the new layout: one directory per site, one file per holder (spec 2026-10-03, D2)', () => {
+  const paths = sessionPaths(ROOT)
+  assert.equal(paths.lockDir('work'), join(ROOT, 'locks', 'work'))
+  assert.equal(paths.holderFile('work', 's1'), join(ROOT, 'locks', 'work', 's1.json'))
 })
 
 test('a session owns a directory with its three files', () => {

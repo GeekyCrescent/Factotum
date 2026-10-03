@@ -192,6 +192,7 @@ export function createHistory(deps: HistoryDeps): History {
           total: active.length,
           archived: all.length - active.length,
           category: entry.category,
+          concurrent: entry.concurrent === true,
         }
       })
       return {
