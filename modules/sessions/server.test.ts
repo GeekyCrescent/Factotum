@@ -1257,3 +1257,38 @@ test('the MCP fallbacks no longer talk about asking: they cover every tool (D13)
   const failed = await call(throwing.table, mcpRoute, mcpCall('s', { jsonrpc: '2.0', id: 3, method: 'tools/call' }))
   assert.match((failed.body as { result: { content: { text: string }[] } }).result.content[0]?.text ?? '', /factotum could not run the tool \(boom\)/)
 })
+
+// ---------------------------------------------------------------------------
+// Dictation (spec 2026-10-03)
+// ---------------------------------------------------------------------------
+
+test('a broken dictation block does NOT cost the sessions: it starts, launches, and says why dictation is off (criterion 4)', async () => {
+  const warnings: string[] = []
+  const ctx = {
+    ...context(EMPTY),
+    config: { ...EMPTY, dictation: { apiKeyFile: 42 } } as never,
+    log: { info: () => undefined, warn: (m: string) => void warnings.push(m), error: () => undefined },
+  }
+  const module = sessionsModule(async () => fakeEngine(), () => 'http://host:7778')
+  const table = module.routes!(ctx)
+  await module.start!(ctx)
+
+  const launched = await call(table, 'POST /sessions', request('POST', 'sessions', { body: { siteId: 'a', entryId: 'b', text: 'hi' } }))
+  assert.equal(launched.status, 200)
+  assert.equal((launched.body as { sessionId: string }).sessionId, 'sid-1')
+  const dictation = await call(table, 'GET /dictation', request('GET', 'dictation'))
+  assert.equal(dictation.status, 200)
+  assert.match((dictation.body as { off: string }).off, /apiKeyFile/)
+  assert.equal(warnings.filter((w) => w.includes('dictation')).length, 1)
+})
+
+test('without a dictation block it is off, NOT_CONFIGURED; before start() it is 503 (criteria 5, 7)', async () => {
+  const module = sessionsModule(async () => fakeEngine(), () => 'http://host:7778')
+  const table = module.routes!(context(EMPTY))
+  const before = await call(table, 'GET /dictation', request('GET', 'dictation'))
+  assert.equal(before.status, 503)
+  await module.start!(context(EMPTY))
+  const after = await call(table, 'GET /dictation', request('GET', 'dictation'))
+  assert.equal(after.status, 200)
+  assert.match((after.body as { off: string }).off, /not configured/)
+})

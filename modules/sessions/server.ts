@@ -23,6 +23,8 @@ import { homedir } from 'node:os'
 import { uploadRoute, type FactotumModule, type ModuleContext, type ModuleRequest, type ModuleResponse, type RouteTable } from '@factotum/core'
 import { sessionsConfigSchema, UPLOAD_MAX_BYTES, type SessionsConfig } from './config.ts'
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
+import { dictationRoutes } from './dictation/routes.ts'
+import { createDictation, type DictationState } from './dictation/service.ts'
 import {
   isSiteId,
   parseArchived,
@@ -46,6 +48,8 @@ import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, Question
  */
 interface EngineHolder {
   engine?: SessionEngine
+  /** Filled by start(), like the engine; undefined before, and the routes answer 503 (spec 2026-10-03, D8). */
+  dictation?: DictationState
 }
 
 const STARTING: ModuleResponse = {
@@ -683,6 +687,9 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
         }
       }
     },
+
+    // Dictation (spec 2026-10-03): its own folder, which imports nothing from here (D1).
+    ...dictationRoutes(() => holder.dictation),
   }
 }
 
@@ -731,6 +738,8 @@ export function sessionsModule(
         seed: { sites: ctx.config.sites, sharedPaths: ctx.config.sharedPaths },
         now: ctx.now,
       })
+      // Never throws, so its place costs nothing: a bad block switches off dictation, not sessions (D3).
+      holder.dictation = await createDictation({ raw: ctx.config.dictation, log: ctx.log, timers: ctx.timers })
       const engine = await createEngine({
         stateDir: ctx.stateDir,
         registry,
