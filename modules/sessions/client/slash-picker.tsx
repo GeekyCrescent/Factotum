@@ -98,6 +98,12 @@ export function useSlash(input: {
     )
   }, [api, siteId, siteKey])
 
+  // A selection belongs to one opening of the list: a fresh `/` starts at the top, never on a row that
+  // was chosen earlier and is out of sight. Narrowing inside the same token keeps it (`open` stays true).
+  useEffect(() => {
+    if (!open) setSelectedKey(undefined)
+  }, [open])
+
   // The first time it opens with this project. Closing or another project: what is on its way no longer counts.
   useEffect(() => {
     if (!open || (answer?.key === siteKey && answer.view !== undefined)) return
@@ -152,6 +158,7 @@ export function useSlash(input: {
     const insertion = insertionFor(row.entry, mode)
     if (insertion.kind === 'agent') onAgent?.(insertion.name)
     const next = applyInsertion(text, token.end, insertion)
+    setSelectedKey(undefined)
     setLanding({ caret: next.caret })
     setText(next.text)
   }
