@@ -23,6 +23,7 @@ const session = (
   prompt,
   title,
   autoTitle,
+  agent: undefined,
   archived: false,
 })
 

@@ -22,7 +22,7 @@ export function Details({
   const path = setup.sites.find((site) => site.id === summary?.siteId)?.path
   const rows: readonly (readonly [string, string, boolean?])[] = [
     ['Conversation', summary === undefined ? '' : nameOf(summary)],
-    ['Run', entry?.label ?? summary?.entryId ?? ''],
+    ['Run', `${entry?.label ?? summary?.entryId ?? ''}${summary?.agent === undefined ? '' : ` as ${summary.agent}`}`],
     ['Started', summary === undefined ? '' : started(summary.startedAt)],
     ['Duration', summary === undefined ? '' : duration(summary.startedAt, summary.endedAt, now)],
     ['Turns', summary === undefined ? '' : String(summary.turns)],
