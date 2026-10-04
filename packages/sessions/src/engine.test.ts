@@ -662,6 +662,7 @@ test('cancelling a session that a dead daemon left behind closes it anyway', asy
     startedAt: new Date().toISOString(),
     sitePath: undefined,
     prompt: undefined,
+    agent: undefined,
   })
 
   await engine.cancel(orphan)
@@ -739,7 +740,7 @@ test('reconcile through the facade releases a lock left by a dead daemon', async
   const { engine, stateDir, locks } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const stale = '019965aa-0000-7000-8000-0000000000bb'
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   await engine.reconcile()
@@ -1019,7 +1020,7 @@ test('a session that died WITH THE DAEMON is announced on the way back up, with 
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000cc'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await engine.reconcile()
@@ -1035,7 +1036,7 @@ test('a session stop() already closed is NOT announced a second time by reconcil
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const closed = '019965aa-0000-7000-8000-0000000000dd'
-  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
+  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
   // What stop() leaves: a terminal meta over a lock it deliberately did not release.
   await store.patchMeta(closed, (m) => ({ ...m, state: 'cancelled', reason: 'the daemon was shutting down' }))
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', closed, new Date().toISOString())
@@ -1050,7 +1051,7 @@ test('reconcile does not wait on a notice — a hanging push service cannot disa
   const { engine, stateDir } = await world({ notify: hanging })
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000ee'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await Promise.race([engine.reconcile(), new Promise((_, reject) => setTimeout(() => reject(new Error('reconcile waited')), 2_000))])
@@ -1589,7 +1590,7 @@ test('THE INDEX SEES WHAT RECONCILE WROTE: a session a crash left running lists 
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   await store.ensureRoots()
   const stale = uuidv7()
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: siteDir, prompt: 'left running' })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: siteDir, agent: undefined, prompt: 'left running' })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   const engine = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
@@ -1760,7 +1761,7 @@ test('REMOVED PROJECTS: conversations whose project is not registered are counte
   await store.ensureRoots()
   for (let i = 0; i < 3; i++) {
     const id = uuidv7()
-    await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'old' })
+    await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'old' })
     await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
   }
   const engine = await engineOver(stateDir, [{ id: 'a', path: a }])
@@ -2009,4 +2010,100 @@ test('a reply announces too, because it spawns the CLI again', async () => {
   await engine.reply(id, 'announce')
   await until(async () => engine.announced() !== undefined, 'the reply announced')
   await settle(engine, id)
+})
+
+// ---------------------------------------------------------------------------
+// Launching as an agent (spec 2026-10-03-skills-a-mano, D3: criteria 6-10)
+// ---------------------------------------------------------------------------
+
+/** The argv of every turn of a session, as the fake CLI recorded them. */
+async function argvOf(stateDir: string, id: string): Promise<string[][]> {
+  const text = await readFile(join(sessionPaths(stateDir).sessionDir(id), 'argv.log'), 'utf8')
+  return text.trim().split('\n').map((line) => JSON.parse(line) as string[])
+}
+
+/** A world whose CLI has already announced its list (`code-reviewer` is in it). */
+async function worldWithList(): Promise<World> {
+  const w = await world()
+  await finished(w.engine, 'work', 'announce')
+  assert.ok(w.engine.announced()?.agents.includes('code-reviewer'))
+  return w
+}
+
+/** Waits until the lock of `work` is back, i.e. the turn is truly over and `patchMeta` has run. */
+async function endOfTurn(engine: SessionEngine, id: string): Promise<void> {
+  await settle(engine, id)
+  const locks = engineLocks.get(engine)
+  const deadline = Date.now() + 15_000
+  while (locks !== undefined && (await locks.heldBy('work')) !== undefined) {
+    if (Date.now() > deadline) throw new Error(`the lock on work never came back for ${id}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+test('a launch with an agent passes --agent and saves it in meta.json (criterion 6)', async () => {
+  const { engine, stateDir, store } = await worldWithList()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, agent: 'code-reviewer' })
+  assert.equal(result.outcome, 'started', JSON.stringify(result))
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await endOfTurn(engine, id)
+
+  const [first] = await argvOf(stateDir, id)
+  assert.ok(first)
+  const at = first.indexOf('--agent')
+  assert.notEqual(at, -1, 'the first turn carries --agent')
+  assert.equal(first[at + 1], 'code-reviewer')
+  assert.equal((await store.readMeta(id))?.agent, 'code-reviewer')
+  await engine.stop()
+})
+
+test('a reply does not pass --agent again, and meta.agent is still there after the turn ends (criterion 7)', async () => {
+  const { engine, stateDir, store } = await worldWithList()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, agent: 'code-reviewer' })
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  assert.notEqual(id, '', JSON.stringify(result))
+  await endOfTurn(engine, id)
+
+  const reply = await engine.reply(id, QUICK)
+  assert.equal(reply.outcome, 'started', JSON.stringify(reply))
+  await endOfTurn(engine, id)
+
+  const turns = await argvOf(stateDir, id)
+  assert.equal(turns.length, 2)
+  assert.equal(turns[1]?.includes('--agent'), false, 'the reply resumes: the thread already is the agent')
+  assert.ok(turns[1]?.includes('--resume'))
+  // patchMeta ran when the turn ended, twice: the field has to survive both.
+  assert.equal((await store.readMeta(id))?.agent, 'code-reviewer')
+  assert.equal(JSON.parse(await readFile(sessionPaths(stateDir).metaFile(id), 'utf8')).agent, 'code-reviewer')
+  await engine.stop()
+})
+
+test('an agent the CLI did not announce, or a list not known yet, is rejected with its reason (criterion 8)', async () => {
+  const unknown = await world()
+  const early = await unknown.engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, agent: 'code-reviewer' })
+  assert.deepEqual(early, { outcome: 'rejected', reason: 'the list of agents is not known yet' })
+
+  const { engine } = await worldWithList()
+  const missing = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, agent: 'x' })
+  assert.deepEqual(missing, { outcome: 'rejected', reason: 'no agent "x" in the list the CLI announced' })
+  // A rejection leaves no lock behind: the same site launches next.
+  assert.equal((await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })).outcome, 'started')
+  await unknown.engine.stop()
+  await engine.stop()
+})
+
+test('an agent with an entry that is not a free prompt is rejected (criterion 9)', async () => {
+  const { engine } = await worldWithList()
+  const result = await engine.launch({ siteId: 'work', entryId: 'review', text: QUICK, force: false, agent: 'code-reviewer' })
+  assert.deepEqual(result, { outcome: 'rejected', reason: 'an agent can only be launched with a free-prompt entry' })
+  await engine.stop()
+})
+
+test('a launch without an agent has no --agent and an undefined meta.agent (criterion 10)', async () => {
+  const { engine, stateDir, store } = await worldWithList()
+  const id = await finished(engine, 'work', QUICK)
+  const [first] = await argvOf(stateDir, id)
+  assert.equal(first?.includes('--agent'), false)
+  assert.equal((await store.readMeta(id))?.agent, undefined)
+  await engine.stop()
 })

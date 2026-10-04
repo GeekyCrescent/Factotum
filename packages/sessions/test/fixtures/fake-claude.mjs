@@ -41,6 +41,8 @@
  *   "announce"        that `init` once.
  *   "announce-twice"  that `init` twice, as a CLI that restarted its stream would.
  *
+ * Every session turn also appends its argv, as one JSON line, to `argv.log` in the session's directory.
+ *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
  * own directory, where no session ever runs, so that file exists only if the titler was started —
@@ -132,6 +134,10 @@ function subagent() {
 }
 
 function session() {
+  // The argv of each turn, one JSON line, next to the `--settings` file (the session's directory):
+  // so a test can tell a first turn's `--agent` from a reply's without it (spec 2026-10-03, criterion 7).
+  const settings = args.indexOf('--settings')
+  if (settings !== -1) appendFileSync(join(dirname(args[settings + 1] ?? '.'), 'argv.log'), `${JSON.stringify(args)}\n`)
 
 const toolUse = {
   type: 'assistant',

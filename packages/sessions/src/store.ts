@@ -67,6 +67,12 @@ export interface SessionMeta {
    */
   readonly prompt: string | undefined
   /**
+   * The agent this session was launched as (`--agent <name>`), or `undefined` for a plain one. Same
+   * rule as `sitePath`: `string | undefined` AND REQUIRED, and listed in `#readMeta`. It is written
+   * once, at launch; a reply never passes `--agent` and the session still is that agent.
+   */
+  readonly agent: string | undefined
+  /**
    * The owner's title (spec 2026-09-29, D4). Listed in `#readMeta` like every field here, or the
    * next `patchMeta` — a finalize, a reconcile — would erase it (criterion 29).
    */
@@ -184,6 +190,7 @@ export class SessionStore {
         // would have fallen into it if the type had allowed it to be optional (TS2741 caught it).
         sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
         prompt: typeof json.prompt === 'string' ? json.prompt : undefined,
+        agent: typeof json.agent === 'string' ? json.agent : undefined,
         title: typeof json.title === 'string' ? json.title : undefined,
         autoTitle: typeof json.autoTitle === 'string' ? json.autoTitle : undefined,
         archivedAt: typeof json.archivedAt === 'string' ? json.archivedAt : undefined,

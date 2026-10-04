@@ -48,7 +48,7 @@ async function world(seeds: readonly Seed[]): Promise<{ engine: SessionEngine; i
     at += 1000
     const id = uuidv7(at)
     ids.push(id)
-    await store.create({ id, siteId: seed.site, entryId: 'free', startedAt: new Date(at).toISOString(), sitePath: undefined, prompt: seed.prompt })
+    await store.create({ id, siteId: seed.site, entryId: 'free', startedAt: new Date(at).toISOString(), sitePath: undefined, agent: undefined, prompt: seed.prompt })
     for (const event of seed.events) await store.append(id, event)
     await store.patchMeta(id, (m) => ({ ...m, state: 'finished', title: seed.title, archivedAt: seed.archived === true ? 'x' : undefined }))
   }

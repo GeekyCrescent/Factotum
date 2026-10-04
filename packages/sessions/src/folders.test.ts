@@ -180,7 +180,7 @@ test('AN ID WITH OLD HISTORY is taken: delete it first or pick another (criterio
       const store = new SessionStore(sessionPaths(stateDir), () => new Date())
       await store.ensureRoots()
       const id = uuidv7()
-      await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'x' })
+      await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'x' })
       await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
     },
   })
@@ -520,7 +520,7 @@ test('REMOVED PROJECTS: “Delete history” deletes their conversations; a regi
       await store.ensureRoots()
       for (let i = 0; i < 2; i++) {
         const id = uuidv7()
-        await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'x' })
+        await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'x' })
         await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
       }
     },

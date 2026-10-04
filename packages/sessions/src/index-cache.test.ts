@@ -14,7 +14,7 @@ async function storeWith(ids: readonly string[]): Promise<SessionStore> {
   const store = new SessionStore(sessionPaths(await mkdtemp(join(tmpdir(), 'factotum-index-'))), () => new Date())
   await store.ensureRoots()
   for (const id of ids) {
-    await store.create({ id, siteId: id === A ? 'a' : 'b', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: undefined })
+    await store.create({ id, siteId: id === A ? 'a' : 'b', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
   }
   return store
 }

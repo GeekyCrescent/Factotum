@@ -484,6 +484,18 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     const entry = findInvokable(catalog, input.entryId)
     if (!entry.ok) return { outcome: 'rejected', reason: entry.reason }
 
+    // Launching as an agent: only from a free-prompt entry, and only a name the CLI itself announced.
+    let invoke: Invoke = entry.invoke
+    if (input.agent !== undefined) {
+      if (invoke.kind !== 'none') return { outcome: 'rejected', reason: 'an agent can only be launched with a free-prompt entry' }
+      const list = announced.get()
+      if (list === undefined) return { outcome: 'rejected', reason: 'the list of agents is not known yet' }
+      if (!list.agents.includes(input.agent)) {
+        return { outcome: 'rejected', reason: `no agent "${input.agent}" in the list the CLI announced` }
+      }
+      invoke = { kind: 'subagent', name: input.agent }
+    }
+
     const sessionId = uuidv7(setup.now().getTime())
     const acquired = await locks.acquire(input.siteId, sessionId, setup.now().toISOString(), modeFor(input.siteId))
     if (!acquired.ok) {
@@ -531,6 +543,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // So the drawer can tell sessions apart without reading their logs (spec D8d).
         // The words, or the names of the files when there are none — never a path (spec 2026-10-01, D7).
         prompt: promptOf(input.text, uploads.root).slice(0, PROMPT_CHARS),
+        agent: input.agent,
       })
 
       if (site.isRepo && siblings > 0) {
@@ -554,7 +567,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // A catalog entry can launch with no text, and an empty bubble says nothing.
       if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })
 
-      const running = spawnFor(sessionId, site, entry.invoke, input.text, files, false)
+      const running = spawnFor(sessionId, site, invoke, input.text, files, false)
       await store.patchMeta(sessionId, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(sessionId, { kind: 'state', state: 'running', reason: undefined })
 

@@ -241,6 +241,8 @@ export interface LaunchInput {
   /** Launch anyway over a freshness warning. Required, so neither copy of this file
    *  has to agree about `exactOptionalPropertyTypes`. */
   readonly force: boolean
+  /** Launch as this agent (`--agent`). Only with a free-prompt entry, and only a name the CLI announced. */
+  readonly agent?: string
 }
 
 export interface FreshnessReport {
@@ -281,6 +283,8 @@ export interface SessionSummary {
   readonly turns: number
   /** The first prompt, cut. `undefined` for a session from before the field existed. */
   readonly prompt: string | undefined
+  /** The agent it was launched as. `undefined` for a plain session. */
+  readonly agent: string | undefined
   /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
   readonly title: string | undefined
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
