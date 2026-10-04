@@ -50,6 +50,13 @@ export const UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
 export const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 
+/**
+ * What a name must look like to reach an argv slot as `/<name>` or `--agent <name>`. A COPY of `NAME` in
+ * `packages/sessions/src/catalog.ts`: this package cannot import that one (CLAUDE.md §1), so the rule is
+ * declared twice and `packages/cli/src/invokable-name.test.ts` fails if the two ever differ.
+ */
+export const INVOKABLE_NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+
 export const siteIdSchema = z.string().regex(SITE_ID_PATTERN, 'a site id must match /^[a-z0-9][a-z0-9-]*$/')
 
 /** Exported so the projects registry is built from it (spec 2026-09-29, criterion 3). */
