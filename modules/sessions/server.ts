@@ -35,6 +35,7 @@ import {
   parseIds,
   parseLaunchAgent,
   parseLayout,
+  parsePin,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -332,6 +333,16 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       const patch = parseProjectPatch(req.body)
       if (!patch.ok) return invalid(patch.message)
       return fromChange(await engine.updateProject(id, patch.value))
+    }),
+
+    // One pin. The same `fromChange` as a rename: 200, 404 for an unknown project, 409 for the 13th
+    // pin. It does not return the list: the client asks GET /skills again (spec 2026-10-03-skills-a-mano, D7).
+    'POST /projects/:id/pins': withEngine(async (engine, req) => {
+      const id = req.params['id']
+      if (!isSiteId(id)) return invalid('that is not a project id')
+      const pin = parsePin(req.body)
+      if (!pin.ok) return invalid(pin.message)
+      return fromChange(await engine.pinProject(id, pin.value.name, pin.value.pinned))
     }),
 
     // The drawer's order and categories, WHOLE (see `ProjectLayout`). Cosmetic, like a name: no

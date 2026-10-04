@@ -30,7 +30,7 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import { boundaryPath, SITE_ID_PATTERN, siteSchema } from './config.ts'
+import { boundaryPath, INVOKABLE_NAME, SITE_ID_PATTERN, siteSchema } from './config.ts'
 import type {
   CategoryEntry,
   Color,
@@ -49,6 +49,9 @@ export const NAME_MAX = 40
 
 /** How many categories the drawer may have: past this it is not grouping any more. */
 export const CATEGORIES_MAX = 50
+
+/** How many names one project may pin: past this the "Pinned" group is not short any more (spec 2026-10-03-skills-a-mano, D7). */
+export const MAX_PINS = 12
 
 export const CATEGORY_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/
 
@@ -72,6 +75,10 @@ export const projectEntrySchema = siteSchema.extend({
   // anything else — a `false`, a "yes" typed by hand — reads as off and the project still loads, and
   // the next write drops the key. `z.boolean()` would keep a hand-typed `false` for ever.
   concurrent: z.literal(true).optional().catch(undefined),
+  // COSMETIC TOO: a `pinned` the reader cannot use (not a list, a bad name, more than the cap) reads
+  // as none and the project loads. THE `.catch` IS WHY `set-pin` CHECKS THE CAP BEFORE THE SCHEMA:
+  // a 13-name array would not fail here, it would become `undefined` and wipe the 12 with an `ok`.
+  pinned: z.array(z.string().regex(INVOKABLE_NAME)).max(MAX_PINS).optional().catch(undefined),
 })
 
 export const sharedEntrySchema = z.object({ path: boundaryPath, addedAt: z.string().optional() })
@@ -347,6 +354,18 @@ function apply(current: Registry, edit: RegistryEdit, at: string): Registry | st
       // client that does not know it turns nothing off. `false` drops the key (stripUndefined below).
       const concurrent = edit.concurrent === undefined ? found.concurrent : edit.concurrent ? true : undefined
       const entry = projectEntrySchema.safeParse({ ...found, name: edit.name, color: edit.color, concurrent })
+      if (!entry.success) return describe(entry.error)
+      return { ...current, projects: current.projects.map((p) => (p.id === edit.id ? stripUndefined(entry.data) : p)) }
+    }
+    case 'set-pin': {
+      const found = current.projects.find((p) => p.id === edit.id)
+      if (found === undefined) return `no project "${edit.id}"`
+      const held = found.pinned ?? []
+      // BEFORE THE SCHEMA, never through it (see `projectEntrySchema.pinned`): the cap is refused here.
+      if (edit.pinned && !held.includes(edit.name) && held.length >= MAX_PINS) return `a project holds at most ${MAX_PINS} pins`
+      const pinned = edit.pinned ? (held.includes(edit.name) ? held : [...held, edit.name]) : held.filter((name) => name !== edit.name)
+      // An empty list leaves the key out (stripUndefined below), like `concurrent: false`.
+      const entry = projectEntrySchema.safeParse({ ...found, pinned: pinned.length === 0 ? undefined : pinned })
       if (!entry.success) return describe(entry.error)
       return { ...current, projects: current.projects.map((p) => (p.id === edit.id ? stripUndefined(entry.data) : p)) }
     }

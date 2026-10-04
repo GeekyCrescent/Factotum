@@ -541,3 +541,89 @@ test('the patch is WHOLE for name and colour: a set-project with only concurrent
   await store.update(async () => ({ kind: 'set-project' as const, id: 'b', name: undefined, color: undefined, concurrent: true }))
   assert.deepEqual(await projectOnDisk(file, 'b'), { id: 'b', path: '/Users/me/b', concurrent: true })
 })
+
+// ---------------------------------------------------------------------------
+// pins (spec 2026-10-03-skills-a-mano, D7, criterion 29)
+// ---------------------------------------------------------------------------
+
+type PinnedDisk = { id: string; pinned?: unknown }
+
+const pinnedOnDisk = async (file: string, id: string): Promise<unknown> => (((await onDisk(file)).projects as PinnedDisk[]).find((p) => p.id === id) ?? {}).pinned
+
+const pin = (id: string, name: string, pinned: boolean) => async () => ({ kind: 'set-pin' as const, id, name, pinned })
+
+const names = (count: number): string[] => Array.from({ length: count }, (_, i) => `skill-${i + 1}`)
+
+test('a pin is stored on its project only, and survives a reload (criterion 29)', async () => {
+  const { file, store } = await withFile(THREE)
+  assert.equal((await store.update(pin('a', 'review', true))).kind, 'ok')
+  assert.equal((await store.update(pin('a', 'plugin:fix', true))).kind, 'ok')
+
+  assert.deepEqual(await pinnedOnDisk(file, 'a'), ['review', 'plugin:fix'])
+  assert.equal(await pinnedOnDisk(file, 'b'), undefined)
+  const reloaded = createRegistryStore({ file, seed: { sites: [], sharedPaths: [] }, now: NOW })
+  const loaded = await reloaded.load()
+  assert.equal(loaded.kind === 'ok' ? loaded.registry.projects[0]?.pinned?.join() : 'broken', 'review,plugin:fix')
+})
+
+test('adding a name that is already pinned, or removing one that is not, changes nothing', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(pin('a', 'review', true))
+  assert.equal((await store.update(pin('a', 'review', true))).kind, 'ok')
+  assert.equal((await store.update(pin('a', 'other', false))).kind, 'ok')
+  assert.deepEqual(await pinnedOnDisk(file, 'a'), ['review'])
+})
+
+test('unpinning the last name REMOVES the key', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(pin('a', 'review', true))
+  await store.update(pin('a', 'review', false))
+  assert.equal('pinned' in ((await projectOnDisk(file, 'a')) ?? {}), false)
+})
+
+test('a rename keeps the pins', async () => {
+  const { file, store } = await withFile(THREE)
+  await store.update(pin('b', 'review', true))
+  await store.update(rename('b', 'Bee 2'))
+  assert.deepEqual(await pinnedOnDisk(file, 'b'), ['review'])
+})
+
+test('the 13th pin is REFUSED and the 12 before it are still on disk, not wiped by the schema catch', async () => {
+  const twelve = names(12)
+  const { file, store } = await withFile({ ...THREE, projects: THREE.projects.map((p) => (p.id === 'a' ? { ...p, pinned: twelve } : p)) })
+  await store.load()
+
+  const refused = await store.update(pin('a', 'one-too-many', true))
+
+  assert.deepEqual(refused, { kind: 'refused', reason: 'a project holds at most 12 pins' })
+  assert.deepEqual(await pinnedOnDisk(file, 'a'), twelve)
+  // Adding one that is already there is not a 13th, and unpinning still works at the cap.
+  assert.equal((await store.update(pin('a', 'skill-3', true))).kind, 'ok')
+  assert.equal((await store.update(pin('a', 'skill-12', false))).kind, 'ok')
+  assert.equal((await store.update(pin('a', 'one-too-many', true))).kind, 'ok')
+})
+
+test('a project that does not exist is refused', async () => {
+  const { store } = await withFile(THREE)
+  assert.deepEqual(await store.update(pin('nope', 'review', true)), { kind: 'refused', reason: 'no project "nope"' })
+})
+
+test('a malformed `pinned` typed by hand reads as none: the project loads, and the next write drops it', async () => {
+  const content = {
+    version: 1,
+    projects: [
+      { id: 'a', path: '/Users/me/a', pinned: 'x' },
+      { id: 'b', path: '/Users/me/b', pinned: ['ok', 'bad name'] },
+      { id: 'c', path: '/Users/me/c', pinned: names(13) },
+    ],
+    shared: [],
+  }
+  const { file, store } = await withFile(content)
+  const loaded = await store.load()
+  assert.equal(loaded.kind, 'ok')
+  if (loaded.kind !== 'ok') return
+  assert.deepEqual(loaded.registry.projects.map((p) => [p.id, p.pinned]), [['a', undefined], ['b', undefined], ['c', undefined]])
+  assert.deepEqual(loaded.skipped, [])
+  await store.update(pin('a', 'review', true))
+  assert.deepEqual(await pinnedOnDisk(file, 'a'), ['review'])
+})

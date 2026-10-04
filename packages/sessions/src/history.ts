@@ -194,6 +194,7 @@ export function createHistory(deps: HistoryDeps): History {
           archived: all.length - active.length,
           category: entry.category,
           concurrent: entry.concurrent === true,
+          pinned: entry.pinned ?? [],
         }
       })
       return {

@@ -985,8 +985,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     decide,
     reconcile,
     announced: announced.get,
-    // Block E reads the registry's `pinned` here; until then no project has pins.
-    pinnedOf: () => [],
+    // The IN-MEMORY registry, never `projects()`: that one checks every project on disk, and this
+    // runs on every GET /skills.
+    pinnedOf: (siteId) => table.entry(siteId)?.pinned ?? [],
     view,
     stop,
     summary: history.summary,
@@ -1004,6 +1005,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     inspectGrant: folders.inspectGrant,
     answerGrant: unlessStopped(folders.answerGrant),
     updateProject: unlessStopped(folders.updateProject),
+    pinProject: unlessStopped(folders.pinProject),
     setLayout: unlessStopped(folders.setLayout),
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),

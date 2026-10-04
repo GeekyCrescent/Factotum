@@ -56,6 +56,9 @@ const projectPatchSchema = z.object({
   concurrent: z.boolean().optional(),
 })
 
+/** One name pinned or unpinned. The name rule is the one the CLI is given (`INVOKABLE_NAME`), so a bad one is a 400. */
+const pinSchema = z.object({ name: z.string().regex(INVOKABLE_NAME, 'that is not a name the CLI can be given'), pinned: z.boolean() })
+
 /** A category's name: trimmed, and REQUIRED — a header with nothing in it is not one to find. */
 const categoryNameSchema = z
   .string()
@@ -115,6 +118,11 @@ export function parseProjectPatch(
   const parsed = projectPatchSchema.safeParse(record(body))
   if (!parsed.success) return { ok: false, message: first(parsed.error) }
   return { ok: true, value: { name: parsed.data.name, color: parsed.data.color, concurrent: parsed.data.concurrent } }
+}
+
+export function parsePin(body: unknown): Parsed<{ name: string; pinned: boolean }> {
+  const parsed = pinSchema.safeParse(record(body))
+  return parsed.success ? { ok: true, value: { name: parsed.data.name, pinned: parsed.data.pinned } } : { ok: false, message: first(parsed.error) }
 }
 
 /**

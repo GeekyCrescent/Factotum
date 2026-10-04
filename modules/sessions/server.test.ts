@@ -46,6 +46,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     inspectGrant: async () => ({ kind: 'unknown' }),
     answerGrant: async () => ({ outcome: 'unknown' }),
     updateProject: async () => ({ outcome: 'unknown' }),
+    pinProject: async () => ({ outcome: 'unknown' }),
     setLayout: async () => ({ outcome: 'ok', removedSessions: 0 }),
     removeProject: async () => ({ outcome: 'unknown' }),
     removeHistory: async () => ({ outcome: 'unknown' }),
@@ -1460,4 +1461,32 @@ test('an invalid `skills` switches off the note only: it is logged, the module s
 
 test('the config schema lets any `skills` through untouched: it is interpreted in start(), not here', () => {
   assert.deepEqual(sessionsConfigSchema.parse({ skills: { notes: 3 } }).skills, { notes: 3 })
+})
+
+test('POST /projects/:id/pins maps the change like a rename: 200, 404 and 409, and passes name and flag to the engine', async () => {
+  const outcomes = [
+    [{ outcome: 'ok', removedSessions: 0 }, 200],
+    [{ outcome: 'unknown' }, 404],
+    [{ outcome: 'conflict', reason: 'a project holds at most 12 pins' }, 409],
+  ] as const
+  for (const [result, status] of outcomes) {
+    const { table } = await started(fakeEngine({ pinProject: async () => result }))
+    const response = await call(table, 'POST /projects/:id/pins', request('POST', '/', { params: { id: 'web' }, body: { name: 'review', pinned: true } }))
+    assert.equal(response.status, status)
+  }
+  const seen: unknown[] = []
+  const { table } = await started(fakeEngine({ pinProject: async (...args) => (seen.push(args), { outcome: 'ok', removedSessions: 0 }) }))
+  await call(table, 'POST /projects/:id/pins', request('POST', '/', { params: { id: 'web' }, body: { name: 'plugin:review', pinned: false } }))
+  assert.deepEqual(seen, [['web', 'plugin:review', false]])
+})
+
+test('POST /projects/:id/pins: a bad id, name or body is a 400 and the engine is never asked', async () => {
+  let asked = 0
+  const { table } = await started(fakeEngine({ pinProject: async () => ((asked += 1), { outcome: 'ok' as const, removedSessions: 0 }) }))
+  const pin = (params: Record<string, string>, body: unknown) => call(table, 'POST /projects/:id/pins', request('POST', '/', { params, body }))
+  assert.equal((await pin({ id: '../x' }, { name: 'a', pinned: true })).status, 400)
+  assert.equal((await pin({ id: 'web' }, { name: '-bad name', pinned: true })).status, 400)
+  assert.equal((await pin({ id: 'web' }, { name: 'a', pinned: 'yes' })).status, 400)
+  assert.equal((await pin({ id: 'web' }, {})).status, 400)
+  assert.equal(asked, 0)
 })

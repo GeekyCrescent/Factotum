@@ -89,6 +89,8 @@ export interface ProjectEntry {
    * absent: on disk a project that does not allow it has no key at all.
    */
   readonly concurrent?: true | undefined
+  /** Names pinned to the top of the "/" list in this project (spec 2026-10-03-skills-a-mano, D7). At most 12; absent when none. */
+  readonly pinned?: readonly string[] | undefined
 }
 
 /**
@@ -135,6 +137,8 @@ export type RegistryEdit =
       /** `undefined` KEEPS what is there, unlike `name` and `color` (spec 2026-10-03-varias-sesiones-por-proyecto, D5). */
       readonly concurrent?: boolean | undefined
     }
+  /** Adds or removes ONE name from the project's pins; the cap is checked in `apply`, before the schema (D7). */
+  | { readonly kind: 'set-pin'; readonly id: string; readonly name: string; readonly pinned: boolean }
   | { readonly kind: 'remove-project'; readonly id: string }
   | { readonly kind: 'add-shared'; readonly path: string }
   | { readonly kind: 'remove-shared'; readonly path: string }
@@ -607,6 +611,8 @@ export interface ProjectView {
   readonly category: string | undefined
   /** Several sessions at once allowed here (spec 2026-10-03-varias-sesiones-por-proyecto, D9). */
   readonly concurrent: boolean
+  /** The names pinned here (spec 2026-10-03-skills-a-mano, D7); `[]` when none. */
+  readonly pinned: readonly string[]
 }
 
 export interface SharedView {
@@ -811,6 +817,8 @@ export interface SessionEngine {
   readonly inspectGrant: (token: string) => Promise<GrantInspect>
   readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
   readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  /** Pins or unpins one name in a project. Cosmetic like a rename: no approval (spec 2026-10-03-skills-a-mano, D7). */
+  readonly pinProject: (id: string, name: string, pinned: boolean) => Promise<ProjectChange>
   /** The order and the categories (see `ProjectLayout`). Cosmetic: no approval. */
   readonly setLayout: (layout: ProjectLayout) => Promise<ProjectChange>
   readonly removeProject: (id: string) => Promise<ProjectChange>

@@ -40,6 +40,7 @@ const project = (id: string, sessions: SessionSummary[], extra: Partial<ProjectV
   archived: 0,
   category: undefined,
   concurrent: false,
+  pinned: [],
   ...extra,
 })
 
