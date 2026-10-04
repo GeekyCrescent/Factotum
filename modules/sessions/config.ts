@@ -116,6 +116,11 @@ export const sessionsConfigSchema = z
      * in it must switch off dictation, not sessions — and a failure of this schema takes the whole fragment.
      */
     dictation: z.unknown().optional(),
+    /**
+     * The owner's skills note (spec 2026-10-03-skills-a-mano, D5). `z.unknown()` for the same reason as
+     * `dictation` above: interpreted in start() by `skills/config.ts`, so a bad block switches off the note only.
+     */
+    skills: z.unknown().optional(),
   })
   // Duplicate ids are refused here rather than resolved somewhere later: two sites
   // with one id means two directories sharing one lock, which is the one thing the
