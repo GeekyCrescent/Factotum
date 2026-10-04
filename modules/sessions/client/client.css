@@ -2501,6 +2501,102 @@
   font-size: var(--text-small);
 }
 
+/* --- «/» in the box (spec 2026-10-03-skills-a-mano, D8) -------------------- */
+
+/* The list uses `.s-picker-list`'s height; an entry is a name line and a text line, about 52 px at most. */
+.s-slash-row {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  min-height: 40px;
+  max-height: 52px;
+  padding-block: var(--space-1h);
+  /* A press must not select text under the finger, and the menu's long press is ours. */
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.s-slash-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.s-slash-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-slash-kind {
+  flex: none;
+  padding: 0 var(--space-1h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+.s-slash-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A group's heading stays at the top of the scroll while its entries pass under it. */
+.s-slash-group {
+  position: sticky;
+  top: calc(var(--space-1) * -1);
+  z-index: 1;
+  padding: var(--space-1h) var(--space-3);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.s-slash-note {
+  color: var(--text-3);
+}
+
+.s-slash-notice {
+  color: var(--err);
+}
+
+.s-slash-hint {
+  border-top: 1px solid var(--line);
+}
+
+/* The agent a launch will run as, beside the project. */
+.s-agent-chip {
+  gap: var(--space-1h);
+  font-family: var(--font-mono);
+}
+
+.s-agent-x {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.s-agent-x:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 /* A reference in the owner's bubble: a small chip inside the sentence, never a link. */
 .s-ref {
   display: inline-flex;
