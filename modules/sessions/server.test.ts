@@ -238,6 +238,42 @@ test('a launch missing its siteId or entryId is a 400, not a guess', async () =>
   }
 })
 
+test('a launch hands the engine the agent, or none when the body has none (criterion 6)', async () => {
+  const seen: (string | undefined)[] = []
+  const { table } = await started(
+    fakeEngine({
+      launch: async (input) => {
+        seen.push(input.agent)
+        return { outcome: 'started', sessionId: 'x' }
+      },
+    }),
+  )
+  const base = { siteId: 'a', entryId: 'free', text: 'x' }
+  const withAgent = await call(table, 'POST /sessions', request('POST', '/sessions', { body: { ...base, agent: 'code-reviewer' } }))
+  const without = await call(table, 'POST /sessions', request('POST', '/sessions', { body: base }))
+  assert.equal(withAgent.status, 200)
+  assert.equal(without.status, 200)
+  assert.deepEqual(seen, ['code-reviewer', undefined])
+})
+
+test('an agent that is not text, or not a name the CLI can be given, is a 400 and the engine never sees it (criterion 8)', async () => {
+  let reached = 0
+  const { table } = await started(
+    fakeEngine({
+      launch: async () => {
+        reached += 1
+        return { outcome: 'started', sessionId: 'x' }
+      },
+    }),
+  )
+  for (const agent of [3, 'x y']) {
+    const response = await call(table, 'POST /sessions', request('POST', '/sessions', { body: { siteId: 'a', entryId: 'free', text: 'x', agent } }))
+    assert.equal(response.status, 400)
+    assert.match((response.body as ErrorBody).error.message, /agent is not a name the CLI can be given/)
+  }
+  assert.equal(reached, 0)
+})
+
 test('a reply with no text is a 400', async () => {
   const { table } = await started(fakeEngine())
   for (const body of [undefined, {}, { text: '' }]) {
@@ -616,6 +652,7 @@ const SUMMARY = {
   reason: undefined,
   turns: 1,
   prompt: 'hi',
+  agent: undefined,
   title: undefined,
   autoTitle: undefined,
   archived: false,

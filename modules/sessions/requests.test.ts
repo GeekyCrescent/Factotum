@@ -5,6 +5,7 @@ import {
   isSiteId,
   parseArchived,
   parseIds,
+  parseLaunchAgent,
   parseLayout,
   parseProjectPatch,
   parseProjectRequest,
@@ -102,5 +103,18 @@ test('A LAYOUT: names trimmed and required, ids that are ids, nothing twice, no 
     const parsed = parseLayout(body)
     assert.equal(parsed.ok, false)
     assert.match(parsed.ok ? '' : parsed.message, message)
+  }
+})
+
+test('parseLaunchAgent: absent is no agent, a name passes, anything else is refused', () => {
+  assert.deepEqual(parseLaunchAgent({}), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchAgent(undefined), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchAgent({ agent: 'code-reviewer' }), { ok: true, value: 'code-reviewer' })
+  assert.deepEqual(parseLaunchAgent({ agent: 'impeccable:impeccable-manual-edit-applier' }), {
+    ok: true,
+    value: 'impeccable:impeccable-manual-edit-applier',
+  })
+  for (const agent of [3, null, '', 'x y', '-x', '/x', ['a']]) {
+    assert.deepEqual(parseLaunchAgent({ agent }), { ok: false, message: 'agent is not a name the CLI can be given' }, JSON.stringify(agent))
   }
 })

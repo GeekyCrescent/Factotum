@@ -30,6 +30,7 @@ import {
   parseArchived,
   parseFilesQuery,
   parseIds,
+  parseLaunchAgent,
   parseLayout,
   parseProjectPatch,
   parseProjectRequest,
@@ -400,12 +401,16 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       }
       const prompt = text(req.body, 'text') ?? ''
       if (HAS_NUL.test(prompt)) return invalid(NUL_REFUSED)
+      const agent = parseLaunchAgent(req.body)
+      if (!agent.ok) return invalid(agent.message)
       return fromLaunch(
         await engine.launch({
           siteId,
           entryId,
           text: prompt,
           force: body?.force === true,
+          // Left out when absent: `agent?: string` does not take an explicit undefined.
+          ...(agent.value === undefined ? {} : { agent: agent.value }),
         }),
       )
     }),
