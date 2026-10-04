@@ -58,7 +58,7 @@
  */
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const args = process.argv.slice(2)
 const prompt = args[args.indexOf('-p') + 1] ?? ''
@@ -137,7 +137,9 @@ function session() {
   // The argv of each turn, one JSON line, next to the `--settings` file (the session's directory):
   // so a test can tell a first turn's `--agent` from a reply's without it (spec 2026-10-03, criterion 7).
   const settings = args.indexOf('--settings')
-  if (settings !== -1) appendFileSync(join(dirname(args[settings + 1] ?? '.'), 'argv.log'), `${JSON.stringify(args)}\n`)
+  // Only when it is a session's own settings.json: some tests hand the runner a stand-in path.
+  const file = args[settings + 1] ?? ''
+  if (settings !== -1 && basename(file) === 'settings.json') appendFileSync(join(dirname(file), 'argv.log'), `${JSON.stringify(args)}\n`)
 
 const toolUse = {
   type: 'assistant',
