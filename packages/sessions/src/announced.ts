@@ -19,8 +19,12 @@ export const MAX_ANNOUNCED = 1_000
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
-/** Valid names, once each, in order, at most `MAX_ANNOUNCED`. What is not kept is counted. */
-function cleaned(raw: readonly unknown[]): { readonly names: readonly string[]; readonly dropped: number } {
+/** The CLI's own internals (`__remote-workflow`): not for the owner and not bad data, so skipped silently. */
+const isInternal = (name: unknown): boolean => typeof name === 'string' && name.startsWith('__')
+
+/** Valid names, once each, in order, at most `MAX_ANNOUNCED`. What is not kept is counted, internals aside. */
+function cleaned(all: readonly unknown[]): { readonly names: readonly string[]; readonly dropped: number } {
+  const raw = all.filter((name) => !isInternal(name))
   const valid = raw.filter((name): name is string => typeof name === 'string' && isInvokableName(name))
   const unique = [...new Set(valid)]
   const names = unique.slice(0, MAX_ANNOUNCED)

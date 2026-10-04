@@ -27,9 +27,8 @@ test('the real init line gives its skills, agents and version', () => {
   assert.deepEqual(result.announced.agents, line.agents)
   assert.equal(result.announced.version, line.claude_code_version)
   assert.equal(result.announced.since, AT)
-  // Measured: the real list holds one internal name, `__remote-workflow`, which starts with `_` and so
-  // is not a name the box could ever insert. It is dropped and counted, the rest stands.
-  assert.equal(result.dropped, 1)
+  // The real list holds one CLI internal, `__remote-workflow`: skipped silently, not a drop.
+  assert.equal(result.dropped, 0)
 })
 
 test('commands are slash_commands minus skills minus terminal_slash_commands', () => {
@@ -74,6 +73,14 @@ test('a name that is not a string is dropped and counted', () => {
   const result = announcedOf({ skills: ['good', 7, null], agents: [] }, AT)
   assert.deepEqual(result?.announced.skills, ['good'])
   assert.equal(result?.dropped, 2)
+})
+
+test('a name starting with __ is skipped silently while a genuinely bad one still counts', () => {
+  const result = announcedOf({ skills: ['good', '__x', 'a b'], agents: ['__y'], slash_commands: ['good', '__z', 'clear'] }, AT)
+  assert.deepEqual(result?.announced.skills, ['good'])
+  assert.deepEqual(result?.announced.agents, [])
+  assert.deepEqual(result?.announced.commands, ['clear'])
+  assert.equal(result?.dropped, 1)
 })
 
 test('a bad name that is in skills and in slash_commands is counted once', () => {
