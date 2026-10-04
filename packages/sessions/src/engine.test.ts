@@ -1957,3 +1957,56 @@ test('TITLER: a boot’s reconcile and a reply never start it; only a launch doe
   assert.equal((await store.readMeta(oldId))?.autoTitle, undefined)
   await on.stop()
 })
+
+// ---------------------------------------------------------------------------
+// The list the CLI announces (spec 2026-10-03-skills-a-mano, D2: criteria 1, 2, 5)
+// ---------------------------------------------------------------------------
+
+test('the list is unknown until a session has run, and a session that announces one leaves it known and on disk (criteria 1, 2)', async () => {
+  const { engine, stateDir } = await world()
+  assert.equal(engine.announced(), undefined)
+
+  const plain = await finished(engine, 'work', QUICK)
+  assert.equal(engine.announced(), undefined, 'the made-up init of a plain turn announces no list')
+  const id = await finished(engine, 'work', 'announce')
+
+  const announced = engine.announced()
+  assert.ok(announced)
+  assert.ok(announced.skills.includes('superpowers:brainstorming'))
+  assert.equal(announced.version, '2.1.288')
+  await until(async () => (await stat(sessionPaths(stateDir).announcedFile).catch(() => undefined)) !== undefined, 'announced.json written')
+  const saved = JSON.parse(await readFile(sessionPaths(stateDir).announcedFile, 'utf8')) as { skills: string[]; since: string }
+  assert.deepEqual(saved.skills, announced.skills)
+  assert.equal(saved.since, announced.since)
+
+  // The init is not an event: the log holds the same kinds as that of a session without a list (criterion 5).
+  const kindsOf = async (sessionId: string): Promise<string[]> => (await readPage(engine, sessionId, 0)).events.map((event) => event.kind)
+  assert.deepEqual(await kindsOf(id), await kindsOf(plain))
+})
+
+test('a restarted engine still has the list, and a second session with the same list keeps since (criteria 1, 2)', async () => {
+  const { engine, stateDir, siteDir } = await world()
+  await finished(engine, 'work', 'announce')
+  const first = engine.announced()
+  await until(async () => (await stat(sessionPaths(stateDir).announcedFile).catch(() => undefined)) !== undefined, 'announced.json written')
+  await engine.stop()
+
+  const again = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
+  assert.deepEqual(again.announced(), first)
+
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  engineLocks.set(again, new SiteLocks(sessionPaths(stateDir)))
+  await finished(again, 'work', 'announce')
+  assert.equal(again.announced()?.since, first?.since)
+  await again.stop()
+})
+
+test('a reply announces too, because it spawns the CLI again', async () => {
+  const { engine } = await world()
+  const id = await finished(engine, 'work', QUICK)
+  assert.equal(engine.announced(), undefined)
+
+  await engine.reply(id, 'announce')
+  await until(async () => engine.announced() !== undefined, 'the reply announced')
+  await settle(engine, id)
+})

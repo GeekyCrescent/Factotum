@@ -13,6 +13,7 @@
 import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
+import { createAnnounced } from './announced.ts'
 import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh, type FreshnessDeps } from './freshness.ts'
 import { uuidv7 } from './id.ts'
@@ -132,6 +133,11 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const locks = new SiteLocks(paths)
   const freshness = deps.freshness ?? checkFreshness
   await store.ensureRoots()
+
+  // What the CLI announces it can invoke (spec 2026-10-03-skills-a-mano, D2): read once here, and
+  // refreshed by the `init` of any turn, a reply included.
+  const announced = createAnnounced({ file: paths.announcedFile, log, now: setup.now })
+  await announced.load()
 
   /**
    * How a launch or a reply in this project asks for its lock (spec 2026-10-03, D4). A THUNK, read
@@ -412,6 +418,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       mcpConfigPath: files.mcp,
       resume,
       cwd: site.path,
+      onInit: announced.take,
       onEvent: async (event) => {
         if (event.kind === 'state' && event.state !== 'running') {
           reported = { state: event.state, reason: event.reason }
@@ -964,6 +971,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     read,
     decide,
     reconcile,
+    announced: announced.get,
     view,
     stop,
     summary: history.summary,

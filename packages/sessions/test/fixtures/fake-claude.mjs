@@ -35,6 +35,12 @@
  *   "service-then-exit" the same, waiting for a `service` event instead: the test plays `start_service`,
  *                     and the turn ends with the service still running (spec 2026-10-02, criterion 16).
  *
+ * THE LIST THE CLI ANNOUNCES (spec 2026-10-03-skills-a-mano, D2). Both play "quick", but their `init`
+ * is the real line of CLI 2.1.288 (`init-2.1.288.json`, trimmed) instead of the made-up one:
+ *
+ *   "announce"        that `init` once.
+ *   "announce-twice"  that `init` twice, as a CLI that restarted its stream would.
+ *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
  * own directory, where no session ever runs, so that file exists only if the titler was started —
@@ -146,7 +152,13 @@ if (prompt.startsWith('boom')) {
   process.exit(3)
 }
 
-emit({ type: 'system', subtype: 'init', tools: ['Write'] })
+if (prompt.startsWith('announce')) {
+  const init = JSON.parse(readFileSync(new URL('./init-2.1.288.json', import.meta.url), 'utf8'))
+  emit(init)
+  if (prompt.startsWith('announce-twice')) emit(init)
+} else {
+  emit({ type: 'system', subtype: 'init', tools: ['Write'] })
+}
 emit(toolUse)
 emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } })
 emit(toolResult)

@@ -8,6 +8,7 @@
  */
 
 export type {
+  Announced,
   CatalogEntry,
   CreateEngine,
   Decision,
@@ -40,6 +41,7 @@ export type {
 
 export { createEngine, PAGE_SIZE } from './engine.ts'
 export type { EngineDeps } from './engine.ts'
+export { announcedOf, createAnnounced, MAX_ANNOUNCED } from './announced.ts'
 export { checkFreshness, describeFreshness, isFresh } from './freshness.ts'
 export { uuidv7 } from './id.ts'
 export { reconcile } from './lifecycle.ts'
@@ -57,7 +59,7 @@ export { buildArgs, CLAUDE_BIN, killGroup, runAgent } from './run.ts'
 export type { AgentExit, AgentRun, BuildArgsInput, RunOptions } from './run.ts'
 export { contains, insideSite, inspectSite, resolveAgainst } from './sites.ts'
 export type { Site } from './sites.ts'
-export { findInvokable, resolveCatalog } from './catalog.ts'
+export { findInvokable, isInvokableName, NAME, resolveCatalog } from './catalog.ts'
 export type { Invoke, ResolvedEntry } from './catalog.ts'
 export { isTerminal, parseLine, parseLog, serialize, stateFrom, SESSION_STATES } from './events.ts'
 export { sessionPaths } from './paths.ts'

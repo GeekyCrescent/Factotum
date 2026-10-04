@@ -105,6 +105,12 @@ export interface RunOptions extends BuildArgsInput {
    * record of what order things happened in.
    */
   readonly onEvent: (event: EventInput) => Promise<void>
+  /**
+   * The CLI's `system/init` line, once per process (spec 2026-10-03-skills-a-mano, D2). A throw here
+   * is caught and dropped: whoever passed it reports it, and it never costs the turn. The translator
+   * still gets the line and still turns it into nothing (criterion 5).
+   */
+  readonly onInit?: (line: unknown) => void
   readonly bin?: string
 }
 
@@ -119,6 +125,12 @@ export interface RunOptions extends BuildArgsInput {
  */
 export function killGroup(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void {
   process.kill(-pid, signal)
+}
+
+function isInit(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null) return false
+  const line = message as { type?: unknown; subtype?: unknown }
+  return line.type === 'system' && line.subtype === 'init'
 }
 
 export function runAgent(opts: RunOptions): AgentRun {
@@ -150,6 +162,7 @@ export function runAgent(opts: RunOptions): AgentRun {
   // persisted in is the order they arrived in.
   let writes: Promise<void> = Promise.resolve()
   let writeError: Error | undefined
+  let hasSeenInit = false
 
   if (child.stdout !== null) {
     const lines = createInterface({ input: child.stdout })
@@ -161,6 +174,14 @@ export function runAgent(opts: RunOptions): AgentRun {
         // A line that is not JSON is not an event. The CLI prints the odd warning on
         // stdout, and one of those must not end a session.
         return
+      }
+      if (!hasSeenInit && opts.onInit !== undefined && isInit(message)) {
+        hasSeenInit = true
+        try {
+          opts.onInit(message)
+        } catch {
+          // Reported by whoever passed it; the list is a nicety and the turn is the work.
+        }
       }
       for (const event of translator.translate(message)) {
         writes = writes.then(async () => {

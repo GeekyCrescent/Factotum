@@ -21,7 +21,7 @@ function collector(): { events: EventInput[]; onEvent: (e: EventInput) => Promis
  * exists because the alternative is a test that spends quota to prove that a pipe was
  * read. It is the same shape as the kernel's own `makeServer` seam.
  */
-function startWithScript(prompt: string, onEvent: (e: EventInput) => Promise<void>) {
+function startWithScript(prompt: string, onEvent: (e: EventInput) => Promise<void>, onInit?: (line: unknown) => void) {
   return runAgent({
     sessionId: 'sid-1',
     invoke: { kind: 'none' },
@@ -31,6 +31,7 @@ function startWithScript(prompt: string, onEvent: (e: EventInput) => Promise<voi
     resume: false,
     cwd: tmpdir(),
     onEvent,
+    ...(onInit === undefined ? {} : { onInit }),
     bin: FAKE,
   })
 }
@@ -167,4 +168,49 @@ test('killing a run that never spawned is not an error', async () => {
   })
   await agent.done
   assert.doesNotThrow(() => agent.kill())
+})
+
+// ---------------------------------------------------------------------------
+// The `init` line (spec 2026-10-03-skills-a-mano, D2)
+// ---------------------------------------------------------------------------
+
+test('onInit is called once with the init line, even when two arrive', async () => {
+  const lines: unknown[] = []
+  const exit = await startWithScript('announce-twice', collector().onEvent, (line) => void lines.push(line)).done
+
+  assert.equal(exit.code, 0)
+  assert.equal(lines.length, 1)
+  const init = lines[0] as { type: string; subtype: string; skills: string[] }
+  assert.equal(init.type, 'system')
+  assert.equal(init.subtype, 'init')
+  assert.ok(init.skills.length > 0)
+})
+
+test('an onInit that throws changes nothing about the turn', async () => {
+  const plain = collector()
+  await startWithScript('announce', plain.onEvent).done
+
+  const thrown = collector()
+  const exit = await startWithScript('announce', thrown.onEvent, () => {
+    throw new Error('the list could not be kept')
+  }).done
+
+  assert.equal(exit.code, 0)
+  assert.deepEqual(thrown.events, plain.events)
+})
+
+test('the init line still produces no event (criterion 5)', async () => {
+  const { events, onEvent } = collector()
+  await startWithScript('announce', onEvent, () => undefined).done
+
+  // The same four events as a turn without onInit: nothing was added for the init.
+  assert.deepEqual(events.map((e) => e.kind), ['tool', 'result', 'message', 'state'])
+})
+
+test('without onInit the init line is simply read as before', async () => {
+  const { events, onEvent } = collector()
+  const exit = await startWithScript('announce', onEvent).done
+
+  assert.equal(exit.code, 0)
+  assert.equal(events.length, 4)
 })

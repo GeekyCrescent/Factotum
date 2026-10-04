@@ -725,6 +725,20 @@ export type ProjectChange =
   | { readonly outcome: 'invalid'; readonly reason: string }
 
 
+/**
+ * What the CLI announced it can invoke, read from the `init` line of any session (spec
+ * 2026-10-03-skills-a-mano, D2). One list for the whole machine.
+ */
+export interface Announced {
+  readonly skills: readonly string[]
+  readonly agents: readonly string[]
+  /** `slash_commands` minus `skills` minus `terminal_slash_commands` (D4). Built-ins included: §0.1. */
+  readonly commands: readonly string[]
+  readonly version: string | undefined
+  /** When THIS list was first seen. Not rewritten while it stays the same (criterion 1). */
+  readonly since: string
+}
+
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
@@ -759,6 +773,8 @@ export interface SessionEngine {
   /** One ask by its token, for the approval panel (spec D8). A property, like every member here. */
   readonly inspect: (askId: string) => Promise<InspectResult>
   readonly reconcile: () => Promise<void>
+  /** The list the CLI announced, or `undefined` until a session has run (spec 2026-10-03, D2). */
+  readonly announced: () => Announced | undefined
   // --- uploads (spec 2026-10-01, D9, D12): optional here, like `uploads` above ---
   readonly upload?: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
   readonly openUpload?: (uploadId: string, name: string) => UploadLookup
