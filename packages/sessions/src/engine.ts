@@ -985,6 +985,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     decide,
     reconcile,
     announced: announced.get,
+    // Block E reads the registry's `pinned` here; until then no project has pins.
+    pinnedOf: () => [],
     view,
     stop,
     summary: history.summary,

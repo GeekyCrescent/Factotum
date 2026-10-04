@@ -25,6 +25,9 @@ import { sessionsConfigSchema, UPLOAD_MAX_BYTES, type SessionsConfig } from './c
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
 import { dictationRoutes } from './dictation/routes.ts'
 import { createDictation, type DictationState } from './dictation/service.ts'
+import { interpretSkillsConfig } from './skills/config.ts'
+import { createNotes } from './skills/notes.ts'
+import { skillsRoutes } from './skills/routes.ts'
 import {
   isSiteId,
   parseArchived,
@@ -51,6 +54,8 @@ interface EngineHolder {
   engine?: SessionEngine
   /** Filled by start(), like the engine; undefined before, and the routes answer 503 (spec 2026-10-03, D8). */
   dictation?: DictationState
+  /** Filled by start(): the owner's note, read on demand (spec 2026-10-03-skills-a-mano, D6). */
+  skills?: { readonly read: ReturnType<typeof createNotes>['read'] }
 }
 
 const STARTING: ModuleResponse = {
@@ -697,6 +702,13 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
 
     // Dictation (spec 2026-10-03): its own folder, which imports nothing from here (D1).
     ...dictationRoutes(() => holder.dictation),
+
+    // The skills list (spec 2026-10-03-skills-a-mano): the same, plus the engine's two reads.
+    ...skillsRoutes(() => {
+      const { engine, skills } = holder
+      if (engine === undefined || skills === undefined) return undefined
+      return { announced: engine.announced, pinnedOf: engine.pinnedOf, notes: skills }
+    }),
   }
 }
 
@@ -747,6 +759,10 @@ export function sessionsModule(
       })
       // Never throws, so its place costs nothing: a bad block switches off dictation, not sessions (D3).
       holder.dictation = await createDictation({ raw: ctx.config.dictation, log: ctx.log, timers: ctx.timers })
+      // Never throws either: a bad `skills` block switches off the note, not sessions (D5, criterion 16).
+      const skillsConfig = interpretSkillsConfig(ctx.config.skills)
+      if (skillsConfig.kind === 'invalid') ctx.log.warn(`skills note is off: ${skillsConfig.reason}`)
+      holder.skills = createNotes(skillsConfig)
       const engine = await createEngine({
         stateDir: ctx.stateDir,
         registry,

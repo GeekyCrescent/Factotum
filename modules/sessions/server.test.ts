@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ErrorBody, ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
 import { sessionsConfigSchema } from './config.ts'
 import { sessionsModule } from './server.ts'
@@ -28,6 +31,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     }),
     reconcile: async () => undefined,
     announced: () => undefined,
+    pinnedOf: () => [],
     view: () => ({ sites: [], catalog: [] }),
     stop: async () => undefined,
     summary: async () => ({ kind: 'unknown' }),
@@ -1329,4 +1333,131 @@ test('without a dictation block it is off, NOT_CONFIGURED; before start() it is 
   const after = await call(table, 'GET /dictation', request('GET', 'dictation'))
   assert.equal(after.status, 200)
   assert.match((after.body as { off: string }).off, /not configured/)
+})
+
+// ---------------------------------------------------------------------------
+// GET /skills (spec 2026-10-03-skills-a-mano, D6)
+// ---------------------------------------------------------------------------
+
+const ANNOUNCED = { skills: ['alpha', 'bravo'], agents: ['helper'], commands: ['deploy', 'clear'], version: '2.1.0', since: '2026-10-03T00:00:00.000Z' }
+
+const NOTE = [
+  '## First',
+  '| Name | Para qué | Cuándo la llamo |',
+  '|---|---|---|',
+  '| `bravo` | Why B | When B |',
+  '| `/deploy now` | Ships | Fridays |',
+  '## Second',
+  '| Name | Para qué | Cuándo la llamo |',
+  '|---|---|---|',
+  '| `alpha` | Why A | When A |',
+  '',
+].join('\n')
+
+interface SkillsBody {
+  readonly list: { readonly state: string }
+  readonly notes: { readonly state: string; readonly reason?: string; readonly warnings: readonly string[] }
+  readonly groups: readonly { readonly label: string; readonly entries: readonly { readonly name: string; readonly kind: string; readonly why?: string; readonly when?: string }[] }[]
+  readonly stale: readonly string[]
+}
+
+/** The module started with a `skills` key as given, and the warnings it logged. */
+async function startedWithSkills(engine: SessionEngine, skills: unknown) {
+  const warnings: string[] = []
+  const config = skills === undefined ? EMPTY : { ...EMPTY, skills }
+  const base = context(EMPTY)
+  const ctx = { ...base, config: config as never, log: { ...base.log, warn: (message: string) => void warnings.push(message) } }
+  const module = sessionsModule(async () => engine, () => 'http://host:7778')
+  const table = module.routes!(ctx)
+  await module.start!(ctx)
+  const skillsBody = async (query: Record<string, string> = {}): Promise<{ status: number; body: SkillsBody }> => {
+    const response = await call(table, 'GET /skills', request('GET', '/skills', { query }))
+    return { status: response.status, body: response.body as SkillsBody }
+  }
+  return { table, warnings, skillsBody }
+}
+
+async function withNote<T>(text: string, run: (file: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'skills-server-'))
+  try {
+    const file = join(dir, 'note.md')
+    await writeFile(file, text)
+    return await run(file)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+test('GET /skills before the first conversation says the list is unknown, and is still 200 (criterion 3)', async () => {
+  const { skillsBody } = await startedWithSkills(fakeEngine(), undefined)
+  const { status, body } = await skillsBody()
+  assert.equal(status, 200)
+  assert.deepEqual(body.list, { state: 'unknown' })
+  assert.deepEqual(body.groups, [])
+})
+
+test('GET /skills with the note: groups in heading order, entries in row order, with why and when (criterion 11)', async () => {
+  await withNote(NOTE, async (file) => {
+    const { skillsBody } = await startedWithSkills(fakeEngine({ announced: () => ANNOUNCED }), { notes: file })
+    const { status, body } = await skillsBody()
+    assert.equal(status, 200)
+    assert.equal(body.notes.state, 'ok')
+    assert.deepEqual(body.groups.map((group) => group.label), ['First', 'Second', 'Unsorted'])
+    assert.deepEqual(body.groups[0]!.entries, [
+      { name: 'bravo', kind: 'skill', why: 'Why B', when: 'When B' },
+      { name: 'deploy', kind: 'command', why: 'Ships', when: 'Fridays' },
+    ])
+    assert.deepEqual(body.groups[2]!.entries, [{ name: 'helper', kind: 'agent' }])
+  })
+})
+
+test('GET /skills hands the site to the engine for the pins, and never calls projects()', async () => {
+  const asked: string[] = []
+  const engine = fakeEngine({
+    announced: () => ANNOUNCED,
+    pinnedOf: (site) => (asked.push(site), ['helper']),
+    projects: async () => assert.fail('projects() checks every project on disk'),
+  })
+  const { skillsBody } = await startedWithSkills(engine, undefined)
+  const { body } = await skillsBody({ site: 'work' })
+  assert.deepEqual(asked, ['work'])
+  assert.deepEqual(body.groups[0], { label: 'Pinned', entries: [{ name: 'helper', kind: 'agent' }] })
+})
+
+test('GET /skills with the four reasons the note is not used: 200, all Unsorted, the state says which (criterion 15)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'skills-server-'))
+  try {
+    const big = join(dir, 'big.md')
+    await writeFile(big, 'x'.repeat(256 * 1024 + 1))
+    const cases: readonly (readonly [unknown, string])[] = [
+      [undefined, 'off'],
+      [{ notes: 'relative/note.md' }, 'invalid'],
+      [{ notes: join(dir, 'absent.md') }, 'missing'],
+      [{ notes: big }, 'too-large'],
+    ]
+    for (const [skills, state] of cases) {
+      const { status, body } = await (await startedWithSkills(fakeEngine({ announced: () => ANNOUNCED }), skills)).skillsBody()
+      assert.equal(status, 200, state)
+      assert.equal(body.notes.state, state)
+      assert.deepEqual(body.groups.map((group) => group.label), ['Unsorted'], state)
+      assert.deepEqual(body.groups[0]!.entries.map((entry) => entry.name), ['alpha', 'bravo', 'helper'], state)
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('an invalid `skills` switches off the note only: it is logged, the module starts, and launching still works (criterion 16)', async () => {
+  const { table, warnings, skillsBody } = await startedWithSkills(fakeEngine({ announced: () => ANNOUNCED }), { notes: 3 })
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0]!, /skills\.notes/)
+  const { status, body } = await skillsBody()
+  assert.equal(status, 200)
+  assert.equal(body.notes.state, 'invalid')
+  const launched = await call(table, 'POST /sessions', request('POST', '/sessions', { body: { siteId: 'a', entryId: 'free', text: 'x' } }))
+  assert.equal(launched.status, 200)
+})
+
+test('the config schema lets any `skills` through untouched: it is interpreted in start(), not here', () => {
+  assert.deepEqual(sessionsConfigSchema.parse({ skills: { notes: 3 } }).skills, { notes: 3 })
 })

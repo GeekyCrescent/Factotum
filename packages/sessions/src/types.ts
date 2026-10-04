@@ -828,6 +828,8 @@ export interface SessionEngine {
   readonly reconcile: () => Promise<void>
   /** The list the CLI announced, or `undefined` until a session has run (spec 2026-10-03, D2). */
   readonly announced: () => Announced | undefined
+  /** The names pinned in one project, from the in-memory registry; `[]` for an id that does not exist (spec 2026-10-03-skills-a-mano, D6). */
+  readonly pinnedOf: (siteId: string) => readonly string[]
   // --- uploads (spec 2026-10-01, D5, D9) ---
   /** Keeps a file the kernel received, under a sanitised name. The kernel deletes it if this does not. */
   readonly upload: (file: ReceivedFile, rawName: string) => Promise<UploadResult>
