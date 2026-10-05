@@ -103,10 +103,75 @@ full of unrelated short questions; keep it off for a code repository.
 An entry naming something that cannot be invoked shows up **disabled with its reason**
 and the rest of the catalog still works.
 
+In the composer, **What to run** is a select over the catalog's usable entries. With one
+usable entry there is nothing to choose, so the select is hidden.
+
 The reason `command` only prepends on the first turn is a bug someone else already
 paid for: without it, every reply re-invokes the whole skill and treats your answer as
 a brand new brief. It also means a follow-up can start with its own `/command` and the
 agent will run it with the previous turn's context.
+
+### Skills with /
+
+Typing `/` as the **first character** of the box opens a list of what the CLI can run: its
+skills, its agents, and the commands your note names. It works in the launch box and in
+the box of a conversation. A `/` anywhere else (`src/app`, `see /etc`) opens nothing, because
+the CLI only expands a skill at the start of the text. Keep typing to filter by name;
+picking a row writes `/<name> ` and nothing else. The text still goes to the CLI as you
+typed it, so the list is only help.
+
+- **Where the list comes from.** The CLI announces it on its first line of every run;
+  factotum keeps the last one in `<state>/modules/sessions/announced.json`. Until a
+  session has run, the list is empty. After you install a plugin it stays old until the
+  next session, of any kind.
+- **Agents.** In the launch box an agent becomes a chip, *as <name>*, and the session
+  launches with `--agent`; the chip's cross launches without it. Only names the CLI
+  announced are accepted. In a conversation, picking an agent writes `Use the <name> agent to `
+  instead, and a resumed agent session stays that agent.
+- **Pinning.** Long-press a row (phone) or right-click it (computer) to pin it to the
+  project. Pinned names come first, under *Pinned*, and are kept in `projects.json`. It asks
+  for no approval.
+- **Order.** *Pinned*, then your note's groups, then *Unsorted*: every skill and agent the
+  note does not mention. **Commands appear only if the note names them**, because the CLI's
+  own built-ins (`clear`, `compact`) arrive in the same list and cannot be told apart.
+- **Settings, Skills** shows what you used in the last 30 days, what you never did, the
+  *Unsorted* ones and the names your note has that the CLI does not announce. It is read-only.
+
+#### The note
+
+Optional, and yours: set `sessions.skills.notes` to the absolute path of a Markdown file.
+
+```json
+"sessions": { "skills": { "notes": "/Users/you/notes/skills.md" } }
+```
+
+The note only **arranges**. It cannot make something exist: a name the CLI does not announce is
+reported as stale on the Skills screen and never listed. A missing, over-256 KiB or unreadable
+note, or an invalid `skills` block, means no note and a reason in the screen; sessions are
+unaffected. It is read again whenever the file changes.
+
+The format, which the parser reads literally:
+
+- `##` and `###` headings are groups, in the order written. A table before the first one is ignored.
+- A table needs two columns whose headers match **Para qué** and **Cuándo la llamo**
+  (case-insensitive, accents optional). **Those headers are Spanish on purpose**, because the
+  parser looks for exactly them; a table without both is ignored. Other columns are fine.
+- The name is the first backticked span of the first cell, a leading `/` and anything after the
+  first space dropped: `` `/name <arg>` `` is `name`.
+- Put `*(agente)*` or `(agent)` in the first cell for an agent. Such a row looks only among
+  agents; the others look among skills and commands.
+- The two columns are shown under the name, flattened to one line and cut at 200 characters.
+- Code fences and `>` quotes are skipped; a repeated name counts once, and a bad row is skipped
+  with a warning.
+
+```md
+## Planning
+
+| Name | Para qué | Cuándo la llamo |
+|---|---|---|
+| `my-skill` | What it does | When I reach for it |
+| `my-reviewer` *(agente)* | What it does | When I reach for it |
+```
 
 ### Titles
 
