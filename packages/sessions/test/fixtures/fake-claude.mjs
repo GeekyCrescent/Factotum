@@ -35,6 +35,14 @@
  *   "service-then-exit" the same, waiting for a `service` event instead: the test plays `start_service`,
  *                     and the turn ends with the service still running (spec 2026-10-02, criterion 16).
  *
+ * THE LIST THE CLI ANNOUNCES (spec 2026-10-03-skills-a-mano, D2). Both play "quick", but their `init`
+ * is the real line of CLI 2.1.288 (`init-2.1.288.json`, trimmed) instead of the made-up one:
+ *
+ *   "announce"        that `init` once.
+ *   "announce-twice"  that `init` twice, as a CLI that restarted its stream would.
+ *
+ * Every session turn also appends its argv, as one JSON line, to `argv.log` in the session's directory.
+ *
  * THE TITLER (spec 2026-09-30, D6). Called with `--tools`, which a session never passes, it plays
  * the titler instead: it appends `{ owner, pid }` to `./titler-calls.log` IN ITS CWD — the titler's
  * own directory, where no session ever runs, so that file exists only if the titler was started —
@@ -50,7 +58,7 @@
  */
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const args = process.argv.slice(2)
 const prompt = args[args.indexOf('-p') + 1] ?? ''
@@ -126,6 +134,12 @@ function subagent() {
 }
 
 function session() {
+  // The argv of each turn, one JSON line, next to the `--settings` file (the session's directory):
+  // so a test can tell a first turn's `--agent` from a reply's without it (spec 2026-10-03, criterion 7).
+  const settings = args.indexOf('--settings')
+  // Only when it is a session's own settings.json: some tests hand the runner a stand-in path.
+  const file = args[settings + 1] ?? ''
+  if (settings !== -1 && basename(file) === 'settings.json') appendFileSync(join(dirname(file), 'argv.log'), `${JSON.stringify(args)}\n`)
 
 const toolUse = {
   type: 'assistant',
@@ -146,7 +160,13 @@ if (prompt.startsWith('boom')) {
   process.exit(3)
 }
 
-emit({ type: 'system', subtype: 'init', tools: ['Write'] })
+if (prompt.startsWith('announce')) {
+  const init = JSON.parse(readFileSync(new URL('./init-2.1.288.json', import.meta.url), 'utf8'))
+  emit(init)
+  if (prompt.startsWith('announce-twice')) emit(init)
+} else {
+  emit({ type: 'system', subtype: 'init', tools: ['Write'] })
+}
 emit(toolUse)
 emit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } })
 emit(toolResult)

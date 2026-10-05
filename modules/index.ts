@@ -50,5 +50,5 @@ export type {
   SessionState,
   SessionSummary,
 } from './sessions/types.ts'
-export { sessionsConfigSchema } from './sessions/config.ts'
+export { INVOKABLE_NAME, sessionsConfigSchema } from './sessions/config.ts'
 export type { SessionsConfig } from './sessions/config.ts'

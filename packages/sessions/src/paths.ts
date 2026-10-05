@@ -37,6 +37,11 @@ export interface SessionPaths {
   readonly lockDir: (siteId: string) => string
   /** `locks/<siteId>/<holderId>.json`: one holder — a session id, or `removing`. */
   readonly holderFile: (siteId: string, holderId: string) => string
+  /**
+   * What the CLI announced it can invoke (spec 2026-10-03-skills-a-mano, D2): ONE file for the machine,
+   * not one per session, because the list does not depend on the folder (§0.2).
+   */
+  readonly announcedFile: string
   readonly sessionDir: (sessionId: string) => string
   readonly metaFile: (sessionId: string) => string
   readonly eventsFile: (sessionId: string) => string
@@ -66,6 +71,7 @@ export function sessionPaths(stateDir: string): SessionPaths {
     lockFile: (siteId) => join(locks, `${siteId}.json`),
     lockDir: (siteId) => join(locks, siteId),
     holderFile: (siteId, holderId) => join(locks, siteId, `${holderId}.json`),
+    announcedFile: join(stateDir, 'announced.json'),
     sessionDir,
     metaFile: (sessionId) => join(sessionDir(sessionId), 'meta.json'),
     eventsFile: (sessionId) => join(sessionDir(sessionId), 'events.jsonl'),

@@ -67,6 +67,7 @@ export interface Folders {
   readonly inspectGrant: (token: string) => Promise<GrantInspect>
   readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
   readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  readonly pinProject: (id: string, name: string, pinned: boolean) => Promise<ProjectChange>
   readonly setLayout: (layout: ProjectLayout) => Promise<ProjectChange>
   readonly removeProject: (id: string) => Promise<ProjectChange>
   readonly removeHistory: (siteId: string) => Promise<ProjectChange>
@@ -241,6 +242,17 @@ export function createFolders(deps: FoldersDeps): Folders {
         current.projects.some((p) => p.id === id)
           ? { kind: 'set-project', id, name: patch.name, color: patch.color, concurrent: patch.concurrent }
           : { refused: `no project "${id}"` },
+      )
+      if (result.kind !== 'ok') return change(result.reason)
+      await table.apply(result.registry, false)
+      return { outcome: 'ok', removedSessions: 0 }
+    },
+
+    /** One name pinned or unpinned: the same road as a rename, no approval (spec 2026-10-03-skills-a-mano, D7). */
+    pinProject: async (id, name, pinned) => {
+      if (table.entry(id) === undefined) return { outcome: 'unknown' }
+      const result = await registry.update(async (current) =>
+        current.projects.some((p) => p.id === id) ? { kind: 'set-pin', id, name, pinned } : { refused: `no project "${id}"` },
       )
       if (result.kind !== 'ok') return change(result.reason)
       await table.apply(result.registry, false)

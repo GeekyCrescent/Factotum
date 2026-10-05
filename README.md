@@ -112,6 +112,8 @@ Write your own by copying `modules/example/` and adding a line to `modules/local
 
 The module that launches agents. You add **projects** (sites, in the code), folders you
 are willing to let an agent write in, and a **catalog** of things to launch.
+Typing `/` at the start of the box lists the skills and agents the CLI announces, optionally
+arranged by a note of yours.
 
 **Projects are added from the app**, and adding one sends an approval to your phone:
 nothing is written until you answer there. They live in

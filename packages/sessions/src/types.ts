@@ -89,6 +89,8 @@ export interface ProjectEntry {
    * absent: on disk a project that does not allow it has no key at all.
    */
   readonly concurrent?: true | undefined
+  /** Names pinned to the top of the "/" list in this project (spec 2026-10-03-skills-a-mano, D7). At most 12; absent when none. */
+  readonly pinned?: readonly string[] | undefined
 }
 
 /**
@@ -135,6 +137,8 @@ export type RegistryEdit =
       /** `undefined` KEEPS what is there, unlike `name` and `color` (spec 2026-10-03-varias-sesiones-por-proyecto, D5). */
       readonly concurrent?: boolean | undefined
     }
+  /** Adds or removes ONE name from the project's pins; the cap is checked in `apply`, before the schema (D7). */
+  | { readonly kind: 'set-pin'; readonly id: string; readonly name: string; readonly pinned: boolean }
   | { readonly kind: 'remove-project'; readonly id: string }
   | { readonly kind: 'add-shared'; readonly path: string }
   | { readonly kind: 'remove-shared'; readonly path: string }
@@ -241,6 +245,8 @@ export interface LaunchInput {
   /** Launch anyway over a freshness warning. Required, so neither copy of this file
    *  has to agree about `exactOptionalPropertyTypes`. */
   readonly force: boolean
+  /** Launch as this agent (`--agent`). Only with a free-prompt entry, and only a name the CLI announced. */
+  readonly agent?: string
 }
 
 export interface FreshnessReport {
@@ -281,6 +287,8 @@ export interface SessionSummary {
   readonly turns: number
   /** The first prompt, cut. `undefined` for a session from before the field existed. */
   readonly prompt: string | undefined
+  /** The agent it was launched as. `undefined` for a plain session. */
+  readonly agent: string | undefined
   /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
   readonly title: string | undefined
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
@@ -603,6 +611,8 @@ export interface ProjectView {
   readonly category: string | undefined
   /** Several sessions at once allowed here (spec 2026-10-03-varias-sesiones-por-proyecto, D9). */
   readonly concurrent: boolean
+  /** The names pinned here (spec 2026-10-03-skills-a-mano, D7); `[]` when none. */
+  readonly pinned: readonly string[]
 }
 
 export interface SharedView {
@@ -770,6 +780,30 @@ export type QuestionsAnswer =
   | { readonly kind: 'over'; readonly how: SettledHow }
   | { readonly kind: 'unknown' }
 
+/**
+ * What the CLI announced it can invoke, read from the `init` line of any session (spec
+ * 2026-10-03-skills-a-mano, D2). One list for the whole machine.
+ */
+export interface Announced {
+  readonly skills: readonly string[]
+  readonly agents: readonly string[]
+  /** `slash_commands` minus `skills` minus `terminal_slash_commands` (D4). Built-ins included: §0.1. */
+  readonly commands: readonly string[]
+  readonly version: string | undefined
+  /** When THIS list was first seen. Not rewritten while it stays the same (criterion 1). */
+  readonly since: string
+}
+
+/** How often one announced name was used in a period (spec 2026-10-03-skills-a-mano, D9). Never any prompt text. */
+export interface UsageCount {
+  readonly name: string
+  /** Typed by the owner (`/name`), or the session was launched with it. */
+  readonly owner: number
+  /** Called by an agent: a Skill call or a subagent. */
+  readonly agent: number
+  readonly lastUsedAt: string | undefined
+}
+
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
@@ -793,6 +827,8 @@ export interface SessionEngine {
   readonly inspectGrant: (token: string) => Promise<GrantInspect>
   readonly answerGrant: (token: string, decision: 'allow' | 'deny') => Promise<AnswerGrantResult>
   readonly updateProject: (id: string, patch: ProjectPatch) => Promise<ProjectChange>
+  /** Pins or unpins one name in a project. Cosmetic like a rename: no approval (spec 2026-10-03-skills-a-mano, D7). */
+  readonly pinProject: (id: string, name: string, pinned: boolean) => Promise<ProjectChange>
   /** The order and the categories (see `ProjectLayout`). Cosmetic: no approval. */
   readonly setLayout: (layout: ProjectLayout) => Promise<ProjectChange>
   readonly removeProject: (id: string) => Promise<ProjectChange>
@@ -808,6 +844,12 @@ export interface SessionEngine {
   /** One ask by its token, for the approval panel (spec D8). A property, like every member here. */
   readonly inspect: (askId: string) => Promise<InspectResult>
   readonly reconcile: () => Promise<void>
+  /** The list the CLI announced, or `undefined` until a session has run (spec 2026-10-03, D2). */
+  readonly announced: () => Announced | undefined
+  /** The names pinned in one project, from the in-memory registry; `[]` for an id that does not exist (spec 2026-10-03-skills-a-mano, D6). */
+  readonly pinnedOf: (siteId: string) => readonly string[]
+  /** A count per name of skills, agents and commands (zeros included) over the last `days`; `undefined` without a list (D9). */
+  readonly usage: (days: number) => Promise<readonly UsageCount[] | undefined>
   // --- uploads (spec 2026-10-01, D5, D9) ---
   /** Keeps a file the kernel received, under a sanitised name. The kernel deletes it if this does not. */
   readonly upload: (file: ReceivedFile, rawName: string) => Promise<UploadResult>

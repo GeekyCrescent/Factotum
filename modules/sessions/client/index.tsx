@@ -31,9 +31,11 @@ import { Icon } from './icon.tsx'
 import { ProjectsScreen } from './projects.tsx'
 import { firstWithSession, pickRelevant, resolvedBy } from './relevance.ts'
 import { Session } from './session.tsx'
+import { SkillsScreen } from './skills-screen.tsx'
 
 const NEW = 'new'
 const PROJECTS = 'projects'
+const SKILLS = 'skills'
 
 function SessionsView(view: ViewProps) {
   const { api, rest, navigate, pending, resolvePending } = view
@@ -79,6 +81,8 @@ function SessionsView(view: ViewProps) {
   }, [rest, page, pending, navigate])
 
   if (rest === PROJECTS) return <ProjectsScreen view={view} />
+  // Before the last case below, where any other `rest` is a session id.
+  if (rest === SKILLS) return <SkillsScreen view={view} />
 
   if (error !== undefined && (setup === undefined || page === undefined)) {
     return (
@@ -162,6 +166,12 @@ export const sessionsClient = {
       description: 'The folders agents may write in, shared folders, and the history of removed projects.',
       icon: 'folder-simple',
       rest: PROJECTS,
+    },
+    {
+      label: 'Skills',
+      description: 'What you can launch with /, and what you have used.',
+      icon: 'lightning',
+      rest: SKILLS,
     },
   ],
 }

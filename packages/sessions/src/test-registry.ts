@@ -89,6 +89,17 @@ function apply(view: RegistryView, edit: RegistryEdit): RegistryView {
           return { ...rest, name: edit.name, color: edit.color, ...(concurrent === true ? { concurrent } : {}) }
         }),
       }
+    case 'set-pin':
+      // The real store's rule (D7), minus the schema: the cap is the engine-independent store's.
+      return {
+        ...view,
+        projects: view.projects.map((p) => {
+          if (p.id !== edit.id) return p
+          const { pinned: kept = [], ...rest } = p
+          const next = edit.pinned ? (kept.includes(edit.name) ? kept : [...kept, edit.name]) : kept.filter((n) => n !== edit.name)
+          return { ...rest, ...(next.length > 0 ? { pinned: next } : {}) }
+        }),
+      }
     case 'remove-project':
       return { ...view, projects: view.projects.filter((p) => p.id !== edit.id) }
     case 'add-shared':

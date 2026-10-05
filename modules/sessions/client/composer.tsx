@@ -29,6 +29,7 @@ import { DictateButton, DictationNotice, useComposerDictation, type DictationCon
 import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
+import { SlashPicker, useSlash, type SlashControls } from './slash-picker.tsx'
 import { ProjectButton, ProjectSheet, useArrangement } from './project-pick.tsx'
 import { filesOf } from './refs.ts'
 import { toneClass } from './tone.ts'
@@ -97,16 +98,20 @@ export function LaunchComposer({
   const [siteId, setSiteId] = useState(sites[0]?.id ?? '')
   const site = sites.find((s) => s.id === siteId)
   const [entryId, setEntryId] = useState(usable[0]?.id ?? '')
+  // The agent the session launches as (spec 2026-10-03-skills-a-mano, D8). Changing project keeps it:
+  // the list is the machine's, not the project's.
+  const [agent, setAgent] = useState<string | undefined>(undefined)
   const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text, force) => {
     const sent = attach.items.filter((item) => item.state === 'ready')
-    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force })
+    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force, ...(agent === undefined ? {} : { agent }) })
     attach.clear(sent.map((item) => item.key))
     dictation.clear()
     onLaunched(result.sessionId)
   })
   // `@` lists the project chosen in the select; changing it re-reads the token (criterion 24).
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
+  const slash = useSlash({ api, siteId: site?.id, projectLabel: site === undefined ? undefined : (site.name ?? site.id), mode: 'launch', text: s.text, setText: s.setText, textarea: picker.textarea, onAgent: setAgent })
   // Before the early return below: a hook is called on every render or on none.
   const dictation = useComposerDictation(api, s.text, s.setText, picker.textarea)
   // The project's sheet, with the drawer's categories; outside the box's form, so none of its styles reach it.
@@ -169,6 +174,7 @@ export function LaunchComposer({
         canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: entryId !== '' }) && !dictation.busy}
         send={() => void s.go(false)}
         picker={picker}
+        slash={slash}
         dictation={dictation}
         autoFocus
         tone={siteId === '' ? undefined : toneClass(siteId, site?.color)}
@@ -180,16 +186,27 @@ export function LaunchComposer({
             setChoosing(true)
           }}
         />
-        <label class="chip s-pick">
-          <select aria-label="What to run" value={entryId} onChange={(e) => setEntryId((e.target as HTMLSelectElement).value)}>
-            {usable.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
-          <Icon name="caret-down" size={12} />
-        </label>
+        {agent === undefined ? null : (
+          <span class="chip s-agent-chip">
+            as {agent}
+            <button type="button" class="s-agent-x" aria-label={`Launch without the ${agent} agent`} onClick={() => setAgent(undefined)}>
+              <Icon name="x" size={12} />
+            </button>
+          </span>
+        )}
+        {/* One usable entry is nothing to choose between (criterion 27). */}
+        {usable.length > 1 ? (
+          <label class="chip s-pick">
+            <select aria-label="What to run" value={entryId} onChange={(e) => setEntryId((e.target as HTMLSelectElement).value)}>
+              {usable.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+            <Icon name="caret-down" size={12} />
+          </label>
+        ) : null}
       </Box>
       {choosing ? (
         <ProjectSheet
@@ -234,6 +251,7 @@ export function ReplyComposer({
   })
   const site = project === undefined ? undefined : setup.sites.find((candidate) => candidate.id === project.id)
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
+  const slash = useSlash({ api, siteId: project?.id, projectLabel: project?.label, mode: 'reply', text: s.text, setText: s.setText, textarea: picker.textarea })
   const dictation = useComposerDictation(api, s.text, s.setText, picker.textarea)
   const tone = project === undefined ? undefined : toneClass(project.id, project.color)
   return (
@@ -258,6 +276,7 @@ export function ReplyComposer({
         canSend={canSend({ busy: s.busy, text: s.text, attachments: attach.items, ready: true }) && !dictation.busy}
         send={() => void s.go(false)}
         picker={picker}
+        slash={slash}
         dictation={dictation}
         autoFocus={false}
         tone={tone}
@@ -282,6 +301,7 @@ function Box({
   canSend,
   send,
   picker,
+  slash,
   dictation,
   autoFocus,
   tone,
@@ -296,6 +316,8 @@ function Box({
   readonly send: () => void
   /** The `@` list (spec 2026-10-01-referencias-y-tab, D9): it is asked about every key first. */
   readonly picker: PickerControls
+  /** The `/` list (spec 2026-10-03-skills-a-mano, D8): asked before the `@` one. At most one is open. */
+  readonly slash: SlashControls
   /** Dictation (spec 2026-10-03): the mic beside `+`, and its notice above the box. */
   readonly dictation: DictationControls
   readonly autoFocus: boolean
@@ -304,12 +326,19 @@ function Box({
   readonly children?: ComponentChildren
 }) {
   const [dropping, setDropping] = useState(false)
+  // Whichever list is open owns the textarea's aria-*.
+  const list = slash.view.kind === 'rows' ? { listId: slash.listId, optionId: slash.optionId, selected: slash.view.selected } : picker.view.kind === 'rows' ? { listId: picker.listId, optionId: picker.optionId, selected: picker.view.selected } : undefined
+  const syncBoth = () => {
+    picker.sync()
+    slash.sync()
+  }
   const classes = ['composer', tone, dropping ? 's-dropping' : undefined].filter((c) => c !== undefined).join(' ')
   return (
     <div class="s-composer">
       <Suggestions />
       <Chips attach={attach} />
       <DictationNotice dictation={dictation} />
+      <SlashPicker slash={slash} />
       <FilePicker picker={picker} />
       <form
         class={classes}
@@ -343,16 +372,17 @@ function Box({
           aria-label={placeholder}
           autoFocus={autoFocus}
           aria-autocomplete="list"
-          aria-controls={picker.view.kind === 'rows' ? picker.listId : undefined}
-          aria-expanded={picker.view.kind === 'rows'}
-          aria-activedescendant={picker.view.kind === 'rows' && picker.view.selected >= 0 ? picker.optionId(picker.view.selected) : undefined}
+          aria-controls={list?.listId}
+          aria-expanded={list !== undefined}
+          aria-activedescendant={list !== undefined && list.selected >= 0 ? list.optionId(list.selected) : undefined}
           onInput={(event) => {
             setText((event.target as HTMLTextAreaElement).value)
             picker.sync()
+            slash.sync()
           }}
-          onClick={picker.sync}
-          onKeyUp={picker.sync}
-          onFocus={picker.sync}
+          onClick={syncBoth}
+          onKeyUp={syncBoth}
+          onFocus={syncBoth}
           // A screenshot on the clipboard is attached; text is pasted as it always was (criterion 15).
           // A copy from a spreadsheet carries BOTH its text and a picture of it: that is text.
           onPaste={(event) => {
@@ -362,8 +392,8 @@ function Box({
             attach.add(files)
           }}
           onKeyDown={(event) => {
-            // The `@` list first: with it open, Tab, the arrows, Enter and Esc are its (criteria 20, 21).
-            if (picker.onKey(event)) return
+            // The `/` and `@` lists first: with one open, Tab, the arrows, Enter and Esc are its (criteria 20, 21, 24).
+            if (slash.onKey(event) || picker.onKey(event)) return
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
             const sends = event.metaKey || event.ctrlKey || window.matchMedia(FINE_POINTER).matches
             if (!sends) return

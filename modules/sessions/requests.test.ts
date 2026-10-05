@@ -5,7 +5,9 @@ import {
   isSiteId,
   parseArchived,
   parseIds,
+  parseLaunchAgent,
   parseLayout,
+  parsePin,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -102,5 +104,26 @@ test('A LAYOUT: names trimmed and required, ids that are ids, nothing twice, no 
     const parsed = parseLayout(body)
     assert.equal(parsed.ok, false)
     assert.match(parsed.ok ? '' : parsed.message, message)
+  }
+})
+
+test('parseLaunchAgent: absent is no agent, a name passes, anything else is refused', () => {
+  assert.deepEqual(parseLaunchAgent({}), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchAgent(undefined), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchAgent({ agent: 'code-reviewer' }), { ok: true, value: 'code-reviewer' })
+  assert.deepEqual(parseLaunchAgent({ agent: 'impeccable:impeccable-manual-edit-applier' }), {
+    ok: true,
+    value: 'impeccable:impeccable-manual-edit-applier',
+  })
+  for (const agent of [3, null, '', 'x y', '-x', '/x', ['a']]) {
+    assert.deepEqual(parseLaunchAgent({ agent }), { ok: false, message: 'agent is not a name the CLI can be given' }, JSON.stringify(agent))
+  }
+})
+
+test('a pin is a name the CLI can be given and a boolean; anything else is refused', () => {
+  assert.deepEqual(parsePin({ name: 'plugin:review.v2', pinned: true }), { ok: true, value: { name: 'plugin:review.v2', pinned: true } })
+  assert.deepEqual(parsePin({ name: 'a', pinned: false }), { ok: true, value: { name: 'a', pinned: false } })
+  for (const body of [{ name: '', pinned: true }, { name: '-x', pinned: true }, { name: 'a b', pinned: true }, { name: 'a' }, { name: 'a', pinned: 'true' }, { pinned: true }, null, 'x']) {
+    assert.equal(parsePin(body).ok, false, JSON.stringify(body))
   }
 })

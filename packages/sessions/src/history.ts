@@ -73,6 +73,7 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
     reason: meta.reason,
     turns: meta.turns,
     prompt: meta.prompt,
+    agent: meta.agent,
     title: meta.title,
     autoTitle: meta.autoTitle,
     archived: meta.archivedAt !== undefined,
@@ -193,6 +194,7 @@ export function createHistory(deps: HistoryDeps): History {
           archived: all.length - active.length,
           category: entry.category,
           concurrent: entry.concurrent === true,
+          pinned: entry.pinned ?? [],
         }
       })
       return {

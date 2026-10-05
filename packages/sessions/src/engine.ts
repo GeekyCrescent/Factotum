@@ -13,7 +13,8 @@
 import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
-import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
+import { createAnnounced } from './announced.ts'
+import { findInvokable, isInvokableName, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh, type FreshnessDeps } from './freshness.ts'
 import { uuidv7 } from './id.ts'
 import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
@@ -34,6 +35,7 @@ import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
+import { usageOver } from './usage.ts'
 import { createServices, type ServiceSeams } from './services/wire.ts'
 import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore, type RemoveOutcome } from './store.ts'
@@ -132,6 +134,11 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const locks = new SiteLocks(paths)
   const freshness = deps.freshness ?? checkFreshness
   await store.ensureRoots()
+
+  // What the CLI announces it can invoke (spec 2026-10-03-skills-a-mano, D2): read once here, and
+  // refreshed by the `init` of any turn, a reply included.
+  const announced = createAnnounced({ file: paths.announcedFile, log, now: setup.now })
+  await announced.load()
 
   /**
    * How a launch or a reply in this project asks for its lock (spec 2026-10-03, D4). A THUNK, read
@@ -412,6 +419,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       mcpConfigPath: files.mcp,
       resume,
       cwd: site.path,
+      onInit: announced.take,
       onEvent: async (event) => {
         if (event.kind === 'state' && event.state !== 'running') {
           reported = { state: event.state, reason: event.reason }
@@ -477,6 +485,20 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     const entry = findInvokable(catalog, input.entryId)
     if (!entry.ok) return { outcome: 'rejected', reason: entry.reason }
 
+    // Launching as an agent: only from a free-prompt entry, and only a name the CLI itself announced.
+    let invoke: Invoke = entry.invoke
+    if (input.agent !== undefined) {
+      if (invoke.kind !== 'none') return { outcome: 'rejected', reason: 'an agent can only be launched with a free-prompt entry' }
+      // The argv guarantee holds without the server in front: a name the CLI could read as a flag never gets there.
+      if (!isInvokableName(input.agent)) return { outcome: 'rejected', reason: 'agent is not a name the CLI can be given' }
+      const list = announced.get()
+      if (list === undefined) return { outcome: 'rejected', reason: 'the list of agents is not known yet' }
+      if (!list.agents.includes(input.agent)) {
+        return { outcome: 'rejected', reason: `no agent "${input.agent}" in the list the CLI announced` }
+      }
+      invoke = { kind: 'subagent', name: input.agent }
+    }
+
     const sessionId = uuidv7(setup.now().getTime())
     const acquired = await locks.acquire(input.siteId, sessionId, setup.now().toISOString(), modeFor(input.siteId))
     if (!acquired.ok) {
@@ -524,6 +546,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // So the drawer can tell sessions apart without reading their logs (spec D8d).
         // The words, or the names of the files when there are none — never a path (spec 2026-10-01, D7).
         prompt: promptOf(input.text, uploads.root).slice(0, PROMPT_CHARS),
+        agent: input.agent,
       })
 
       if (site.isRepo && siblings > 0) {
@@ -547,7 +570,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // A catalog entry can launch with no text, and an empty bubble says nothing.
       if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })
 
-      const running = spawnFor(sessionId, site, entry.invoke, input.text, files, false)
+      const running = spawnFor(sessionId, site, invoke, input.text, files, false)
       await store.patchMeta(sessionId, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(sessionId, { kind: 'state', state: 'running', reason: undefined })
 
@@ -964,6 +987,25 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     read,
     decide,
     reconcile,
+    announced: announced.get,
+    // The IN-MEMORY registry, never `projects()`: that one checks every project on disk, and this
+    // runs on every GET /skills.
+    pinnedOf: (siteId) => table.entry(siteId)?.pinned ?? [],
+    usage: async (days) =>
+      await usageOver(
+        {
+          index,
+          store,
+          ensureIndex,
+          announced: announced.get,
+          invokeOf: (entryId) => {
+            const found = findInvokable(catalog, entryId)
+            return found.ok ? found.invoke : undefined
+          },
+          now: setup.now,
+        },
+        days,
+      ),
     view,
     stop,
     summary: history.summary,
@@ -981,6 +1023,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     inspectGrant: folders.inspectGrant,
     answerGrant: unlessStopped(folders.answerGrant),
     updateProject: unlessStopped(folders.updateProject),
+    pinProject: unlessStopped(folders.pinProject),
     setLayout: unlessStopped(folders.setLayout),
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),

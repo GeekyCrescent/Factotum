@@ -15,6 +15,7 @@ const session = (id: string, state: SessionState, startedAt: string): SessionSum
   reason: undefined,
   turns: 1,
   prompt: undefined,
+  agent: undefined,
   title: undefined,
   autoTitle: undefined,
   archived: false,

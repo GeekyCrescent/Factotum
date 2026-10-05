@@ -180,7 +180,7 @@ test('AN ID WITH OLD HISTORY is taken: delete it first or pick another (criterio
       const store = new SessionStore(sessionPaths(stateDir), () => new Date())
       await store.ensureRoots()
       const id = uuidv7()
-      await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'x' })
+      await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'x' })
       await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
     },
   })
@@ -520,7 +520,7 @@ test('REMOVED PROJECTS: “Delete history” deletes their conversations; a regi
       await store.ensureRoots()
       for (let i = 0; i < 2; i++) {
         const id = uuidv7()
-        await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'x' })
+        await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'x' })
         await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
       }
     },
@@ -541,4 +541,44 @@ test('ONE REQUEST PER FOLDER: asking again while one waits is a 409, and it does
   assert.equal(again.outcome === 'conflict' ? again.conflict : again.outcome, 'already-waiting')
   assert.equal(notices.length, 1)
   for (const name of ['a', 'b']) await requested(engine, await folder(name))
+})
+
+test('PINS: pinProject stores them on that project, pinnedOf and the view read them, a rename keeps them (criterion 29)', async () => {
+  const { engine, registry, root } = await world({
+    sites: (r) => [
+      { id: 'web', path: join(r, 'web') },
+      { id: 'api', path: join(r, 'api') },
+    ],
+  })
+  await mkdir(join(root, 'web'))
+  await mkdir(join(root, 'api'))
+  assert.deepEqual(engine.pinnedOf('web'), [])
+
+  assert.equal((await engine.pinProject('web', 'review', true)).outcome, 'ok')
+  assert.equal((await engine.pinProject('web', 'plugin:fix', true)).outcome, 'ok')
+  await engine.updateProject('web', { name: 'Web', color: 2 })
+
+  assert.deepEqual(engine.pinnedOf('web'), ['review', 'plugin:fix'])
+  assert.deepEqual(engine.pinnedOf('api'), [])
+  assert.deepEqual(engine.pinnedOf('nope'), [])
+  assert.deepEqual(registry.current().projects[0]?.pinned, ['review', 'plugin:fix'])
+  const page = await engine.projects()
+  assert.deepEqual(page.projects.map((p) => [p.id, p.pinned]), [['web', ['review', 'plugin:fix']], ['api', []]])
+
+  await engine.pinProject('web', 'review', false)
+  await engine.pinProject('web', 'plugin:fix', false)
+  assert.deepEqual(engine.pinnedOf('web'), [])
+  assert.equal('pinned' in (registry.current().projects[0] ?? {}), false)
+})
+
+test('PINS: a project that does not exist is "unknown", whatever the name', async () => {
+  const { engine } = await world()
+  assert.deepEqual(await engine.pinProject('nope', 'review', true), { outcome: 'unknown' })
+})
+
+test('PINS: pinnedOf reads the registry in memory and never touches the disk of the projects', async () => {
+  const { engine } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  // The folder was never created: `projects()` would mark it missing, but the pins are still read.
+  await engine.pinProject('web', 'review', true)
+  assert.deepEqual(engine.pinnedOf('web'), ['review'])
 })

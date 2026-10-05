@@ -10,7 +10,7 @@
 
 import { join, normalize } from 'node:path'
 import { z } from 'zod'
-import { boundaryPath, siteIdSchema } from './config.ts'
+import { boundaryPath, INVOKABLE_NAME, siteIdSchema } from './config.ts'
 import { CATEGORIES_MAX, categoryIdSchema, colorSchema, NAME_MAX } from './registry.ts'
 import type { Color, FilesQuery, ProjectLayout } from './types.ts'
 
@@ -55,6 +55,9 @@ const projectPatchSchema = z.object({
   // Several sessions at once (spec 2026-10-03-varias-sesiones-por-proyecto, D5). Not sent = unchanged.
   concurrent: z.boolean().optional(),
 })
+
+/** One name pinned or unpinned. The name rule is the one the CLI is given (`INVOKABLE_NAME`), so a bad one is a 400. */
+const pinSchema = z.object({ name: z.string().regex(INVOKABLE_NAME, 'that is not a name the CLI can be given'), pinned: z.boolean() })
 
 /** A category's name: trimmed, and REQUIRED — a header with nothing in it is not one to find. */
 const categoryNameSchema = z
@@ -117,6 +120,11 @@ export function parseProjectPatch(
   return { ok: true, value: { name: parsed.data.name, color: parsed.data.color, concurrent: parsed.data.concurrent } }
 }
 
+export function parsePin(body: unknown): Parsed<{ name: string; pinned: boolean }> {
+  const parsed = pinSchema.safeParse(record(body))
+  return parsed.success ? { ok: true, value: { name: parsed.data.name, pinned: parsed.data.pinned } } : { ok: false, message: first(parsed.error) }
+}
+
 /**
  * The SHAPE of a layout: ids that could be ids, names that are names, nothing twice, and no category
  * named that is not sent. Whether it places exactly the projects there are is the engine's, inside
@@ -142,6 +150,16 @@ export function parseTitle(body: unknown): Parsed<string> {
   const title = record(body)['title']
   if (typeof title !== 'string') return { ok: false, message: 'a title must be text' }
   return { ok: true, value: title }
+}
+
+/** `value: undefined`: absent. `ok: false`: present and not a name the CLI can be given (400). */
+export function parseLaunchAgent(body: unknown): Parsed<string | undefined> {
+  const agent = record(body)['agent']
+  if (agent === undefined) return { ok: true, value: undefined }
+  if (typeof agent !== 'string' || !INVOKABLE_NAME.test(agent)) {
+    return { ok: false, message: 'agent is not a name the CLI can be given' }
+  }
+  return { ok: true, value: agent }
 }
 
 export function parseArchived(body: unknown): Parsed<boolean> {

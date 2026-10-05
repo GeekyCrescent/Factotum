@@ -160,7 +160,7 @@ test('the conversation deleted while it is titled: nothing is made again, nothin
   const store = new SessionStore(paths, () => new Date())
   await store.ensureRoots()
   const id = uuidv7(Date.now())
-  await store.create({ id, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: '/w', prompt: 'x' })
+  await store.create({ id, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: '/w', agent: undefined, prompt: 'x' })
   await store.patchMeta(id, (meta) => ({ ...meta, state: 'finished' }))
 
   const guard = trapEscapes()

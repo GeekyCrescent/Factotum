@@ -25,12 +25,17 @@ import { sessionsConfigSchema, UPLOAD_MAX_BYTES, type SessionsConfig } from './c
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
 import { dictationRoutes } from './dictation/routes.ts'
 import { createDictation, type DictationState } from './dictation/service.ts'
+import { interpretSkillsConfig } from './skills/config.ts'
+import { createNotes } from './skills/notes.ts'
+import { skillsRoutes } from './skills/routes.ts'
 import {
   isSiteId,
   parseArchived,
   parseFilesQuery,
   parseIds,
+  parseLaunchAgent,
   parseLayout,
+  parsePin,
   parseProjectPatch,
   parseProjectRequest,
   parseQuery,
@@ -50,6 +55,8 @@ interface EngineHolder {
   engine?: SessionEngine
   /** Filled by start(), like the engine; undefined before, and the routes answer 503 (spec 2026-10-03, D8). */
   dictation?: DictationState
+  /** Filled by start(): the owner's note, read on demand (spec 2026-10-03-skills-a-mano, D6). */
+  skills?: { readonly read: ReturnType<typeof createNotes>['read'] }
 }
 
 const STARTING: ModuleResponse = {
@@ -328,6 +335,16 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       return fromChange(await engine.updateProject(id, patch.value))
     }),
 
+    // One pin. The same `fromChange` as a rename: 200, 404 for an unknown project, 409 for the 13th
+    // pin. It does not return the list: the client asks GET /skills again (spec 2026-10-03-skills-a-mano, D7).
+    'POST /projects/:id/pins': withEngine(async (engine, req) => {
+      const id = req.params['id']
+      if (!isSiteId(id)) return invalid('that is not a project id')
+      const pin = parsePin(req.body)
+      if (!pin.ok) return invalid(pin.message)
+      return fromChange(await engine.pinProject(id, pin.value.name, pin.value.pinned))
+    }),
+
     // The drawer's order and categories, WHOLE (see `ProjectLayout`). Cosmetic, like a name: no
     // approval. NOT `/projects/layout`: a literal beats a parameter, so a project whose folder is
     // called `layout` could never be renamed again.
@@ -400,12 +417,16 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       }
       const prompt = text(req.body, 'text') ?? ''
       if (HAS_NUL.test(prompt)) return invalid(NUL_REFUSED)
+      const agent = parseLaunchAgent(req.body)
+      if (!agent.ok) return invalid(agent.message)
       return fromLaunch(
         await engine.launch({
           siteId,
           entryId,
           text: prompt,
           force: body?.force === true,
+          // Left out when absent: `agent?: string` does not take an explicit undefined.
+          ...(agent.value === undefined ? {} : { agent: agent.value }),
         }),
       )
     }),
@@ -692,6 +713,13 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
 
     // Dictation (spec 2026-10-03): its own folder, which imports nothing from here (D1).
     ...dictationRoutes(() => holder.dictation),
+
+    // The skills list (spec 2026-10-03-skills-a-mano): the same, plus the engine's two reads.
+    ...skillsRoutes(() => {
+      const { engine, skills } = holder
+      if (engine === undefined || skills === undefined) return undefined
+      return { announced: engine.announced, pinnedOf: engine.pinnedOf, notes: skills, usage: engine.usage }
+    }),
   }
 }
 
@@ -742,6 +770,10 @@ export function sessionsModule(
       })
       // Never throws, so its place costs nothing: a bad block switches off dictation, not sessions (D3).
       holder.dictation = await createDictation({ raw: ctx.config.dictation, log: ctx.log, timers: ctx.timers })
+      // Never throws either: a bad `skills` block switches off the note, not sessions (D5, criterion 16).
+      const skillsConfig = interpretSkillsConfig(ctx.config.skills)
+      if (skillsConfig.kind === 'invalid') ctx.log.warn(`skills note is off: ${skillsConfig.reason}`)
+      holder.skills = createNotes(skillsConfig)
       const engine = await createEngine({
         stateDir: ctx.stateDir,
         registry,

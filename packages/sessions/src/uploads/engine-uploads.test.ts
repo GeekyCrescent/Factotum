@@ -90,7 +90,7 @@ async function uploadOnDisk(uploadsRoot: string, name = 'a.png'): Promise<{ id: 
 /** A finished conversation in `siteId` whose log holds these events. */
 async function conversation(store: SessionStore, siteId: string, events: readonly EventInput[]): Promise<string> {
   const id = uuidv7()
-  await store.create({ id, siteId, entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, prompt: 'x' })
+  await store.create({ id, siteId, entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'x' })
   for (const event of events) await store.append(id, event)
   await store.patchMeta(id, (meta) => ({ ...meta, state: 'finished' }))
   return id

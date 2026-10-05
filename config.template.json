@@ -39,7 +39,9 @@
     "",
     "sessions.catalog: what you can launch. kind is one of none, command or subagent. An",
     "entry naming something that cannot be invoked is disabled with its reason and the",
-    "rest of the catalog keeps working."
+    "rest of the catalog keeps working.",
+    "",
+    "sessions.skills.notes: optional ABSOLUTE path to a Markdown note that orders the \"/\" list; the CLI decides what exists, the note only arranges it. See docs/running-agents.md."
   ],
   "environment": "prod",
   "listen": {
@@ -57,6 +59,9 @@
           "path": "/Users/you/notes"
         }
       ],
+      "skills": {
+        "notes": "/Users/you/notes/skills.md"
+      },
       "catalog": [
         {
           "id": "free",

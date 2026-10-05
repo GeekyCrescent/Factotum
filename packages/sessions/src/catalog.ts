@@ -37,7 +37,12 @@ const KINDS = ['none', 'command', 'subagent'] as const
  * silently become a different command with an argument; no leading slash, because the
  * caller adds it and `//name` invokes nothing.
  */
-const NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+export const NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+
+/** The rule as a question, for callers that hold a name and no catalog entry. */
+export function isInvokableName(name: string): boolean {
+  return NAME.test(name)
+}
 
 export function resolveCatalog(entries: readonly CatalogEntry[]): readonly ResolvedEntry[] {
   const seen = new Set<string>()
@@ -66,7 +71,7 @@ export function resolveCatalog(entries: readonly CatalogEntry[]): readonly Resol
     if (name === undefined || name === '') {
       return disabled(`invoke.kind "${kind}" needs a name`)
     }
-    if (!NAME.test(name)) {
+    if (!isInvokableName(name)) {
       return disabled(`invoke.name ${JSON.stringify(name)} is not a name the CLI can be given`)
     }
 

@@ -45,7 +45,7 @@ function sleeper(): ChildProcess {
 
 test('a lock held by a LIVE daemon pid stops reconciliation and touches nothing', async () => {
   const { store, locks } = await world(process.pid)
-  await store.create({ id: sid(1), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(1), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await locks.acquire('work', sid(1), AT)
   const { log, lines } = silentLog()
 
@@ -64,7 +64,7 @@ test('a lock held by a LIVE daemon pid stops reconciliation and touches nothing'
 
 test('a running session whose agent is ALIVE: the group is killed FIRST, then failed, then released', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(2), (m) => ({ ...m, agentPid: 12_345 }))
   await locks.acquire('work', sid(2), AT)
 
@@ -102,7 +102,7 @@ test('the orphan kill reaches a REAL process group, negative pid and all', async
   const pid = child.pid
   assert.notEqual(pid, undefined)
 
-  await store.create({ id: sid(3), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(3), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(3), (m) => ({ ...m, agentPid: pid }))
   await locks.acquire('work', sid(3), AT)
 
@@ -120,7 +120,7 @@ test('the orphan kill reaches a REAL process group, negative pid and all', async
 
 test('an agent that died between the check and the signal still closes the session', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(4), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(4), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(4), (m) => ({ ...m, agentPid: 777 }))
   await locks.acquire('work', sid(4), AT)
 
@@ -146,7 +146,7 @@ test('an agent that died between the check and the signal still closes the sessi
 
 test('a running session whose agent is dead becomes failed with a reason, then the lock goes', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(5), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(5), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(5), (m) => ({ ...m, agentPid: 31_337 }))
   await locks.acquire('work', sid(5), AT)
 
@@ -161,7 +161,7 @@ test('a running session whose agent is dead becomes failed with a reason, then t
 
 test('the failure is written to the LOG too, so the screen can show it', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(6), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(6), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await locks.acquire('work', sid(6), AT)
 
   const { log } = silentLog()
@@ -174,7 +174,7 @@ test('the failure is written to the LOG too, so the screen can show it', async (
 
 test('the events.jsonl written before the crash is left intact up to its last event', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(7), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(7), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.append(sid(7), { kind: 'message', role: 'assistant', text: 'made it this far' })
   await locks.acquire('work', sid(7), AT)
 
@@ -194,7 +194,7 @@ test('a lock over an already-terminal session is released and the session is not
   // The daemon died between writing the terminal state and releasing the lock — the
   // second of the two mid-sequence crashes.
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(8), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(8), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(8), (m) => ({ ...m, state: 'finished', endedAt: AT, reason: 'all done' }))
   await locks.acquire('work', sid(8), AT)
 
@@ -234,7 +234,7 @@ test('a lock whose session has no directory at all is released', async () => {
 
 test('a lock whose meta.json is TRUNCATED is released instead of holding every site hostage', async () => {
   const { store, locks, paths } = await world(999_999)
-  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await writeFile(paths.metaFile(sid(2)), '{"id":"019965aa-0000')
   await locks.acquire('work', sid(2), AT)
 
@@ -258,8 +258,8 @@ test('an UNREADABLE lock file is released rather than left for ever', async () =
 
 test('every site is reconciled in one pass, and each keeps its own outcome', async () => {
   const { store, locks } = await world(999_999)
-  await store.create({ id: sid(1), siteId: 'a', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
-  await store.create({ id: sid(2), siteId: 'b', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(1), siteId: 'a', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: sid(2), siteId: 'b', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(2), (m) => ({ ...m, state: 'finished' }))
   await locks.acquire('a', sid(1), AT)
   await locks.acquire('b', sid(2), AT)
@@ -289,7 +289,7 @@ const SHARED = () => 'shared' as const
 /** A healthy neighbour: a running session with a dead agent, next to the row under test. */
 async function neighbour(store: SessionStore, locks: SiteLocks): Promise<string> {
   const id = sid(0)
-  await store.create({ id, siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id, siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await locks.acquire('work', id, AT, SHARED)
   return id
 }
@@ -302,7 +302,7 @@ async function neighbourWasReconciled(store: SessionStore, locks: SiteLocks, id:
 test('row 2 per lock: an orphan next to a neighbour — both closed, both released (criterion 18)', async () => {
   const { store, locks } = await world(999_999)
   const other = await neighbour(store, locks)
-  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(2), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(2), (m) => ({ ...m, agentPid: 12_345 }))
   await locks.acquire('work', sid(2), AT, SHARED)
   const killed: number[] = []
@@ -318,7 +318,7 @@ test('row 2 per lock: an orphan next to a neighbour — both closed, both releas
 test('row 3 per lock: two running sessions with dead agents on one site both fail (criterion 18)', async () => {
   const { store, locks } = await world(999_999)
   const other = await neighbour(store, locks)
-  await store.create({ id: sid(5), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(5), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await locks.acquire('work', sid(5), AT, SHARED)
 
   const { log } = silentLog()
@@ -331,7 +331,7 @@ test('row 3 per lock: two running sessions with dead agents on one site both fai
 test('row 4 per lock: a terminal session next to a running one — released, not rewritten (criterion 18)', async () => {
   const { store, locks } = await world(999_999)
   const other = await neighbour(store, locks)
-  await store.create({ id: sid(8), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(8), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await store.patchMeta(sid(8), (m) => ({ ...m, state: 'finished', endedAt: AT, reason: 'all done' }))
   await locks.acquire('work', sid(8), AT, SHARED)
 
@@ -357,7 +357,7 @@ test('rows 5 and 6 per lock: no meta, and an unreadable holder file, next to a n
 test('three running sessions on one shared site: three failed, three notices, nothing left (criterion 17)', async () => {
   const { store, locks, paths } = await world(999_999)
   for (const n of [1, 2, 3]) {
-    await store.create({ id: sid(n), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+    await store.create({ id: sid(n), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
     await locks.acquire('work', sid(n), AT, SHARED)
   }
   const announced: string[] = []
@@ -374,7 +374,7 @@ test('three running sessions on one shared site: three failed, three notices, no
 
 test('an OLD-layout lock over a running session is reconciled by the same rows and released (criterion 19)', async () => {
   const { store, locks, paths } = await world(999_999)
-  await store.create({ id: sid(4), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, prompt: undefined })
+  await store.create({ id: sid(4), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
   await writeFile(paths.lockFile('work'), JSON.stringify({ siteId: 'work', sessionId: sid(4), pid: 999_999, acquiredAt: AT }))
 
   const { log } = silentLog()
