@@ -41,7 +41,12 @@
     "entry naming something that cannot be invoked is disabled with its reason and the",
     "rest of the catalog keeps working.",
     "",
-    "sessions.skills.notes: optional ABSOLUTE path to a Markdown note that orders the \"/\" list; the CLI decides what exists, the note only arranges it. See docs/running-agents.md."
+    "sessions.skills.notes: optional ABSOLUTE path to a Markdown note that orders the \"/\" list; the CLI decides what exists, the note only arranges it. See docs/running-agents.md.",
+    "",
+    "inbox: a digest of your mail when you press Check mail. passwordFile is an ABSOLUTE path to a",
+    "Google app password in a 0600 file — and an app password can do EVERYTHING with the account,",
+    "not only read. sources are accounts forwarded into this one; use read \"all\" for them. Read",
+    "docs/inbox.md before turning it on."
   ],
   "environment": "prod",
   "listen": {
@@ -77,6 +82,30 @@
             "kind": "command",
             "name": "code-review"
           }
+        }
+      ]
+    },
+    "inbox": {
+      "enabled": false,
+      "model": "haiku",
+      "windowHours": 48,
+      "keepDays": 30,
+      "accounts": [
+        {
+          "id": "personal",
+          "label": "Gmail",
+          "host": "imap.gmail.com",
+          "user": "you@gmail.com",
+          "passwordFile": "/Users/you/.factotum/secrets/gmail-personal",
+          "read": "unread",
+          "sources": [
+            {
+              "id": "uni",
+              "label": "University",
+              "address": "you@students.example.edu",
+              "read": "all"
+            }
+          ]
         }
       ]
     }
