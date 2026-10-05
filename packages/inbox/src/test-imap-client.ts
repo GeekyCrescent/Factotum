@@ -32,7 +32,7 @@ export interface Call {
 }
 
 /** `bodies` is the second fetch, the one with `bodyParts`. */
-export type Stall = 'connect' | 'mailboxOpen' | 'search' | 'fetchAll' | 'bodies'
+export type Stall = 'connect' | 'mailboxOpen' | 'search' | 'fetchAll' | 'bodies' | 'logout'
 
 export interface DoubleOptions {
   /** Rejects `connect` the way imapflow rejects a refused login. */
@@ -109,6 +109,7 @@ export function imapDouble(mails: readonly FakeMail[], options: DoubleOptions = 
       },
       logout: async () => {
         calls.push({ method: 'logout', args: [] })
+        return await answer('logout', () => undefined)
       },
       close: () => {
         calls.push({ method: 'close', args: [] })

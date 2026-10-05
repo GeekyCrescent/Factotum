@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -108,6 +108,8 @@ test('an empty stateDir: run/ and digests/ are made, and the first run does not 
   const { created, stateDir } = await rig()
   const inbox = inboxOf(created)
   assert.deepEqual((await readdir(stateDir)).sort(), ['digests', 'run', 'secret'])
+  // `run` existed already (the rig made it 0755 by umask): tightened all the same.
+  for (const dir of ['digests', 'run']) assert.equal((await stat(join(stateDir, dir))).mode & 0o777, 0o700, dir)
   const started = inbox.runNow()
   assert.equal(started.outcome, 'started')
   await finished(inbox)

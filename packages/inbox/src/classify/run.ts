@@ -16,13 +16,18 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { Timers } from '@factotum/core'
-import { CLAUDE_BIN, killQuietly } from '@factotum/sessions'
+import { CLAUDE_BIN, killGroup, killQuietly } from '@factotum/sessions'
 import { buildDigestArgs } from './args.ts'
 import { buildBatchPrompt, type PromptMail } from './prompt.ts'
 import { BATCH_JSON_SCHEMA, verdictSchema, type Verdict } from './schema.ts'
 
 /** A batch of 40 took 26–38 s in A2 (tasks §M). Five times that is a batch that is stuck. */
 export const BATCH_TIMEOUT_MS = 3 * 60_000
+/**
+ * After SIGTERM, how long the group gets before SIGKILL. The batch settles only on `close`: a group
+ * that ignored SIGTERM would leave the run `running` for good, and `stop()` waiting on it.
+ */
+export const KILL_GRACE_MS = 5_000
 /** The CLI's answer for 40 mails is a few KB; past this it is not an answer. */
 const STDOUT_MAX = 1024 * 1024
 /** Enough of stderr to say why the CLI refused, never a second log. */
@@ -92,13 +97,24 @@ export function classifyBatch(input: BatchInput): Promise<BatchResult> {
     let aborted = false
     let settled = false
 
+    let grace: Disposable | undefined
+    const kill = (): void => {
+      killQuietly(child.pid)
+      grace ??= input.timers.setTimeout(() => {
+        try {
+          if (child.pid !== undefined) killGroup(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone: what was wanted.
+        }
+      }, KILL_GRACE_MS)
+    }
     const timer = input.timers.setTimeout(() => {
       timedOut = true
-      killQuietly(child.pid)
+      kill()
     }, timeoutMs)
     const onAbort = (): void => {
       aborted = true
-      killQuietly(child.pid)
+      kill()
     }
     input.signal.addEventListener('abort', onAbort, { once: true })
 
@@ -107,16 +123,20 @@ export function classifyBatch(input: BatchInput): Promise<BatchResult> {
       if (settled) return
       settled = true
       timer[Symbol.dispose]()
+      grace?.[Symbol.dispose]()
       input.signal.removeEventListener('abort', onAbort)
       resolve(conclude({ code, stdout, stderr, spawnError, stdinError, timedOut, aborted }, input, timeoutMs))
     }
 
-    child.stdout?.on('data', (chunk: Buffer) => {
-      if (stdout.length < STDOUT_MAX) stdout += chunk.toString('utf8')
+    // Decoded by the stream, not per chunk: a character split across two chunks would become U+FFFD.
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => {
+      if (stdout.length < STDOUT_MAX) stdout += chunk
     })
     // Read always: a full stderr pipe would block the child. Only its start is kept, for a refusal.
-    child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < STDERR_MAX) stderr += chunk.toString('utf8')
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      if (stderr.length < STDERR_MAX) stderr += chunk
     })
     child.on('error', (error: Error) => {
       spawnError = error

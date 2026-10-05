@@ -11,12 +11,14 @@
  * TEXT ONLY: no glyphs on this screen (D9). The envelope in the nav is the shell's.
  */
 
-import { useCallback, useEffect, useState } from 'preact/hooks'
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { AccountStatus, Digest, DigestEntry, InboxStatus } from '../types.ts'
 import type { ViewProps } from './contract.ts'
 import { dollars, metaLine, priorityOf, progressText, sectionsOf, seconds, splitFrom, tokens, type SenderGroup } from './model.ts'
 
 const POLL_MS = 2_000
+/** The only links drawn: the ones the daemon builds. A tampered file cannot make one `javascript:`. */
+const GMAIL = 'https://mail.google.com/'
 
 export function DigestView({ view, id }: { readonly view: ViewProps; readonly id?: string }) {
   const { api, navigate } = view
@@ -25,6 +27,11 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
   const [digest, setDigest] = useState<Digest | null | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [pressing, setPressing] = useState(false)
+  /** Bumped by a failed poll, so the poll re-arms instead of stopping with the screen stuck on "running". */
+  const [retry, setRetry] = useState(0)
+  /** The id on screen NOW: a response for another one, arriving late, is dropped. */
+  const shown = useRef(id)
+  shown.current = id
 
   const loadStatus = useCallback(async (): Promise<InboxStatus> => {
     const next = await api.get<InboxStatus>('status')
@@ -34,9 +41,12 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
 
   const loadDigest = useCallback(async (): Promise<void> => {
     try {
-      setDigest(await api.get<Digest>(id === undefined ? 'digests/latest' : `digests/${encodeURIComponent(id)}`))
+      const next = await api.get<Digest>(id === undefined ? 'digests/latest' : `digests/${encodeURIComponent(id)}`)
+      if (shown.current !== id) return
+      setDigest(next)
       setError(undefined)
     } catch (cause) {
+      if (shown.current !== id) return
       if (statusOf(cause) === 404) setDigest(null)
       else setError(messageOf(cause))
     }
@@ -58,14 +68,16 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
           if (live && !next.running && id === undefined) await loadDigest()
         })
         .catch((cause: unknown) => {
-          if (live) setError(messageOf(cause))
+          if (!live) return
+          setError(messageOf(cause))
+          setRetry((count) => count + 1)
         })
     }, POLL_MS)
     return () => {
       live = false
       clearTimeout(timer)
     }
-  }, [status, loadStatus, loadDigest, id])
+  }, [status, retry, loadStatus, loadDigest, id])
 
   const checkMail = async (): Promise<void> => {
     setPressing(true)
@@ -76,7 +88,14 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
       // 409: one is already going — the status below shows it, which is all the owner needs.
       if (statusOf(cause) !== 409) setError(messageOf(cause))
     } finally {
-      await loadStatus().catch((cause: unknown) => setError(messageOf(cause)))
+      try {
+        // A run that ended before this first look — a password file that is wrong fails at once — arms
+        // no poll: its digest is fetched here, or the screen keeps showing the previous one.
+        const next = await loadStatus()
+        if (!next.running) await loadDigest()
+      } catch (cause) {
+        setError(messageOf(cause))
+      }
       setPressing(false)
     }
   }
@@ -202,7 +221,7 @@ function TodoCard({ entry }: { readonly entry: DigestEntry }) {
       <p class="i-subject">{entry.subject}</p>
       {entry.why === undefined ? null : <p class="i-why">{entry.why}</p>}
       {entry.draft === undefined ? (
-        entry.link === undefined ? null : (
+        !isGmail(entry.link) ? null : (
           <div class="i-acts">
             <OpenLink link={entry.link} />
           </div>
@@ -215,7 +234,7 @@ function TodoCard({ entry }: { readonly entry: DigestEntry }) {
             <button type="button" class="btn" onClick={() => void copy()}>
               {copied ? 'Copied' : 'Copy'}
             </button>
-            {entry.link === undefined ? null : <OpenLink link={entry.link} />}
+            {isGmail(entry.link) ? <OpenLink link={entry.link} /> : null}
           </div>
         </details>
       )}
@@ -306,6 +325,10 @@ function senderOf(entry: DigestEntry): string {
 
 export function when(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+function isGmail(link: string | undefined): link is string {
+  return link !== undefined && link.startsWith(GMAIL)
 }
 
 function statusOf(cause: unknown): number | undefined {

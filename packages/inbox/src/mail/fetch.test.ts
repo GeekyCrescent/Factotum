@@ -185,3 +185,25 @@ test('a body in quoted-printable and latin-1 arrives decoded', async () => {
   const result = await fetchAccount(input(double.connect))
   assert.deepEqual(result.ok && result.mails.map((m) => m.body), ['Señor, mañana a las 9.'])
 })
+
+test('a server that never answers LOGOUT holds the account 5 s at most, then the socket is dropped', async () => {
+  const manual = manualTimers()
+  const double = imapDouble([mail(1, 1)], { stall: 'logout' })
+  const pending = fetchAccount(input(double.connect, { timers: manual.timers }))
+  await eventually(() => double.calls.some((call) => call.method === 'logout'), 'logout was sent')
+  assert.deepEqual(manual.pending(), [5_000])
+  manual.fire(5_000)
+  const result = await pending
+  assert.deepEqual(result.ok && result.mails.map((m) => m.uid), [1])
+  assert.equal(double.closed(), 1)
+})
+
+test('a hostile subject and display name are cut, so they cannot grow the prompt or the digest', async () => {
+  const double = imapDouble([mail(1, 1, { subject: 'S'.repeat(10_000), from: { name: 'N'.repeat(10_000), address: 'a@b.c' } })])
+  const result = await fetchAccount(input(double.connect))
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.mails[0]!.subject.length, 300)
+  assert.equal(result.mails[0]!.from.length, 200)
+  assert.equal(result.mails[0]!.subject.endsWith('…'), true)
+})

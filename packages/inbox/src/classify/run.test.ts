@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { eventually, manualTimers, realTimers } from '../test-support.ts'
 import type { PromptMail } from './prompt.ts'
-import { BATCH_TIMEOUT_MS, classifyBatch, type BatchInput } from './run.ts'
+import { BATCH_TIMEOUT_MS, classifyBatch, KILL_GRACE_MS, type BatchInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
 
@@ -157,4 +157,21 @@ test('a CLI that refuses its arguments: the first line of its stderr is the reas
     ok: false,
     reason: 'claude exited with code 1: Error: --json-schema is not a valid JSON Schema: no schema with key or ref',
   })
+})
+
+test('a claude that ignores SIGTERM gets SIGKILL after the grace, and the batch still settles', async () => {
+  const manual = manualTimers()
+  const { input, pids } = await rig(['stubborn'], { timers: manual.timers })
+  const pending = classifyBatch(input)
+  await eventually(async () => (await pids()).length === 1, 'claude started')
+  const [pid] = await pids()
+  // Let it install its SIGTERM trap before the deadline is forced.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  manual.fire(BATCH_TIMEOUT_MS)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  assert.equal(alive(pid!), true, 'SIGTERM alone did not end it')
+  assert.deepEqual(manual.pending(), [KILL_GRACE_MS])
+  manual.fire(KILL_GRACE_MS)
+  assert.deepEqual(await pending, { ok: false, reason: 'claude gave no answer within 180 s' })
+  await eventually(() => !alive(pid!), 'the stubborn claude is gone')
 })

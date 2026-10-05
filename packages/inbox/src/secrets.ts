@@ -7,7 +7,8 @@
  * A REASON NEVER CARRIES THE CONTENT. Not a prefix, not a length — only what is wrong with the file.
  */
 
-import { lstat, readFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, open } from 'node:fs/promises'
 
 /** An app password is sixteen letters; anything near a kilobyte is not one. */
 const MAX_BYTES = 1024
@@ -31,9 +32,20 @@ export async function readPassword(file: string): Promise<PasswordResult> {
   if (stats.size === 0) return { ok: false, reason: 'password file is empty' }
   if (stats.size > MAX_BYTES) return { ok: false, reason: 'password file is larger than 1 KiB' }
 
+  // O_NOFOLLOW, and the checks again ON THE HANDLE: a file swapped for a symlink between `lstat` and
+  // the read is refused instead of followed.
   let text
   try {
-    text = await readFile(file, 'utf8')
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const opened = await handle.stat()
+      if (!opened.isFile() || (opened.mode & 0o077) !== 0 || opened.ino !== stats.ino) {
+        return { ok: false, reason: 'password file changed while it was read' }
+      }
+      text = await handle.readFile('utf8')
+    } finally {
+      await handle.close()
+    }
   } catch (error) {
     return { ok: false, reason: `password file unreadable (${codeOf(error)})` }
   }

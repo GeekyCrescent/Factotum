@@ -20,6 +20,7 @@
  *   garbage    a line that is not JSON
  *   hang       never answers (a minute), stdin unread
  *   no-stdin   exits 0 at once WITHOUT reading stdin — the EPIPE case (criterion 11b)
+ *   stubborn   like "hang", but ignores SIGTERM: only SIGKILL ends it
  *   refuse     what the real CLI does with a schema it refuses: one line on stderr, exit 1
  */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
@@ -34,7 +35,8 @@ if (mode === 'refuse') {
   process.stderr.write('Error: --json-schema is not a valid JSON Schema: no schema with key or ref\nsecond line\n')
   process.exit(1)
 }
-if (mode === 'hang') {
+if (mode === 'stubborn') process.on('SIGTERM', () => undefined)
+if (mode === 'hang' || mode === 'stubborn') {
   setTimeout(() => process.exit(0), 60_000)
 } else {
   let prompt = ''

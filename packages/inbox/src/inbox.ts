@@ -13,7 +13,7 @@
  * sender, a subject or a body (criterion 27).
  */
 
-import { mkdir } from 'node:fs/promises'
+import { chmod, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { classifyBatch } from './classify/run.ts'
 import type { PromptMail } from './classify/prompt.ts'
@@ -57,8 +57,12 @@ export async function createInbox(deps: InboxDeps & { readonly onProgress?: Prog
   let lastAccounts: readonly AccountStatus[] | undefined
   try {
     // Without these, the first spawn fails with ENOENT for its cwd.
-    await mkdir(runDir, { recursive: true })
-    await mkdir(digestsDir, { recursive: true })
+    // 0700: subjects and drafts live in there (the files themselves are 0600).
+    // `mode` only applies to a directory mkdir creates, so one left by an earlier build is tightened too.
+    for (const dir of [runDir, digestsDir]) {
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      await chmod(dir, 0o700)
+    }
     store = await openDigestStore(digestsDir, deps.log)
     const pruned = await store.prune(config.keepDays, deps.now())
     if (pruned > 0) deps.log.info(`pruned ${pruned} digest${pruned === 1 ? '' : 's'} older than ${config.keepDays} days`)

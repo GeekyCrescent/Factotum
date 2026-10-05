@@ -30,6 +30,11 @@ export const IMAP_PORT = 993
 const HEADERS = ['list-unsubscribe', 'resent-from', 'x-forwarded-for', 'delivered-to']
 const DAY_MS = 24 * 60 * 60 * 1000
 const REASON_MAX = 200
+/** A hostile subject or display name must not grow the prompt or the digest without end. */
+const SUBJECT_MAX = 300
+const FROM_MAX = 200
+/** LOGOUT is politeness: a server that does not answer it does not hold the run (or shutdown) longer. */
+const LOGOUT_MAX_MS = 5_000
 
 export interface FetchedMail {
   readonly accountId: string
@@ -103,8 +108,8 @@ export async function fetchAccount(input: FetchInput): Promise<FetchResult> {
     return { ok: false, reason: reasonOf(error, input) }
   } finally {
     timer[Symbol.dispose]()
+    await closeQuietly(client, signal.aborted, input.timers)
     signal.removeEventListener('abort', onAbort)
-    await closeQuietly(client, signal.aborted)
   }
 }
 
@@ -202,8 +207,8 @@ function describe(message: FetchMessageObject, input: FetchInput): Described | u
       uid: message.uid,
       messageId: envelope?.messageId,
       gmailId: message.emailId,
-      from: sender === undefined ? '' : sender.name ? `${sender.name} <${sender.address ?? ''}>` : (sender.address ?? ''),
-      subject: envelope?.subject ?? '',
+      from: cut(sender === undefined ? '' : sender.name ? `${sender.name} <${sender.address ?? ''}>` : (sender.address ?? ''), FROM_MAX),
+      subject: cut(envelope?.subject ?? '', SUBJECT_MAX),
       date: (toDate(envelope?.date) ?? received).toISOString(),
       unsubscribe: headers.has('list-unsubscribe'),
       attachments: countAttachments(message.bodyStructure),
@@ -236,12 +241,21 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-/** Aborted: `onAbort` already closed it, at the instant of the abort. Otherwise LOGOUT, politely. */
-async function closeQuietly(client: ImapClient | undefined, aborted: boolean): Promise<void> {
+/**
+ * Aborted: `onAbort` already closed it, at the instant of the abort. Otherwise LOGOUT, politely — but
+ * bounded: past LOGOUT_MAX_MS the socket is dropped. The abort listener is still on meanwhile, so the
+ * run's cap or `stop()` also cuts it.
+ */
+async function closeQuietly(client: ImapClient | undefined, aborted: boolean, timers: Timers): Promise<void> {
   if (client === undefined || aborted) return
+  let timer: Disposable | undefined
+  const late = new Promise<void>((resolve) => {
+    timer = timers.setTimeout(resolve, LOGOUT_MAX_MS)
+  })
   try {
-    await client.logout()
-  } catch {
+    await Promise.race([client.logout().catch(() => undefined), late])
+  } finally {
+    timer?.[Symbol.dispose]()
     try {
       client.close()
     } catch {
@@ -278,4 +292,8 @@ function toDate(value: Date | string | undefined): Date | undefined {
 
 function mask(text: string, secret: string, as: string): string {
   return secret === '' ? text : text.split(secret).join(as)
+}
+
+function cut(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
