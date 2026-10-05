@@ -794,6 +794,16 @@ export interface Announced {
   readonly since: string
 }
 
+/** How often one announced name was used in a period (spec 2026-10-03-skills-a-mano, D9). Never any prompt text. */
+export interface UsageCount {
+  readonly name: string
+  /** Typed by the owner (`/name`), or the session was launched with it. */
+  readonly owner: number
+  /** Called by an agent: a Skill call or a subagent. */
+  readonly agent: number
+  readonly lastUsedAt: string | undefined
+}
+
 export interface SessionEngine {
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
@@ -838,6 +848,8 @@ export interface SessionEngine {
   readonly announced: () => Announced | undefined
   /** The names pinned in one project, from the in-memory registry; `[]` for an id that does not exist (spec 2026-10-03-skills-a-mano, D6). */
   readonly pinnedOf: (siteId: string) => readonly string[]
+  /** A count per name of skills, agents and commands (zeros included) over the last `days`; `undefined` without a list (D9). */
+  readonly usage: (days: number) => Promise<readonly UsageCount[] | undefined>
   // --- uploads (spec 2026-10-01, D5, D9) ---
   /** Keeps a file the kernel received, under a sanitised name. The kernel deletes it if this does not. */
   readonly upload: (file: ReceivedFile, rawName: string) => Promise<UploadResult>

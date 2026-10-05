@@ -9,6 +9,7 @@
 
 export type {
   Announced,
+  UsageCount,
   CatalogEntry,
   CreateEngine,
   Decision,

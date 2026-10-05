@@ -35,6 +35,7 @@ import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
+import { usageOver } from './usage.ts'
 import { createServices, type ServiceSeams } from './services/wire.ts'
 import type { DiskProbe, Site } from './sites.ts'
 import { SessionStore, type RemoveOutcome } from './store.ts'
@@ -988,6 +989,21 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // The IN-MEMORY registry, never `projects()`: that one checks every project on disk, and this
     // runs on every GET /skills.
     pinnedOf: (siteId) => table.entry(siteId)?.pinned ?? [],
+    usage: async (days) =>
+      await usageOver(
+        {
+          index,
+          store,
+          ensureIndex,
+          announced: announced.get,
+          invokeOf: (entryId) => {
+            const found = findInvokable(catalog, entryId)
+            return found.ok ? found.invoke : undefined
+          },
+          now: setup.now,
+        },
+        days,
+      ),
     view,
     stop,
     summary: history.summary,
