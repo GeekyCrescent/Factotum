@@ -222,9 +222,11 @@ test('criterion 12: rewriting the file changes the next read, with no restart', 
   await inTmp(async (dir) => {
     const file = join(dir, 'note.md')
     await writeFile(file, NOTE('alpha'))
+    await utimes(file, new Date('2026-10-01T00:00:00Z'), new Date('2026-10-01T00:00:00Z'))
     const notes = createNotes({ kind: 'on', notes: file })
     const first = await notes.read()
     await writeFile(file, NOTE('bravo'))
+    await utimes(file, new Date('2026-10-01T00:00:05Z'), new Date('2026-10-01T00:00:05Z'))
     const second = await notes.read()
     assert.equal(first.state === 'ok' && first.parsed.groups[0]!.rows[0]!.name, 'alpha')
     assert.equal(second.state === 'ok' && second.parsed.groups[0]!.rows[0]!.name, 'bravo')
