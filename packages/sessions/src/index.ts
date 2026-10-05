@@ -57,6 +57,8 @@ export { allowBody, decisionBody, denyBody, preToolUsePayloadSchema } from './pe
 export type { PreToolUsePayload } from './permissions/payload.ts'
 export { ASK_TIMEOUT_SECONDS, HOOK_PATH, HOOK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissions/settings.ts'
 export { buildArgs, CLAUDE_BIN, killGroup, runAgent } from './run.ts'
+// The mail digest launches `claude` the titler's way and kills it with the same guard (spec 2026-10-05, D1).
+export { killQuietly } from './titler/index.ts'
 export type { AgentExit, AgentRun, BuildArgsInput, RunOptions } from './run.ts'
 export { contains, insideSite, inspectSite, resolveAgainst } from './sites.ts'
 export type { Site } from './sites.ts'

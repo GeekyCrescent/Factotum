@@ -146,6 +146,18 @@ the switch on, and the same trade inside it.
 [docs/running-agents.md](docs/running-agents.md) lists all ten limits, and it is worth
 reading before you add your first project.
 
+## Inbox
+
+A digest of your mail, when you press **Check mail**: the last 48 hours of one or more Gmail
+inboxes, sorted by Claude into *to do*, *unsubscribe*, *spam* and *info*, with the to-dos ranked
+and replies drafted for you to copy. Accounts that cannot be read directly (institutional Outlook)
+come in forwarded to a Gmail one. It reads over IMAP with an app password and **changes nothing in
+the mailbox** — no moving, no deleting, nothing marked as read.
+
+**An app password can do everything with the account, and any agent session can read the file it
+is in.** [docs/inbox.md](docs/inbox.md) says how to create one, what it exposes, what goes to
+Claude, what is kept, and how to revoke it. ADR-0018 is the why.
+
 ## Two environments
 
 `dev` and `prod` are separate configs, separate state and separate ports, and they
@@ -232,6 +244,8 @@ packages/core     types and schemas — the module contract. No I/O
 packages/kernel   config, bind, origin policy, registry, HTTP. Knows no module
 packages/sessions the session engine: subprocess, event log, locks, permissions.
                   Knows nothing about HTTP, and no module depends on it
+packages/inbox    the mail digest: IMAP read-only, classification, digests on disk.
+                  Knows nothing about HTTP either
 packages/cli      the `factotum` binary — and the composition root
 modules/          the bundled modules, plus local.ts where yours go
 apps/web          the client shell: navigation and module mounting

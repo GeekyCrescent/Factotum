@@ -11,6 +11,9 @@
       "path": "packages/sessions"
     },
     {
+      "path": "packages/inbox"
+    },
+    {
       "path": "modules"
     },
     {
