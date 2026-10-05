@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { clip, redactInput, StreamTranslator, MAX_SUMMARY_CHARS, MAX_VALUE_CHARS } from './parse.ts'
+import { clip, redactInput, StreamTranslator, MAX_MESSAGE_CHARS, MAX_SUMMARY_CHARS, MAX_VALUE_CHARS } from './parse.ts'
 import type { EventInput } from './types.ts'
 import { SERVICE_OUTPUT_SUMMARY } from './services/shape.ts'
 
@@ -107,6 +107,26 @@ test('an empty or whitespace text block is not an event', () => {
     translator.translate({ type: 'assistant', message: { content: [{ type: 'text', text: '  \n ' }] } }),
     [],
   )
+})
+
+test('a long assistant answer of 16,000 chars reaches the log WHOLE', () => {
+  // The answer is the conversation the owner reads; clipping it lost the ending.
+  const text = `${'Paragraph of a long answer. '.repeat(572)}THE END`.slice(-16_000)
+  const translator = new StreamTranslator()
+  const [event] = translator.translate({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  const logged = event?.kind === 'message' ? event.text : ''
+  assert.equal(logged.length, text.length)
+  assert.ok(logged.endsWith('THE END'))
+  assert.ok(logged === text)
+})
+
+test('GUARD: a text block past MAX_MESSAGE_CHARS is still bounded, with the length recorded', () => {
+  const text = 'm'.repeat(MAX_MESSAGE_CHARS + 1)
+  const translator = new StreamTranslator()
+  const [event] = translator.translate({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  const logged = event?.kind === 'message' ? event.text : ''
+  assert.ok(logged.startsWith('m'.repeat(MAX_MESSAGE_CHARS)))
+  assert.ok(logged.endsWith(`… [${MAX_MESSAGE_CHARS + 1} chars]`))
 })
 
 // ---------------------------------------------------------------------------

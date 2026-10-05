@@ -31,8 +31,11 @@ import { QUALIFIED_TOOL } from './questions/mcp.ts'
 import { isBackgroundBash, QUALIFIED_OUTPUT, QUALIFIED_START, SERVICE_OUTPUT_SUMMARY } from './services/shape.ts'
 import type { EventInput } from './types.ts'
 
-/** Generous: this is the conversation, which is the thing the owner actually reads. */
-export const MAX_MESSAGE_CHARS = 4_000
+/**
+ * A bound against a runaway block, not a cut of the conversation: the assistant's text
+ * is the thing the owner actually reads, so a long answer must arrive whole.
+ */
+export const MAX_MESSAGE_CHARS = 100_000
 /** Tight: these are tool arguments, and the big ones are file contents. */
 export const MAX_VALUE_CHARS = 200
 /** A successful result only has to say it worked. */
