@@ -718,7 +718,7 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
     ...skillsRoutes(() => {
       const { engine, skills } = holder
       if (engine === undefined || skills === undefined) return undefined
-      return { announced: engine.announced, pinnedOf: engine.pinnedOf, notes: skills }
+      return { announced: engine.announced, pinnedOf: engine.pinnedOf, notes: skills, usage: engine.usage }
     }),
   }
 }

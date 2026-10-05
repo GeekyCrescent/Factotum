@@ -32,6 +32,7 @@ function fakeEngine(overrides: Partial<SessionEngine> = {}): SessionEngine {
     reconcile: async () => undefined,
     announced: () => undefined,
     pinnedOf: () => [],
+    usage: async () => undefined,
     view: () => ({ sites: [], catalog: [] }),
     stop: async () => undefined,
     summary: async () => ({ kind: 'unknown' }),
