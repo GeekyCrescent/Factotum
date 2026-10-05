@@ -98,6 +98,12 @@ export function useSlash(input: {
     )
   }, [api, siteId, siteKey])
 
+  // Escape dismisses the token that was there, not every later `/`: its key (position 0, empty query) is
+  // the same for all of them, so the dismissal is forgotten as soon as there is no token.
+  useEffect(() => {
+    if (token === undefined) setDismissed(undefined)
+  }, [token])
+
   // A selection belongs to one opening of the list: a fresh `/` starts at the top, never on a row that
   // was chosen earlier and is out of sight. Narrowing inside the same token keeps it (`open` stays true).
   useEffect(() => {
