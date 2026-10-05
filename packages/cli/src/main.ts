@@ -13,8 +13,9 @@
 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_MODULES, sessionsModule, type CreateEngine } from '@factotum/modules'
+import { ALL_MODULES, inboxModule, sessionsModule, type CreateEngine, type CreateInbox } from '@factotum/modules'
 import { createEngine } from '@factotum/sessions'
+import { createInbox } from '@factotum/inbox'
 import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum/kernel'
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
@@ -131,6 +132,12 @@ function installRoot(): string {
  */
 const engineFactory: CreateEngine = createEngine
 
+/**
+ * The same link for the mail digest (spec 2026-10-05, D1): `modules/inbox/types.ts` declares by hand
+ * what the package exports, and this assignment is where the compiler checks that they agree.
+ */
+const inboxFactory: CreateInbox = createInbox
+
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
   // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
@@ -162,7 +169,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   try {
     handle = await boot({
       env,
-      modules: [...ALL_MODULES, sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() })],
+      modules: [...ALL_MODULES, sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() }), inboxModule(inboxFactory)],
       version: VERSION,
       site: createStaticSite(siteRoot()),
     })

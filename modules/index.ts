@@ -51,4 +51,12 @@ export type {
   SessionSummary,
 } from './sessions/types.ts'
 export { INVOKABLE_NAME, sessionsConfigSchema } from './sessions/config.ts'
+
+/**
+ * The mail digest (spec 2026-10-05-bandeja-resumida): a factory too, for the same reason as
+ * `sessionsModule` — what reads mail and launches `claude` lives in a workspace package only the
+ * composition root may import, and is handed in.
+ */
+export { inboxModule } from './inbox/server.ts'
+export type { CreateInbox, Digest, DigestSummary, Inbox, InboxSetup, InboxStatus } from './inbox/types.ts'
 export type { SessionsConfig } from './sessions/config.ts'

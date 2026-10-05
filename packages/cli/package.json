@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@factotum/core": "workspace:*",
+    "@factotum/inbox": "workspace:*",
     "@factotum/kernel": "workspace:*",
     "@factotum/modules": "workspace:*",
     "@factotum/sessions": "workspace:*",
