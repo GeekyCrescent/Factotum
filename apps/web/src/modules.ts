@@ -16,6 +16,7 @@ import type { ComponentType } from 'preact'
 import { moduleApi, type ModuleApi } from './api.ts'
 import type { Pending } from './pending.ts'
 import { sessionsClient } from '../../../modules/sessions/client/index.tsx'
+import { inboxClient } from '../../../modules/inbox/client/index.tsx'
 
 export interface ModuleViewProps {
   readonly api: ModuleApi
@@ -81,7 +82,7 @@ export interface ModuleSetting {
 }
 
 /** `modules/example` is a template to copy, not a bundled module: its screen is not here either. */
-export const CLIENTS: readonly ModuleClient[] = [sessionsClient]
+export const CLIENTS: readonly ModuleClient[] = [sessionsClient, inboxClient]
 
 export function clientFor(id: string): ModuleClient | undefined {
   return CLIENTS.find((client) => client.id === id)

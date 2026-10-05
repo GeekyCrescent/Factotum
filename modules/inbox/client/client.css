@@ -1,0 +1,238 @@
+/*
+ * The inbox module's own classes, all prefixed `i-` (spec 2026-10-05, D9). Colours, sizes and motion
+ * are the shell's tokens, by name: nothing here declares a colour value, and every transition names
+ * its properties — the rules `modules/sessions/client/client.css` follows.
+ */
+
+.i-screen {
+  display: grid;
+  gap: var(--space-4);
+  max-width: var(--column, 50rem);
+  margin-inline: auto;
+}
+
+/* --- The head: when, the progress, and the button ---------------------------- */
+
+.i-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.i-head-text {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.i-when {
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.i-progress {
+  font-size: var(--text-small);
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Accounts ---------------------------------------------------------------- */
+
+.i-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.i-accounts .chip {
+  min-height: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+.i-accounts .chip.i-failed {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+  color: var(--err);
+  flex-wrap: wrap;
+  white-space: normal;
+  padding-block: var(--space-1);
+}
+
+.i-reason {
+  flex-basis: 100%;
+  font-weight: 400;
+  font-size: var(--text-caption);
+}
+
+.i-note {
+  font-size: var(--text-small);
+}
+
+/* --- Sections ---------------------------------------------------------------- */
+
+.i-section {
+  display: grid;
+  gap: var(--space-2h);
+}
+
+.i-section h2,
+.i-fold summary {
+  font-size: var(--text-heading);
+  font-weight: 600;
+}
+
+.i-fold summary {
+  cursor: pointer;
+  min-height: var(--hit);
+  display: flex;
+  align-items: center;
+}
+
+/* --- A to-do ----------------------------------------------------------------- */
+
+.i-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-1h);
+}
+
+.i-ask {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.i-pri {
+  display: inline-block;
+  margin-right: var(--space-1h);
+  padding: 0 var(--space-1h);
+  border-radius: var(--radius-6);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 0.1em;
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+}
+
+.i-pri-high {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.i-pri-low {
+  color: var(--text-3);
+  border-color: var(--line);
+}
+
+.i-meta,
+.i-subject {
+  font-size: var(--text-small);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.i-why {
+  font-size: var(--text-small);
+  color: var(--text-3);
+}
+
+.i-draft summary {
+  cursor: pointer;
+  min-height: var(--hit);
+  display: flex;
+  align-items: center;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--accent-text);
+}
+
+.i-draft pre {
+  margin-block: var(--space-1h) var(--space-2);
+  padding: var(--space-2h);
+  border-radius: var(--radius-6);
+  background: var(--surface-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-small);
+}
+
+.i-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.i-acts a.btn {
+  text-decoration: none;
+}
+
+/* --- Rows: senders, folded lists, the history ---------------------------------- */
+
+.i-rows {
+  list-style: none;
+  padding: 0;
+  display: grid;
+}
+
+.i-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-small);
+}
+
+.i-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.i-row-main {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.i-row-button {
+  width: 100%;
+  min-height: var(--hit);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.i-state-failed {
+  color: var(--err);
+}
+
+/* --- The foot ---------------------------------------------------------------- */
+
+.i-foot {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.i-link {
+  justify-self: start;
+  min-height: var(--hit);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font-size: var(--text-small);
+  text-decoration: underline;
+  cursor: pointer;
+}

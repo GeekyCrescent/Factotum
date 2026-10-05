@@ -7,9 +7,10 @@ test('a glyph name a module uses resolves to itself', () => {
   assert.equal(navIcon('terminal-window'), 'terminal-window')
 })
 
-test('the two names the bundled modules declare today resolve to real glyphs', () => {
+test('the names the bundled modules declare today resolve to real glyphs', () => {
   assert.equal(navIcon('terminal'), 'terminal-window')
   assert.equal(navIcon('dot'), 'circle')
+  assert.equal(navIcon('envelope-simple'), 'envelope-simple')
 })
 
 test('an unknown or missing name falls back to a circle, never to nothing', () => {
