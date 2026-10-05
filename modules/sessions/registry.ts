@@ -360,6 +360,8 @@ function apply(current: Registry, edit: RegistryEdit, at: string): Registry | st
     case 'set-pin': {
       const found = current.projects.find((p) => p.id === edit.id)
       if (found === undefined) return `no project "${edit.id}"`
+      // The schema's `.catch` would turn a bad name into "no pins" and wipe them with an ok, like the cap.
+      if (!INVOKABLE_NAME.test(edit.name)) return `"${edit.name}" is not a name the CLI can be given`
       const held = found.pinned ?? []
       // BEFORE THE SCHEMA, never through it (see `projectEntrySchema.pinned`): the cap is refused here.
       if (edit.pinned && !held.includes(edit.name) && held.length >= MAX_PINS) return `a project holds at most ${MAX_PINS} pins`

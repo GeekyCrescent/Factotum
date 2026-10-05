@@ -588,6 +588,16 @@ test('a rename keeps the pins', async () => {
   assert.deepEqual(await pinnedOnDisk(file, 'b'), ['review'])
 })
 
+test('a pin whose name is not invokable is REFUSED and the pins on disk are not wiped by the schema catch', async () => {
+  const { file, store } = await withFile({ ...THREE, projects: THREE.projects.map((p) => (p.id === 'a' ? { ...p, pinned: ['review'] } : p)) })
+  await store.load()
+
+  const refused = await store.update(pin('a', '--bad name', true))
+
+  assert.equal(refused.kind, 'refused')
+  assert.deepEqual(await pinnedOnDisk(file, 'a'), ['review'])
+})
+
 test('the 13th pin is REFUSED and the 12 before it are still on disk, not wiped by the schema catch', async () => {
   const twelve = names(12)
   const { file, store } = await withFile({ ...THREE, projects: THREE.projects.map((p) => (p.id === 'a' ? { ...p, pinned: twelve } : p)) })
