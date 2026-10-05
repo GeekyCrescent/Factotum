@@ -179,8 +179,8 @@ export function useSlash(input: {
     }
     const plainEnter = event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey
     const plainTab = event.key === 'Tab' && !event.shiftKey
-    // Before the list arrives: Tab must not leave the box and Enter must not send a half-written `/`.
-    if (state.kind === 'loading' && (plainTab || plainEnter)) {
+    // Without rows (loading, unknown, error): Tab must not leave the box and Enter must not send a half-written `/`.
+    if ((state.kind === 'loading' || state.kind === 'unknown' || state.kind === 'error') && (plainTab || plainEnter)) {
       event.preventDefault()
       return true
     }
@@ -215,7 +215,11 @@ export function useSlash(input: {
     if (siteId === undefined) return
     setNotice(undefined)
     api.post(`projects/${encodeURIComponent(siteId)}/pins`, { name: entry.name, pinned: !pinned.has(entry.name) }).then(
-      () => load(),
+      () => {
+        // A reload that a closing list drops would leave the old view cached: forget it so the next opening asks again.
+        setAnswer(undefined)
+        load()
+      },
       (cause: unknown) => setNotice((cause as { status?: unknown } | null)?.status === 409 ? 'A project holds at most 12 pins.' : `Could not pin: ${messageOf(cause)}`),
     )
   }

@@ -96,7 +96,7 @@ export function insertionFor(entry: SkillEntryView, mode: 'launch' | 'reply'): I
  */
 export function applyInsertion(text: string, end: number, insertion: Insertion): { readonly text: string; readonly caret: number } {
   const rest = text.slice(end)
-  if (insertion.kind === 'agent') return { text: rest, caret: 0 }
+  if (insertion.kind === 'agent') return { text: rest.trimStart(), caret: 0 }
   const written = BLANK.test(rest[0] ?? 'x') ? insertion.text.trimEnd() : insertion.text
   return { text: written + rest, caret: insertion.text.length }
 }

@@ -107,6 +107,6 @@ test('applyInsertion: the rest of the text after the token is kept', () => {
 })
 
 test('applyInsertion: an agent in launch removes the token and leaves the rest', () => {
-  assert.deepEqual(applyInsertion('/code fix it', 5, { kind: 'agent', name: 'code-reviewer' }), { text: ' fix it', caret: 0 })
+  assert.deepEqual(applyInsertion('/code fix it', 5, { kind: 'agent', name: 'code-reviewer' }), { text: 'fix it', caret: 0 })
   assert.deepEqual(applyInsertion('/code', 5, { kind: 'agent', name: 'code-reviewer' }), { text: '', caret: 0 })
 })
