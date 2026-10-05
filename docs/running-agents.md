@@ -161,7 +161,7 @@ The format, which the parser reads literally:
 - Put `*(agente)*` or `(agent)` in the first cell for an agent. Such a row looks only among
   agents; the others look among skills and commands.
 - The two columns are shown under the name, flattened to one line and cut at 200 characters.
-- Code fences and `>` quotes are skipped; a repeated name counts once, and a bad row is skipped
+- Code fences and `>` quotes are skipped; a name repeated in the same kind (agent or not) counts once, and a bad row is skipped
   with a warning.
 
 ```md
