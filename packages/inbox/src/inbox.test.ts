@@ -290,3 +290,21 @@ test('stop on an idle inbox is quiet, and stop during a run waits for its file',
   assert.equal(digest?.state, 'failed')
   assert.match(digest?.reason ?? '', /^stopped/)
 })
+
+test('"seen last time" compares with the last run that did not fail, not with a failed one in between (criterion 25)', async () => {
+  const { created, stateDir } = await rig({ doubles: { 'imap.gmail.com': imapDouble(mails(2)) } })
+  const inbox = inboxOf(created)
+  const run = async (): Promise<void> => {
+    inbox.runNow()
+    await finished(inbox)
+  }
+  await run()
+  assert.equal((await inbox.latest())?.state, 'ok')
+  // A run in between that fails: the password file goes 0644, so the account fails and nothing comes out.
+  await chmod(join(stateDir, 'secret'), 0o644)
+  await run()
+  assert.equal((await inbox.latest())?.state, 'failed')
+  await chmod(join(stateDir, 'secret'), 0o600)
+  await run()
+  assert.deepEqual((await inbox.latest())?.entries.map((entry) => entry.seenLastTime), [true, true])
+})

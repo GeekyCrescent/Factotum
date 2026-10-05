@@ -8,6 +8,8 @@
  * `ImapFlow` with a test CA through the same seam.
  */
 
+import type { TcpNetConnectOpts } from 'node:net'
+import type { ConnectionOptions } from 'node:tls'
 import { ImapFlow, type FetchMessageObject, type ImapFlowOptions, type MessageStructureObject } from 'imapflow'
 
 export type { FetchMessageObject, MessageStructureObject }
@@ -45,7 +47,10 @@ export interface ImapClient {
   readonly close: () => void
 }
 
-/** The options a client is built with. `tls` only ever carries a test CA (guardrail 6). */
+/**
+ * The options a client is built with. `tls` carries socket timing, and in the protocol test a test CA —
+ * never `rejectUnauthorized` (guardrail 6).
+ */
 export type ImapOptions = Pick<
   ImapFlowOptions,
   | 'host'
@@ -60,8 +65,13 @@ export type ImapOptions = Pick<
   | 'connectionTimeout'
   | 'greetingTimeout'
   | 'socketTimeout'
-  | 'tls'
->
+> & {
+  /**
+   * Merged by imapflow into `tls.connect()`, which hands the socket options on to `net`: Node's TLS
+   * typing does not declare the `net` half, so it is added here.
+   */
+  readonly tls?: ConnectionOptions & Pick<TcpNetConnectOpts, 'autoSelectFamilyAttemptTimeout'>
+}
 
 export type ConnectImap = (options: ImapOptions) => ImapClient
 

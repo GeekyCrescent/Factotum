@@ -83,7 +83,9 @@ export async function createInbox(deps: InboxDeps & { readonly onProgress?: Prog
   const execute = async (run: Running, startedAt: Date): Promise<void> => {
     const signal = run.controller.signal
     const since = new Date(startedAt.getTime() - config.windowHours * HOUR_MS)
-    const previous = await store.latest()
+    // Compared with the last run that brought something: a failed run in between has no entries, and
+    // would leave every mail looking new (criterion 25).
+    const previous = await store.latest((digest) => digest.state !== 'failed')
 
     const accounts = await readAccounts(config, deps, since, signal, (index) =>
       setProgress(run, { step: 'reading', account: index + 1, of: config.accounts.length }),

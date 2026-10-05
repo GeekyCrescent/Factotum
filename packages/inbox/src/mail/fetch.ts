@@ -86,6 +86,11 @@ export function imapOptions(account: AccountConfig, password: string): ImapOptio
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 60_000,
+    // Node's Happy Eyeballs gives EACH ADDRESS 250 ms by default. Measured 2026-10-06 behind a VPN:
+    // a TCP connect to imap.gmail.com takes 280–560 ms and IPv6 is unreachable, so all four
+    // addresses "time out" and the account fails with ETIMEDOUT in under a second. imapflow merges
+    // `tls` into its `tls.connect()` options; `connectionTimeout` above still caps the whole.
+    tls: { autoSelectFamilyAttemptTimeout: 2_500 },
   }
 }
 

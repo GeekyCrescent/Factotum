@@ -103,7 +103,7 @@ test('the real imapflow, against Gmail’s CAPABILITY: nothing forbidden goes ou
   const seen: Record<string, unknown>[] = []
   const connect: ConnectImap = (options) => {
     seen.push({ ...options })
-    return connectImapFlow({ ...options, host: '127.0.0.1', port: server.port, tls: { ca: tls.ca, servername: 'localhost' } })
+    return connectImapFlow({ ...options, host: '127.0.0.1', port: server.port, tls: { ...options.tls, ca: tls.ca, servername: 'localhost' } })
   }
   const account: AccountConfig = {
     id: 'personal',

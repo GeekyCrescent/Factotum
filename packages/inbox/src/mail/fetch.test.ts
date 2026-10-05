@@ -68,7 +68,7 @@ test('the window and the read rule per source: unread for the account, all for a
   assert.equal(first.date, new Date(NOW.getTime() - HOUR).toISOString())
 })
 
-test('built with logger false, the four disable* and the three timeouts, on 993 with TLS', async () => {
+test('built with logger false, the four disable*, the three timeouts and the per-address connect time, on 993 with TLS', async () => {
   const double = imapDouble([])
   await fetchAccount(input(double.connect))
   assert.deepEqual(double.built, [
@@ -85,6 +85,7 @@ test('built with logger false, the four disable* and the three timeouts, on 993 
       connectionTimeout: 15_000,
       greetingTimeout: 15_000,
       socketTimeout: 60_000,
+      tls: { autoSelectFamilyAttemptTimeout: 2_500 },
     },
   ])
 })

@@ -23,7 +23,8 @@ export interface DigestStore {
   /** Temp + rename: a reader never sees half a digest. */
   readonly write: (digest: Digest) => Promise<void>
   readonly get: (id: string) => Promise<Digest | undefined>
-  readonly latest: () => Promise<Digest | undefined>
+  /** The newest readable digest — the newest that `accept` takes, when given. */
+  readonly latest: (accept?: (digest: Digest) => boolean) => Promise<Digest | undefined>
   readonly list: (limit: number) => Promise<readonly DigestSummary[]>
   /** By the date in the NAME, not the mtime: a copied or touched file keeps its age. */
   readonly prune: (keepDays: number, now: Date) => Promise<number>
@@ -73,10 +74,10 @@ export async function openDigestStore(dir: string, log: Logger): Promise<DigestS
 
     get: async (id) => (DIGEST_ID.test(id) ? await read(id) : undefined),
 
-    latest: async () => {
+    latest: async (accept) => {
       for (const id of await newestFirst()) {
         const digest = await read(id)
-        if (digest !== undefined) return digest
+        if (digest !== undefined && (accept === undefined || accept(digest))) return digest
       }
       return undefined
     },
