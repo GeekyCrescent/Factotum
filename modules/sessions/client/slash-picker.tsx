@@ -8,6 +8,9 @@
  *
  * PINNING is a long press on a phone and a right-click on a computer, with the `useLongPress` the drawer
  * uses. It is a hook with refs, so every entry row is its own component and calls it: never in a `.map`.
+ *
+ * THE GROUP CHIPS show one group at a time instead of scrolling past all of them. Only with the bare `/`:
+ * a query already searches every group. ← and → walk them then, since the caret has nowhere useful to go.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
@@ -17,7 +20,7 @@ import { ContextMenu, useLongPress, type MenuAt } from './context-menu.tsx'
 import type { Api } from './contract.ts'
 import { messageOf } from './errors.ts'
 import { latest } from './refs.ts'
-import { applyInsertion, insertionFor, rowText, slashRows, slashTokenAt, type SlashRow } from './slash.ts'
+import { applyInsertion, insertionFor, rowText, slashGroups, slashRows, slashTokenAt, stepGroup, type SlashRow } from './slash.ts'
 
 /** What shows when the CLI has announced nothing yet (criterion 3). */
 const UNKNOWN_TEXT = 'The list appears after your first conversation'
@@ -49,6 +52,11 @@ export interface SlashControls {
   readonly togglePin: (entry: SkillEntryView) => void
   /** A pin that did not go through, in one line. */
   readonly notice: string | undefined
+  /** The chips after «All». Empty: no chips (a query, or a single group). */
+  readonly groups: readonly string[]
+  /** `undefined`: «All». */
+  readonly group: string | undefined
+  readonly chooseGroup: (group: string | undefined) => void
 }
 
 let instances = 0
@@ -77,6 +85,7 @@ export function useSlash(input: {
   const [menu, setMenu] = useState<SlashControls['menu']>(undefined)
   const [notice, setNotice] = useState<string | undefined>(undefined)
   const [landing, setLanding] = useState<{ readonly caret: number } | undefined>(undefined)
+  const [group, setGroup] = useState<string | undefined>(undefined)
   const order = useRef(latest())
   const listId = useMemo(() => `s-slash-${(instances += 1)}`, [])
 
@@ -106,8 +115,11 @@ export function useSlash(input: {
 
   // A selection belongs to one opening of the list: a fresh `/` starts at the top, never on a row that
   // was chosen earlier and is out of sight. Narrowing inside the same token keeps it (`open` stays true).
+  // The same for the chip: every opening starts on «All».
   useEffect(() => {
-    if (!open) setSelectedKey(undefined)
+    if (open) return
+    setSelectedKey(undefined)
+    setGroup(undefined)
   }, [open])
 
   // The first time it opens with this project. Closing or another project: what is on its way no longer counts.
@@ -131,7 +143,17 @@ export function useSlash(input: {
   }, [text, landing])
 
   const view = answer?.key === siteKey ? answer.view : undefined
-  const rows = useMemo(() => (view === undefined || token === undefined ? [] : slashRows(view, token.query)), [view, token])
+  const groups = useMemo(() => {
+    if (view === undefined || token?.query !== '') return []
+    const all = slashGroups(view)
+    return all.length < 2 ? [] : all
+  }, [view, token])
+  // A chip a reload took away (the last pin unpinned) is «All» again, pressed and all.
+  const activeGroup = group !== undefined && groups.includes(group) ? group : undefined
+  const rows = useMemo(
+    () => (view === undefined || token === undefined ? [] : slashRows(view, token.query, activeGroup)),
+    [view, token, activeGroup],
+  )
   const choosable = rows.flatMap((row, i) => (row.kind === 'entry' ? [i] : []))
   // The row chosen by name, so it survives the list narrowing; by default the first entry.
   const chosen = choosable.find((i) => {
@@ -157,6 +179,12 @@ export function useSlash(input: {
           : choosable.length === 0
             ? { kind: 'closed' }
             : { kind: 'rows', rows, selected: current }
+
+  /** A new group's first row is the selection: the old one is out of sight. */
+  const chooseGroup = (next: string | undefined) => {
+    setGroup(next)
+    setSelectedKey(undefined)
+  }
 
   const choose = (index: number) => {
     const row = rows[index]
@@ -191,6 +219,14 @@ export function useSlash(input: {
       const next = event.key === 'ArrowDown' ? Math.min(choosable.length - 1, at + 1) : Math.max(0, at - 1)
       const row = rows[choosable[next] ?? current]
       if (row?.kind === 'entry') setSelectedKey(keyOfEntry(row.entry))
+      return true
+    }
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && groups.length > 0 && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      const next = stepGroup(groups, activeGroup, event.key === 'ArrowRight' ? 1 : -1)
+      // At either end the key is the caret's again: ← on «All» still steps back over the `/`.
+      if (next === activeGroup) return false
+      event.preventDefault()
+      chooseGroup(next)
       return true
     }
     if ((plainTab || plainEnter) && current >= 0) {
@@ -238,6 +274,9 @@ export function useSlash(input: {
     closeMenu,
     togglePin,
     notice,
+    groups,
+    group: activeGroup,
+    chooseGroup,
   }
 }
 
@@ -269,9 +308,15 @@ export function SlashPicker({ slash }: { readonly slash: SlashControls }) {
 
 function SlashList({ slash, rows, selected }: { readonly slash: SlashControls; readonly rows: readonly SlashRow[]; readonly selected: number }) {
   const canPin = slash.projectLabel !== undefined
+  const list = useRef<HTMLUListElement>(null)
+  // Another group is another list: it starts at its top, not where the last one was scrolled to.
+  useEffect(() => {
+    if (list.current !== null) list.current.scrollTop = 0
+  }, [slash.group])
   return (
     <div class="s-picker">
-      <ul id={slash.listId} class="s-picker-list" role="listbox" aria-label="Skills, commands and agents">
+      {slash.groups.length === 0 ? null : <GroupChips groups={slash.groups} group={slash.group} onChoose={slash.chooseGroup} />}
+      <ul ref={list} id={slash.listId} class="s-picker-list" role="listbox" aria-label="Skills, commands and agents">
         {rows.map((row, i) =>
           row.kind === 'group' ? (
             <li key={`g:${row.label}`} role="presentation" class="s-slash-group">
@@ -295,6 +340,51 @@ function SlashList({ slash, rows, selected }: { readonly slash: SlashControls; r
         </p>
       )}
       {canPin ? <p class="s-picker-more s-slash-hint">{window.matchMedia('(pointer: coarse)').matches ? 'Long-press to pin' : 'Right-click to pin'}</p> : null}
+    </div>
+  )
+}
+
+/**
+ * «All» and then one chip per group, in a row that slides sideways when it does not fit. The chosen one is
+ * kept in sight, so → past the edge still shows where it is.
+ */
+function GroupChips({
+  groups,
+  group,
+  onChoose,
+}: {
+  readonly groups: readonly string[]
+  readonly group: string | undefined
+  readonly onChoose: (group: string | undefined) => void
+}) {
+  const bar = useRef<HTMLDivElement>(null)
+  // Only the row slides: `scrollIntoView` would also scroll the chat and the page under a phone's keyboard.
+  useEffect(() => {
+    const row = bar.current
+    if (row === null) return
+    const chip = row.querySelector<HTMLElement>('[aria-pressed="true"]')
+    if (chip === null) return
+    if (chip.offsetLeft < row.scrollLeft) row.scrollLeft = chip.offsetLeft
+    else if (chip.offsetLeft + chip.offsetWidth > row.scrollLeft + row.clientWidth) row.scrollLeft = chip.offsetLeft + chip.offsetWidth - row.clientWidth
+  }, [group])
+  const chip = (label: string, value: string | undefined) => (
+    <button
+      key={label}
+      type="button"
+      tabIndex={-1}
+      class="s-slash-chip"
+      aria-pressed={value === group}
+      // Keeps the focus in the box, so the phone's keyboard stays up, like the rows.
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={() => onChoose(value)}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div ref={bar} class="s-slash-chips" role="group" aria-label="Groups (← and → switch)">
+      {chip('All', undefined)}
+      {groups.map((label) => chip(label, label))}
     </div>
   )
 }
