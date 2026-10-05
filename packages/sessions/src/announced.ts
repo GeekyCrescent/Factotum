@@ -31,6 +31,8 @@ function cleaned(all: readonly unknown[]): { readonly names: readonly string[]; 
   return { names, dropped: raw.length - valid.length + (unique.length - names.length) }
 }
 
+const isInitLine = (line: unknown): boolean => isRecord(line) && line.type === 'system' && line.subtype === 'init'
+
 const stringsOf = (value: unknown): readonly string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
@@ -106,6 +108,7 @@ export function createAnnounced(deps: {
   const write = deps.write ?? writeAtomically
   let current: Announced | undefined
   let hasWarnedOfDrops = false
+  let hasWarnedOfShape = false
   // One promise, like the log's writes: `take` is called from a turn and never makes it wait.
   let chain: Promise<unknown> = Promise.resolve()
 
@@ -128,7 +131,14 @@ export function createAnnounced(deps: {
 
   const take = (line: unknown): void => {
     const result = announcedOf(line, deps.now().toISOString())
-    if (result === undefined) return
+    if (result === undefined) {
+      // A system/init line without the arrays: the CLI changed its shape. Once per daemon, like the drops.
+      if (isInitLine(line) && !hasWarnedOfShape) {
+        hasWarnedOfShape = true
+        deps.log.warn('the CLI init line has no skills/agents lists (its shape changed?); the announced list was left as it was')
+      }
+      return
+    }
 
     // Once per daemon, not per session: every session would say the same thing about the same list.
     if (result.dropped > 0 && !hasWarnedOfDrops) {

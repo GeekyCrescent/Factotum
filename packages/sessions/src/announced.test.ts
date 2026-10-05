@@ -193,11 +193,14 @@ test('a changed version alone is written again', async () => {
 })
 
 test('an init without the lists changes nothing', async () => {
-  const { store } = await setup()
+  const { store, warnings } = await setup()
   store.take(LINE)
   store.take({ type: 'system', subtype: 'init' })
+  store.take({ type: 'system', subtype: 'init', skills: 'nope' })
+  store.take({ type: 'assistant' })
 
   assert.deepEqual(store.get()?.skills, ['s1'])
+  assert.equal(warnings.length, 1, 'one warning per daemon, only for an init line')
 })
 
 test('load restores what a previous process wrote', async () => {

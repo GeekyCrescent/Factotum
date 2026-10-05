@@ -14,7 +14,7 @@ import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
 import { createAnnounced } from './announced.ts'
-import { findInvokable, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
+import { findInvokable, isInvokableName, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import { checkFreshness, describeFreshness, isFresh, type FreshnessDeps } from './freshness.ts'
 import { uuidv7 } from './id.ts'
 import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
@@ -489,6 +489,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     let invoke: Invoke = entry.invoke
     if (input.agent !== undefined) {
       if (invoke.kind !== 'none') return { outcome: 'rejected', reason: 'an agent can only be launched with a free-prompt entry' }
+      // The argv guarantee holds without the server in front: a name the CLI could read as a flag never gets there.
+      if (!isInvokableName(input.agent)) return { outcome: 'rejected', reason: 'agent is not a name the CLI can be given' }
       const list = announced.get()
       if (list === undefined) return { outcome: 'rejected', reason: 'the list of agents is not known yet' }
       if (!list.agents.includes(input.agent)) {

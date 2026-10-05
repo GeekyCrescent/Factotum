@@ -2092,6 +2092,13 @@ test('an agent the CLI did not announce, or a list not known yet, is rejected wi
   await engine.stop()
 })
 
+test('an agent name the CLI could read as a flag is rejected before the list is looked at', async () => {
+  const { engine } = await worldWithList()
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, agent: '--dangerous' })
+  assert.deepEqual(result, { outcome: 'rejected', reason: 'agent is not a name the CLI can be given' })
+  await engine.stop()
+})
+
 test('an agent with an entry that is not a free prompt is rejected (criterion 9)', async () => {
   const { engine } = await worldWithList()
   const result = await engine.launch({ siteId: 'work', entryId: 'review', text: QUICK, force: false, agent: 'code-reviewer' })
