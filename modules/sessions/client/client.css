@@ -2562,6 +2562,48 @@
   letter-spacing: 0.04em;
 }
 
+/* The groups as chips: one row that slides sideways, no scrollbar to steal height. */
+.s-slash-chips {
+  /* The chips' offsetLeft is measured from here, to slide the chosen one into sight. */
+  position: relative;
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1h) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.s-slash-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.s-slash-chip {
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.s-slash-chip:hover {
+  background: var(--surface-2);
+}
+
+.s-slash-chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent-text);
+}
+
 .s-slash-note {
   color: var(--text-3);
 }

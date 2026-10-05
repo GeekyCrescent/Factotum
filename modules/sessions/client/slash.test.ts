@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SkillEntryView, SkillsView } from '../skills/arrange.ts'
-import { applyInsertion, insertionFor, rowText, slashRows, slashTokenAt } from './slash.ts'
+import { applyInsertion, insertionFor, rowText, slashGroups, slashRows, slashTokenAt, stepGroup } from './slash.ts'
 
 const skill = (name: string, extra: Partial<SkillEntryView> = {}): SkillEntryView => ({ name, kind: 'skill', ...extra })
 const view = (...groups: readonly { label: string; entries: readonly SkillEntryView[] }[]): SkillsView => ({
@@ -71,6 +71,43 @@ test('slashRows: never searches why or when', () => {
 test('slashRows: no match, or no list, gives no rows', () => {
   assert.deepEqual(slashRows(full, 'zzz'), [])
   assert.deepEqual(slashRows({ ...full, groups: [] }, ''), [])
+})
+
+// --- the group chips ----------------------------------------------------------------------------
+
+test('slashGroups: the labels in view order, skipping a group left empty', () => {
+  const withEmpty = view(...full.groups, { label: 'Empty', entries: [] })
+  assert.deepEqual(slashGroups(withEmpty), ['Pinned', 'Specs', 'Unsorted'])
+})
+
+test('slashRows: an empty query with a group shows only its entries, without the header', () => {
+  assert.deepEqual(names(slashRows(full, '', 'Specs')), ['create-spec', 'validate-spec'])
+})
+
+test('slashRows: a query searches every group, whatever group is chosen', () => {
+  assert.deepEqual(names(slashRows(full, 'val', 'Pinned')), ['validate-spec', 'revalidate'])
+})
+
+test('slashRows: a group that is not in the view falls back to all of them', () => {
+  assert.deepEqual(slashRows(full, '', 'Gone'), slashRows(full, ''))
+})
+
+test('stepGroup: right walks from All through the groups and stops at the last', () => {
+  const groups = slashGroups(full)
+  assert.equal(stepGroup(groups, undefined, 1), 'Pinned')
+  assert.equal(stepGroup(groups, 'Pinned', 1), 'Specs')
+  assert.equal(stepGroup(groups, 'Unsorted', 1), 'Unsorted')
+})
+
+test('stepGroup: left walks back to All and stops there', () => {
+  const groups = slashGroups(full)
+  assert.equal(stepGroup(groups, 'Specs', -1), 'Pinned')
+  assert.equal(stepGroup(groups, 'Pinned', -1), undefined)
+  assert.equal(stepGroup(groups, undefined, -1), undefined)
+})
+
+test('stepGroup: a group no longer there starts again from All', () => {
+  assert.equal(stepGroup(slashGroups(full), 'Gone', 1), 'Pinned')
 })
 
 // --- rowText (criterion 22) -------------------------------------------------------------------

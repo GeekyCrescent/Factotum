@@ -49,12 +49,15 @@ function rankOf(name: string, query: string): 0 | 1 | undefined {
 }
 
 /**
- * No query: the view's groups as they are, each header before its entries. A query: no groups, the
- * entries whose name matches — starts-with first, then contains, ties in view order. NEVER the why/when
- * lines: a «when» that mentions «spec» would fill the list.
+ * No query: the view's groups as they are, each header before its entries — or, with a chip chosen, only
+ * that group's entries. A query: no groups and no chip, the entries whose name matches — starts-with
+ * first, then contains, ties in view order. NEVER the why/when lines: a «when» that mentions «spec» would
+ * fill the list.
  */
-export function slashRows(view: SkillsView, query: string): readonly SlashRow[] {
+export function slashRows(view: SkillsView, query: string, group?: string): readonly SlashRow[] {
   if (query === '') {
+    const only = view.groups.find((candidate) => candidate.label === group)
+    if (only !== undefined) return only.entries.map((entry) => ({ kind: 'entry', entry }) as const)
     return view.groups.flatMap((group) => [
       { kind: 'group', label: group.label } as const,
       ...group.entries.map((entry) => ({ kind: 'entry', entry }) as const),
@@ -68,6 +71,25 @@ export function slashRows(view: SkillsView, query: string): readonly SlashRow[] 
       return rank === undefined ? [] : [{ entry, rank, order }]
     })
   return ranked.sort((a, b) => a.rank - b.rank || a.order - b.order).map(({ entry }) => ({ kind: 'entry', entry }))
+}
+
+// ---------------------------------------------------------------------------
+// The group chips: one group at a time instead of scrolling through all of them
+// ---------------------------------------------------------------------------
+
+/** The chips after «All»: the view's groups in order, without one the pins left empty. */
+export function slashGroups(view: SkillsView): readonly string[] {
+  return view.groups.filter((group) => group.entries.length > 0).map((group) => group.label)
+}
+
+/**
+ * ← and →: `undefined` is «All», before the first group. It stops at both ends rather than wrapping,
+ * so holding a key lands on an end, never back where it started.
+ */
+export function stepGroup(groups: readonly string[], current: string | undefined, step: 1 | -1): string | undefined {
+  const at = current === undefined ? -1 : groups.indexOf(current)
+  const next = Math.min(groups.length - 1, Math.max(-1, at + step))
+  return next < 0 ? undefined : groups[next]
 }
 
 /** What a row shows under the name: `when`, else `why`, else nothing (criterion 22). */
