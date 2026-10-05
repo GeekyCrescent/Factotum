@@ -3064,3 +3064,55 @@
     animation: none;
   }
 }
+
+/* --- The Skills screen (spec 2026-10-03-skills-a-mano, D10): read-only rows --------- */
+
+.s-use-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.s-use-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.s-use-name {
+  font-weight: 600;
+}
+
+.s-use-when {
+  flex-basis: 100%;
+  font-size: var(--text-small);
+}
+
+.s-use-row .s-use-who + .s-use-when {
+  flex-basis: auto;
+  margin-left: auto;
+}
+
+.s-use-group + .s-use-group {
+  margin-top: var(--space-3);
+}
+
+.s-use-group-title {
+  color: var(--text-2);
+  font-size: var(--text-small);
+  font-weight: 600;
+}
+
+.s-fold > summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  color: var(--text);
+  font-weight: 600;
+}
