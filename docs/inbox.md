@@ -132,3 +132,18 @@ The rule is **the cheapest model that works**: three days on the same real mail 
 missed to-do, or more than two spam/unsubscribe mistakes in one check, rules a candidate out. Haiku
 costs about $0.10 per batch of 40 and Sonnet about $0.23 (measured with synthetic mail; Haiku with
 `--effort low` saved nothing). The default is `haiku` while that comparison runs on real mail.
+
+## 7. The screen
+
+`/m/inbox` puts what asks for you first. **To do** opens; **Unsubscribe**, **Info** and **Spam** start
+folded, and a tap on any heading folds or opens it. Each has its own colour: to do red, unsubscribe
+orange, info teal, spam pink. A red dot marks an urgent to-do, and a due date that is today or past
+is red too.
+
+Each to-do is its ask and one line: when it is due, who sent it, the source, and "seen last time".
+The two icons copy the draft (it turns into a check for two seconds) and open the mail in Gmail. A
+tap on the text shows the subject, why it is a to-do, and the whole draft.
+
+The spec asked for a screen with text only (D9). Copy and Open in Gmail became icons after the
+screen was tried on the phone, each with its own label for a screen reader. Nothing else on the
+screen is a glyph but the caret that folds a section.

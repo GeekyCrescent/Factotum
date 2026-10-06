@@ -69,106 +69,214 @@
   font-size: var(--text-small);
 }
 
-/* --- Sections ---------------------------------------------------------------- */
+/* --- The button: the page's colours, swapped -------------------------------- */
 
-.i-section {
+/* The head's buttons are `sm` in look, not in reach: the touch target stays 44 px. */
+.i-head .btn.sm {
+  min-height: var(--hit);
+}
+
+.btn.i-check {
+  background: var(--text);
+  border-color: transparent;
+  color: var(--bg);
+}
+
+/* --- Sections: one hue each, folding ---------------------------------------- */
+
+/* To do takes err's red, as the urgent dot does; the others are project hues, never err / ok / ask. */
+.i-sec-todo {
+  --i-hue: var(--err);
+}
+
+.i-sec-unsub {
+  --i-hue: var(--p5);
+}
+
+.i-sec-info {
+  --i-hue: var(--p3);
+}
+
+.i-sec-spam {
+  --i-hue: var(--p6);
+}
+
+.i-sec-other {
+  --i-hue: var(--line-strong);
+}
+
+.i-sections {
   display: grid;
+}
+
+.i-sec + .i-sec {
+  border-top: 1px solid var(--line);
+}
+
+.i-sec > summary,
+.i-sec-empty {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
   gap: var(--space-2h);
 }
 
-.i-section h2,
-.i-fold summary {
-  font-size: var(--text-heading);
+.i-sec > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.i-sec > summary::-webkit-details-marker {
+  display: none;
+}
+
+.i-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--i-hue);
+}
+
+.i-name {
+  font-size: var(--text-title);
   font-weight: 600;
 }
 
-.i-fold summary {
-  cursor: pointer;
-  min-height: var(--hit);
-  display: flex;
-  align-items: center;
+.i-count {
+  font-size: var(--text-small);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
-/* --- A to-do ----------------------------------------------------------------- */
+.i-caret {
+  margin-left: auto;
+  color: var(--text-3);
+  rotate: -90deg;
+  transition-property: rotate;
+  transition-duration: var(--dur-fade);
+  transition-timing-function: var(--ease-out);
+}
 
-.i-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  background: var(--surface);
-  padding: var(--space-3);
+.i-sec[open] > summary .i-caret {
+  rotate: 0deg;
+}
+
+.i-sec-empty .i-name {
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.i-sec-empty .i-count {
+  color: var(--text-3);
+}
+
+/* --- A to-do: the ask, one meta line, two icons --------------------------------- */
+
+.i-list {
+  list-style: none;
+  padding: 0 0 var(--space-2);
   display: grid;
-  gap: var(--space-1h);
+}
+
+.i-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.i-todo {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-1);
+}
+
+.i-todo-text {
+  min-width: 0;
+  min-height: var(--hit);
+  padding: var(--space-1h) 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
 }
 
 .i-ask {
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: var(--text-body);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
-.i-pri {
+.i-dot {
   display: inline-block;
-  margin-right: var(--space-1h);
-  padding: 0 var(--space-1h);
-  border-radius: var(--radius-6);
-  font-size: var(--text-caption);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  vertical-align: 0.1em;
-  border: 1px solid var(--line-strong);
-  color: var(--text-2);
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-2);
+  border-radius: 3px;
+  background: var(--err);
+  vertical-align: 0.2em;
 }
 
-.i-pri-high {
-  border-color: var(--err-border);
-  background: var(--err-bg);
+.i-meta {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.i-late {
   color: var(--err);
 }
 
-.i-pri-low {
-  color: var(--text-3);
-  border-color: var(--line);
+.i-acts {
+  display: flex;
+  margin-right: calc(-1 * var(--space-2h));
 }
 
-.i-meta,
-.i-subject {
+/* Two classes each: components.css loads after this file, and `.icon-btn` alone would win. */
+@media (hover: hover) {
+  .icon-btn.i-icon:hover {
+    background: var(--surface-2);
+  }
+}
+
+.icon-btn.i-copy-copied {
+  color: var(--ok);
+}
+
+.icon-btn.i-copy-failed {
+  color: var(--err);
+}
+
+.i-more {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+}
+
+.i-subject,
+.i-why {
   font-size: var(--text-small);
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
 
-.i-why {
-  font-size: var(--text-small);
-  color: var(--text-3);
-}
-
-.i-draft summary {
-  cursor: pointer;
-  min-height: var(--hit);
-  display: flex;
-  align-items: center;
-  font-size: var(--text-small);
-  font-weight: 500;
-  color: var(--accent-text);
-}
-
-.i-draft pre {
-  margin-block: var(--space-1h) var(--space-2);
-  padding: var(--space-2h);
-  border-radius: var(--radius-6);
+.i-draft {
+  padding: var(--space-2h) var(--space-3);
+  border-radius: var(--radius-10);
   background: var(--surface-2);
   font-family: var(--font-sans);
   font-size: var(--text-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.i-acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.i-acts a.btn {
-  text-decoration: none;
+@media (prefers-reduced-motion: reduce) {
+  .i-caret {
+    transition: none;
+  }
 }
 
 /* --- Rows: senders, folded lists, the history ---------------------------------- */
@@ -179,6 +287,10 @@
   display: grid;
 }
 
+.i-small > li + li {
+  border-top: 0;
+}
+
 .i-row {
   display: flex;
   justify-content: space-between;
@@ -187,6 +299,11 @@
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--line);
   font-size: var(--text-small);
+}
+
+.i-small .i-row {
+  padding: var(--space-1h) 0;
+  border-bottom: 0;
 }
 
 .i-row-stack {

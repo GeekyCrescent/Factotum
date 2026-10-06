@@ -8,15 +8,23 @@
  *
  * WITH AN `id` it is a past digest from the history, read-only.
  *
- * TEXT ONLY: no glyphs on this screen (D9). The envelope in the nav is the shell's.
+ * THE SECTIONS FOLD, each with its own colour (to do in red, then orange, teal and pink: the project
+ * hues the tokens keep apart from err / ok / ask). To do opens; the rest start folded.
+ *
+ * GLYPHS: four, in `icon.tsx`. Copy and Open in Gmail are icon buttons with their own labels; D9's
+ * "text only" was relaxed for them after the screen was tried on the phone (docs/inbox.md §7).
  */
 
+import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { AccountStatus, Digest, DigestEntry, InboxStatus } from '../types.ts'
 import type { ViewProps } from './contract.ts'
-import { dollars, metaLine, priorityOf, progressText, sectionsOf, seconds, splitFrom, tokens, type SenderGroup } from './model.ts'
+import { Icon } from './icon.tsx'
+import { dollars, dueText, metaLine, priorityOf, progressText, sectionsOf, seconds, splitFrom, tokens, type SenderGroup } from './model.ts'
 
 const POLL_MS = 2_000
+/** How long the copy button shows how it went before it is a copy button again. */
+const COPIED_MS = 2_000
 /** The only links drawn: the ones the daemon builds. A tampered file cannot make one `javascript:`. */
 const GMAIL = 'https://mail.google.com/'
 
@@ -123,11 +131,11 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
           ) : null}
         </div>
         {past ? (
-          <button type="button" class="btn" onClick={() => navigate('')}>
+          <button type="button" class="btn sm" onClick={() => navigate('')}>
             Latest
           </button>
         ) : (
-          <button type="button" class="btn primary" disabled={running || pressing || status === undefined} onClick={() => void checkMail()}>
+          <button type="button" class="btn sm i-check" disabled={running || pressing || status === undefined} onClick={() => void checkMail()}>
             Check mail
           </button>
         )}
@@ -149,7 +157,7 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
         </div>
       ) : null}
 
-      {digest ? <DigestBody digest={digest} /> : null}
+      {digest ? <DigestBody digest={digest} past={past} /> : null}
 
       <footer class="i-foot">
         {digest ? <p class="dim-3">{usageLine(digest)}</p> : null}
@@ -161,8 +169,10 @@ export function DigestView({ view, id }: { readonly view: ViewProps; readonly id
   )
 }
 
-function DigestBody({ digest }: { readonly digest: Digest }) {
+function DigestBody({ digest, past }: { readonly digest: Digest; readonly past: boolean }) {
   const sections = sectionsOf(digest.entries)
+  // A past check is read against the day it ran: otherwise every due date in it turns red and late.
+  const today = localDay(past ? new Date(digest.startedAt) : new Date())
   return (
     <>
       {digest.state === 'ok' ? null : (
@@ -175,78 +185,142 @@ function DigestBody({ digest }: { readonly digest: Digest }) {
         <p class="dim-2 i-note">{digest.overflow} older mails were left out: a check classifies the newest 400.</p>
       ) : null}
 
-      <section class="i-section">
-        <h2>To do ({sections.todo.length})</h2>
-        {sections.todo.length === 0 ? <p class="dim-2">Nothing asks for you.</p> : null}
-        {sections.todo.map((entry) => (
-          <TodoCard key={entry.key} entry={entry} />
-        ))}
-      </section>
-
-      <section class="i-section">
-        <h2>Unsubscribe ({sections.unsubscribe.length} senders)</h2>
-        {sections.unsubscribe.length === 0 ? <p class="dim-2">No bulk mail worth leaving.</p> : null}
-        <ul class="i-rows">
-          {sections.unsubscribe.map((group) => (
-            <SenderRow key={group.address} group={group} />
-          ))}
-        </ul>
-      </section>
-
-      <Folded title="Spam" entries={sections.spam} />
-      <Folded title="Info" entries={sections.info} />
-      {sections.unclassified.length === 0 ? null : <Folded title="Unclassified" entries={sections.unclassified} />}
+      <div class="i-sections">
+        <Section kind="todo" title="To do" count={sections.todo.length} none="nothing asks for you" open>
+          <ul class="i-list">
+            {sections.todo.map((entry) => (
+              <TodoRow key={entry.key} entry={entry} today={today} />
+            ))}
+          </ul>
+        </Section>
+        <Section kind="unsub" title="Unsubscribe" count={sections.unsubscribe.length} none="none">
+          <ul class="i-list i-small">
+            {sections.unsubscribe.map((group) => (
+              <SenderRow key={group.address} group={group} />
+            ))}
+          </ul>
+        </Section>
+        <Section kind="info" title="Info" count={sections.info.length} none="none">
+          <MailRows entries={sections.info} />
+        </Section>
+        <Section kind="spam" title="Spam" count={sections.spam.length} none="none">
+          <MailRows entries={sections.spam} />
+        </Section>
+        {sections.unclassified.length === 0 ? null : (
+          <Section kind="other" title="Unclassified" count={sections.unclassified.length} none="none">
+            <MailRows entries={sections.unclassified} />
+          </Section>
+        )}
+      </div>
     </>
   )
 }
 
-function TodoCard({ entry }: { readonly entry: DigestEntry }) {
-  const [copied, setCopied] = useState(false)
-  const priority = priorityOf(entry)
-  const copy = async (): Promise<void> => {
-    if (entry.draft === undefined) return
-    try {
-      await navigator.clipboard.writeText(entry.draft)
-      setCopied(true)
-    } catch {
-      setCopied(false)
-    }
-  }
+type SectionKind = 'todo' | 'unsub' | 'info' | 'spam' | 'other'
+
+/** A heading with its colour and count that folds what is under it; with nothing under it, one quiet line. */
+function Section(props: {
+  readonly kind: SectionKind
+  readonly title: string
+  readonly count: number
+  readonly none: string
+  readonly open?: boolean
+  readonly children: ComponentChildren
+}) {
+  const { kind, title, count, none, open = false, children } = props
+  const heading = (
+    <>
+      <span class="i-swatch" aria-hidden="true" />
+      <span class="i-name">{title}</span>
+      <span class="i-count">{count === 0 ? none : count}</span>
+    </>
+  )
+  if (count === 0) return <div class={`i-sec i-sec-${kind} i-sec-empty`}>{heading}</div>
   return (
-    <article class="i-card">
-      <p class="i-ask">
-        <span class={`i-pri i-pri-${priority}`}>{priority}</span> {entry.ask ?? entry.subject}
-      </p>
-      <p class="i-meta">{metaLine(entry)}</p>
-      <p class="i-subject">{entry.subject}</p>
-      {entry.why === undefined ? null : <p class="i-why">{entry.why}</p>}
-      {entry.draft === undefined ? (
-        !isGmail(entry.link) ? null : (
-          <div class="i-acts">
-            <OpenLink link={entry.link} />
-          </div>
-        )
-      ) : (
-        <details class="i-draft">
-          <summary>Draft</summary>
-          <pre>{entry.draft}</pre>
-          <div class="i-acts">
-            <button type="button" class="btn" onClick={() => void copy()}>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-            {isGmail(entry.link) ? <OpenLink link={entry.link} /> : null}
-          </div>
-        </details>
-      )}
-    </article>
+    <details class={`i-sec i-sec-${kind}`} open={open}>
+      <summary>
+        {heading}
+        <Icon name="caret-down" size={18} class="i-caret" />
+      </summary>
+      {children}
+    </details>
   )
 }
 
-function OpenLink({ link }: { readonly link: string }) {
+type CopyState = 'idle' | 'copied' | 'failed'
+
+const COPY_LABEL: Readonly<Record<CopyState, string>> = { idle: 'Copy draft', copied: 'Copied', failed: 'Could not copy' }
+
+function TodoRow({ entry, today }: { readonly entry: DigestEntry; readonly today: string }) {
+  const [open, setOpen] = useState(false)
+  const [copy, setCopy] = useState<CopyState>('idle')
+  const due = entry.due === undefined ? undefined : dueText(entry.due, today)
+  const ask = entry.ask ?? entry.subject
+
+  useEffect(() => {
+    if (copy === 'idle') return
+    const timer = setTimeout(() => setCopy('idle'), COPIED_MS)
+    return () => clearTimeout(timer)
+  }, [copy])
+
+  const copyDraft = async (): Promise<void> => {
+    if (entry.draft === undefined) return
+    try {
+      await navigator.clipboard.writeText(entry.draft)
+      setCopy('copied')
+    } catch {
+      setCopy('failed')
+    }
+  }
+
   return (
-    <a class="btn" href={link} target="_blank" rel="noreferrer noopener">
-      Open in Gmail
-    </a>
+    <li>
+      <div class="i-todo">
+        <button type="button" class="i-todo-text" aria-expanded={open} onClick={() => setOpen((was) => !was)}>
+          <span class="i-ask">
+            {priorityOf(entry) === 'high' ? <span class="i-dot" role="img" aria-label="Urgent" /> : null}
+            {ask}
+          </span>
+          <span class="i-meta">
+            {due === undefined ? null : (
+              <>
+                <span class={due.urgent ? 'i-late' : undefined}>{due.text}</span>
+                {' · '}
+              </>
+            )}
+            {metaLine(entry)}
+          </span>
+        </button>
+        <div class="i-acts">
+          {entry.draft === undefined ? null : (
+            <button
+              type="button"
+              class={`icon-btn i-icon i-copy-${copy}`}
+              aria-label={COPY_LABEL[copy]}
+              title={COPY_LABEL[copy]}
+              onClick={() => void copyDraft()}
+            >
+              <Icon name={copy === 'copied' ? 'check' : 'copy'} />
+            </button>
+          )}
+          <span class="sr-only" role="status">
+            {copy === 'idle' ? '' : COPY_LABEL[copy]}
+          </span>
+          {isGmail(entry.link) ? (
+            <a class="icon-btn i-icon" href={entry.link} target="_blank" rel="noreferrer noopener" aria-label="Open in Gmail" title="Open in Gmail">
+              <Icon name="envelope-simple" />
+            </a>
+          ) : null}
+        </div>
+      </div>
+      {open ? (
+        <div class="i-more">
+          {entry.ask === undefined || entry.subject === '' ? null : <p class="i-subject">{entry.subject}</p>}
+          {entry.why === undefined ? null : <p class="i-why">{entry.why}</p>}
+          {entry.draft === undefined ? null : <pre class="i-draft">{entry.draft}</pre>}
+        </div>
+      ) : null}
+    </li>
   )
 }
 
@@ -255,31 +329,26 @@ function SenderRow({ group }: { readonly group: SenderGroup }) {
     <li class="i-row">
       <span class="i-row-main">{group.sender}</span>
       <span class="dim-2 num">
-        {group.count} mail{group.count === 1 ? '' : 's'}
-        {group.hasUnsubscribe ? ' · has unsubscribe link' : ''}
+        {group.count}
+        {group.hasUnsubscribe ? '' : ' · no unsubscribe link'}
       </span>
     </li>
   )
 }
 
-function Folded({ title, entries }: { readonly title: string; readonly entries: readonly DigestEntry[] }) {
+function MailRows({ entries }: { readonly entries: readonly DigestEntry[] }) {
   return (
-    <details class="i-section i-fold">
-      <summary>
-        {title} ({entries.length})
-      </summary>
-      <ul class="i-rows">
-        {entries.map((entry) => (
-          <li key={entry.key} class="i-row i-row-stack">
-            <span class="i-row-main">{entry.subject || '(no subject)'}</span>
-            <span class="dim-2">
-              {senderOf(entry)} · {entry.account}
-              {entry.why === undefined ? '' : ` — ${entry.why}`}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </details>
+    <ul class="i-list i-small">
+      {entries.map((entry) => (
+        <li key={entry.key} class="i-row i-row-stack">
+          <span class="i-row-main">{entry.subject || '(no subject)'}</span>
+          <span class="dim-2">
+            {senderOf(entry)} · {entry.account}
+            {entry.why === undefined ? '' : ` · ${entry.why}`}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -321,6 +390,12 @@ function usageLine(digest: Digest): string {
 function senderOf(entry: DigestEntry): string {
   const { name, address } = splitFrom(entry.from)
   return name || address
+}
+
+/** Today on this device, as `YYYY-MM-DD`: what a due date is compared with. */
+function localDay(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 export function when(iso: string): string {

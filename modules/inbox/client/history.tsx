@@ -36,7 +36,7 @@ export function History({ view }: { readonly view: ViewProps }) {
         <div class="i-head-text">
           <p class="i-when">History</p>
         </div>
-        <button type="button" class="btn" onClick={() => navigate('')}>
+        <button type="button" class="btn sm" onClick={() => navigate('')}>
           Latest
         </button>
       </header>

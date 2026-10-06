@@ -86,12 +86,43 @@ export function splitFrom(from: string): { readonly name: string; readonly addre
   return { name: match[1]?.trim() ?? '', address: (match[2] ?? '').trim().toLowerCase() }
 }
 
-/** Under a to-do: sender · source · due · "seen last time" (criteria 14, 25). */
+/** Under a to-do: sender · source · "seen last time" (criteria 14, 25). The due date is `dueText`, drawn apart to colour it. */
 export function metaLine(entry: DigestEntry): string {
   const { name, address } = splitFrom(entry.from)
-  return [name || address, entry.account, entry.due === undefined ? '' : `due ${entry.due}`, entry.seenLastTime ? 'seen last time' : '']
-    .filter((part) => part !== '')
-    .join(' · ')
+  return [name || address, entry.account, entry.seenLastTime ? 'seen last time' : ''].filter((part) => part !== '').join(' · ')
+}
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/
+const DAY_MS = 86_400_000
+const WEEK_DAYS = 7
+
+/** `YYYY-MM-DD` → its UTC midnight, or undefined when it is not a real date (`2026-13-40`). */
+function dayOf(iso: string): number | undefined {
+  const match = ISO_DAY.exec(iso)
+  if (match === null) return undefined
+  const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return new Date(ms).toISOString().startsWith(iso) ? ms : undefined
+}
+
+/**
+ * The due date the way the owner thinks of it, against `today` (`YYYY-MM-DD`, local): "due today",
+ * "was due yesterday", "due Thu", "due Oct 30". Late and today are `urgent`. Anything the model wrote
+ * that is not a date is shown as it came, and never as late.
+ */
+export function dueText(due: string, today: string): { readonly text: string; readonly urgent: boolean } {
+  const dueDay = dayOf(due)
+  const todayDay = dayOf(today)
+  if (dueDay === undefined || todayDay === undefined) return { text: `due ${due}`, urgent: false }
+  const days = Math.round((dueDay - todayDay) / DAY_MS)
+  if (days < -1) return { text: `${-days} days late`, urgent: true }
+  if (days === -1) return { text: 'was due yesterday', urgent: true }
+  if (days === 0) return { text: 'due today', urgent: true }
+  if (days === 1) return { text: 'due tomorrow', urgent: false }
+  const date = new Date(dueDay)
+  if (days < WEEK_DAYS) return { text: `due ${date.toLocaleDateString('en', { weekday: 'short', timeZone: 'UTC' })}`, urgent: false }
+  const sameYear = due.slice(0, 4) === today.slice(0, 4)
+  const format: Intl.DateTimeFormatOptions = sameYear ? { month: 'short', day: 'numeric', timeZone: 'UTC' } : { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
+  return { text: `due ${date.toLocaleDateString('en', format)}`, urgent: false }
 }
 
 /** What the screen says while a run goes on (criterion 18). */
