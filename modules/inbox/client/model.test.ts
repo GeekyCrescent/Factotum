@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { DigestEntry } from '../types.ts'
-import { dollars, metaLine, progressText, seconds, sectionsOf, splitFrom, todoOrder, tokens, unsubscribeGroups } from './model.ts'
+import { dollars, dueText, metaLine, progressText, seconds, sectionsOf, splitFrom, todoOrder, tokens, unsubscribeGroups } from './model.ts'
 
 let counter = 0
 function entry(over: Partial<DigestEntry>): DigestEntry {
@@ -70,12 +70,28 @@ test('the sections split by category, unclassified apart', () => {
   )
 })
 
-test('the meta line says the sender, the source, the due date and "seen last time" (criteria 14, 25)', () => {
+test('the meta line says the sender, the source and "seen last time" (criteria 14, 25); the due date is drawn apart', () => {
   assert.equal(
     metaLine(entry({ from: '"Prof. Ruiz" <ruiz@mq.edu.au>', account: 'Macquarie', due: '2026-10-09', seenLastTime: true })),
-    'Prof. Ruiz · Macquarie · due 2026-10-09 · seen last time',
+    'Prof. Ruiz · Macquarie · seen last time',
   )
   assert.equal(metaLine(entry({ from: 'bare@x.com', account: 'Gmail' })), 'bare@x.com · Gmail')
+})
+
+test('the due date, said against today: late and today are urgent, the rest is not (criterion 14)', () => {
+  const today = '2026-10-06'
+  assert.deepEqual(dueText('2026-10-06', today), { text: 'due today', urgent: true })
+  assert.deepEqual(dueText('2026-10-05', today), { text: 'was due yesterday', urgent: true })
+  assert.deepEqual(dueText('2026-10-01', today), { text: '5 days late', urgent: true })
+  assert.deepEqual(dueText('2026-10-07', today), { text: 'due tomorrow', urgent: false })
+  assert.deepEqual(dueText('2026-10-08', today), { text: 'due Thu', urgent: false })
+  assert.deepEqual(dueText('2026-10-30', today), { text: 'due Oct 30', urgent: false })
+  assert.deepEqual(dueText('2027-01-03', today), { text: 'due Jan 3, 2027', urgent: false })
+})
+
+test('a due date that is not YYYY-MM-DD is shown as it came, never as late', () => {
+  assert.deepEqual(dueText('next week', '2026-10-06'), { text: 'due next week', urgent: false })
+  assert.deepEqual(dueText('2026-13-40', '2026-10-06'), { text: 'due 2026-13-40', urgent: false })
 })
 
 test('splitFrom reads a display name, quoted or not, and a bare address', () => {
