@@ -13,13 +13,22 @@
  */
 
 import type { ComponentType } from 'preact'
-import { moduleApi, type ModuleApi } from './api.ts'
+import type { ModuleApi } from './api.ts'
 import type { Pending } from './pending.ts'
+import type { NavigateOptions } from './router.ts'
 import { sessionsClient } from '../../../modules/sessions/client/index.tsx'
 import { inboxClient } from '../../../modules/inbox/client/index.tsx'
 
 export interface ModuleViewProps {
+  /** This module on the screen's host: every call of the screen goes there (design D12). */
   readonly api: ModuleApi
+  /**
+   * The host this screen is on, from `/h/<host>/`; `undefined` for the one serving the app (spec
+   * 2026-10-07-dos-hosts, design D12).
+   */
+  readonly host: string | undefined
+  /** This module on any host, for what CROSSES hosts from a screen. `undefined`: the serving host. */
+  readonly apiOn: (host: string | undefined) => ModuleApi
   /**
    * What follows `/m/<id>/` in the path, `''` at the module's root. KEPT IN STEP WITH THE URL: when
    * the module navigates, or Back is pressed, the screen re-renders with the new value.
@@ -34,8 +43,11 @@ export interface ModuleViewProps {
    * A module that needs a query value keeps it in memory; no query survives in the history.
    */
   readonly search: string
-  /** Change what follows `/m/<id>/`, without a reload. `replace` leaves no history entry. */
-  readonly navigate: (rest: string, options?: { readonly replace?: boolean }) => void
+  /**
+   * Change what follows `/m/<id>/`, without a reload. `replace` leaves no history entry; `host` a
+   * name goes to that host, `null` to the serving one, and without the key it stays on this one.
+   */
+  readonly navigate: (rest: string, options?: NavigateOptions) => void
   readonly openDrawer: () => void
   /** The module's own overlay (a sheet), which Android's Back closes first. */
   readonly overlay: string | undefined
@@ -49,9 +61,15 @@ export interface ModuleViewProps {
 
 export interface ModuleDrawerProps {
   readonly api: ModuleApi
+  /** ALWAYS `undefined`: the drawer belongs to the whole app, not to a host (design D12). */
+  readonly host: string | undefined
+  readonly apiOn: (host: string | undefined) => ModuleApi
   readonly rest: string
-  /** Navigates within the module and closes the drawer. */
-  readonly navigate: (rest: string) => void
+  /**
+   * Navigates within the module and closes the drawer. Without the `host` key it goes to the
+   * SERVING host — the drawer has no host of its own to stay on.
+   */
+  readonly navigate: (rest: string, options?: { readonly host?: string | null }) => void
   readonly pending: readonly Pending[]
 }
 
@@ -86,18 +104,4 @@ export const CLIENTS: readonly ModuleClient[] = [sessionsClient, inboxClient]
 
 export function clientFor(id: string): ModuleClient | undefined {
   return CLIENTS.find((client) => client.id === id)
-}
-
-const APIS = new Map<string, ModuleApi>()
-
-/**
- * One `ModuleApi` per module for the life of the page. A new object on every render would re-run
- * every effect a screen keys on `api` (Example's is `[api]`), and the shell now re-renders often.
- */
-export function apiFor(id: string): ModuleApi {
-  const known = APIS.get(id)
-  if (known !== undefined) return known
-  const created = moduleApi(id)
-  APIS.set(id, created)
-  return created
 }

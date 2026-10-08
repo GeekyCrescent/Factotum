@@ -9,6 +9,8 @@
  * The ceiling is never a copy here: it comes from the daemon's `view().uploads.maxBytes`.
  */
 
+import type { Api } from './contract.ts'
+
 /** What the browser hands over: a `File`, or anything shaped like one in a test. */
 export interface FileLike {
   readonly name: string
@@ -175,7 +177,10 @@ export function splitRefs(text: string): readonly Piece[] {
   return pieces
 }
 
-/** Where the module serves an upload, relative to its prefix. */
-export function uploadUrl(uploadId: string, name: string): string {
-  return `/modules/sessions/uploads/${uploadId}/${encodeURIComponent(name)}`
+/**
+ * Where the module serves an upload, on the host of `api` (spec 2026-10-07-dos-hosts, design D12): a
+ * file sent to the Mac is on the Mac.
+ */
+export function uploadUrl(api: Pick<Api, 'url'>, uploadId: string, name: string): string {
+  return api.url(`uploads/${uploadId}/${encodeURIComponent(name)}`)
 }

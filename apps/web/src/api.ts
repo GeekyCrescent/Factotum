@@ -4,6 +4,10 @@
  * `moduleApi(id)` is prefixed so a module's screen cannot call another module's
  * routes without writing the whole path by hand — the client-side mirror of the
  * server rule that a module can only register under its own prefix.
+ *
+ * `moduleApi(id, host)` is THE SAME MODULE ON ANOTHER HOST, through the kernel's proxy:
+ * `/peers/<host>/modules/<id>/` (spec 2026-10-07-dos-hosts, design D12). Still only this module's
+ * prefix, so no module gains a way to reach another module or the kernel.
  */
 
 import type { NavEntry } from '@factotum/core'
@@ -40,6 +44,11 @@ export interface ModuleApi {
    * and anything else travel in the query; the body is the file itself, never JSON.
    */
   upload: <T>(path: string, file: Blob, query: Readonly<Record<string, string>>) => Promise<T>
+  /**
+   * The address of one of this module's routes, for what the browser fetches by itself — an `<img>`,
+   * a download (design D12). Only a string: it reaches nothing `get` does not.
+   */
+  url: (path: string) => string
 }
 
 /**
@@ -86,8 +95,9 @@ function unreachable(cause: unknown): Error {
   return Object.assign(new Error(cause instanceof Error ? cause.message : 'could not reach the daemon'), { status: 0, body: undefined })
 }
 
-export function moduleApi(id: string): ModuleApi {
-  const base = `/modules/${id}/`
+/** `host` absent: the host serving the app. A name: that peer, through `/peers/<name>/`. */
+export function moduleApi(id: string, host?: string): ModuleApi {
+  const base = host === undefined ? `/modules/${id}/` : `/peers/${encodeURIComponent(host)}/modules/${id}/`
   const url = (path: string): string => base + path.replace(/^\//, '')
 
   const send = async <T>(path: string, init: RequestInit): Promise<T> => {
@@ -114,7 +124,26 @@ export function moduleApi(id: string): ModuleApi {
     // new is the body — the file's bytes, with no JSON content type — not the way (spec 2026-10-01,
     // D10, which amends the note below that said this interface does not grow).
     upload: (path, file, query) => send(`${path}?${new URLSearchParams(query).toString()}`, { method: 'POST', body: file }),
+    url,
   }
+}
+
+const APIS = new Map<string, ModuleApi>()
+
+/**
+ * One `ModuleApi` per module AND HOST for the life of the page. A new object on every render would
+ * re-run every effect a screen keys on `api` (Example's is `[api]`), and the shell re-renders often.
+ * Keyed by both, so one module on two hosts never shares an object (design D12).
+ *
+ * Here and not in `modules.ts`, which imports the modules' `.tsx`: `node --test` can load this.
+ */
+export function apiFor(id: string, host?: string): ModuleApi {
+  const key = `${host ?? ''}|${id}`
+  const known = APIS.get(key)
+  if (known !== undefined) return known
+  const created = moduleApi(id, host)
+  APIS.set(key, created)
+  return created
 }
 
 // ---------------------------------------------------------------------------

@@ -265,6 +265,7 @@ function Live({
       {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
       <div class="s-body">
         <Log
+          api={api}
           rows={rows}
           running={running}
           asking={ask !== undefined}

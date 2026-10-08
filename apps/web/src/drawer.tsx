@@ -11,12 +11,12 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks'
-import type { ModuleSummary } from './api.ts'
+import { apiFor, type ModuleSummary } from './api.ts'
 import { Icon } from './icon.tsx'
 import { navIcon } from './icons.ts'
-import { apiFor, clientFor } from './modules.ts'
+import { clientFor } from './modules.ts'
 import { forModule, type Pending } from './pending.ts'
-import { pathOf, type Screen } from './router.ts'
+import { navigatePath, pathOf, type Screen } from './router.ts'
 
 export interface DrawerProps {
   readonly open: boolean
@@ -124,11 +124,14 @@ function ModuleSection({
   if (module.status.kind !== 'enabled' || client?.Drawer === undefined) return null
   const Section = client.Drawer
   const rest = screen.kind === 'module' && screen.id === module.id ? screen.rest : ''
+  // No host of its own (design D12): `navigate` without the key goes to the serving host.
   return (
     <Section
       api={apiFor(module.id)}
+      host={undefined}
+      apiOn={(on) => apiFor(module.id, on)}
       rest={rest}
-      navigate={(next) => select(pathOf({ kind: 'module', id: module.id, rest: next }))}
+      navigate={(next, options) => select(navigatePath(module.id, next, undefined, options))}
       pending={forModule(pending, module.id)}
     />
   )

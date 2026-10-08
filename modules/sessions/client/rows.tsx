@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { Activity, Shown } from './activity.ts'
 import { splitRefs, uploadUrl, type Piece } from './attachments.ts'
+import type { Api } from './contract.ts'
 import { inlineRefs } from './refs.ts'
 import type { Call, QuestionsRow, ServiceRow, SubagentRow } from './fold.ts'
 import { describeRow, questionsLabel } from './questions.ts'
@@ -38,12 +39,15 @@ const GLYPHS: Readonly<Record<string, SessionIcon>> = {
  * waiting for the owner.
  */
 export function Log({
+  api,
   rows,
   running,
   asking,
   onOpenQuestions,
   onOpenService,
 }: {
+  /** Where the files of this log are served: the session's host (spec 2026-10-07-dos-hosts, D12). */
+  readonly api: Pick<Api, 'url'>
   readonly rows: readonly Shown[]
   readonly running: boolean
   readonly asking: boolean
@@ -55,19 +59,21 @@ export function Log({
   return (
     <ol class="s-log">
       {rows.map((row) => (
-        <LogRow key={row.seq} row={row} running={running} asking={asking} onOpenQuestions={onOpenQuestions} onOpenService={onOpenService} />
+        <LogRow key={row.seq} api={api} row={row} running={running} asking={asking} onOpenQuestions={onOpenQuestions} onOpenService={onOpenService} />
       ))}
     </ol>
   )
 }
 
 function LogRow({
+  api,
   row,
   running,
   asking,
   onOpenQuestions,
   onOpenService,
 }: {
+  readonly api: Pick<Api, 'url'>
   readonly row: Shown
   readonly running: boolean
   readonly asking: boolean
@@ -79,7 +85,7 @@ function LogRow({
       // The owner's words: a bubble on the right, as typed. The agent's: the page itself, as Markdown.
       return row.role === 'user' ? (
         <li class="s-user">
-          <OwnerMessage text={row.text} />
+          <OwnerMessage api={api} text={row.text} />
         </li>
       ) : (
         <li class="s-row s-said">
@@ -236,7 +242,7 @@ function SubagentRowView({ row, running }: { readonly row: SubagentRow; readonly
  * thumbnail for a picture, a chip for anything else (spec 2026-10-01, D11). The text is still the
  * record: this only reads the `@<path>` lines back out of it.
  */
-function OwnerMessage({ text }: { readonly text: string }) {
+function OwnerMessage({ api, text }: { readonly api: Pick<Api, 'url'>; readonly text: string }) {
   const pieces = splitRefs(text)
   if (!pieces.some((piece) => piece.kind === 'ref')) {
     return (
@@ -257,7 +263,7 @@ function OwnerMessage({ text }: { readonly text: string }) {
       <ul class="s-sent-files" aria-label="Attached files">
         {files.map((file, i) => (
           <li key={`${file.uploadId}-${i}`}>
-            <SentFile uploadId={file.uploadId} name={file.name} image={file.image} />
+            <SentFile api={api} uploadId={file.uploadId} name={file.name} image={file.image} />
           </li>
         ))}
       </ul>
@@ -295,9 +301,19 @@ function InlineText({ text }: { readonly text: string }) {
  * served as a download — it becomes the plain chip. The chip NEVER SAYS WHY: an `<img>` cannot tell a
  * 404 from a 503, so it does not pretend to (criterion 31).
  */
-function SentFile({ uploadId, name, image }: { readonly uploadId: string; readonly name: string; readonly image: boolean }) {
+function SentFile({
+  api,
+  uploadId,
+  name,
+  image,
+}: {
+  readonly api: Pick<Api, 'url'>
+  readonly uploadId: string
+  readonly name: string
+  readonly image: boolean
+}) {
   const [broken, setBroken] = useState(false)
-  const href = uploadUrl(uploadId, name)
+  const href = uploadUrl(api, uploadId, name)
   if (image && !broken) {
     return (
       <a class="s-sent-thumb" href={href} target="_blank" rel="noopener">
