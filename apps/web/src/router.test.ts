@@ -160,3 +160,9 @@ test('navigatePath: a host string goes there, null back to the serving host, no 
   assert.equal(navigatePath('sessions', 'abc', 'mac', { replace: true }), '/h/mac/m/sessions/abc')
   assert.equal(navigatePath('sessions', '', undefined), '/m/sessions')
 })
+
+test('a malformed escape in the host or the id is an unknown screen, never a throw (review 2026-10-08)', () => {
+  for (const path of ['/h/%E0/m/x', '/m/%E0', '/h/mac/m/%', '/h/%/m/x/y']) {
+    assert.deepEqual(screenOf(path), { kind: 'unknown', path }, path)
+  }
+})

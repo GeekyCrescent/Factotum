@@ -38,6 +38,9 @@ Two shapes were weighed:
   `/hosts` lists only itself, `/peers/*` is 404, and so is the relay.
 - At most one peer. A peer's origin passes **the same canonical-origin rule as `publicOrigin`**,
   reused rather than copied (`isCanonicalOrigin`, `packages/core/src/config.ts`), with its own message.
+  And it must be `https:` unless its host is loopback (`127.0.0.0/8`, `::1`, `localhost`): the proxy and
+  the relay carry everything to it, and two loopback daemons over `http:` is what the tests pair
+  (security review, 2026-10-08).
 - A peer's name is `machineName(origin)`, the first label of its hostname (`net/peers.ts`, the one
   place it is computed). The boot **aborts** — config errors on the network surface abort, they do not
   degrade (ADR-0004) — when the peer is this host's own `publicOrigin`, shares this host's name, or has

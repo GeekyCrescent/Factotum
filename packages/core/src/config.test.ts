@@ -231,6 +231,18 @@ test('a peer with a trailing dot or a path is refused, with a message of its own
   }
 })
 
+test('a peer over http: is refused unless its host is loopback (security review, 2026-10-08)', () => {
+  for (const origin of ['http://omarchy.tail1234.ts.net', 'http://100.64.0.2:7777', 'http://localhost.evil.example', 'http://128.0.0.1:7777']) {
+    const result = withPeers([{ origin }])
+    assert.equal(result.success, false, origin)
+    assert.deepEqual(result.error?.issues[0]?.path, ['peers', 0, 'origin'])
+    assert.match(result.error?.issues[0]?.message ?? '', /https/)
+  }
+  for (const origin of ['http://127.0.0.1:7778', 'http://127.4.5.6:7778', 'http://localhost:7778', 'http://[::1]:7778']) {
+    assert.equal(withPeers([{ origin }]).success, true, origin)
+  }
+})
+
 test('two peers are refused: one peer at most (D1)', () => {
   const result = withPeers([{ origin: 'https://a.tail1234.ts.net' }, { origin: 'https://b.tail1234.ts.net' }])
   assert.equal(result.success, false)

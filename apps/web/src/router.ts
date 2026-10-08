@@ -45,10 +45,23 @@ export function screenOf(pathname: string): Screen {
   const m = MODULE.exec(pathname)
   if (m !== null) {
     const [, host, rawId = ''] = m
-    const screen = { kind: 'module', id: decodeURIComponent(rawId), rest: restOf(pathname, rawId) } as const
-    return host === undefined ? screen : { ...screen, host: decodeURIComponent(host) }
+    // A malformed escape (`/h/%E0/m/x`) is a URL nobody can mean: an unknown screen, never a throw
+    // out of the router (review 2026-10-08).
+    const id = decodeOrUndefined(rawId)
+    const hostName = host === undefined ? undefined : decodeOrUndefined(host)
+    if (id === undefined || (host !== undefined && hostName === undefined)) return { kind: 'unknown', path: pathname }
+    const screen = { kind: 'module', id, rest: restOf(pathname, rawId) } as const
+    return hostName === undefined ? screen : { ...screen, host: hostName }
   }
   return { kind: 'unknown', path: pathname }
+}
+
+function decodeOrUndefined(raw: string): string | undefined {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return undefined
+  }
 }
 
 export function pathOf(screen: Screen): string {
