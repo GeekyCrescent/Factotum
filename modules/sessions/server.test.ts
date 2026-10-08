@@ -209,7 +209,15 @@ test('a busy site answers 409 WITH the id of the session that has it', async () 
 })
 
 test('a stale site answers 409 with the freshness report, not a bare refusal', async () => {
-  const freshness = { clean: false, behind: 2, dirtyFiles: ['a.ts'], remoteWarning: undefined }
+  const freshness = {
+    clean: false,
+    behind: 2,
+    dirtyFiles: ['a.ts'],
+    remoteWarning: undefined,
+    fetchFailed: false,
+    noUpstream: false,
+    pullError: undefined,
+  }
   const { table } = await started(fakeEngine({ launch: async () => ({ outcome: 'stale', freshness }) }))
   const response = await call(
     table,
@@ -219,6 +227,27 @@ test('a stale site answers 409 with the freshness report, not a bare refusal', a
   assert.equal(response.status, 409)
   assert.deepEqual((response.body as { freshness: unknown }).freshness, freshness)
   assert.equal((response.body as ErrorBody).error.code, 'conflict')
+})
+
+test('a fast-forward that could not be made reaches the client: pullError in the 409, and said in the message (spec 2026-10-07-dos-hosts, D5)', async () => {
+  const freshness = {
+    clean: true,
+    behind: 1,
+    dirtyFiles: [],
+    remoteWarning: undefined,
+    fetchFailed: false,
+    noUpstream: false,
+    pullError: 'cannot-fast-forward: fatal: Not possible to fast-forward, aborting.',
+  }
+  const { table } = await started(fakeEngine({ launch: async () => ({ outcome: 'stale', freshness }) }))
+  const response = await call(
+    table,
+    'POST /sessions',
+    request('POST', '/sessions', { body: { siteId: 'a', entryId: 'free', text: 'x' } }),
+  )
+  assert.equal(response.status, 409)
+  assert.equal((response.body as { freshness: { pullError?: string } }).freshness.pullError, freshness.pullError)
+  assert.match((response.body as ErrorBody).error.message, /cannot fast-forward/)
 })
 
 test('a refusal the owner has to read comes back as 400 WITH its reason', async () => {

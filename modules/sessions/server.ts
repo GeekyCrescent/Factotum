@@ -195,7 +195,14 @@ function fromLaunch(result: LaunchResult): ModuleResponse {
       return {
         status: 409,
         body: {
-          error: { code: 'conflict', message: 'that site is not clean or not up to date' },
+          error: {
+            code: 'conflict',
+            // A fast-forward that failed is a different thing to fix than a dirty tree (design D5).
+            message:
+              result.freshness.pullError === undefined
+                ? 'that site is not clean or not up to date'
+                : 'that site cannot fast-forward to its remote',
+          },
           freshness: result.freshness,
         },
       }

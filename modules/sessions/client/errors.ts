@@ -17,6 +17,8 @@ export interface Freshness {
   readonly behind: number
   readonly dirtyFiles: readonly string[]
   readonly remoteWarning?: string
+  /** The fast-forward before launching could not be made (spec 2026-10-07-dos-hosts, D5). */
+  readonly pullError?: string
 }
 
 /** The 409 body of a busy site, read WITHOUT importing anything (see the header). */
@@ -41,5 +43,6 @@ export function describe(report: Freshness): string {
   if (report.behind > 0) parts.push(`${report.behind} commit${report.behind === 1 ? '' : 's'} behind`)
   if (!report.clean) parts.push(`uncommitted: ${report.dirtyFiles.join(', ')}`)
   if (report.remoteWarning !== undefined) parts.push(report.remoteWarning)
+  if (report.pullError !== undefined) parts.push(report.pullError)
   return parts.join(' · ')
 }

@@ -796,10 +796,12 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
   const id = forced.outcome === 'started' ? forced.sessionId : ''
   await settle(engine, id)
 
-  // And the report is the first thing in the log, so the decision is recoverable; the prompt follows.
-  const [first, second] = (await readPage(engine, id, 0)).events
-  assert.match(first?.kind === 'message' ? first.text : '', /launched over a freshness warning/)
-  assert.equal(second?.kind === 'message' ? second.text : '', QUICK)
+  // What the pull did, then the report, first in the log, so the decision is recoverable; the
+  // prompt follows. A dirty tree is never pulled, with force or without (spec 2026-10-07-dos-hosts, S10).
+  const [first, second, third] = (await readPage(engine, id, 0)).events
+  assert.equal(first?.kind === 'message' ? first.text : '', 'not pulled: working tree has changes')
+  assert.match(second?.kind === 'message' ? second.text : '', /launched over a freshness warning/)
+  assert.equal(third?.kind === 'message' ? third.text : '', QUICK)
 })
 
 test('a refused stale launch does not keep the lock', async () => {

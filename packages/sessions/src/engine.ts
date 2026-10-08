@@ -15,7 +15,15 @@ import { basename } from 'node:path'
 import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
 import { createAnnounced } from './announced.ts'
 import { findInvokable, isInvokableName, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
-import { checkFreshness, describeFreshness, isFresh, type FreshnessDeps } from './freshness.ts'
+import {
+  checkFreshness,
+  describeFreshness,
+  isFresh,
+  pullIfSafe,
+  type FreshnessDeps,
+  type PullDeps,
+  type PullOutcome,
+} from './freshness.ts'
 import { uuidv7 } from './id.ts'
 import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
 import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './lifecycle.ts'
@@ -100,6 +108,8 @@ export interface EngineDeps {
   readonly serviceSeams?: ServiceSeams
   /** The freshness check `launch` runs, so a test can hold one without a network (spec 2026-10-03, D7). */
   readonly freshness?: (deps: FreshnessDeps) => Promise<FreshnessReport>
+  /** The pull `launch` runs after it, so a test can hold or count the merge (spec 2026-10-07-dos-hosts, D5). */
+  readonly pull?: (deps: PullDeps) => Promise<PullOutcome>
 }
 
 /** The per-session files the CLI is launched with. */
@@ -133,6 +143,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   const store = new SessionStore(paths, setup.now)
   const locks = new SiteLocks(paths)
   const freshness = deps.freshness ?? checkFreshness
+  const pull = deps.pull ?? pullIfSafe
   await store.ensureRoots()
 
   // What the CLI announces it can invoke (spec 2026-10-03-skills-a-mano, D2): read once here, and
@@ -475,6 +486,55 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
 
   // --- launch --------------------------------------------------------------
 
+  /**
+   * The order of design D5, for a repo with no other holder. NEVER touches a dirty tree, with or
+   * without `force` (S10); a fetch that failed is said and not a reason to stop (criterion 20).
+   * `isFresh` is read AFTER the pull, so a fast-forward that failed is what refuses.
+   */
+  async function checkAndPull(
+    siteId: string,
+    cwd: string,
+    holderId: string,
+    force: boolean,
+  ): Promise<{ readonly kind: 'stale'; readonly report: FreshnessReport } | { readonly kind: 'go'; readonly notes: readonly string[] }> {
+    const found = await freshness({ cwd, timers: setup.timers })
+    const pulled = await pullFor(found, siteId, cwd, holderId)
+    const report = pulled.report
+    if (!force) return isFresh(report) ? { kind: 'go', notes: pulled.notes } : { kind: 'stale', report }
+
+    const warned = !report.clean || report.behind > 0 || report.remoteWarning !== undefined || report.pullError !== undefined
+    const warning = warned ? [`launched over a freshness warning: ${describeFreshness(report)}`] : []
+    return { kind: 'go', notes: [...pulled.notes, ...warning] }
+  }
+
+  /** Pulls when it is safe to, and says what happened. A NEW report, never the one it was given. */
+  async function pullFor(
+    report: FreshnessReport,
+    siteId: string,
+    cwd: string,
+    holderId: string,
+  ): Promise<{ readonly report: FreshnessReport; readonly notes: readonly string[] }> {
+    if (!report.clean) return { report, notes: ['not pulled: working tree has changes'] }
+    if (report.fetchFailed) return { report, notes: ['not pulled: fetch failed'] }
+    if (report.behind === 0) return { report, notes: [] }
+
+    const outcome = await pull({
+      cwd,
+      timers: setup.timers,
+      behind: report.behind,
+      sole: (fn) => locks.soleSection(siteId, holderId, fn),
+    })
+    switch (outcome.kind) {
+      case 'pulled':
+        // `behind` is what it is NOW, so what is shown and stored tells the truth.
+        return { report: { ...report, behind: 0 }, notes: [`pulled ${outcome.commits} commits`] }
+      case 'skipped':
+        return { report, notes: ['pull skipped: another session is working here'] }
+      case 'failed':
+        return { report: { ...report, pullError: outcome.pullError }, notes: [`not pulled: ${outcome.pullError}`] }
+    }
+  }
+
   async function launch(input: LaunchInput): Promise<LaunchResult> {
     if (stopped) throw new Error(STOPPED)
 
@@ -528,9 +588,13 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // With siblings the tree is dirty with THEIR edits, and the warning would fire every time — the
       // reason `reply` does not check either. What is not checked is said, in the log, below.
       const checks = site.isRepo && siblings === 0
-      if (checks && !input.force) {
-        const report = await freshness({ cwd: site.path, timers: setup.timers })
-        if (!isFresh(report)) return { outcome: 'stale', freshness: report }
+      // The pull before launching (spec 2026-10-07-dos-hosts, D5), BEFORE the session exists: a refusal
+      // leaves nothing behind. What it has to say waits in `notes` and opens the log.
+      let notes: readonly string[] = []
+      if (checks) {
+        const checked = await checkAndPull(site.id, site.path, sessionId, input.force)
+        if (checked.kind === 'stale') return { outcome: 'stale', freshness: checked.report }
+        notes = checked.notes
       }
 
       const files = await writeSessionFiles(sessionId)
@@ -556,16 +620,9 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
           text: `freshness not checked: ${siblings} other session(s) are running in this project`,
         })
       }
-      if (checks && input.force) {
-        const report = await freshness({ cwd: site.path, timers: setup.timers })
-        // The report becomes the first thing in the log, so "I launched over a warning"
-        // is recoverable later rather than a thing the owner has to remember.
-        await store.append(sessionId, {
-          kind: 'message',
-          role: 'user',
-          text: `launched over a freshness warning: ${describeFreshness(report)}`,
-        })
-      }
+      // What the pull did, and any warning launched over, first in the log: "I launched over a
+      // warning" is recoverable later rather than a thing the owner has to remember.
+      for (const text of notes) await store.append(sessionId, { kind: 'message', role: 'user', text })
       // The prompt goes into the log the same way a reply does, or the thread opens on an answer.
       // A catalog entry can launch with no text, and an empty bubble says nothing.
       if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })

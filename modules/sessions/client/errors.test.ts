@@ -30,3 +30,9 @@ test('describe says what is behind, what is dirty and what the remote warned, jo
   assert.equal(describe({ clean: true, behind: 1, dirtyFiles: [] }), '1 commit behind')
   assert.equal(describe({ clean: true, behind: 0, dirtyFiles: [], remoteWarning: 'no remote' }), 'no remote')
 })
+
+test('a fast-forward that failed travels with the stale 409, and describe says it (spec 2026-10-07-dos-hosts, D5)', () => {
+  const freshness = { clean: true, behind: 1, dirtyFiles: [], pullError: 'cannot-fast-forward: fatal: Not possible to fast-forward, aborting.' }
+  assert.equal(freshnessOf(failed(409, { freshness }))?.pullError, freshness.pullError)
+  assert.equal(describe(freshness), '1 commit behind · cannot-fast-forward: fatal: Not possible to fast-forward, aborting.')
+})
