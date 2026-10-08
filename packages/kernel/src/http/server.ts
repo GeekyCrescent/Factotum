@@ -24,6 +24,7 @@ import { describePolicy, originAllowed, type OriginPolicy } from '../net/origin.
 import type { Interfaces } from '../net/resolve.ts'
 import { isSameMachine, sourceIpOf } from '../net/same-machine.ts'
 import { Registry, type Resolved } from '../modules/registry.ts'
+import type { PeerTable } from '../net/peers.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
 
@@ -55,18 +56,27 @@ export interface ServerDeps {
   readonly push: Pick<PushService, 'publicKey' | 'subscribe' | 'count'>
   /** This machine's addresses, to tell a subscription from here (design D12). */
   readonly interfaces: Interfaces
+  /** This host's name, `machineName(publicOrigin)`: the `self` entry of `/hosts`. */
+  readonly machine: string
+  /** The other daemon, as the probe last saw it (spec 2026-10-07, D2). */
+  readonly peers: Pick<PeerTable, 'list'>
+}
+
+function isPushPath(path: string): boolean {
+  return path === '/push' || path.startsWith('/push/')
 }
 
 /**
- * THE API OWNS THIS PREFIX, and the static site must not answer under it.
+ * THE API OWNS THESE PATHS, and the static site must not answer under them.
  *
  * The static branch runs BEFORE the origin check and falls back to `index.html` for anything
  * it does not own (`static.ts:31`) — which is right for `/m/<id>` and would make every GET here
- * answer 200 text/html, unreachable and above the 403. Exact prefix, so `/pushup` stays the
- * client's.
+ * answer 200 text/html, unreachable and above the 403. Exact prefixes, so `/pushup`, `/hostsx`
+ * and `/peersx` stay the client's. Every new kernel route needs its line here (spec 2026-10-07,
+ * criterion 4).
  */
-function isPushPath(path: string): boolean {
-  return path === '/push' || path.startsWith('/push/')
+function isKernelApiPath(path: string): boolean {
+  return isPushPath(path) || path === '/hosts' || path === '/peers' || path.startsWith('/peers/')
 }
 
 export function createServer(deps: ServerDeps): Server {
@@ -100,7 +110,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
     })
   }
 
-  if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules') && !isPushPath(path)) {
+  if (method === 'GET' && deps.site !== undefined && !path.startsWith('/modules') && !isKernelApiPath(path)) {
     const file = await deps.site.serve(path)
     if (file !== undefined) {
       res.writeHead(200, {
@@ -131,6 +141,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
 
   if (!deps.isReady()) {
     return sendError(res, 503, 'starting', 'factotum is still starting')
+  }
+
+  // --- Hosts (spec 2026-10-07, D2): this one and the peer, behind the origin and the 503 ----
+
+  if (method === 'GET' && path === '/hosts') {
+    return sendJson(res, 200, hosts(deps))
   }
 
   if (path === '/modules') {
@@ -252,6 +268,22 @@ async function handleModule(
       return await respond(res, response, resolved.stateDir)
     }
   }
+}
+
+/**
+ * This host first, then the peer. `lastSeenAt` is `null` for a peer never seen, so the shape does
+ * not change with the state. Names, reachability and a time: no origin, no version, no count.
+ */
+function hosts(deps: ServerDeps): readonly unknown[] {
+  return [
+    { name: deps.machine, self: true, reachable: true },
+    ...deps.peers.list().map((peer) => ({
+      name: peer.name,
+      self: false,
+      reachable: peer.reachable,
+      lastSeenAt: peer.lastSeenAt ?? null,
+    })),
+  ]
 }
 
 /** A file when the module named one — served by the kernel's rules, not the module's — else JSON. */

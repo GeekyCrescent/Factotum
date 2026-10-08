@@ -520,6 +520,12 @@ test('the peer is probed at start on kernel timers, and stop leaves no probe run
   try {
     await until(() => hits >= 2)
     assert.ok(hits >= 2, 'probed at start and then on its period')
+    // Criterion 1, end to end: the name is machineName of each origin.
+    const hosts = await json<{ name: string; self: boolean; reachable: boolean }[]>(await fetch(`${handle.localUrl}/hosts`))
+    assert.deepEqual(hosts.map(({ name, self, reachable }) => ({ name, self, reachable })), [
+      { name: '127', self: true, reachable: true },
+      { name: 'localhost', self: false, reachable: true },
+    ])
   } finally {
     await handle.stop()
   }
@@ -536,6 +542,10 @@ test('a peer that is not there at all: the daemon boots and serves', async () =>
   const handle = await bootWith(paths)
   try {
     assert.equal((await fetch(`${handle.localUrl}/health`)).status, 200)
+    assert.deepEqual(await json(await fetch(`${handle.localUrl}/hosts`)), [
+      { name: 'mimac', self: true, reachable: true },
+      { name: 'localhost', self: false, reachable: false, lastSeenAt: null },
+    ])
   } finally {
     await handle.stop()
   }

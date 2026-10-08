@@ -113,6 +113,8 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     version: options.version,
     startedAt,
     push,
+    machine: machineName(config.publicOrigin),
+    peers,
     // `main.ts` injects none: without the default, prod would compare against nothing.
     interfaces: options.interfaces ?? networkInterfaces,
     ...(options.site !== undefined ? { site: options.site } : {}),

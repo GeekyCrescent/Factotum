@@ -14,6 +14,7 @@ import { incomingDir, moduleStateDir, statePaths } from '../config/paths.ts'
 import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
+import type { PeerTable } from '../net/peers.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -39,7 +40,10 @@ const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key:
 const MAC_IP = '100.71.174.49'
 const MAC = (() => ({ lo0: [{ address: '127.0.0.1', internal: true }], utun4: [{ address: MAC_IP, internal: false }] })) as unknown as Interfaces
 
-async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[] } = {}) {
+/** The peer table as `/hosts` reads it. */
+const NO_PEERS: Pick<PeerTable, 'list'> = { list: () => [] }
+
+async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[]; peers?: Pick<PeerTable, 'list'> } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
   await mkdir(join(root, 'assets'), { recursive: true })
@@ -59,6 +63,8 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
     startedAt: Date.now(),
     site: createStaticSite(root),
     push: opts.push ?? onPush(),
+    machine: 'mimac',
+    peers: opts.peers ?? NO_PEERS,
     interfaces: opts.interfaces ?? MAC,
     isReady: () => opts.ready ?? true,
   })
@@ -80,6 +86,92 @@ test('/health says how many devices are subscribed, so a peer knows whether to r
     assert.equal(body['version'], 'test')
   } finally {
     await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// /hosts and /peers (spec 2026-10-07, criteria 1 and 4)
+// ---------------------------------------------------------------------------
+
+const OMARCHY = {
+  name: 'omarchy',
+  origin: 'https://omarchy.tail1234.ts.net',
+  reachable: true,
+  lastSeenAt: '2026-10-08T10:00:00.000Z',
+  version: '1.0.0',
+  devices: 1,
+}
+
+test('GET /hosts and GET /peers/x/y never answer the static index.html (criterion 4)', async () => {
+  // The same hole /push had: the static branch runs before the origin check and falls back to
+  // index.html for anything it does not own.
+  const { base, close } = await start()
+  try {
+    for (const path of ['/hosts', '/peers', '/peers/x/y', '/peers/omarchy/modules/sessions/sessions']) {
+      const response = await fetch(`${base}${path}`)
+      assert.doesNotMatch(await response.text(), /<title>/, path)
+      assert.match(response.headers.get('content-type') ?? '', /json/, path)
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('the exclusions are exact prefixes: /hostsx and /peersx are still the client’s', async () => {
+  const { base, close } = await start()
+  try {
+    for (const path of ['/hostsx', '/peersx', '/pushup']) {
+      assert.match(await (await fetch(`${base}${path}`)).text(), /<title>factotum/, path)
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('the shape of GET /hosts: this host first, as self, then the peer with when it was seen (criterion 1)', async () => {
+  const { base, close } = await start({ peers: { list: () => [OMARCHY] } })
+  try {
+    const response = await fetch(`${base}/hosts`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), [
+      { name: 'mimac', self: true, reachable: true },
+      { name: 'omarchy', self: false, reachable: true, lastSeenAt: '2026-10-08T10:00:00.000Z' },
+    ])
+  } finally {
+    await close()
+  }
+})
+
+test('a peer never seen says so with null, and a daemon without peers lists only itself', async () => {
+  const never = { ...OMARCHY, reachable: false, lastSeenAt: undefined }
+  const one = await start({ peers: { list: () => [never] } })
+  try {
+    const hosts = (await (await fetch(`${one.base}/hosts`)).json()) as unknown[]
+    assert.deepEqual(hosts[1], { name: 'omarchy', self: false, reachable: false, lastSeenAt: null })
+  } finally {
+    await one.close()
+  }
+  const none = await start()
+  try {
+    assert.deepEqual(await (await fetch(`${none.base}/hosts`)).json(), [{ name: 'mimac', self: true, reachable: true }])
+  } finally {
+    await none.close()
+  }
+})
+
+test('GET /hosts is behind the origin check and the 503, like the rest of the API', async () => {
+  const open = await start()
+  try {
+    assert.equal((await fetch(`${open.base}/hosts`, { headers: { origin: FOREIGN } })).status, 403)
+    assert.equal((await fetch(`${open.base}/hosts`, { headers: { origin: PUBLIC } })).status, 200)
+  } finally {
+    await open.close()
+  }
+  const starting = await start({ ready: false })
+  try {
+    assert.equal((await fetch(`${starting.base}/hosts`)).status, 503)
+  } finally {
+    await starting.close()
   }
 })
 
