@@ -65,6 +65,10 @@ export const REMOVING_HOLDER = 'removing'
 
 const EXCLUSIVE = (): LockMode => 'exclusive'
 
+/** What `soleSection` answers when it did not run its task: someone else holds the site too. */
+export const SOLE_SKIPPED = 'skipped'
+export type SoleSkipped = typeof SOLE_SKIPPED
+
 /**
  * Does this pid exist? Signal 0 performs the permission and existence checks and
  * delivers nothing, so it asks without killing.
