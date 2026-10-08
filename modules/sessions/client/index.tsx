@@ -18,6 +18,11 @@
  * «New» with no host goes there once, on mount, while it is reachable. A launch the other host did
  * not answer is not retried: the composer says it may have started, and this reads that host again.
  *
+ * PENDINGS OF EVERY HOST (criteria 10, 14): landing and the strip go to a pending's own host, and a
+ * pending is over when ITS host's page says so. The screen's own `setup` and page load as before;
+ * what is read from another host for that is asked APART, with `Promise.allSettled`, so a host that
+ * is down leaves its pendings waiting and never turns this screen into "Could not load".
+ *
  * A SESSION READS ITS OWN SUMMARY (`session.tsx`), so opening one does not depend on it being on the
  * first page of a list (criterion 36). The page here is only for landing on `''` and for noticing
  * that a pending's session is over; `GET sessions` leaves out what is archived and what belongs to a
@@ -38,10 +43,10 @@ import { LaunchComposer } from './composer.tsx'
 import type { ViewProps } from './contract.ts'
 import { SessionsDrawer } from './drawer.tsx'
 import { messageOf } from './errors.ts'
-import { launchPath, launchRest, rememberedLaunchHost, runOnChoices, type RunOnChoice } from './hosts.ts'
+import { hostKey, launchPath, launchRest, rememberedLaunchHost, runOnChoices, type RunOnChoice } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { ProjectsScreen } from './projects.tsx'
-import { firstWithSession, pickRelevant, resolvedBy } from './relevance.ts'
+import { firstWithSession, hostOf, landingReady, otherHosts, pickRelevant, resolvedBy, type Pending } from './relevance.ts'
 import { Session } from './session.tsx'
 import { SkillsScreen } from './skills-screen.tsx'
 
@@ -50,7 +55,7 @@ const PROJECTS = 'projects'
 const SKILLS = 'skills'
 
 function SessionsView(view: ViewProps) {
-  const { api, rest, navigate, pending, resolvePending } = view
+  const { api, host, hosts, rest, navigate, pending, resolvePending } = view
   const [setup, setSetup] = useState<EngineSetupView | undefined>(undefined)
   const [page, setPage] = useState<SessionPage | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -87,18 +92,21 @@ function SessionsView(view: ViewProps) {
     if (launching) void refresh()
   }, [launching, refresh])
 
-  // A pending whose session this page shows as over is over (criterion 28 of the previous spec).
+  // A pending whose session this page shows as over is over (criterion 28 of the previous spec) —
+  // only a pending of THIS screen's host: the others are checked on theirs, just below.
   useEffect(() => {
     if (page === undefined) return
-    for (const tag of resolvedBy(pending, page.sessions)) resolvePending(tag)
-  }, [page, pending, resolvePending])
+    for (const tag of resolvedBy(pending, page.sessions, hosts, host)) resolvePending(tag)
+  }, [page, pending, hosts, host, resolvePending])
+  useOtherHostsResolve(view, page)
 
   // `/m/sessions` alone: land on what matters, without leaving the bare URL in the history.
   useEffect(() => {
-    if (rest !== '' || page === undefined) return
-    const pick = pickRelevant(pending, page.sessions)
-    navigate(pick.kind === 'new' ? NEW : pick.id, { replace: true })
-  }, [rest, page, pending, navigate])
+    if (rest !== '' || page === undefined || !landingReady(pending, hosts)) return
+    const pick = pickRelevant(pending, page.sessions, hosts, host)
+    if (pick.kind === 'new') navigate(NEW, { replace: true })
+    else navigate(pick.id, { replace: true, host: pick.host ?? null })
+  }, [rest, page, pending, hosts, host, navigate])
 
   if (rest === PROJECTS) return <ProjectsScreen view={view} />
   // Before the last case below, where any other `rest` is a session id.
@@ -133,7 +141,7 @@ function SessionsView(view: ViewProps) {
         <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer}>
           <RunOn view={view} onPick={runOn} />
         </TopBar>
-        {other === undefined ? null : <Strip pending={other} onOpen={(id) => navigate(id)} />}
+        {other === undefined ? null : <Strip pending={other} onOpen={(id) => navigate(id, { host: hostOfPending(other, hosts) })} />}
         <div class="s-body">
           {page.sessions.length === 0 ? (
             <div class="center-state">
@@ -164,6 +172,37 @@ function SessionsView(view: ViewProps) {
   }
 
   return <Session key={rest} view={view} id={rest} setup={setup} onChanged={() => void refresh()} />
+}
+
+/** Where a pending's session lives, as `navigate` takes it: `null` is the serving host. */
+function hostOfPending(p: Pending, hosts: ViewProps['hosts']): string | null {
+  return hostKey(hostOf(p), hosts) ?? null
+}
+
+/**
+ * The pendings of the OTHER hosts are over when their own pages say so (criterion 14). Read whenever
+ * this screen's page is — on mount, on entering New, after a launch — each host apart and all at
+ * once with `Promise.allSettled`: one that fails or is down resolves nothing, and holds up nothing.
+ */
+function useOtherHostsResolve(view: ViewProps, page: SessionPage | undefined): void {
+  const { apiOn, host, hosts, pending, resolvePending } = view
+  const others = otherHosts(pending, hosts, host)
+  const key = others.map((other) => other ?? '').join(',')
+  useEffect(() => {
+    if (page === undefined || others.length === 0) return undefined
+    let live = true
+    void Promise.allSettled(others.map((other) => apiOn(other).get<SessionPage>('sessions?page=0'))).then((results) => {
+      if (!live) return
+      results.forEach((result, i) => {
+        if (result.status !== 'fulfilled') return
+        for (const tag of resolvedBy(pending, result.value.sessions, hosts, others[i])) resolvePending(tag)
+      })
+    })
+    return () => {
+      live = false
+    }
+    // `key` stands for `others`; `pending` and `hosts` are read as they are when the page is.
+  }, [page, key, apiOn, resolvePending])
 }
 
 /**
