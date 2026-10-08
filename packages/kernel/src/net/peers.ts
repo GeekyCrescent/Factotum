@@ -37,6 +37,11 @@ export interface PeerState {
 export interface PeerTable {
   readonly list: () => readonly PeerState[]
   readonly get: (name: string) => PeerState | undefined
+  /**
+   * Where `rawRest` lands on the peer called `name`, or `undefined` if it may not go there.
+   * `rawRest` is what follows `/peers/<name>` in `req.url` AS RECEIVED (design D3).
+   */
+  readonly url: (name: string, rawRest: string) => URL | undefined
 }
 
 export interface PeerTableDeps {
@@ -55,5 +60,33 @@ export function createPeerTable(deps: PeerTableDeps): PeerTable {
   return {
     list: () => [...states.values()],
     get: (name) => states.get(name),
+    url: (name, rawRest) => {
+      const peer = states.get(name)
+      return peer === undefined ? undefined : peerUrl(peer.origin, rawRest)
+    },
   }
+}
+
+/** A module route with its own segments, or the peer's `/health`. Nothing else leaves. */
+const ALLOWED_PATH = /^\/(modules\/[a-z0-9][a-z0-9-]*(\/[A-Za-z0-9._~!$&'()*+,;=:@%-]*)*|health)$/
+
+/** Dot segments, an empty segment, and the escapes that would become one of them further on. */
+const TRAVERSAL = /(^|\/)\.\.?(\/|$)|\/\/|%2e|%2f|%5c|\\/i
+
+/**
+ * THE OUTGOING URL IS BUILT HERE AND NOWHERE ELSE (criterion 7), from a RAW path.
+ *
+ * Raw, not the `path` that `handle()` normalises and decodes: decoded, a `%3F` would become a query
+ * and a `%2e` a dot. The query is not looked at — it cannot change the host — so a search for
+ * `src/app` (`q=src%2Fapp`) still passes. And the URL `new URL` built is compared to the peer's
+ * origin by EXACT equality, as `origin.ts` compares origins: the two regexes are the policy, this
+ * is the proof the policy held.
+ */
+function peerUrl(origin: string, rawRest: string): URL | undefined {
+  const q = rawRest.indexOf('?')
+  const path = q === -1 ? rawRest : rawRest.slice(0, q)
+  if (!ALLOWED_PATH.test(path)) return undefined
+  if (TRAVERSAL.test(path)) return undefined
+  const out = new URL(rawRest, origin)
+  return out.origin === origin ? out : undefined
 }
