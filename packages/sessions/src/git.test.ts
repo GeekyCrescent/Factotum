@@ -2,12 +2,21 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gitEnv, gitFailureReason, outerBoundMs, runGit } from './git.ts'
 
 const exec = promisify(execFile)
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function repo(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'factotum-git-'))
@@ -84,17 +93,25 @@ test('a failing command rejects with git’s own reason on the first line', asyn
 })
 
 test('a command that outlives its budget is killed WITH its children, and rejects', async () => {
-  // A fake ssh that waits for git to speak first while git waits for it: a hang. Its own group,
-  // killed whole, or the `sleep` would hold the pipe open and the promise with it.
+  // A fake ssh that waits for git to speak first while git waits for it: a hang. Killing git alone
+  // leaves this one behind as an orphan, so the whole group goes.
   const dir = await repo()
   const fake = join(dir, 'fake-ssh.sh')
-  await writeFile(fake, '#!/bin/sh\nread answer\nsleep 600\n')
+  const pidFile = join(dir, 'ssh.pid')
+  await writeFile(fake, `#!/bin/sh\necho $$ > '${pidFile}'\nread answer\nexec sleep 600\n`)
   await chmod(fake, 0o755)
   await exec('git', ['remote', 'add', 'origin', 'ssh://factotum.invalid/repo.git'], { cwd: dir })
 
   const started = Date.now()
   await assert.rejects(runGit(['fetch', '--quiet'], 500, dir, { ...process.env, GIT_SSH_COMMAND: fake }), /did not finish within 500ms/)
   assert.equal(Date.now() - started < 5_000, true)
+
+  const pid = Number.parseInt(await readFile(pidFile, 'utf8'), 10)
+  const deadline = Date.now() + 5_000
+  while (isRunning(pid)) {
+    if (Date.now() > deadline) throw new Error('the fake ssh outlived the timeout')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
 })
 
 test('core.sshCommand in the repo is read and used for a network command', async () => {

@@ -14,9 +14,9 @@
  *     environment brings a `GIT_SSH_COMMAND` nor the repo has `core.sshCommand`: the variable wins
  *     over the config, so setting it blindly would throw away a key the owner chose for that repo.
  *
- * AND MAY NEVER HANG. stdin is closed, and the process gets a group of its own that the timeout
- * kills whole: an ssh that waits for input keeps the stdout pipe open after git itself is gone, and
- * with it the promise (the same reason as `killGroup` in `run.ts`).
+ * AND MAY NEVER HANG, OR LEAVE ANYTHING BEHIND. stdin is closed, and the process gets a group of its
+ * own that the timeout kills whole. Measured: `execFile`'s `timeout` kills git alone, and an ssh that
+ * was waiting for input lives on as an orphan (the same reason as `killGroup` in `run.ts`).
  */
 
 import { spawn } from 'node:child_process'
