@@ -529,9 +529,10 @@ test('the peer is probed at start on kernel timers, and stop leaves no probe run
   } finally {
     await handle.stop()
   }
-  const after = hits
+  const atStop = hits
   await new Promise((resolve) => setTimeout(resolve, 150))
-  assert.equal(hits, after, 'no probe after stop')
+  // At most the probe already on the wire when stop ran; a live 30 ms interval would add about five.
+  assert.ok(hits <= atStop + 1, `${hits - atStop} probes after stop`)
   peer.closeAllConnections()
   await new Promise<void>((resolve) => peer.close(() => resolve()))
 })

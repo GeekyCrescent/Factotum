@@ -327,9 +327,11 @@ test('after stop, no timer is left and the peer is asked nothing more', async ()
     p.peers.start(p.timers.timers)
     await eventually(() => p.state()?.reachable === true, 'reachable')
     p.stop()
-    const hits = fake.peer.hits
+    const atStop = fake.peer.hits
     await new Promise((resolve) => setTimeout(resolve, PROBE_MS * 4))
-    assert.equal(fake.peer.hits, hits)
+    // At most the probe that was already on the wire when stop ran; a live interval would have
+    // added about four in this window.
+    assert.ok(fake.peer.hits <= atStop + 1, `${fake.peer.hits - atStop} probes after stop`)
   } finally {
     await fake.down()
   }

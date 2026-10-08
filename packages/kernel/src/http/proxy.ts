@@ -194,7 +194,7 @@ function send(
     // the peer has to guess. @types/node 22 declares the flag on `ServerResponse` only; it lives on
     // `OutgoingMessage`, and on a `ClientRequest` it throws ERR_HTTP_CONTENT_LENGTH_MISMATCH (measured).
     ;(out as ClientRequest & { strictContentLength: boolean }).strictContentLength = true
-    out.once('error', reject)
+    out.on('error', reject)
     if (body === undefined) out.end()
     // A failure on either side destroys both; `out`'s error rejects above if no answer came yet.
     else void pipeline(body, out).catch(() => undefined)
