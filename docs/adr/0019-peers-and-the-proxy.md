@@ -101,13 +101,19 @@ to a URL that function built.
   announced a length would leave the peer waiting for bytes that never come, and on a kept-alive
   connection read the next request as its body; so `content-length` goes out only with a body, and
   `strictContentLength` turns a body that does not match it into an error.
-- **Timeouts**, on the kernel's timers, covering the response body as well as its headers:
+- **Timeouts**, on the kernel's timers. The fixed bound covers the wait for the response **headers**;
+  after them, `PROXY_IDLE_TIMEOUT_MS` (30 s) is the longest silence between two chunks of the body, so a
+  download that keeps flowing is never cut and one that stalls is (code review, 2026-10-08):
 
   | Request | Constant | Value | Why |
   |---|---|---|---|
   | `GET`, `HEAD` | `PROXY_TIMEOUT_MS` | 10 s | reads |
   | `POST` JSON | `PROXY_POST_TIMEOUT_MS` | 60 s | a launch runs git inside the request: `status`, `fetch`, `rev-list` and `merge` are 33 s at worst |
   | Any other `POST` | `PROXY_UPLOAD_TIMEOUT_MS` | 120 s | uploads. A `POST` with no `content-type` counts as one: a `File` with no type is sent that way |
+
+  An upload cut by its bound while the browser is still sending gets a reset, not the 502: the rest of
+  its body is never read. Accepted (code review, 2026-10-08): the client already treats a failed upload
+  as failed, and reading the rest to answer politely is the unbounded read `body.ts` exists to avoid.
 
   A peer marked unreachable, or one that does not answer in time, is **502 `peer-unreachable`** with its
   name. **A 502 after a `POST` does not say whether the peer did it**, so the client never retries a
@@ -182,7 +188,9 @@ Linux: POST /push/relay
   names the peer can still push, but 20 a minute of short text, not a flood.
 - **`/health` now says `devices`**, a count, without the origin check — like `version` and `ready`
   already were.
-- **No cap on concurrent proxied requests.** Low: whoever can open them can already reach the peer.
+- **At most 32 proxied requests in flight** (`PROXY_MAX_IN_FLIGHT`, security review, 2026-10-08); past
+  it, 503 `peer-unreachable` without calling the peer. It bounds the sockets and timers one host holds
+  open towards the other.
 - **The probe and the relay still use `fetch`.** Their bodies are small; backpressure is the
   proxy's problem only.
 - **Each host needs Tailscale DNS on** (`tailscale set --accept-dns=true`). Without it `*.ts.net` does

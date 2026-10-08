@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { createServer as createHttpServer, request, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Logger } from '@factotum/core'
 import { createServer } from './server.ts'
-import { createProxy, PROXY_POST_TIMEOUT_MS, PROXY_TIMEOUT_MS, PROXY_UPLOAD_TIMEOUT_MS, type ProxyTimeouts } from './proxy.ts'
+import { createProxy, PROXY_IDLE_TIMEOUT_MS, PROXY_MAX_IN_FLIGHT, PROXY_POST_TIMEOUT_MS, PROXY_TIMEOUT_MS, PROXY_UPLOAD_TIMEOUT_MS, type ProxyTimeouts } from './proxy.ts'
 import { policyFor } from '../net/policy.ts'
 import { createPeerTable, type PeerTable } from '../net/peers.ts'
 import { Registry, timerSet } from '../modules/registry.ts'
@@ -88,12 +88,18 @@ function peersFor(port: number, state: { reachable: boolean }): Pick<PeerTable, 
   return { get, url: real.url, list: () => real.list().map((p) => ({ ...p, reachable: state.reachable })) }
 }
 
-async function daemon(peerPort: number, opts: { reachable?: boolean; ready?: boolean; timeouts?: Partial<ProxyTimeouts> } = {}) {
+async function daemon(peerPort: number, opts: { reachable?: boolean; ready?: boolean; timeouts?: Partial<ProxyTimeouts>; maxInFlight?: number } = {}) {
   const state = { reachable: opts.reachable ?? true }
   const { lines, log } = capture()
   const timers = timerSet()
   const peers = peersFor(peerPort, state)
-  const proxy = createProxy({ peers, timers: timers.timers, log, ...(opts.timeouts !== undefined ? { timeouts: opts.timeouts } : {}) })
+  const proxy = createProxy({
+    peers,
+    timers: timers.timers,
+    log,
+    ...(opts.timeouts !== undefined ? { timeouts: opts.timeouts } : {}),
+    ...(opts.maxInFlight !== undefined ? { maxInFlight: opts.maxInFlight } : {}),
+  })
   const home = await mkdtemp(join(tmpdir(), 'factotum-proxy-'))
   const registry = await Registry.create([], {
     paths: statePaths('prod', home),
@@ -459,6 +465,74 @@ test('abortAll ends every request in flight, so stopping cannot wait on a sleepi
     while (w.peer.seen.length === 0) await new Promise((resolve) => setTimeout(resolve, 5))
     w.self.proxy.abortAll()
     assert.equal((await pending).status, 502)
+  } finally {
+    await w.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Code review 2026-10-08: the fixed bound covers the headers; after them, an idle timeout
+// ---------------------------------------------------------------------------
+
+/** Headers at once, then `chunks` pieces `everyMs` apart, then the end — or never, with `stall`. */
+const trickle = (chunks: number, everyMs: number, opts: { readonly stall?: boolean } = {}): Answer => (_req, res) => {
+  res.writeHead(200, { 'content-type': 'application/octet-stream' })
+  res.flushHeaders()
+  let sent = 0
+  const tick = setInterval(() => {
+    res.write(`chunk${sent};`)
+    sent += 1
+    if (sent < chunks) return
+    clearInterval(tick)
+    if (opts.stall !== true) res.end()
+  }, everyMs)
+  res.once('close', () => clearInterval(tick))
+}
+
+test('the idle timeout is 30 s, and the proxy holds at most 32 requests in flight', () => {
+  assert.equal(PROXY_IDLE_TIMEOUT_MS, 30_000)
+  assert.equal(PROXY_MAX_IN_FLIGHT, 32)
+})
+
+test('a body that keeps flowing outlives the fixed bound: it only covers the headers', async () => {
+  // Scaled: the read bound is 150 ms, the body takes ~600 ms, a chunk every 100 ms resets 300 ms of idle.
+  const w = await world(trickle(6, 100), { timeouts: { read: 150, idle: 300 } })
+  try {
+    const response = await fetch(`${w.self.base}/peers/localhost/modules/sessions/uploads/u1/a.bin`)
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'chunk0;chunk1;chunk2;chunk3;chunk4;chunk5;')
+  } finally {
+    await w.close()
+  }
+})
+
+test('a body that stalls past the idle timeout is cut, long before the fixed bound', async () => {
+  const w = await world(trickle(1, 10, { stall: true }), { timeouts: { read: 5_000, idle: 200 } })
+  try {
+    const started = performance.now()
+    const response = await fetch(`${w.self.base}/peers/localhost/modules/sessions/uploads/u1/a.bin`)
+    assert.equal(response.status, 200)
+    await assert.rejects(response.text())
+    assert.ok(performance.now() - started < 2_000, 'cut by the idle timeout, not the 5 s bound')
+  } finally {
+    await w.close()
+  }
+})
+
+test('past the cap of requests in flight the proxy answers 503 and does not call the peer', async () => {
+  const w = await world(() => undefined, { maxInFlight: 2 })
+  try {
+    const pending = [fetch(`${w.self.base}/peers/localhost/health`), fetch(`${w.self.base}/peers/localhost/health`)]
+    while (w.peer.seen.length < 2) await new Promise((resolve) => setTimeout(resolve, 5))
+    const third = await fetch(`${w.self.base}/peers/localhost/health`)
+    assert.equal(third.status, 503)
+    assert.equal(((await third.json()) as { error: { code: string } }).error.code, 'peer-unreachable')
+    assert.equal(w.peer.seen.length, 2)
+    w.self.proxy.abortAll()
+    assert.deepEqual((await Promise.all(pending)).map((r) => r.status), [502, 502])
+    // Released: the next one goes through to the peer again.
+    w.peer.answer = json(200, { ok: true })
+    assert.equal((await fetch(`${w.self.base}/peers/localhost/health`)).status, 200)
   } finally {
     await w.close()
   }

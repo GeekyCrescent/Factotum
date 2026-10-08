@@ -29,6 +29,19 @@ export const PROXY_POST_TIMEOUT_MS = 60_000
 /** `POST` that is not JSON: the photos `api.upload` sends. A5 tunes it. */
 export const PROXY_UPLOAD_TIMEOUT_MS = 120_000
 
+/**
+ * After the response headers, how long the body may go without a chunk (code review, 2026-10-08).
+ * The fixed bounds above cover the wait for the headers only: a large download that keeps flowing
+ * must not be cut at 10 s, and one that stalls must not hold a socket for the rest of the bound.
+ */
+export const PROXY_IDLE_TIMEOUT_MS = 30_000
+
+/**
+ * At most this many proxied requests at once (security review, 2026-10-08); past it, 503 without
+ * calling the peer. A page holds a handful; 32 is room for thumbnails and bounds the sockets.
+ */
+export const PROXY_MAX_IN_FLIGHT = 32
+
 /** The only request headers that travel. Never `Origin`, `Cookie`, `Host` or `Forwarded`. */
 export const REQUEST_HEADERS = ['content-type', 'accept', 'content-length'] as const
 
@@ -53,6 +66,8 @@ export interface ProxyTimeouts {
   readonly read: number
   readonly json: number
   readonly upload: number
+  /** After the headers: the longest silence between two chunks of the body. */
+  readonly idle: number
 }
 
 export interface ProxyDeps {
@@ -62,6 +77,8 @@ export interface ProxyDeps {
   readonly log: Logger
   /** Tests scale them down; production uses the table above. */
   readonly timeouts?: Partial<ProxyTimeouts>
+  /** Tests lower it; production uses PROXY_MAX_IN_FLIGHT. */
+  readonly maxInFlight?: number
 }
 
 export interface Proxy {
@@ -83,7 +100,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
     read: deps.timeouts?.read ?? PROXY_TIMEOUT_MS,
     json: deps.timeouts?.json ?? PROXY_POST_TIMEOUT_MS,
     upload: deps.timeouts?.upload ?? PROXY_UPLOAD_TIMEOUT_MS,
+    idle: deps.timeouts?.idle ?? PROXY_IDLE_TIMEOUT_MS,
   }
+  const maxInFlight = deps.maxInFlight ?? PROXY_MAX_IN_FLIGHT
   const inFlight = new Set<AbortController>()
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -106,20 +125,34 @@ export function createProxy(deps: ProxyDeps): Proxy {
       return refuse(req, res, 502, 'peer-unreachable', `the host ${name} is unreachable`)
     }
 
+    if (inFlight.size >= maxInFlight) {
+      done(503)
+      return refuse(req, res, 503, 'peer-unreachable', `too many requests to ${name} in flight; try again`)
+    }
+
     const timeoutMs = timeoutFor(method, req.headers['content-type'], timeouts)
     const controller = new AbortController()
     inFlight.add(controller)
-    const timer = deps.timers.setTimeout(() => controller.abort(), timeoutMs)
+    // The fixed bound until the headers; from then on, re-armed by every chunk of the body.
+    const deadline = watchdog(deps.timers, () => controller.abort())
+    deadline.arm(timeoutMs)
     // The browser went away: so does the request to the peer.
     res.once('close', () => {
       if (!res.writableFinished) controller.abort()
     })
 
     try {
-      const status = await forward(req, res, { method, target, name, timeoutMs, signal: controller.signal })
+      const status = await forward(req, res, {
+        method,
+        target,
+        name,
+        timeoutMs,
+        signal: controller.signal,
+        onProgress: () => deadline.arm(timeouts.idle),
+      })
       done(status)
     } finally {
-      timer[Symbol.dispose]()
+      deadline.disarm()
       inFlight.delete(controller)
     }
   }
@@ -144,7 +177,15 @@ export function createProxy(deps: ProxyDeps): Proxy {
 async function forward(
   req: IncomingMessage,
   res: ServerResponse,
-  call: { readonly method: string; readonly target: URL; readonly name: string; readonly timeoutMs: number; readonly signal: AbortSignal },
+  call: {
+    readonly method: string
+    readonly target: URL
+    readonly name: string
+    readonly timeoutMs: number
+    readonly signal: AbortSignal
+    /** The headers arrived, or a chunk of the body did: the deadline becomes the idle one. */
+    readonly onProgress: () => void
+  },
 ): Promise<number> {
   const { method, target, name, signal } = call
   const unreachable = () =>
@@ -160,6 +201,8 @@ async function forward(
     response = await send(target, { method, headers: { ...pick(req.headers, names), 'accept-encoding': 'identity' }, signal }, hasBody ? req : undefined)
   } catch {
     // Never the error's message: it carries the peer's URL, and the path in it carries tokens.
+    // An upload cut while its body is still going up sees a reset, not this 502: the browser is still
+    // writing and the rest is never read. Accepted (code review 2026-10-08, ADR-0019).
     sendError(res, 502, 'peer-unreachable', unreachable())
     return 502
   }
@@ -171,14 +214,32 @@ async function forward(
     return 502
   }
 
+  call.onProgress()
+  response.on('data', call.onProgress)
   res.writeHead(status, pickResponse(response.headers))
   try {
     await pipeline(response, res)
   } catch {
-    // Cut mid-body — the timeout, the peer, or the browser. The status has gone; the socket goes too.
+    // Cut mid-body — the idle timeout, the peer, or the browser. The status has gone; the socket goes too.
     res.destroy()
   }
   return status
+}
+
+/** One timer at a time on the kernel's timers: arming it again replaces the previous one. */
+function watchdog(timers: Timers, fire: () => void): { readonly arm: (ms: number) => void; readonly disarm: () => void } {
+  let current: Disposable | undefined
+  const disarm = () => {
+    current?.[Symbol.dispose]()
+    current = undefined
+  }
+  return {
+    arm: (ms) => {
+      disarm()
+      current = timers.setTimeout(fire, ms)
+    },
+    disarm,
+  }
 }
 
 /** One request to the peer, resolved with its response. The body, if any, is piped — with backpressure. */
