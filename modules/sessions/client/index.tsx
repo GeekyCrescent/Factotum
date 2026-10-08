@@ -43,7 +43,7 @@ import { LaunchComposer } from './composer.tsx'
 import type { ViewProps } from './contract.ts'
 import { SessionsDrawer } from './drawer.tsx'
 import { messageOf } from './errors.ts'
-import { hostKey, launchPath, launchRest, rememberedLaunchHost, runOnChoices, type RunOnChoice } from './hosts.ts'
+import { hostKey, launchDecisionOpen, launchPath, launchRest, rememberedLaunchHost, runOnChoices, type RunOnChoice } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { ProjectsScreen } from './projects.tsx'
 import { firstWithSession, hostOf, landingReady, otherHosts, pickRelevant, resolvedBy, type Pending } from './relevance.ts'
@@ -189,6 +189,8 @@ function useOtherHostsResolve(view: ViewProps, page: SessionPage | undefined): v
   const { apiOn, host, hosts, pending, resolvePending } = view
   const others = otherHosts(pending, hosts, host)
   const key = others.map((other) => other ?? '').join(',')
+  // A pending that arrives while the page is already read is resolved too (code review, 2026-10-08).
+  const pendingKey = pending.map((p) => p.tag).join('\n')
   useEffect(() => {
     if (page === undefined || others.length === 0) return undefined
     let live = true
@@ -202,18 +204,21 @@ function useOtherHostsResolve(view: ViewProps, page: SessionPage | undefined): v
     return () => {
       live = false
     }
-    // `key` stands for `others`; `pending` and `hosts` are read as they are when the page is.
-  }, [page, key, apiOn, resolvePending])
+    // `key` stands for `others` and `pendingKey` for `pending`; `hosts` is read as it is when the page is.
+  }, [page, key, pendingKey, apiOn, resolvePending])
 }
 
 /**
  * «New» on the serving host goes to the host last chosen on this device, if it is a reachable peer
  * (criterion 12). DECIDED ONCE EACH TIME the screen becomes the launcher, as soon as `GET /hosts` has
- * answered — never later, under someone already typing. Every other launch screen stays where it is.
+ * answered and within LAUNCH_DECISION_MS of entering — never later, under someone already typing (a
+ * first `/hosts` that failed and a later poll that answered). Every other launch screen stays where it is.
  */
 function useRememberedLaunchHost(view: ViewProps, siteId: string | undefined, launching: boolean): void {
   const { host, hosts, launchHost, navigate } = view
   const decided = useRef(false)
+  // When the screen became the launcher: past LAUNCH_DECISION_MS, a late `/hosts` redirects nobody.
+  const enteredAt = useRef<number | undefined>(undefined)
   const alive = useRef(true)
   // Read when the stored host arrives: the owner may have left the launcher while IndexedDB answered.
   const stillLaunching = useRef(launching)
@@ -227,10 +232,14 @@ function useRememberedLaunchHost(view: ViewProps, siteId: string | undefined, la
   useEffect(() => {
     if (!launching) {
       decided.current = false
+      enteredAt.current = undefined
       return
     }
+    enteredAt.current ??= Date.now()
     if (decided.current || host !== undefined || hosts.length === 0) return
     decided.current = true
+    // `/hosts` came too late — its first read failed and a later poll answered: stay, the owner may be typing.
+    if (!launchDecisionOpen(enteredAt.current, Date.now())) return
     void launchHost.read().then((saved) => {
       const target = rememberedLaunchHost(saved, hosts)
       if (alive.current && stillLaunching.current && target !== undefined) navigate(launchPath(siteId), { host: target, replace: true })

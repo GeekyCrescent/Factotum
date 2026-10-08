@@ -16,11 +16,11 @@
  * NO CONSOLE (criterion 41): the pendings it lists may hold tokens, and the search is typed here.
  */
 
-import { useCallback, useState } from 'preact/hooks'
+import { useCallback, useEffect, useState } from 'preact/hooks'
 import type { ComponentChildren } from 'preact'
 import type { DrawerProps } from './contract.ts'
 import { HostDrawer, useFolded } from './host-drawer.tsx'
-import { groupByHost, hostStatus, type HostGroup } from './hosts.ts'
+import { groupByHost, hostStatus, LAST_SEEN_TICK_MS, lastSeenTicks, type HostGroup } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { onHost } from './relevance.ts'
 
@@ -40,7 +40,7 @@ export function SessionsDrawer({ apiOn, hosts, rest, navigate, pending }: Drawer
   )
   const groups = groupByHost(hosts, NO_DATA)
   const hostsFolded = useFolded(HOSTS_FOLDED_KEY)
-  const now = Date.now()
+  const now = useLastSeenClock(lastSeenTicks(hosts))
 
   return (
     <div class="s-drawer">
@@ -90,6 +90,21 @@ export function SessionsDrawer({ apiOn, hosts, rest, navigate, pending }: Drawer
       })}
     </div>
   )
+}
+
+/**
+ * The time "last seen … ago" is measured against. It ticks every LAST_SEEN_TICK_MS ONLY while a peer
+ * that was seen is down: otherwise nothing on screen ages, and the drawer does not re-render for it.
+ */
+function useLastSeenClock(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!ticking) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), LAST_SEEN_TICK_MS)
+    return () => clearInterval(timer)
+  }, [ticking])
+  return now
 }
 
 /**

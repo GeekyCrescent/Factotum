@@ -2,7 +2,22 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { EngineSetupView } from '../types.ts'
 import type { HostView } from './contract.ts'
-import { barHost, groupByHost, hostKey, hostStatus, initialLaunchChoice, isUnreachable, launchPath, launchRest, rememberedLaunchHost, runOnChoices } from './hosts.ts'
+import {
+  barHost,
+  groupByHost,
+  hostKey,
+  hostStatus,
+  initialLaunchChoice,
+  isUnreachable,
+  LAUNCH_DECISION_MS,
+  LAST_SEEN_TICK_MS,
+  lastSeenTicks,
+  launchDecisionOpen,
+  launchPath,
+  launchRest,
+  rememberedLaunchHost,
+  runOnChoices,
+} from './hosts.ts'
 
 const LINUX: HostView = { name: 'omarchy', self: true, reachable: true, lastSeenAt: null }
 const MAC: HostView = { name: 'mac', self: false, reachable: true, lastSeenAt: '2026-10-08T10:00:00.000Z' }
@@ -137,4 +152,21 @@ test('barHost: another host’s screen names it; the serving host is named only 
   assert.equal(barHost(undefined, [LINUX, MAC]), 'omarchy')
   assert.equal(barHost(undefined, [LINUX]), undefined, 'one host: nothing to tell apart, the bar is as it was')
   assert.equal(barHost(undefined, []), undefined)
+})
+
+test('the remembered host is decided only inside the first window: a /hosts that arrives on a later poll redirects nobody', () => {
+  const entered = 1_000
+  assert.equal(launchDecisionOpen(entered, entered), true)
+  assert.equal(launchDecisionOpen(entered, entered + LAUNCH_DECISION_MS), true)
+  // A failed first read: the next poll is HOSTS_REFRESH_MS (5 s) later, with the owner already typing.
+  assert.equal(launchDecisionOpen(entered, entered + 5_000), false)
+  assert.ok(LAUNCH_DECISION_MS < 5_000, 'shorter than the poll that follows a failed first read')
+})
+
+test('the drawer ticks for "last seen" only while a peer it has seen is down', () => {
+  assert.equal(lastSeenTicks([LINUX, MAC]), false)
+  assert.equal(lastSeenTicks([LINUX, MAC_DOWN]), true)
+  assert.equal(lastSeenTicks([LINUX, { ...MAC_DOWN, lastSeenAt: null }]), false, '"never seen" does not age')
+  assert.equal(lastSeenTicks([]), false)
+  assert.equal(LAST_SEEN_TICK_MS, 5_000)
 })

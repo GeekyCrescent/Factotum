@@ -150,3 +150,28 @@ export function rememberedLaunchHost(saved: string | undefined, hosts: readonly 
   if (key === undefined) return undefined
   return hosts.some((host) => !host.self && host.name === key && host.reachable) ? key : undefined
 }
+
+/**
+ * How long after the launcher opens the remembered host may still redirect it (code review,
+ * 2026-10-08). A first `GET /hosts` that works answers well inside it; one that FAILED is retried a
+ * whole HOSTS_REFRESH_MS (5 s) later, when the owner may be typing — and a redirect then would remount
+ * the composer under their fingers.
+ */
+export const LAUNCH_DECISION_MS = 2_000
+
+/** Whether the launcher entered at `enteredAt` may still be sent to the remembered host. */
+export function launchDecisionOpen(enteredAt: number, now: number): boolean {
+  return now - enteredAt <= LAUNCH_DECISION_MS
+}
+
+/**
+ * How often the drawer re-reads the clock while a peer is down: HOSTS_REFRESH_MS of the shell. While
+ * a peer stays down `GET /hosts` answers the same list, the shell keeps the same array, and nothing
+ * else would re-render "last seen … ago" (code review, 2026-10-08).
+ */
+export const LAST_SEEN_TICK_MS = 5_000
+
+/** Whether "last seen … ago" is on screen: a peer down that was seen once. "never seen" does not age. */
+export function lastSeenTicks(hosts: readonly HostView[]): boolean {
+  return hosts.some((host) => !host.self && !host.reachable && host.lastSeenAt !== null)
+}
