@@ -102,9 +102,11 @@ test('a command that outlives its budget is killed WITH its children, and reject
   await chmod(fake, 0o755)
   await exec('git', ['remote', 'add', 'origin', 'ssh://factotum.invalid/repo.git'], { cwd: dir })
 
+  // 3 s, not less: under a full parallel suite git can take over half a second just to start the
+  // fake ssh, and then the pid file never appears. The budget is what is being tested, not its size.
   const started = Date.now()
-  await assert.rejects(runGit(['fetch', '--quiet'], 500, dir, { ...process.env, GIT_SSH_COMMAND: fake }), /did not finish within 500ms/)
-  assert.equal(Date.now() - started < 5_000, true)
+  await assert.rejects(runGit(['fetch', '--quiet'], 3_000, dir, { ...process.env, GIT_SSH_COMMAND: fake }), /did not finish within 3000ms/)
+  assert.equal(Date.now() - started < 10_000, true)
 
   const pid = Number.parseInt(await readFile(pidFile, 'utf8'), 10)
   const deadline = Date.now() + 5_000
