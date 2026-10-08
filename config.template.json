@@ -21,6 +21,10 @@
     "hatch for a proxy that is not tailscale serve. Do not add localhost:5173 here: that",
     "belongs in a dev config only. See docs/networking.md.",
     "",
+    "peers: the OTHER host, when one app drives two machines — at most one, by its exact",
+    "publicOrigin, e.g. [{ \"origin\": \"https://other-machine.your-tailnet.ts.net\" }].",
+    "Empty, this host runs alone. See docs/hosts.md.",
+    "",
     "modules: a module is OFF unless its block says enabled. Everything else in the block",
     "belongs to that module and is validated by its own schema — a bad value disables that",
     "module with a reason and leaves the rest running.",
@@ -55,6 +59,7 @@
     "extraOrigins": []
   },
   "publicOrigin": "https://your-machine.your-tailnet.ts.net",
+  "peers": [],
   "modules": {
     "sessions": {
       "enabled": false,
