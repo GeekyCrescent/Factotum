@@ -514,6 +514,77 @@ test('an attachment from the peer keeps its containment headers and its bytes (c
   }
 })
 
+// Containment is NEVER the peer's to decide (security review, 2026-10-08): a peer that answers HTML
+// with no headers must not get a document painted under this host's origin.
+
+test('a peer answering text/html with no headers: nosniff, a sandbox CSP and attachment are forced', async () => {
+  const w = await world((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<script>alert(1)</script>')
+  })
+  try {
+    const response = await raw(w.self.port, '/peers/localhost/modules/sessions/uploads/u1/a.html')
+    assert.equal(response.status, 200)
+    assert.equal(response.headers['x-content-type-options'], 'nosniff')
+    assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox")
+    assert.equal(response.headers['content-disposition'], 'attachment')
+  } finally {
+    await w.close()
+  }
+})
+
+test('the peer cannot loosen containment: its inline disposition and its CSP are overridden', async () => {
+  for (const type of ['text/html; charset=utf-8', 'image/svg+xml', 'application/octet-stream', undefined]) {
+    const w = await world((_req, res) => {
+      res.writeHead(200, {
+        ...(type === undefined ? {} : { 'content-type': type }),
+        'content-disposition': 'inline',
+        'content-security-policy': 'default-src *',
+        'x-content-type-options': 'off',
+      })
+      res.end('<svg onload="alert(1)"/>')
+    })
+    try {
+      const response = await raw(w.self.port, '/peers/localhost/modules/sessions/uploads/u1/x')
+      assert.equal(response.headers['x-content-type-options'], 'nosniff', String(type))
+      assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox", String(type))
+      assert.equal(response.headers['content-disposition'], 'attachment', String(type))
+    } finally {
+      await w.close()
+    }
+  }
+})
+
+test('a raster image stays inline — an <img> and a tap must still show it — but is sandboxed and never sniffed', async () => {
+  const w = await world((_req, res) => {
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'content-security-policy': 'default-src *' })
+    res.end(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))
+  })
+  try {
+    const response = await raw(w.self.port, '/peers/localhost/modules/sessions/uploads/u1/a.jpg')
+    assert.equal(response.headers['content-type'], 'image/jpeg')
+    assert.equal(response.headers['x-content-type-options'], 'nosniff')
+    assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox")
+    assert.equal(response.headers['content-disposition'], undefined)
+  } finally {
+    await w.close()
+  }
+})
+
+test('JSON keeps its own headers, plus nosniff', async () => {
+  const w = await world(json(200, { ok: true }, { 'cache-control': 'no-store' }))
+  try {
+    const response = await raw(w.self.port, '/peers/localhost/modules/sessions/sessions')
+    assert.equal(response.headers['content-type'], 'application/json')
+    assert.equal(response.headers['x-content-type-options'], 'nosniff')
+    assert.equal(response.headers['content-disposition'], undefined)
+    assert.equal(response.headers['content-security-policy'], undefined)
+    assert.deepEqual(JSON.parse(response.body), { ok: true })
+  } finally {
+    await w.close()
+  }
+})
+
 test('50 MB go through without being held: the peer reads before the browser has finished, and the memory peak stays below the body', async () => {
   const SIZE = 50 * 1024 * 1024
   const CHUNK = 64 * 1024

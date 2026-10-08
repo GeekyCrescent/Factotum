@@ -35,7 +35,7 @@ export const REQUEST_HEADERS = ['content-type', 'accept', 'content-length'] as c
 /**
  * The only response headers that come back. The last three are `serve-file.ts`'s containment
  * headers: an attachment from the other host must arrive as contained as one from this one
- * (criterion 8). NOT `content-length`: Node sends the body chunked, so a peer that compressed could
+ * (criterion 8) — and `pickResponse` forces them, so it is never LESS contained than here. NOT `content-length`: Node sends the body chunked, so a peer that compressed could
  * never leave the length disagreeing with what `fetch` decompressed.
  */
 export const RESPONSE_HEADERS = [
@@ -230,8 +230,27 @@ function pick(headers: IncomingMessage['headers'], names: readonly string[]): Re
   return out
 }
 
+/** `serve-file.ts`'s sandbox, word for word: opened directly, a document gets no origin and no script. */
+const SANDBOX = "default-src 'none'; sandbox"
+
+/** The four raster types `rasterTypeOf` paints (`@factotum/core`, `sniff.ts`). SVG is not one. */
+const INLINE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+/**
+ * The response headers, with CONTAINMENT DECIDED HERE AND NEVER BY THE PEER (security review,
+ * 2026-10-08). Whatever the peer says, nothing is sniffed. JSON keeps the peer's headers — it is
+ * what `fetch` reads, never painted. A raster image stays inline, because the chat paints it with an
+ * `<img>` and a tap opens it in a tab (`rows.tsx`), but is sandboxed. Anything else is a sandboxed
+ * download, whatever disposition and policy the peer sent: a compromised peer must not be able to
+ * serve a document under this host's origin.
+ */
 function pickResponse(headers: IncomingMessage['headers']): Record<string, string> {
-  return pick(headers, RESPONSE_HEADERS)
+  const picked = pick(headers, RESPONSE_HEADERS)
+  const media = (picked['content-type'] ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? ''
+  const contained = { ...picked, 'x-content-type-options': 'nosniff' }
+  if (media === 'application/json') return contained
+  if (INLINE_TYPES.has(media)) return { ...contained, 'content-security-policy': SANDBOX }
+  return { ...contained, 'content-security-policy': SANDBOX, 'content-disposition': 'attachment' }
 }
 
 /**

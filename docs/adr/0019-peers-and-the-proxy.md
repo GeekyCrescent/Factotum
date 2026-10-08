@@ -92,8 +92,11 @@ to a URL that function built.
   | Back | `content-type`, `cache-control`, `content-disposition`, `content-security-policy`, `x-content-type-options` |
 
   Never `Origin`, `Cookie`, `Host` or `Forwarded`, and nothing `tailscale serve` adds. The last three
-  coming back are `serve-file.ts`'s containment headers: an attachment from the other host arrives as
-  contained as one from this host. **`content-length` does not come back**: the body goes out chunked,
+  coming back are `serve-file.ts`'s containment headers, and **containment is never the peer's to
+  decide**: `x-content-type-options: nosniff` is forced on every proxied response; JSON keeps the
+  peer's other headers; the four raster types `rasterTypeOf` paints stay inline (the chat shows them
+  in an `<img>`) with `content-security-policy: default-src 'none'; sandbox` forced; anything else gets
+  that CSP **and** `content-disposition: attachment`, overriding whatever the peer sent. **`content-length` does not come back**: the body goes out chunked,
   so a peer that compressed could never leave the length disagreeing with the bytes. A GET that
   announced a length would leave the peer waiting for bytes that never come, and on a kept-alive
   connection read the next request as its body; so `content-length` goes out only with a body, and
@@ -166,9 +169,9 @@ Linux: POST /push/relay
 - **The `Host` / DNS-rebinding gap now reaches the peer.** `docs/networking.md` declares that `Host` is
   not checked. Through the proxy, what sits behind that gap on this host includes everything the other
   host's modules serve.
-- **A compromised peer can serve HTML under this host's origin**, through an attachment route. Its own
-  containment headers come back, but nothing here forces them. Inherent to a proxy; forcing
-  `x-content-type-options: nosniff` on every proxied response is a possible hardening, not done.
+- **A compromised peer cannot serve a document under this host's origin**: the proxy forces the
+  containment headers above (security review, 2026-10-08). What it can still serve is JSON to `fetch`
+  and a raster image, which is what the modules' routes answer anyway.
 - **`/health` now says `devices`**, a count, without the origin check — like `version` and `ready`
   already were.
 - **No cap on concurrent proxied requests.** Low: whoever can open them can already reach the peer.
