@@ -600,3 +600,19 @@ test('THE LOG CARRIES THE SHAPE OF THE ROUTE AND NOTHING ELSE: no token from the
     await w.close()
   }
 })
+
+test('a GET never carries a content-length to the peer: no body is sent, so none may be announced', async () => {
+  // A GET announcing 100 bytes and sending none would leave the peer waiting for them — and on a
+  // kept-alive connection, reading the NEXT request as this one's body.
+  const w = await world()
+  try {
+    const response = await raw(w.self.port, '/peers/localhost/health', { headers: { 'content-length': '0' } })
+    assert.equal(response.status, 200)
+    assert.equal(w.peer.seen[0]?.headers['content-length'], undefined)
+    // And the next request on the same agent arrives as itself.
+    assert.equal((await raw(w.self.port, '/peers/localhost/modules/sessions/sessions')).status, 200)
+    assert.equal(w.peer.seen[1]?.url, '/modules/sessions/sessions')
+  } finally {
+    await w.close()
+  }
+})

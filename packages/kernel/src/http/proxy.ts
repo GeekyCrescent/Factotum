@@ -11,7 +11,7 @@
  * kernel's own body cap is not this code's to apply — the peer applies its own.
  */
 
-import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
+import { request as httpRequest, type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { pipeline } from 'node:stream/promises'
 import { errorBody, type ErrorCode, type Logger, type Timers } from '@factotum/core'
@@ -153,7 +153,11 @@ async function forward(
   let response: IncomingMessage
   try {
     const hasBody = method !== 'GET' && method !== 'HEAD'
-    response = await send(target, { method, headers: { ...pick(req.headers, REQUEST_HEADERS), 'accept-encoding': 'identity' }, signal }, hasBody ? req : undefined)
+    // A body's length is announced only when a body is sent: a GET announcing bytes it never sends
+    // leaves the peer waiting for them, and on a kept-alive connection reading the next request as
+    // this one's body.
+    const names = hasBody ? REQUEST_HEADERS : REQUEST_HEADERS.filter((header) => header !== 'content-length')
+    response = await send(target, { method, headers: { ...pick(req.headers, names), 'accept-encoding': 'identity' }, signal }, hasBody ? req : undefined)
   } catch {
     // Never the error's message: it carries the peer's URL, and the path in it carries tokens.
     sendError(res, 502, 'peer-unreachable', unreachable())
@@ -186,6 +190,10 @@ function send(
   return new Promise((resolve, reject) => {
     const make = target.protocol === 'https:' ? httpsRequest : httpRequest
     const out = make(target, { method: options.method, headers: options.headers, signal: options.signal }, resolve)
+    // A body that does not match the length it announced is an error, never a request whose end
+    // the peer has to guess. @types/node 22 declares the flag on `ServerResponse` only; it lives on
+    // `OutgoingMessage`, and on a `ClientRequest` it throws ERR_HTTP_CONTENT_LENGTH_MISMATCH (measured).
+    ;(out as ClientRequest & { strictContentLength: boolean }).strictContentLength = true
     out.once('error', reject)
     if (body === undefined) out.end()
     // A failure on either side destroys both; `out`'s error rejects above if no answer came yet.
