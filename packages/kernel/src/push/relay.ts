@@ -17,9 +17,16 @@
  */
 
 import { z } from 'zod'
-import type { ErrorCode, Logger, PushEnvelope } from '@factotum/core'
-import { PEER_NAME } from '../net/peers.ts'
+import type { ErrorCode, Logger, PushEnvelope, Timers } from '@factotum/core'
+import { PEER_NAME, type PeerState, type PeerTable } from '../net/peers.ts'
 import { MAX_PLAINTEXT_BYTES } from './send.ts'
+
+/**
+ * How long a forward to the peer waits (design D6). The same order as `PUSH_TIMEOUT_MS`, for the
+ * same reason: `BootHandle.stop` waits for `settled()`, and a peer that fell asleep must not hang
+ * this host's shutdown.
+ */
+export const PUSH_RELAY_TIMEOUT_MS = 5_000
 
 /**
  * Each text field is bounded by what could ever be sent: an envelope over MAX_PLAINTEXT_BYTES is
@@ -112,4 +119,58 @@ export function fitRelayed(envelope: PushEnvelope, log: Logger): PushEnvelope {
   // The machine and nothing else: data can carry a token (ADR-0010).
   log.warn(`a notice relayed from ${envelope.machine} is over ${MAX_PLAINTEXT_BYTES} bytes; sent without its data`)
   return { ...envelope, message }
+}
+
+// ---------------------------------------------------------------------------
+// The other side: this host forwarding its own notice to the peer
+// ---------------------------------------------------------------------------
+
+export interface RelayPeers {
+  /** The peer table: the last probe, and the one URL towards the peer's relay. */
+  readonly table: Pick<PeerTable, 'list' | 'relayUrl'>
+  /** The kernel's own timers (CLAUDE.md §6): the forward's deadline is armed on them. */
+  readonly timers: Timers
+  /** Tests shorten it; production uses PUSH_RELAY_TIMEOUT_MS. */
+  readonly timeoutMs?: number
+}
+
+/**
+ * The peers a forward would reach a device through, by the LAST probe: reachable, with devices.
+ * Synchronous, so `canReach` can ask it from the permission gate.
+ */
+export function relayTargets(table: Pick<PeerTable, 'list'>): readonly PeerState[] {
+  return table.list().filter((state) => state.reachable && state.devices > 0)
+}
+
+/**
+ * Posts this host's envelope to every peer `relayTargets` names. NEVER REJECTS, and never logs the
+ * envelope or the URL: a notice can carry a token (ADR-0010), and the URL is in the config.
+ */
+export async function forwardToPeers(envelope: PushEnvelope, relay: RelayPeers, log: Logger): Promise<void> {
+  await Promise.all(relayTargets(relay.table).map(async ({ name }) => await forwardTo(name, envelope, relay, log)))
+}
+
+async function forwardTo(name: string, envelope: PushEnvelope, relay: RelayPeers, log: Logger): Promise<void> {
+  const target = relay.table.relayUrl(name)
+  if (target === undefined) return
+  const timeoutMs = relay.timeoutMs ?? PUSH_RELAY_TIMEOUT_MS
+  const controller = new AbortController()
+  const timer = relay.timers.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    // No `Origin`: Node's `fetch` adds none (measured, A2), and the relay refuses any. Redirects
+    // are not followed: a peer that redirects is not a peer.
+    const response = await fetch(target, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(envelope),
+      redirect: 'manual',
+      signal: controller.signal,
+    })
+    await response.body?.cancel()
+    if (response.status !== 202) log.warn(`relay to ${name} answered ${response.status}`)
+  } catch {
+    log.warn(`relay to ${name}: ${controller.signal.aborted ? `no answer within ${timeoutMs}ms` : 'no answer'}`)
+  } finally {
+    timer[Symbol.dispose]()
+  }
 }

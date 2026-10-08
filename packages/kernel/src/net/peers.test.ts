@@ -104,6 +104,17 @@ test('a module path with its own segments and a token in it passes untouched', (
   assert.equal(out?.pathname, '/modules/sessions/asks/0a1b-TOKEN_x.y~z/answer')
 })
 
+test('relayUrl is /push/relay on the peer’s own origin, and nothing for a name that is not a peer (design D6)', () => {
+  const peers = table()
+  assert.equal(peers.relayUrl('juans-macbook-pro')?.href, `${MAC}/push/relay`)
+  assert.equal(peers.relayUrl('omarchy'), undefined)
+  assert.equal(peers.relayUrl(''), undefined)
+})
+
+test('url() still refuses /push/relay: relayUrl is the ONLY way out to /push/*', () => {
+  assert.equal(table().url('juans-macbook-pro', '/push/relay'), undefined)
+})
+
 // ---------------------------------------------------------------------------
 // The probe (design D2, criterion 3)
 //

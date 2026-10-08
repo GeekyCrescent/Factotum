@@ -56,6 +56,11 @@ export interface PeerTable {
    * `rawRest` is what follows `/peers/<name>` in `req.url` AS RECEIVED (design D3).
    */
   readonly url: (name: string, rawRest: string) => URL | undefined
+  /**
+   * `POST /push/relay` on the peer called `name` (design D6). `url()` refuses `/push/*` on purpose,
+   * so the relay has its own — the only outgoing URL towards `/push/*`, checked the same way.
+   */
+  readonly relayUrl: (name: string) => URL | undefined
   /** Probes at once and then every `probeMs`, on timers the KERNEL owns (CLAUDE.md §6). */
   readonly start: (timers: Timers) => void
   /** Cancels its timers and any probe in flight. `BootHandle.stop` calls it. */
@@ -151,6 +156,12 @@ export function createPeerTable(deps: PeerTableDeps): PeerTable {
     url: (name, rawRest) => {
       const peer = states.get(name)
       return peer === undefined ? undefined : peerUrl(peer.origin, rawRest)
+    },
+    relayUrl: (name) => {
+      const peer = states.get(name)
+      if (peer === undefined) return undefined
+      const out = new URL('/push/relay', peer.origin)
+      return out.origin === peer.origin ? out : undefined
     },
     start: (timers) => {
       if (armed !== undefined) return

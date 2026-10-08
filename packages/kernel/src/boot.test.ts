@@ -551,3 +551,77 @@ test('a peer that is not there at all: the daemon boots and serves', async () =>
     await handle.stop()
   }
 })
+
+// ---------------------------------------------------------------------------
+// The relay, wired (spec 2026-10-07, D6, criteria 15 and 17): a module's notice reaches the peer
+// ---------------------------------------------------------------------------
+
+test('with no devices here and the peer at 1, a module can reach the owner, and its notice is POSTed to the peer’s relay', async () => {
+  const peerPort = takePort()
+  const relayed: { machine: string; moduleId: string | null; origin: string | undefined }[] = []
+  const peer = createHttpServer((req, res) => {
+    if (req.url === '/push/relay') {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { machine: string; moduleId: string | null }
+        relayed.push({ machine: body.machine, moduleId: body.moduleId, origin: req.headers.origin })
+        res.writeHead(202, { 'content-type': 'application/json' }).end('{}')
+      })
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: 'p', ready: true, devices: 1 }))
+  })
+  await new Promise<void>((resolve) => peer.listen(peerPort, 'localhost', resolve))
+
+  let canReach: () => boolean = () => false
+  const notifier: AnyModule = {
+    id: 'notifier',
+    routes: (ctx) => {
+      canReach = () => ctx.notify.canReach()
+      return {
+        'POST /ring': async () => {
+          await ctx.notify.send({ title: 'ring', body: 'b', path: '/m/notifier', tag: 't' })
+          return { status: 200, body: {} }
+        },
+      }
+    },
+  }
+
+  const port = takePort()
+  const paths = await withConfig(
+    {
+      publicOrigin: `http://127.0.0.1:${port}`,
+      peers: [{ origin: `http://localhost:${peerPort}` }],
+      modules: { notifier: { enabled: true } },
+    },
+    port,
+  )
+  const handle = await bootWith(paths, [notifier], { peerProbeMs: 30 })
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 3_000
+    while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  let peerOpen = true
+  const closePeer = async () => {
+    if (!peerOpen) return
+    peerOpen = false
+    peer.closeAllConnections()
+    await new Promise<void>((resolve) => peer.close(() => resolve()))
+  }
+  try {
+    await until(() => canReach())
+    assert.equal(canReach(), true, 'the peer’s devices count once the probe has seen it')
+
+    assert.equal((await fetch(`${handle.localUrl}/modules/notifier/ring`, { method: 'POST' })).status, 200)
+    assert.deepEqual(relayed, [{ machine: '127', moduleId: 'notifier', origin: undefined }])
+
+    // The peer goes away: once the probe says so, nobody can be reached, and the gate would deny.
+    await closePeer()
+    await until(() => !canReach())
+    assert.equal(canReach(), false, 'a peer that is down counts no devices')
+  } finally {
+    await handle.stop()
+    await closePeer()
+  }
+})

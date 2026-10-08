@@ -18,7 +18,7 @@ import type { Logger, NotificationMessage, PushEnvelope } from '@factotum/core'
 import { inspectKeys, loadOrCreateKeys, type VapidKeys } from './keys.ts'
 import { SubscriptionStore, type Subscription } from './store.ts'
 import { sendToAll, type Deliver } from './send.ts'
-import { fitRelayed } from './relay.ts'
+import { fitRelayed, forwardToPeers, relayTargets, type RelayPeers } from './relay.ts'
 
 /**
  * Small on purpose. A person has a handful of devices; a cap in the dozens would let a flood of
@@ -37,6 +37,11 @@ export interface PushServiceDeps {
   readonly deliver?: Deliver
   readonly timeoutMs?: number
   readonly generate?: () => VapidKeys
+  /**
+   * The peer a notice is also forwarded to (spec 2026-10-07, D6). OPTIONAL: without it — the CLI's
+   * own uses, and every test that predates the peers — this host notifies only its own devices.
+   */
+  readonly peers?: RelayPeers
 }
 
 export type SubscribeResult =
@@ -70,17 +75,6 @@ export interface PushService {
 }
 
 export async function createPushService(deps: PushServiceDeps): Promise<PushService> {
-  const keysResult = await loadOrCreateKeys({ dir: deps.dir, ...(deps.generate !== undefined ? { generate: deps.generate } : {}) })
-
-  if (keysResult.kind === 'unavailable') {
-    deps.log.warn(keysResult.reason)
-    return offService(keysResult.reason)
-  }
-
-  const { store, warning } = await SubscriptionStore.open(deps.dir)
-  if (warning !== undefined) deps.log.warn(warning)
-
-  const keys = keysResult.keys
   const inFlight = new Set<Promise<void>>()
 
   /** Returns the settled promise, so a caller that DOES want to wait can await the same thing. */
@@ -102,6 +96,35 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
     machine: deps.machine,
   })
 
+  // THE FORWARD NEEDS NO KEYS: it is a POST to the other daemon, which delivers with its own. So it
+  // is built before the keys are read, and a host whose push is off still forwards (design D6).
+  const peers = deps.peers
+  const peerReaches = (): boolean => peers !== undefined && relayTargets(peers.table).length > 0
+  /** TRACKED, like a send: `settled()` covers it, and PUSH_RELAY_TIMEOUT_MS bounds it. */
+  const forward = (built: PushEnvelope): Promise<void> | undefined =>
+    peers !== undefined && peerReaches() ? track(forwardToPeers(built, peers, deps.log)) : undefined
+  const settled = async (): Promise<void> => {
+    await Promise.all([...inFlight])
+  }
+
+  const keysResult = await loadOrCreateKeys({ dir: deps.dir, ...(deps.generate !== undefined ? { generate: deps.generate } : {}) })
+
+  if (keysResult.kind === 'unavailable') {
+    deps.log.warn(keysResult.reason)
+    return offService(keysResult.reason, {
+      canReach: peerReaches,
+      send: async (message, moduleId) => {
+        await forward(envelope(message, moduleId))
+      },
+      settled,
+    })
+  }
+
+  const { store, warning } = await SubscriptionStore.open(deps.dir)
+  if (warning !== undefined) deps.log.warn(warning)
+
+  const keys = keysResult.keys
+
   const sendDeps = {
     keys,
     store,
@@ -112,14 +135,20 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
   }
 
   return {
-    canReach: () => store.count() > 0,
+    // Own devices, OR a peer that has some by its last probe (criterion 17). Still synchronous.
+    canReach: () => store.count() > 0 || peerReaches(),
 
+    // THE ORDER OF DESIGN D6. The forward does not depend on `store.count()`: once the phone
+    // subscribes to the other host only, this one has no devices, and an early return here would
+    // mean its notices never leave. The two run side by side; neither waits for the other.
     send: async (message, moduleId) => {
-      if (store.count() === 0) return
+      const built = envelope(message, moduleId)
+      const forwarded = forward(built)
       // TRACKED, so `settled()` covers it. The engine fires its end-of-turn notices without
       // awaiting — in `stop()` above all — and boot drains them through `settled()` before it
       // closes. An untracked send there would be cut off by the shutdown it is announcing.
-      await track(sendToAll(envelope(message, moduleId), sendDeps))
+      const own = store.count() > 0 ? track(sendToAll(built, sendDeps)) : undefined
+      await Promise.all([forwarded, own])
     },
 
     relay: async (relayed) => {
@@ -179,23 +208,23 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
 
     status: () => ({ kind: 'ready', subscriptions: store.count() }),
 
-    settled: async () => {
-      await Promise.all([...inFlight])
-    },
+    settled,
   }
 }
 
-function offService(reason: string): PushService {
+/**
+ * Push off on this host: no keys, so nothing is delivered HERE — but the forward to the peer is
+ * kept, since it needs none (requirements §8, v3.3). Without a peer it is what it always was.
+ */
+function offService(reason: string, forwarding: Pick<PushService, 'canReach' | 'send' | 'settled'>): PushService {
   return {
-    canReach: () => false,
-    send: async () => undefined,
+    ...forwarding,
     relay: async () => undefined,
     publicKey: () => undefined,
     subscribe: async () => ({ kind: 'off', reason }),
     count: () => 0,
     reset: async () => undefined,
     status: () => ({ kind: 'off', reason }),
-    settled: async () => undefined,
   }
 }
 

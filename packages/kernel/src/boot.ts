@@ -86,6 +86,10 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     // subscribe (no secure context), so nothing is ever sent there to object to it.
     subject: config.publicOrigin,
     log: prefixed('push'),
+    // The peer a notice is also forwarded to (spec 2026-10-07, D6). It forwards by the probe's last
+    // reading, and the probe only runs from step 12: until then nothing is forwarded, and nothing
+    // here sends anything either.
+    peers: { table: peers, timers: kernelTimers.timers },
   })
 
   // 8. Contexts and route tables. Still nothing running.
@@ -163,11 +167,12 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
       // asleep would hold it for up to two minutes. Nothing new reaches the proxy past `ready`.
       proxy.abortAll()
       peers.stop()
-      kernelTimers.disposeAll()
       await registry.stopAll()
       // Notices already on their way — a module's "stopped" among them — are let finish. Each
-      // is bounded by its own AbortSignal, so this cannot hang the shutdown.
+      // is bounded by its own AbortSignal, so this cannot hang the shutdown. A forward to the peer
+      // arms its deadline on the KERNEL's timers, so those are disposed only after this.
       await push.settled()
+      kernelTimers.disposeAll()
       await close(server)
     },
   }
