@@ -24,6 +24,7 @@ import { policyFor } from './net/policy.ts'
 import { createPeerTable, machineName, PEER_NAME } from './net/peers.ts'
 import { Registry, timerSet } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
+import { createProxy } from './http/proxy.ts'
 
 export interface BootOptions {
   readonly env: Environment
@@ -61,6 +62,7 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     ...(options.peerProbeMs !== undefined ? { probeMs: options.peerProbeMs } : {}),
   })
   const kernelTimers = timerSet()
+  const proxy = createProxy({ peers, timers: kernelTimers.timers, log: prefixed('proxy') })
 
   // 4-5. Where to listen, and whether we are allowed to.
   const listen = resolveListen(config.listen, options.interfaces)
@@ -115,6 +117,7 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     push,
     machine: machineName(config.publicOrigin),
     peers,
+    proxy,
     // `main.ts` injects none: without the default, prod would compare against nothing.
     interfaces: options.interfaces ?? networkInterfaces,
     ...(options.site !== undefined ? { site: options.site } : {}),
@@ -156,6 +159,9 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     localUrl: localUrl(listen.address, listen.port),
     stop: async () => {
       ready = false
+      // Before closing: `close` waits for open requests, and a proxied upload to a peer that fell
+      // asleep would hold it for up to two minutes. Nothing new reaches the proxy past `ready`.
+      proxy.abortAll()
       peers.stop()
       kernelTimers.disposeAll()
       await registry.stopAll()

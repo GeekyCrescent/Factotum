@@ -134,6 +134,14 @@ export const ERROR_CODES = [
    * apart if they share one.
    */
   'conflict',
+  /**
+   * The other host did not answer through the proxy: marked unreachable by the probe, no answer
+   * within the timeout, or a redirect, which is never followed (spec 2026-10-07, D3). It earns a
+   * code because the client says something no status can: the other host may have done it — a
+   * launch that ends here is never retried — and its list is refreshed instead. The peer's name
+   * travels in the message.
+   */
+  'peer-unreachable',
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

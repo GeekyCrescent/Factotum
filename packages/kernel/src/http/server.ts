@@ -25,6 +25,7 @@ import type { Interfaces } from '../net/resolve.ts'
 import { isSameMachine, sourceIpOf } from '../net/same-machine.ts'
 import { Registry, type Resolved } from '../modules/registry.ts'
 import type { PeerTable } from '../net/peers.ts'
+import type { Proxy } from './proxy.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
 
@@ -60,6 +61,8 @@ export interface ServerDeps {
   readonly machine: string
   /** The other daemon, as the probe last saw it (spec 2026-10-07, D2). */
   readonly peers: Pick<PeerTable, 'list'>
+  /** `/peers/<name>/…` → the other daemon (D3). */
+  readonly proxy: Pick<Proxy, 'handle'>
 }
 
 function isPushPath(path: string): boolean {
@@ -147,6 +150,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
 
   if (method === 'GET' && path === '/hosts') {
     return sendJson(res, 200, hosts(deps))
+  }
+
+  // --- The proxy (D3): after the origin and the 503, so it is one more API route -------------
+  // Dispatched on the normalised path, decided on the RAW one: the proxy reads `req.url` itself,
+  // so a `%2e` or a `%3F` is never decoded into something it was not.
+
+  if (path === '/peers' || path.startsWith('/peers/')) {
+    return await deps.proxy.handle(req, res)
   }
 
   if (path === '/modules') {

@@ -15,6 +15,7 @@ import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
 import type { PeerTable } from '../net/peers.ts'
+import type { Proxy } from './proxy.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -43,6 +44,11 @@ const MAC = (() => ({ lo0: [{ address: '127.0.0.1', internal: true }], utun4: [{
 /** The peer table as `/hosts` reads it. */
 const NO_PEERS: Pick<PeerTable, 'list'> = { list: () => [] }
 
+/** The proxy has its own tests (`proxy.test.ts`); here it only has to be there. */
+const NO_PROXY: Pick<Proxy, 'handle'> = {
+  handle: async (_req, res) => void res.writeHead(404, { 'content-type': 'application/json' }).end('{}'),
+}
+
 async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[]; peers?: Pick<PeerTable, 'list'> } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
@@ -65,6 +71,7 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
     push: opts.push ?? onPush(),
     machine: 'mimac',
     peers: opts.peers ?? NO_PEERS,
+    proxy: NO_PROXY,
     interfaces: opts.interfaces ?? MAC,
     isReady: () => opts.ready ?? true,
   })
