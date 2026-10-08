@@ -11,8 +11,8 @@
  * kernel's own body cap is not this code's to apply — the peer applies its own.
  */
 
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { Readable } from 'node:stream'
+import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { pipeline } from 'node:stream/promises'
 import { errorBody, type ErrorCode, type Logger, type Timers } from '@factotum/core'
 import { PEER_NAME, type PeerTable } from '../net/peers.ts'
@@ -132,7 +132,15 @@ export function createProxy(deps: ProxyDeps): Proxy {
   }
 }
 
-/** Sends the request on and streams the answer back. Returns the status the browser got. */
+/**
+ * Sends the request on and streams the answer back. Returns the status the browser got.
+ *
+ * `node:http`, NOT `fetch`, and it was measured (spec 2026-10-07, B6b): Node 26's `fetch`
+ * (undici 8.3) pulls a streamed request body as fast as it can, whatever the socket says — a
+ * 50 MB upload went through and sat in memory whole, with `Readable.toWeb`, an async iterable or a
+ * pull stream alike, with and without `content-length`. Piped through `request`, the same upload
+ * peaked at 2 MB. The URL is still the one `peers.url()` built; `request` follows no redirect.
+ */
 async function forward(
   req: IncomingMessage,
   res: ServerResponse,
@@ -142,40 +150,47 @@ async function forward(
   const unreachable = () =>
     signal.aborted ? `the host ${name} did not answer within ${call.timeoutMs}ms` : `the host ${name} did not answer`
 
-  let response: Response
+  let response: IncomingMessage
   try {
     const hasBody = method !== 'GET' && method !== 'HEAD'
-    response = await fetch(target, {
-      method,
-      headers: { ...pick(req.headers, REQUEST_HEADERS), 'accept-encoding': 'identity' },
-      ...(hasBody ? { body: Readable.toWeb(req) as ReadableStream<Uint8Array>, duplex: 'half' } : {}),
-      redirect: 'manual',
-      signal,
-    })
+    response = await send(target, { method, headers: { ...pick(req.headers, REQUEST_HEADERS), 'accept-encoding': 'identity' }, signal }, hasBody ? req : undefined)
   } catch {
     // Never the error's message: it carries the peer's URL, and the path in it carries tokens.
     sendError(res, 502, 'peer-unreachable', unreachable())
     return 502
   }
 
-  if (response.status >= 300 && response.status < 400) {
-    await response.body?.cancel().catch(() => undefined)
+  const status = response.statusCode ?? 502
+  if (status >= 300 && status < 400) {
+    response.resume()
     sendError(res, 502, 'peer-unreachable', `the host ${name} answered with a redirect, which is never followed`)
     return 502
   }
 
-  res.writeHead(response.status, pickResponse(response.headers))
-  if (response.body === null || method === 'HEAD') {
-    res.end()
-    return response.status
-  }
+  res.writeHead(status, pickResponse(response.headers))
   try {
-    await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream<Uint8Array>), res)
+    await pipeline(response, res)
   } catch {
     // Cut mid-body — the timeout, the peer, or the browser. The status has gone; the socket goes too.
     res.destroy()
   }
-  return response.status
+  return status
+}
+
+/** One request to the peer, resolved with its response. The body, if any, is piped — with backpressure. */
+function send(
+  target: URL,
+  options: { readonly method: string; readonly headers: Record<string, string>; readonly signal: AbortSignal },
+  body: IncomingMessage | undefined,
+): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const make = target.protocol === 'https:' ? httpsRequest : httpRequest
+    const out = make(target, { method: options.method, headers: options.headers, signal: options.signal }, resolve)
+    out.once('error', reject)
+    if (body === undefined) out.end()
+    // A failure on either side destroys both; `out`'s error rejects above if no answer came yet.
+    else void pipeline(body, out).catch(() => undefined)
+  })
 }
 
 /**
@@ -207,13 +222,8 @@ function pick(headers: IncomingMessage['headers'], names: readonly string[]): Re
   return out
 }
 
-function pickResponse(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const name of RESPONSE_HEADERS) {
-    const value = headers.get(name)
-    if (value !== null) out[name] = value
-  }
-  return out
+function pickResponse(headers: IncomingMessage['headers']): Record<string, string> {
+  return pick(headers, RESPONSE_HEADERS)
 }
 
 /**

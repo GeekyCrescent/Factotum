@@ -2,6 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { once } from 'node:events'
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { join } from 'node:path'
 import { createServer as createHttpServer, request, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Logger } from '@factotum/core'
@@ -40,13 +44,22 @@ const json = (status: number, body: unknown, headers: Record<string, string> = {
   }) as Answer
 
 /** Listens on `localhost`, the resolver `fetch` uses (design D2). Reads every body to its end. */
-async function fakePeer(answer: Answer = json(200, { ok: true })) {
+async function fakePeer(answer: Answer = json(200, { ok: true }), opts: { readonly keep?: boolean } = {}) {
   const port = takePort()
   const seen: Seen[] = []
-  const peer = { seen, answer, port }
+  /** With `keep: false` the body is hashed and dropped — a 50 MB test must not hold 50 MB here. */
+  const streamed = { bytes: 0, sha256: '', firstByteAt: 0 }
+  const peer = { seen, answer, port, streamed }
   const server: Server = createHttpServer(async (req, res) => {
     const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(chunk as Buffer)
+    const hash = createHash('sha256')
+    for await (const chunk of req) {
+      if (streamed.firstByteAt === 0) streamed.firstByteAt = performance.now()
+      streamed.bytes += (chunk as Buffer).length
+      hash.update(chunk as Buffer)
+      if (opts.keep !== false) chunks.push(chunk as Buffer)
+    }
+    streamed.sha256 = hash.digest('hex')
     const body = Buffer.concat(chunks)
     seen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body })
     peer.answer(req, res, body)
@@ -446,6 +459,143 @@ test('abortAll ends every request in flight, so stopping cannot wait on a sleepi
     while (w.peer.seen.length === 0) await new Promise((resolve) => setTimeout(resolve, 5))
     w.self.proxy.abortAll()
     assert.equal((await pending).status, 502)
+  } finally {
+    await w.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// B6b — uploads, attachments, and the log
+// ---------------------------------------------------------------------------
+
+test('an upload streams to the peer byte for byte, with the upload timeout and not the JSON one', async () => {
+  // Slower than the JSON timeout, inside the upload one: only `content-type` decides which.
+  const timeouts = { read: 50, json: 100, upload: 2_000 }
+  const w = await world(delayed(300, json(200, { uploadId: 'u1' })), { timeouts })
+  try {
+    const photo = Buffer.alloc(3 * 1024 * 1024, 7)
+    for (const headers of [{ 'content-type': 'image/jpeg' }, {} as Record<string, string>]) {
+      const response = await raw(w.self.port, '/peers/localhost/modules/sessions/uploads?name=a.jpg', { method: 'POST', headers, body: photo })
+      assert.equal(response.status, 200, JSON.stringify(headers))
+      assert.deepEqual(JSON.parse(response.body), { uploadId: 'u1' })
+    }
+    assert.equal(w.peer.seen.length, 2)
+    assert.ok(w.peer.seen.every((s) => s.body.equals(photo)))
+    assert.equal(w.peer.seen[0]?.headers['content-type'], 'image/jpeg')
+  } finally {
+    await w.close()
+  }
+})
+
+test('an attachment from the peer keeps its containment headers and its bytes (criterion 8)', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  const w = await world((_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'content-length': String(png.length),
+      'cache-control': 'private, no-store',
+      'content-disposition': 'inline; filename="a.png"',
+      'content-security-policy': "default-src 'none'; sandbox",
+      'x-content-type-options': 'nosniff',
+    })
+    res.end(png)
+  })
+  try {
+    const response = await fetch(`${w.self.base}/peers/localhost/modules/sessions/uploads/u1/a.png`)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-security-policy'), "default-src 'none'; sandbox")
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+    assert.equal(response.headers.get('content-disposition'), 'inline; filename="a.png"')
+    assert.equal(response.headers.get('content-type'), 'image/png')
+    assert.equal(response.headers.get('content-length'), null)
+    assert.ok(Buffer.from(await response.arrayBuffer()).equals(png))
+  } finally {
+    await w.close()
+  }
+})
+
+test('50 MB go through without being held: the peer reads before the browser has finished, and the memory peak stays below the body', async () => {
+  const SIZE = 50 * 1024 * 1024
+  const CHUNK = 64 * 1024
+  const fake = await fakePeer(json(200, { ok: true }), { keep: false })
+  const self = await daemon(fake.peer.port)
+  // LIVE memory, not garbage: without a collection the chunks already passed along pile up until
+  // the GC runs, and the peak measured the GC's timing (60 MB alone, less in the full file).
+  // The runner cannot take `--expose-gc`, so the flag is set from here.
+  setFlagsFromString('--expose-gc')
+  const gc = runInNewContext('gc') as () => void
+  const memory = () => {
+    gc()
+    const m = process.memoryUsage()
+    return m.heapUsed + m.arrayBuffers
+  }
+  const before = memory()
+  let peak = before
+  const sampler = setInterval(() => (peak = Math.max(peak, memory())), 5)
+  try {
+    let sentAll = 0
+    // Fresh buffers, written with backpressure: a reused one would hide a copy held anywhere.
+    const req = request({
+      host: '127.0.0.1',
+      port: self.port,
+      method: 'POST',
+      path: '/peers/localhost/modules/sessions/uploads?name=big.bin',
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(SIZE) },
+    })
+    const answered = new Promise<number>((resolve, reject) => {
+      req.on('response', (res) => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode ?? 0))
+      })
+      req.on('error', reject)
+    })
+    for (let sent = 0; sent < SIZE; sent += CHUNK) {
+      if (!req.write(Buffer.alloc(CHUNK, 1))) await once(req, 'drain')
+    }
+    sentAll = performance.now()
+    req.end()
+    const status = await answered
+    clearInterval(sampler)
+    const expected = createHash('sha256')
+    for (let sent = 0; sent < SIZE; sent += CHUNK) expected.update(Buffer.alloc(CHUNK, 1))
+
+    assert.equal(status, 200)
+    assert.equal(fake.peer.streamed.bytes, SIZE)
+    assert.equal(fake.peer.streamed.sha256, expected.digest('hex'))
+    // Streaming, shown two ways: the peer had bytes before the last one was sent…
+    assert.ok(fake.peer.streamed.firstByteAt < sentAll, 'the peer read before the browser finished')
+    // …and the process never held anything like the body. Measured on the Mac: a few MB through
+    // `node:http`, against the whole 50 MB through `fetch` (see `forward` in proxy.ts).
+    const grew = peak - before
+    assert.ok(grew < SIZE / 2, `memory grew by ${Math.round(grew / 1024 / 1024)} MB for a 50 MB body`)
+  } finally {
+    clearInterval(sampler)
+    await self.close()
+    await fake.close()
+  }
+})
+
+test('THE LOG CARRIES THE SHAPE OF THE ROUTE AND NOTHING ELSE: no token from the path, no body (criterion 36)', async () => {
+  const TOKEN = 'ask-7f3a9c1e-SEEDED-TOKEN'
+  const PHRASE = 'the purple elephant sings at midnight'
+  const w = await world(json(200, { answered: true }))
+  try {
+    const response = await fetch(`${w.self.base}/peers/localhost/modules/sessions/asks/${TOKEN}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ answer: PHRASE }),
+    })
+    assert.equal(response.status, 200)
+    await fetch(`${w.self.base}/peers/localhost/health`)
+    await raw(w.self.port, `/peers/localhost/modules/../asks/${TOKEN}`, { method: 'POST', body: PHRASE })
+
+    const log = w.self.lines.join('\n')
+    assert.ok(!log.includes(TOKEN), log)
+    assert.ok(!log.includes(PHRASE), log)
+    assert.ok(!log.includes('asks'), log)
+    assert.match(w.self.lines[0] ?? '', /^proxy POST localhost \/modules\/sessions\/… → 200 \d+ms$/)
+    assert.match(w.self.lines[1] ?? '', /^proxy GET localhost \/health → 200 \d+ms$/)
+    assert.match(w.self.lines[2] ?? '', /^proxy POST refused → 404$/)
   } finally {
     await w.close()
   }
