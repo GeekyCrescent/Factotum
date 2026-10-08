@@ -26,6 +26,15 @@ export function isUnreachable(key: string | undefined, hosts: readonly HostView[
   return hosts.some((host) => !host.self && host.name === key && !host.reachable)
 }
 
+/**
+ * The host a screen's bar names (criterion 13): another host's screen always says which; the serving
+ * host's says its name only when there are peers to tell it from. `undefined`: the bar says nothing.
+ */
+export function barHost(here: string | undefined, hosts: readonly HostView[]): string | undefined {
+  if (here !== undefined) return here
+  return hosts.length > 1 ? hosts.find((host) => host.self)?.name : undefined
+}
+
 /** One host's group, for the drawer: its state from `hosts`, and whatever was loaded for it. */
 export interface HostGroup<T> {
   /** What `apiOn` takes: `undefined` for the serving host. */

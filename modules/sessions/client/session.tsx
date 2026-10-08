@@ -36,7 +36,8 @@ import { awaitingTitle, nameOf, TITLE_POLL_MS } from './history.ts'
 import { mayOpenItself } from './overlays.ts'
 import { askedBy, emptyDraft, sheetState, type Draft } from './questions.ts'
 import { QuestionsSheet, useBatch } from './questions-sheet.tsx'
-import { askFor, questionsFor, sessionOf, withLogBatches, type AskRef, type QuestionsRef } from './relevance.ts'
+import { barHost, hostKey } from './hosts.ts'
+import { askFor, hostOf, questionsFor, sessionOf, withLogBatches, type AskRef, type QuestionsRef } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
 /** The glyph beside the state at the top right. */
@@ -170,6 +171,9 @@ function Live({
   const [showDetails, setShowDetails] = useState(false)
   const running = state === 'running'
   const other = view.pending.find((p) => sessionOf(p) !== undefined && sessionOf(p) !== id)
+  // The strip goes to the session's own host (criterion 14): a pending of the Mac opens /h/<mac>/….
+  const otherHost = other === undefined ? null : (hostKey(hostOf(other), view.hosts) ?? null)
+  const hostName = barHost(view.host, view.hosts)
   // Held after its pending is resolved: the answer stays where the buttons were (design D6).
   const held = useRef<AskRef | undefined>(undefined)
   const found = askFor(id, view.pending, view.search) ?? held.current
@@ -229,6 +233,8 @@ function Live({
           <p class="s-head-project">
             <Icon name="folder-simple" size={14} />
             {project?.name ?? summary?.siteId ?? ''}
+            {/* Where it lives (spec 2026-10-07-dos-hosts, criterion 13); nothing with a single host. */}
+            {hostName === undefined ? null : <span class="s-head-host">on {hostName}</span>}
           </p>
           <h1>{summary === undefined ? id.slice(0, 8) : nameOf(summary)}</h1>
         </div>
@@ -262,7 +268,7 @@ function Live({
         )}
       </header>
       {showDetails ? <Details id={id} summary={summary} setup={setup} now={Date.now()} /> : null}
-      {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to)} />}
+      {other === undefined ? null : <Strip pending={other} onOpen={(to) => view.navigate(to, { host: otherHost })} />}
       <div class="s-body">
         <Log
           api={api}

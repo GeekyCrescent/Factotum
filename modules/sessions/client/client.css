@@ -1934,6 +1934,16 @@
   color: var(--project, var(--text-3));
 }
 
+/* The host it lives on, after the project (spec 2026-10-07-dos-hosts, criterion 13). */
+.s-head .s-head-host {
+  color: var(--text-3);
+}
+
+.s-head .s-head-host::before {
+  content: '·';
+  margin-right: var(--space-1);
+}
+
 .s-head h1 {
   overflow: hidden;
   text-overflow: ellipsis;

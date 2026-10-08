@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { EngineSetupView } from '../types.ts'
 import type { HostView } from './contract.ts'
-import { groupByHost, hostKey, hostStatus, initialLaunchChoice, isUnreachable, launchPath, launchRest, rememberedLaunchHost, runOnChoices } from './hosts.ts'
+import { barHost, groupByHost, hostKey, hostStatus, initialLaunchChoice, isUnreachable, launchPath, launchRest, rememberedLaunchHost, runOnChoices } from './hosts.ts'
 
 const LINUX: HostView = { name: 'omarchy', self: true, reachable: true, lastSeenAt: null }
 const MAC: HostView = { name: 'mac', self: false, reachable: true, lastSeenAt: '2026-10-08T10:00:00.000Z' }
@@ -127,4 +127,14 @@ test('rememberedLaunchHost: the peer chosen last on this device while it is reac
   assert.equal(rememberedLaunchHost('omarchy', [LINUX, MAC]), undefined, 'the serving host is where New already is')
   assert.equal(rememberedLaunchHost('gone', [LINUX, MAC]), undefined, 'a host no longer declared')
   assert.equal(rememberedLaunchHost(undefined, [LINUX, MAC]), undefined)
+})
+
+// --- A session's bar says its host (tasks E6, criterion 13) -----------------------------------------
+
+test('barHost: another host’s screen names it; the serving host is named only when there are peers', () => {
+  assert.equal(barHost('mac', [LINUX, MAC]), 'mac')
+  assert.equal(barHost('mac', []), 'mac')
+  assert.equal(barHost(undefined, [LINUX, MAC]), 'omarchy')
+  assert.equal(barHost(undefined, [LINUX]), undefined, 'one host: nothing to tell apart, the bar is as it was')
+  assert.equal(barHost(undefined, []), undefined)
 })
