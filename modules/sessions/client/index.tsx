@@ -3,9 +3,16 @@
  * (spec 2026-09-18, design D5).
  *
  * WHAT `rest` MEANS. `''` picks the session that matters (a live pending, else the newest running,
- * else the newest, else a new one) and REPLACES the entry with it; `new` is the composer; `projects`
- * is the projects screen (spec 2026-09-29, D10) and never a session id; anything else is a session
- * id. The shell keeps `rest` in step with the URL, so this never reads the address bar.
+ * else the newest, else a new one) and REPLACES the entry with it; `new` is the composer, and
+ * `new/<siteId>` the composer with that project chosen; `projects` is the projects screen (spec
+ * 2026-09-29, D10) and never a session id; anything else is a session id. The shell keeps `rest` in
+ * step with the URL, so this never reads the address bar.
+ *
+ * THE LAUNCHER IS ONE HOST'S LAUNCH SCREEN (spec 2026-10-07-dos-hosts, design D12; criterion 12):
+ * `/h/<host>/m/sessions/new` reads that host's setup through `api`, so its projects — all of them,
+ * git or not —, its catalogue and its uploads. «Run on» does not send one host's choice to another:
+ * it NAVIGATES to the other host's launch screen, carrying the project in the path, and the shell
+ * mounts the screen again (it is keyed by host).
  *
  * A SESSION READS ITS OWN SUMMARY (`session.tsx`), so opening one does not depend on it being on the
  * first page of a list (criterion 36). The page here is only for landing on `''` and for noticing
@@ -20,13 +27,14 @@
  */
 
 import './client.css'
-import { useCallback, useEffect, useState } from 'preact/hooks'
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { EngineSetupView, SessionPage } from '../types.ts'
 import { Strip, TopBar } from './bars.tsx'
 import { LaunchComposer } from './composer.tsx'
 import type { ViewProps } from './contract.ts'
 import { SessionsDrawer } from './drawer.tsx'
 import { messageOf } from './errors.ts'
+import { launchPath, launchRest, runOnChoices } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { ProjectsScreen } from './projects.tsx'
 import { firstWithSession, pickRelevant, resolvedBy } from './relevance.ts'
@@ -42,6 +50,12 @@ function SessionsView(view: ViewProps) {
   const [setup, setSetup] = useState<EngineSetupView | undefined>(undefined)
   const [page, setPage] = useState<SessionPage | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const launch = launchRest(rest)
+  // The project chosen in the composer, for «Run on» to carry to the other host.
+  const chosenSite = useRef<string | undefined>(undefined)
+  const onSite = useCallback((siteId: string) => {
+    chosenSite.current = siteId
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -63,9 +77,10 @@ function SessionsView(view: ViewProps) {
 
   // Entering "New session" reads the setup again: a project added, renamed or recoloured elsewhere
   // shows in the composer with its name and colour (criterion 26).
+  const launching = launch !== undefined
   useEffect(() => {
-    if (rest === NEW) void refresh()
-  }, [rest, refresh])
+    if (launching) void refresh()
+  }, [launching, refresh])
 
   // A pending whose session this page shows as over is over (criterion 28 of the previous spec).
   useEffect(() => {
@@ -102,12 +117,15 @@ function SessionsView(view: ViewProps) {
 
   if (setup === undefined || page === undefined || rest === '') return <Loading view={view} />
 
-  if (rest === NEW) {
+  if (launch !== undefined) {
     // The first pending WITH A SESSION: a folder request has none, and must not hide an ask's strip.
     const other = firstWithSession(pending)
+    const runOn = (host: string | undefined) => navigate(launchPath(chosenSite.current), { host: host ?? null })
     return (
       <div class="s-screen">
-        <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer} />
+        <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer}>
+          <RunOn view={view} onPick={runOn} />
+        </TopBar>
         {other === undefined ? null : <Strip pending={other} onOpen={(id) => navigate(id)} />}
         <div class="s-body">
           {page.sessions.length === 0 ? (
@@ -122,6 +140,8 @@ function SessionsView(view: ViewProps) {
           <LaunchComposer
             api={api}
             setup={setup}
+            wantedSiteId={launch.siteId}
+            onSite={onSite}
             onLaunched={(id) => {
               void refresh()
               navigate(id)
@@ -135,6 +155,35 @@ function SessionsView(view: ViewProps) {
   }
 
   return <Session key={rest} view={view} id={rest} setup={setup} onChanged={() => void refresh()} />
+}
+
+/**
+ * «Run on»: the hosts this screen can be the launch screen of — the serving one and every reachable
+ * peer (`runOnChoices`). Nothing with fewer than two, so a daemon without peers looks as it did.
+ */
+function RunOn({ view, onPick }: { readonly view: ViewProps; readonly onPick: (host: string | undefined) => void }) {
+  const choices = runOnChoices(view.hosts, view.host)
+  if (choices.length === 0) return null
+  return (
+    <label class="chip s-pick s-run-on">
+      <span class="s-run-on-label">Run on</span>
+      <select
+        aria-label="Run on"
+        value={view.host ?? ''}
+        onChange={(event) => {
+          const value = (event.target as HTMLSelectElement).value
+          onPick(value === '' ? undefined : value)
+        }}
+      >
+        {choices.map((choice) => (
+          <option key={choice.key ?? ''} value={choice.key ?? ''}>
+            {choice.name}
+          </option>
+        ))}
+      </select>
+      <Icon name="caret-down" size={12} />
+    </label>
+  )
 }
 
 function Loading({ view }: { readonly view: ViewProps }) {

@@ -598,6 +598,23 @@
   color: var(--text-3);
 }
 
+/* «Run on», at the right of the launcher's bar (spec 2026-10-07-dos-hosts, D12). */
+.s-run-on {
+  flex: none;
+  gap: var(--space-1);
+}
+
+.s-run-on-label {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+}
+
+@media (max-width: 380px) {
+  .s-run-on-label {
+    display: none;
+  }
+}
+
 /* --- The project, chosen in a sheet (project-pick.tsx) ------------------- */
 
 .s-pp-btn {

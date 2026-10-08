@@ -20,7 +20,7 @@
  */
 
 import type { ComponentChildren } from 'preact'
-import { useCallback, useState } from 'preact/hooks'
+import { useCallback, useEffect, useState } from 'preact/hooks'
 import type { Color, EngineSetupView } from '../types.ts'
 import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls } from './attach.tsx'
 import { canSend, uploadsOf, withRefs } from './attachments.ts'
@@ -32,6 +32,7 @@ import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
 import { SlashPicker, useSlash, type SlashControls } from './slash-picker.tsx'
 import { ProjectButton, ProjectSheet, useArrangement } from './project-pick.tsx'
 import { filesOf } from './refs.ts'
+import { initialLaunchChoice } from './hosts.ts'
 import { toneClass } from './tone.ts'
 
 /** The same question whether it starts a session or carries one on. */
@@ -81,12 +82,20 @@ function useSend(send: (text: string, force: boolean) => Promise<void>) {
 export function LaunchComposer({
   api,
   setup,
+  wantedSiteId,
+  onSite,
   onLaunched,
   goTo,
   onManage,
 }: {
+  /** THIS HOST'S api: the screen is the launch screen of one host (spec 2026-10-07-dos-hosts, D12). */
   readonly api: Api
+  /** This host's setup: its projects, its catalogue, its uploads. */
   readonly setup: EngineSetupView
+  /** The project «Run on» carried over from the other host, chosen if this host has it. */
+  readonly wantedSiteId?: string | undefined
+  /** The project chosen now, for «Run on» to carry over. */
+  readonly onSite?: (siteId: string) => void
   readonly onLaunched: (sessionId: string) => void
   readonly goTo: (sessionId: string) => void
   /** To the projects screen, where one is added (spec 2026-09-29, D10). */
@@ -95,9 +104,15 @@ export function LaunchComposer({
   const usable = setup.catalog.filter((entry) => entry.disabledReason === undefined)
   // A project whose folder is missing launches nothing (criterion 23): it is not offered.
   const sites = setup.sites.filter((site) => site.status === 'ok')
-  const [siteId, setSiteId] = useState(sites[0]?.id ?? '')
+  // Decided once, from this host's setup alone (`hosts.ts`): the screen is keyed by host, so another
+  // host is another mount, and nothing chosen there reaches a request here.
+  const [initial] = useState(() => initialLaunchChoice(setup, wantedSiteId))
+  const [siteId, setSiteId] = useState(initial.siteId)
   const site = sites.find((s) => s.id === siteId)
-  const [entryId, setEntryId] = useState(usable[0]?.id ?? '')
+  const [entryId, setEntryId] = useState(initial.entryId)
+  useEffect(() => {
+    onSite?.(siteId)
+  }, [siteId, onSite])
   // The agent the session launches as (spec 2026-10-03-skills-a-mano, D8). Changing project keeps it:
   // the list is the machine's, not the project's.
   const [agent, setAgent] = useState<string | undefined>(undefined)
