@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { historyStep, locationOf, navigateTarget, onLoad, overlayOf, pathOf, screenOf, type HistoryState } from './router.ts'
+import { historyStep, locationOf, navigatePath, navigateTarget, onLoad, overlayOf, pathOf, screenOf, type HistoryState } from './router.ts'
 
 test('screenOf and pathOf are inverse on every valid screen', () => {
   for (const path of ['/', '/settings', '/m/sessions', '/m/sessions/new', '/m/sessions/019a-bc', '/m/x/a/b']) {
@@ -121,4 +121,42 @@ test('a worker message navigates only to a path on this origin', () => {
   assert.equal(navigateTarget({ type: 'navigate', path: 'https://evil.example/x' }), undefined)
   assert.equal(navigateTarget({ type: 'pending', key: 'a:b' }), undefined)
   assert.equal(navigateTarget(null), undefined)
+})
+
+// --- Two hosts (spec 2026-10-07-dos-hosts, design D12, tasks E1) ---------------------------------
+
+test('a screen on another host carries it; without /h/ the host is absent, not undefined-valued', () => {
+  assert.deepEqual(screenOf('/h/mac/m/sessions/019a'), { kind: 'module', id: 'sessions', rest: '019a', host: 'mac' })
+  assert.deepEqual(screenOf('/h/mac/m/sessions'), { kind: 'module', id: 'sessions', rest: '', host: 'mac' })
+  assert.deepEqual(screenOf('/h/mac/m/sessions/new/site-1'), { kind: 'module', id: 'sessions', rest: 'new/site-1', host: 'mac' })
+  assert.equal('host' in screenOf('/m/sessions/019a'), false)
+})
+
+test('screenOf and pathOf are inverse on screens of another host', () => {
+  for (const path of ['/h/mac/m/sessions', '/h/mac/m/sessions/new', '/h/omarchy/m/x/a/b']) {
+    assert.equal(pathOf(screenOf(path)), path, path)
+  }
+})
+
+test('a host with no module after it, or an empty host, is not a screen', () => {
+  for (const path of ['/h/mac', '/h/mac/', '/h//m/sessions', '/h/mac/sessions']) {
+    assert.equal(screenOf(path).kind, 'unknown', path)
+  }
+})
+
+test('the kernel routes of two hosts are never a client screen either', () => {
+  for (const path of ['/hosts', '/peers', '/peers/mac/modules/sessions/setup']) {
+    assert.equal(screenOf(path).kind, 'unknown', path)
+  }
+  assert.equal(screenOf('/hostsx').kind, 'unknown', 'not reserved, just unknown')
+})
+
+test('navigatePath: a host string goes there, null back to the serving host, no key stays put', () => {
+  assert.equal(navigatePath('sessions', 'abc', undefined, { host: 'mac' }), '/h/mac/m/sessions/abc')
+  assert.equal(navigatePath('sessions', 'abc', 'mac', { host: 'omarchy' }), '/h/omarchy/m/sessions/abc')
+  assert.equal(navigatePath('sessions', 'abc', 'mac', { host: null }), '/m/sessions/abc')
+  assert.equal(navigatePath('sessions', 'abc', undefined, { host: null }), '/m/sessions/abc')
+  assert.equal(navigatePath('sessions', 'abc', 'mac'), '/h/mac/m/sessions/abc')
+  assert.equal(navigatePath('sessions', 'abc', 'mac', { replace: true }), '/h/mac/m/sessions/abc')
+  assert.equal(navigatePath('sessions', '', undefined), '/m/sessions')
 })
