@@ -14,6 +14,7 @@
 
 import type { ComponentType } from 'preact'
 import type { ModuleApi } from './api.ts'
+import type { HostView } from './hosts.ts'
 import type { Pending } from './pending.ts'
 import type { NavigateOptions } from './router.ts'
 import { sessionsClient } from '../../../modules/sessions/client/index.tsx'
@@ -29,6 +30,8 @@ export interface ModuleViewProps {
   readonly host: string | undefined
   /** This module on any host, for what CROSSES hosts from a screen. `undefined`: the serving host. */
   readonly apiOn: (host: string | undefined) => ModuleApi
+  /** Every host, the serving one first; empty until `GET /hosts` first answers (`hosts.ts`). */
+  readonly hosts: readonly HostView[]
   /**
    * What follows `/m/<id>/` in the path, `''` at the module's root. KEPT IN STEP WITH THE URL: when
    * the module navigates, or Back is pressed, the screen re-renders with the new value.
@@ -64,6 +67,7 @@ export interface ModuleDrawerProps {
   /** ALWAYS `undefined`: the drawer belongs to the whole app, not to a host (design D12). */
   readonly host: string | undefined
   readonly apiOn: (host: string | undefined) => ModuleApi
+  readonly hosts: readonly HostView[]
   readonly rest: string
   /**
    * Navigates within the module and closes the drawer. Without the `host` key it goes to the

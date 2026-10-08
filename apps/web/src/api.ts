@@ -146,6 +146,21 @@ export function apiFor(id: string, host?: string): ModuleApi {
   return created
 }
 
+const ON = new Map<string, (host: string | undefined) => ModuleApi>()
+
+/**
+ * A module's `apiOn` (design D12): `apiFor` with the id bound. ONE FUNCTION PER MODULE for the life of
+ * the page, for the same reason as `apiFor`: a drawer section keying an effect on it must not see a
+ * new one each time the shell renders.
+ */
+export function apiOnFor(id: string): (host: string | undefined) => ModuleApi {
+  const known = ON.get(id)
+  if (known !== undefined) return known
+  const created = (host: string | undefined) => apiFor(id, host)
+  ON.set(id, created)
+  return created
+}
+
 // ---------------------------------------------------------------------------
 // Push: the daemon's own two routes, like `/modules` above — not a module's
 // ---------------------------------------------------------------------------

@@ -29,6 +29,14 @@ export interface NavigateOptions {
   readonly host?: string | null
 }
 
+/** One host as `GET /hosts` gives it. `lastSeenAt` is `null` for this host and a peer never seen. */
+export interface HostView {
+  readonly name: string
+  readonly self: boolean
+  readonly reachable: boolean
+  readonly lastSeenAt: string | null
+}
+
 export interface ViewProps {
   /** This module on the screen's host: everything the screen does goes there. */
   readonly api: Api
@@ -36,6 +44,8 @@ export interface ViewProps {
   readonly host: string | undefined
   /** This module on any host, only for what crosses hosts: the strip, the landing, grants. */
   readonly apiOn: (host: string | undefined) => Api
+  /** Every host, the serving one first; empty until `GET /hosts` first answers. */
+  readonly hosts: readonly HostView[]
   readonly rest: string
   readonly search: string
   readonly navigate: (rest: string, options?: NavigateOptions) => void
@@ -52,6 +62,7 @@ export interface DrawerProps {
   /** Always `undefined`: the drawer belongs to the whole app. */
   readonly host: string | undefined
   readonly apiOn: (host: string | undefined) => Api
+  readonly hosts: readonly HostView[]
   readonly rest: string
   /** Without the `host` key, to the serving host. */
   readonly navigate: (rest: string, options?: { readonly host?: string | null }) => void

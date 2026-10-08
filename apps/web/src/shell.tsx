@@ -13,10 +13,11 @@
 
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
-import { apiFor, fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
+import { apiFor, apiOnFor, fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
 import { CenterState, FallbackBar } from './bar.tsx'
 import { PUSH_API, rememberPush, Settings, type SettingsLink } from './device.tsx'
 import { Drawer } from './drawer.tsx'
+import { useHosts, type HostView } from './hosts.ts'
 import { navIcon, type ShellIcon } from './icons.ts'
 import { clientFor, type ModuleClient } from './modules.ts'
 import { landing, ordered } from './nav.ts'
@@ -37,6 +38,8 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
   const pendings = usePending()
   const { result, retry } = useModules()
   const push = usePushAtStart()
+  // Once for the whole app (design D12): every screen and drawer section gets the same list.
+  const hosts = useHosts()
 
   const modules = result.state === 'ready' ? ordered(result.modules) : []
   const target = route.screen.kind === 'root' ? landing(modules)?.id : undefined
@@ -62,6 +65,7 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
         modules={modules}
         screen={route.screen}
         pending={pendings.all}
+        hosts={hosts}
         onClose={closeOverlay}
         onFold={() => setRailOpen(false)}
         select={route.go}
@@ -88,7 +92,15 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
             go={route.go}
           />
         ) : (
-          <Screens screen={route.screen} modules={modules} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
+          <Screens
+            screen={route.screen}
+            modules={modules}
+            route={route}
+            pendings={pendings}
+            hosts={hosts}
+            bar={bar}
+            openDrawer={openDrawer}
+          />
         )}
       </main>
     </div>
@@ -100,6 +112,7 @@ function Screens({
   modules,
   route,
   pendings,
+  hosts,
   bar,
   openDrawer,
 }: {
@@ -107,6 +120,7 @@ function Screens({
   readonly modules: readonly ModuleSummary[]
   readonly route: Route
   readonly pendings: Pendings
+  readonly hosts: readonly HostView[]
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
@@ -174,6 +188,7 @@ function Screens({
       label={label}
       route={route}
       pendings={pendings}
+      hosts={hosts}
       bar={bar}
       openDrawer={openDrawer}
     />
@@ -192,6 +207,7 @@ function ModuleView({
   label,
   route,
   pendings,
+  hosts,
   bar,
   openDrawer,
 }: {
@@ -202,6 +218,7 @@ function ModuleView({
   readonly label: string
   readonly route: Route
   readonly pendings: Pendings
+  readonly hosts: readonly HostView[]
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
@@ -213,7 +230,6 @@ function ModuleView({
       go(navigatePath(id, next, host, options), options?.replace === undefined ? undefined : { replace: options.replace }),
     [go, id, host],
   )
-  const apiOn = useCallback((on: string | undefined) => apiFor(id, on), [id])
   const setOverlay = useCallback(
     (name: string | undefined) => (name === undefined ? closeOverlay() : openOverlay(name)),
     [openOverlay, closeOverlay],
@@ -227,7 +243,8 @@ function ModuleView({
       key={host ?? ''}
       api={apiFor(id, host)}
       host={host}
-      apiOn={apiOn}
+      apiOn={apiOnFor(id)}
+      hosts={hosts}
       rest={rest}
       search={route.search}
       navigate={navigate}

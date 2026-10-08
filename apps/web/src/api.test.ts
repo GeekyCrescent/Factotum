@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { apiFor, moduleApi, readResponse } from './api.ts'
+import { apiFor, apiOnFor, moduleApi, readResponse } from './api.ts'
 
 type Failure = Error & { status?: number; body?: unknown }
 
@@ -100,4 +100,11 @@ test('apiFor keeps one object per host and module, and never shares it across ho
   assert.notEqual(apiFor('sessions', 'mac'), apiFor('sessions'))
   assert.notEqual(apiFor('sessions', 'mac'), apiFor('sessions', 'omarchy'))
   assert.notEqual(apiFor('sessions', 'mac'), apiFor('inbox', 'mac'))
+})
+
+test('apiOnFor is one function per module, and it is apiFor with the id bound', () => {
+  assert.equal(apiOnFor('sessions'), apiOnFor('sessions'))
+  assert.notEqual(apiOnFor('sessions'), apiOnFor('inbox'))
+  assert.equal(apiOnFor('sessions')('mac'), apiFor('sessions', 'mac'))
+  assert.equal(apiOnFor('sessions')(undefined), apiFor('sessions'))
 })

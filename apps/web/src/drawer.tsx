@@ -11,7 +11,8 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks'
-import { apiFor, type ModuleSummary } from './api.ts'
+import { apiFor, apiOnFor, type ModuleSummary } from './api.ts'
+import type { HostView } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { navIcon } from './icons.ts'
 import { clientFor } from './modules.ts'
@@ -24,13 +25,15 @@ export interface DrawerProps {
   readonly modules: readonly ModuleSummary[]
   readonly screen: Screen
   readonly pending: readonly Pending[]
+  /** Every host, from the shell's one `useHosts()`. */
+  readonly hosts: readonly HostView[]
   readonly onClose: () => void
   /** Folds the always-there sidebar of a wide screen away. */
   readonly onFold: () => void
   readonly select: (path: string) => void
 }
 
-export function Drawer({ open, modules, screen, pending, onClose, onFold, select }: DrawerProps) {
+export function Drawer({ open, modules, screen, pending, hosts, onClose, onFold, select }: DrawerProps) {
   const close = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -67,7 +70,7 @@ export function Drawer({ open, modules, screen, pending, onClose, onFold, select
         </div>
         <div class="sections">
           {modules.map((module) => (
-            <ModuleSection key={module.id} module={module} screen={screen} pending={pending} select={select} />
+            <ModuleSection key={module.id} module={module} screen={screen} pending={pending} hosts={hosts} select={select} />
           ))}
         </div>
         <nav class="foot" aria-label="Modules">
@@ -113,11 +116,13 @@ function ModuleSection({
   module,
   screen,
   pending,
+  hosts,
   select,
 }: {
   readonly module: ModuleSummary
   readonly screen: Screen
   readonly pending: readonly Pending[]
+  readonly hosts: readonly HostView[]
   readonly select: (path: string) => void
 }) {
   const client = clientFor(module.id)
@@ -129,7 +134,8 @@ function ModuleSection({
     <Section
       api={apiFor(module.id)}
       host={undefined}
-      apiOn={(on) => apiFor(module.id, on)}
+      apiOn={apiOnFor(module.id)}
+      hosts={hosts}
       rest={rest}
       navigate={(next, options) => select(navigatePath(module.id, next, undefined, options))}
       pending={forModule(pending, module.id)}
