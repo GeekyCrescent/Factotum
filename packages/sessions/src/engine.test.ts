@@ -535,6 +535,8 @@ test('a reply reopens a finished session, bumps its turns and asks for the lock 
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
   await settle(engine, id)
+  // The state is written before the lock comes back: wait for the lock, not only the state.
+  await turnOver(locks, 'work')
   assert.equal(await locks.heldBy('work'), undefined)
 
   const second = await engine.reply(id, QUICK)
@@ -571,9 +573,10 @@ test('resuming onto a site another session holds is refused, with that sessionâ€
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
   await settle(engine, id)
+  await turnOver(locks, 'work')
 
   // Somebody else takes the site in between.
-  await locks.acquire('work', 'some-other-session', new Date().toISOString())
+  assert.deepEqual(await locks.acquire('work', 'some-other-session', new Date().toISOString()), { ok: true })
 
   const result = await engine.reply(id, QUICK)
   assert.equal(result.outcome, 'busy')
