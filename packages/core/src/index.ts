@@ -37,11 +37,13 @@ export type { RasterType } from './sniff.ts'
 export { rasterTypeOf, SNIFF_BYTES } from './sniff.ts'
 export type { Environment } from './env.ts'
 export { DEFAULT_ENVIRONMENT, ENVIRONMENTS, isEnvironment } from './env.ts'
-export type { ListenConfig, ModuleEntry, RootConfig } from './config.ts'
+export type { ListenConfig, ModuleEntry, PeerConfig, RootConfig } from './config.ts'
 export {
   environmentSchema,
+  isCanonicalOrigin,
   listenSchema,
   moduleEntrySchema,
   moduleIdSchema,
+  peerSchema,
   rootConfigSchema,
 } from './config.ts'

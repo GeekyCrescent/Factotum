@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  isCanonicalOrigin,
   listenSchema,
   moduleEntrySchema,
   moduleIdSchema,
@@ -193,4 +194,53 @@ test('the failure names the field, because this spec invalidates every old confi
   const result = withPublicOrigin('https://mimac.tail1234.ts.net/')
   assert.equal(result.success, false)
   assert.deepEqual(result.error?.issues[0]?.path, ['publicOrigin'])
+})
+
+// ---------------------------------------------------------------------------
+// peers (spec 2026-10-07, D1): the publicOrigin rule, reused and not copied
+// ---------------------------------------------------------------------------
+
+const withPeers = (peers: unknown) =>
+  rootConfigSchema.safeParse({
+    environment: 'prod',
+    listen: { address: '127.0.0.1', port: 7777 },
+    publicOrigin: 'https://mimac.tail1234.ts.net',
+    peers,
+  })
+
+test('a config without peers is still valid, and has none', () => {
+  const parsed = withPublicOrigin('https://mimac.tail1234.ts.net')
+  assert.equal(parsed.success, true)
+  assert.deepEqual(parsed.data?.peers, [])
+})
+
+test('one canonical peer is accepted', () => {
+  const parsed = withPeers([{ origin: 'https://omarchy.tail1234.ts.net' }])
+  assert.equal(parsed.success, true)
+  assert.deepEqual(parsed.data?.peers, [{ origin: 'https://omarchy.tail1234.ts.net' }])
+})
+
+test('a peer with a trailing dot or a path is refused, with a message of its own', () => {
+  for (const origin of ['https://omarchy.tail1234.ts.net.', 'https://omarchy.tail1234.ts.net/app']) {
+    const result = withPeers([{ origin }])
+    assert.equal(result.success, false, origin)
+    assert.deepEqual(result.error?.issues[0]?.path, ['peers', 0, 'origin'])
+    // Its own message: a mistyped peer must not say "publicOrigin must…".
+    assert.doesNotMatch(result.error?.issues[0]?.message ?? '', /publicOrigin/)
+    assert.match(result.error?.issues[0]?.message ?? '', /peer/)
+  }
+})
+
+test('two peers are refused: one peer at most (D1)', () => {
+  const result = withPeers([{ origin: 'https://a.tail1234.ts.net' }, { origin: 'https://b.tail1234.ts.net' }])
+  assert.equal(result.success, false)
+  assert.deepEqual(result.error?.issues[0]?.path, ['peers'])
+})
+
+test('isCanonicalOrigin is the one rule both schemas use', () => {
+  assert.equal(isCanonicalOrigin('https://mimac.tail1234.ts.net'), true)
+  assert.equal(isCanonicalOrigin('http://127.0.0.1:7777'), true)
+  assert.equal(isCanonicalOrigin('https://mimac.tail1234.ts.net.'), false)
+  assert.equal(isCanonicalOrigin('https://mimac.tail1234.ts.net/'), false)
+  assert.equal(isCanonicalOrigin('not a url'), false)
 })

@@ -87,6 +87,8 @@ export const moduleEntrySchema = z
 export type ModuleEntry = z.infer<typeof moduleEntrySchema>
 
 /**
+ * THE CANONICAL-ORIGIN RULE, in one place: `publicOrigin` and every peer use it.
+ *
  * The origin the client is actually served on.
  *
  * Declared, never derived: with `tailscale serve` terminating TLS in front, the
@@ -107,18 +109,36 @@ export type ModuleEntry = z.infer<typeof moduleEntrySchema>
  * So the second half of this guard is not defensive programming; it is the failure the
  * fourth revision of this design shipped.
  */
-const publicOriginSchema = z.string().refine(
-  (v) => {
-    try {
-      const u = new URL(v)
-      if (v !== u.origin) return false
-      return !u.hostname.endsWith('.')
-    } catch {
-      return false
-    }
-  },
-  { message: 'publicOrigin must be a bare canonical origin with no trailing dot, e.g. https://host.tailnet.ts.net' },
-)
+export function isCanonicalOrigin(v: string): boolean {
+  try {
+    const u = new URL(v)
+    if (v !== u.origin) return false
+    return !u.hostname.endsWith('.')
+  } catch {
+    return false
+  }
+}
+
+const publicOriginSchema = z.string().refine(isCanonicalOrigin, {
+  message: 'publicOrigin must be a bare canonical origin with no trailing dot, e.g. https://host.tailnet.ts.net',
+})
+
+/**
+ * The other daemon this one shows as a host of the same app (spec 2026-10-07, D1).
+ *
+ * THE SAME RULE AS `publicOrigin`, reused rather than copied: a peer's origin is the other
+ * daemon's `publicOrigin`, and the proxy compares the URL it builds against it by exact
+ * equality — so a trailing dot here would refuse every call with nothing visibly wrong. Its own
+ * message, so a mistyped peer does not report itself as `publicOrigin`. It does not demand
+ * https: the tests pair two loopback daemons over http.
+ *
+ * AT MOST ONE. More than two hosts is out of scope, and the client is built for one peer.
+ */
+export const peerSchema = z.object({
+  origin: z.string().refine(isCanonicalOrigin, {
+    message: 'a peer origin must be a bare canonical origin with no trailing dot, e.g. https://other.tailnet.ts.net',
+  }),
+})
 
 export const rootConfigSchema = z.object({
   /**
@@ -130,7 +150,9 @@ export const rootConfigSchema = z.object({
   environment: environmentSchema,
   listen: listenSchema,
   publicOrigin: publicOriginSchema,
+  peers: z.array(peerSchema).max(1, 'at most one peer: more than two hosts is not supported').default([]),
   modules: z.record(z.string(), moduleEntrySchema).default({}),
 })
 
 export type RootConfig = z.infer<typeof rootConfigSchema>
+export type PeerConfig = z.infer<typeof peerSchema>
