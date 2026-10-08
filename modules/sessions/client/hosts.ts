@@ -9,11 +9,21 @@
 
 import type { EngineSetupView } from '../types.ts'
 import type { HostView } from './contract.ts'
+import { ago } from './format.ts'
 
 /** A name from `hosts` as the shell takes it: `undefined` for the serving host, else the name. */
 export function hostKey(name: string | undefined, hosts: readonly HostView[]): string | undefined {
   if (name === undefined) return undefined
   return hosts.some((host) => host.self && host.name === name) ? undefined : name
+}
+
+/**
+ * Whether `GET /hosts` says this host is down. Only a peer can be: the serving host is the one that
+ * answered, and a name the list does not have (or no list yet) is not known to be down.
+ */
+export function isUnreachable(key: string | undefined, hosts: readonly HostView[]): boolean {
+  if (key === undefined) return false
+  return hosts.some((host) => !host.self && host.name === key && !host.reachable)
 }
 
 /** One host's group, for the drawer: its state from `hosts`, and whatever was loaded for it. */
@@ -69,4 +79,65 @@ export function initialLaunchChoice(
     siteId: (wanted ?? sites[0])?.id ?? '',
     entryId: setup.catalog.find((entry) => entry.disabledReason === undefined)?.id ?? '',
   }
+}
+
+/** What a host's heading in the drawer says under its name (criterion 10). */
+export function hostStatus(host: { readonly reachable: boolean; readonly lastSeenAt: string | null }, now: number): string {
+  if (host.reachable) return 'available'
+  if (host.lastSeenAt === null) return 'unreachable · never seen'
+  const when = ago(host.lastSeenAt, now)
+  return `unreachable · last seen ${when === 'now' ? 'just now' : `${when} ago`}`
+}
+
+// --- The launch screen of a host (design D12, criterion 12) -----------------------------------------
+
+const NEW = 'new'
+
+/**
+ * What the launcher's `rest` says: `new`, or `new/<siteId>` with the project «Run on» carried over
+ * (the query would not survive: the shell takes it out). `undefined`: not the launcher.
+ */
+export function launchRest(rest: string): { readonly siteId: string | undefined } | undefined {
+  if (rest === NEW) return { siteId: undefined }
+  const m = /^new\/([^/]+)$/.exec(rest)
+  if (m === null) return undefined
+  try {
+    return { siteId: decodeURIComponent(m[1] ?? '') }
+  } catch {
+    return { siteId: undefined }
+  }
+}
+
+/** The launcher's `rest`, with the project to preselect if there is one. */
+export function launchPath(siteId: string | undefined): string {
+  return siteId === undefined || siteId === '' ? NEW : `${NEW}/${encodeURIComponent(siteId)}`
+}
+
+/** One host «Run on» offers. `key` is what `navigate` and `apiOn` take: `undefined` for the serving one. */
+export interface RunOnChoice {
+  readonly key: string | undefined
+  readonly name: string
+}
+
+/**
+ * The hosts «Run on» offers: the serving one and every REACHABLE peer — plus the screen's own even
+ * while it is down, so the select has its value. Fewer than two is nothing to choose: no select, and
+ * a daemon without peers looks as it did.
+ */
+export function runOnChoices(hosts: readonly HostView[], here: string | undefined): readonly RunOnChoice[] {
+  const choices = hosts.flatMap((host): RunOnChoice[] => {
+    if (host.self) return [{ key: undefined, name: host.name }]
+    return host.reachable || host.name === here ? [{ key: host.name, name: host.name }] : []
+  })
+  return choices.length < 2 ? [] : choices
+}
+
+/**
+ * Where «New» with no host goes (criterion 12): the peer last chosen on this device, while it is
+ * reachable. Anything else — the serving host, one down, one no longer declared — stays where it is.
+ */
+export function rememberedLaunchHost(saved: string | undefined, hosts: readonly HostView[]): string | undefined {
+  const key = hostKey(saved, hosts)
+  if (key === undefined) return undefined
+  return hosts.some((host) => !host.self && host.name === key && host.reachable) ? key : undefined
 }

@@ -6,10 +6,16 @@
  * imports nothing from the shell. For an ask, the engine's notice puts `{ askId, sessionId, siteId,
  * toolName, file }` in `data` and `ask:<sessionId>` in `tag`; on the daemon's own machine the
  * worker keeps it without `askId` (design D12).
+ *
+ * TWO HOSTS (spec 2026-10-07-dos-hosts, design D12): a pending the relay brought from the peer carries
+ * the peer's name in `data.host`; none is the serving host's. A session id is a UUIDv7, so the same id
+ * on two hosts does not happen — but a pending is still resolved only by the sessions of ITS host.
  */
 
 import { askTokenFrom, questionsTokenFrom } from '../ask-token.ts'
 import type { SessionSummary } from '../types.ts'
+import type { HostView } from './contract.ts'
+import { hostKey, isUnreachable } from './hosts.ts'
 
 export interface Pending {
   readonly tag: string
@@ -17,7 +23,8 @@ export interface Pending {
   readonly data: Readonly<Record<string, unknown>>
 }
 
-export type Landing = { readonly kind: 'session'; readonly id: string } | { readonly kind: 'new' }
+/** `host`, when there, is where the session lives (`hostKey`: absent for the serving host). */
+export type Landing = { readonly kind: 'session'; readonly id: string; readonly host?: string } | { readonly kind: 'new' }
 
 /**
  * A FOLDER REQUEST waiting on the owner (spec 2026-09-29, D3): an ask with no session. Its tag is
@@ -58,23 +65,77 @@ export function sessionOf(pending: Pending): string | undefined {
   return typeof id === 'string' && id !== '' ? id : undefined
 }
 
-/** `/m/sessions` with nothing after it: a live pending, else the newest running, else the newest. */
-export function pickRelevant(pending: readonly Pending[], sessions: readonly SessionSummary[]): Landing {
-  const waiting = pending.map(sessionOf).find((id) => id !== undefined)
-  if (waiting !== undefined) return { kind: 'session', id: waiting }
+/** The host a pending is about, as the relay named it; `undefined` is the serving host. */
+export function hostOf(pending: Pending): string | undefined {
+  const host = pending.data['host']
+  return typeof host === 'string' && host !== '' ? host : undefined
+}
+
+/** The pendings of one host (`key` as `hostKey` gives it). The serving host's own name counts as it. */
+export function onHost(pending: readonly Pending[], hosts: readonly HostView[], key: string | undefined): readonly Pending[] {
+  return pending.filter((p) => hostKey(hostOf(p), hosts) === key)
+}
+
+const landing = (id: string, host: string | undefined): Landing => (host === undefined ? { kind: 'session', id } : { kind: 'session', id, host })
+
+/**
+ * `/m/sessions` with nothing after it: a live pending, else the newest running, else the newest —
+ * of `sessions`, the page of the screen's host `here`. A pending of a host that is DOWN is skipped:
+ * landing there would only show that it does not answer (criterion 10).
+ */
+export function pickRelevant(
+  pending: readonly Pending[],
+  sessions: readonly SessionSummary[],
+  hosts: readonly HostView[] = [],
+  here: string | undefined = undefined,
+): Landing {
+  for (const p of pending) {
+    const id = sessionOf(p)
+    const host = hostKey(hostOf(p), hosts)
+    if (id !== undefined && !isUnreachable(host, hosts)) return landing(id, host)
+  }
   const newest = (list: readonly SessionSummary[]) =>
     list.reduce<SessionSummary | undefined>((best, s) => (best === undefined || s.startedAt > best.startedAt ? s : best), undefined)
   const pick = newest(sessions.filter((s) => s.state === 'running')) ?? newest(sessions)
-  return pick === undefined ? { kind: 'new' } : { kind: 'session', id: pick.id }
+  return pick === undefined ? { kind: 'new' } : landing(pick.id, here)
 }
 
-/** The tags of pendings whose session this page shows as no longer running. */
-export function resolvedBy(pending: readonly Pending[], sessions: readonly SessionSummary[]): readonly string[] {
+/** The tags of the pendings of host `host` whose session `sessions` — that host's page — shows as over. */
+export function resolvedBy(
+  pending: readonly Pending[],
+  sessions: readonly SessionSummary[],
+  hosts: readonly HostView[] = [],
+  host: string | undefined = undefined,
+): readonly string[] {
   const over = new Set(sessions.filter((s) => s.state !== 'running').map((s) => s.id))
-  return pending.filter((p) => {
-    const id = sessionOf(p)
-    return id !== undefined && over.has(id)
-  }).map((p) => p.tag)
+  return onHost(pending, hosts, host)
+    .filter((p) => {
+      const id = sessionOf(p)
+      return id !== undefined && over.has(id)
+    })
+    .map((p) => p.tag)
+}
+
+/**
+ * The hosts besides the screen's (`here`) that hold a pending, whose pages have to be read to know
+ * whether it is over. A host that is down is left out: its pendings wait, and nothing waits on it.
+ */
+export function otherHosts(pending: readonly Pending[], hosts: readonly HostView[], here: string | undefined): readonly (string | undefined)[] {
+  const keys = new Set<string | undefined>()
+  for (const p of pending) {
+    if (sessionOf(p) === undefined) continue
+    const key = hostKey(hostOf(p), hosts)
+    if (key !== here && !isUnreachable(key, hosts)) keys.add(key)
+  }
+  return [...keys]
+}
+
+/**
+ * Whether landing can decide yet. A pending that names a host needs `GET /hosts` first — to know
+ * whether that is this host, and whether it is up; before its first answer the list is empty.
+ */
+export function landingReady(pending: readonly Pending[], hosts: readonly HostView[]): boolean {
+  return hosts.length > 0 || pending.every((p) => hostOf(p) === undefined)
 }
 
 export interface AskRef {

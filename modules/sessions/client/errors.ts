@@ -34,6 +34,16 @@ export function freshnessOf(cause: unknown): Freshness | undefined {
   return error?.status === 409 && error.body?.freshness !== undefined ? error.body.freshness : undefined
 }
 
+/**
+ * A launch ON ANOTHER HOST that came back 502 (spec 2026-10-07-dos-hosts, design D3, D12): the proxy
+ * stopped waiting, and the peer may well have started it. Never retried by itself — the screen says
+ * so and reads that host's sessions again. On the serving host a 502 is `tailscale serve` with no
+ * daemon behind it: nothing started, and it is an ordinary error.
+ */
+export function launchUnanswered(cause: unknown, host: string | undefined): boolean {
+  return host !== undefined && (cause as { status?: number } | undefined)?.status === 502
+}
+
 export function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }

@@ -2,8 +2,13 @@
  * The pendings and the device settings, in IndexedDB — the window's side.
  *
  * THE SAME DATABASE AS public/sw.js, which writes the pendings: base `factotum`, stores `pending`
- * (key `key`) and `settings` (one record, key `device`). sw.js cannot import this file; if the
- * schema changes here, it changes there.
+ * (key `key`) and `settings` (the record `device`, which sw.js reads). sw.js cannot import this file;
+ * if the schema changes here, it changes there.
+ *
+ * THE LAUNCH HOST HAS ITS OWN RECORD, `launch`, in the same store (spec 2026-10-07-dos-hosts, design
+ * D12) — never inside `device`: `writeSettings` puts that record whole, so a `{ launchHost }` there
+ * would erase `sameMachine`, and sw.js takes a missing `sameMachine` as "the daemon's machine" and
+ * drops the tokens. sw.js never reads `launch`, so it does not change.
  *
  * NO CONSOLE, anywhere in this file (criterion 37): a record may hold an ask token (ADR-0010), and
  * an error logged here could carry one. A failure means the pending does not show, and the
@@ -16,7 +21,8 @@ const DB = 'factotum'
 const VERSION = 1
 const PENDING = 'pending'
 const SETTINGS = 'settings'
-const DEVICE = 'device'
+export const DEVICE_KEY = 'device'
+export const LAUNCH_KEY = 'launch'
 
 export interface DeviceSettings {
   /**
@@ -74,7 +80,7 @@ export async function removePending(keys: readonly string[]): Promise<void> {
 
 export async function readSettings(): Promise<DeviceSettings> {
   try {
-    const value = await run<unknown>(SETTINGS, 'readonly', (s) => s.get(DEVICE))
+    const value = await run<unknown>(SETTINGS, 'readonly', (s) => s.get(DEVICE_KEY))
     if (value === null || typeof value !== 'object') return {}
     const sameMachine = (value as Record<string, unknown>)['sameMachine']
     return typeof sameMachine === 'boolean' ? { sameMachine } : {}
@@ -85,8 +91,40 @@ export async function readSettings(): Promise<DeviceSettings> {
 
 export async function writeSettings(settings: DeviceSettings): Promise<void> {
   try {
-    await run(SETTINGS, 'readwrite', (s) => s.put(settings, DEVICE))
+    await run(SETTINGS, 'readwrite', (s) => s.put(settings, DEVICE_KEY))
   } catch {
     // The worker keeps treating the machine as unknown, which keeps no token: the safe side.
+  }
+}
+
+/** The `launch` record: the name of the host this device last chose to launch on. */
+export function launchRecord(name: string): { readonly host: string } {
+  return { host: name }
+}
+
+/** The name in a `launch` record, or `undefined` for anything else. */
+export function launchHostOf(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const host = (value as Record<string, unknown>)['host']
+  return typeof host === 'string' && host !== '' ? host : undefined
+}
+
+/**
+ * The name last chosen on this device, AS STORED: which one is the serving host, and whether it is
+ * up, is the launcher's to decide with the hosts it has (`rememberedLaunchHost`). Never throws.
+ */
+export async function readLaunchHost(): Promise<string | undefined> {
+  try {
+    return launchHostOf(await run<unknown>(SETTINGS, 'readonly', (s) => s.get(LAUNCH_KEY)))
+  } catch {
+    return undefined
+  }
+}
+
+export async function writeLaunchHost(name: string): Promise<void> {
+  try {
+    await run(SETTINGS, 'readwrite', (s) => s.put(launchRecord(name), LAUNCH_KEY))
+  } catch {
+    // Not remembered: the next New opens on the serving host, as it always did.
   }
 }
