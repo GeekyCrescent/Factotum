@@ -12,7 +12,7 @@
 import type { Server } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import type { AddressInfo } from 'node:net'
-import { prefixed, type AnyModule, type BootHandle, type Environment } from '@factotum/core'
+import { prefixed, type AnyModule, type BootHandle, type Environment, type PeerConfig } from '@factotum/core'
 import { createPushService } from './push/service.ts'
 import { BootError } from './errors.ts'
 import { loadRootConfig, composeModules } from './config/load.ts'
@@ -21,6 +21,7 @@ import { resolveListen, type Interfaces } from './net/resolve.ts'
 import { verifyBound } from './net/verify.ts'
 import { localUrl } from './net/url.ts'
 import { policyFor } from './net/policy.ts'
+import { machineName, PEER_NAME } from './net/peers.ts'
 import { Registry } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
 
@@ -46,9 +47,10 @@ export interface BootOptions {
 export async function boot(options: BootOptions): Promise<BootHandle> {
   const startedAt = Date.now()
 
-  // 1-3. Environment, config, and the cross-check that catches a copied config.
+  // 1-3. Environment, config, and the cross-checks that catch a copied config and a wrong peer.
   const paths = options.paths ?? statePaths(options.env, options.home)
   const config = await loadRootConfig(options.env, paths)
+  checkPeers(config.publicOrigin, config.peers)
 
   // 4-5. Where to listen, and whether we are allowed to.
   const listen = resolveListen(config.listen, options.interfaces)
@@ -150,12 +152,36 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
 }
 
 /**
- * The first label of the public hostname: `juans-macbook-pro`, not the whole
- * `juans-macbook-pro.tailbd0167.ts.net`. It is what tells two machines' notices apart on a
- * phone, and a notification title has no room for a tailnet suffix.
+ * Criterion 2 of spec 2026-10-07. A peer is the network surface — where this daemon sends requests —
+ * so a wrong one ABORTS (CLAUDE.md §5). The schema already refused a non-canonical origin and a
+ * second peer; what it cannot see is this daemon's own name.
  */
-function machineName(publicOrigin: string): string {
-  return new URL(publicOrigin).hostname.split('.')[0] ?? publicOrigin
+function checkPeers(publicOrigin: string, peers: readonly PeerConfig[]): void {
+  const self = machineName(publicOrigin)
+  for (const { origin } of peers) {
+    if (origin === publicOrigin) {
+      throw new BootError(
+        'peer-invalid',
+        `the peer ${origin} is this daemon's own publicOrigin`,
+        'a peer is the OTHER machine: put its publicOrigin in `peers`, or remove the entry',
+      )
+    }
+    const name = machineName(origin)
+    if (name === self) {
+      throw new BootError(
+        'peer-invalid',
+        `this host and the peer ${origin} are both called ${name}`,
+        `two hosts share the name ${name}: rename one machine in Tailscale`,
+      )
+    }
+    if (!PEER_NAME.test(name)) {
+      throw new BootError(
+        'peer-invalid',
+        `the peer ${origin} is named ${name}, which cannot travel in /peers/<name>/`,
+        'name the peer by its hostname (letters, digits and dashes), e.g. https://other.tailnet.ts.net',
+      )
+    }
+  }
 }
 
 function listenOrExplain(

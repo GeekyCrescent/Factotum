@@ -442,3 +442,55 @@ test('a keys.json it cannot use leaves push OFF and the daemon serving (criterio
     await handle.stop()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Peers (spec 2026-10-07, criterion 2): the network surface, so they ABORT
+// ---------------------------------------------------------------------------
+
+/** Every abort below must carry a remedy (CLAUDE.md §5), and none of them may leave a socket open. */
+async function assertAborts(overrides: Record<string, unknown>, code: string, remedy: RegExp) {
+  const port = takePort()
+  const paths = await withConfig(overrides, port)
+  let error: BootError | undefined
+  try {
+    // A boot that should have aborted and did not is stopped, so a red run fails instead of hanging.
+    await (await bootWith(paths)).stop()
+  } catch (caught) {
+    error = caught as BootError
+  }
+  assert.equal(error?.code, code)
+  assert.match(error?.remedy ?? '', remedy)
+  // Refused before the bind: the port is still free.
+  const probe = createHttpServer()
+  await new Promise<void>((resolve, reject) => probe.once('error', reject).listen(port, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+}
+
+test('a peer that is not a canonical origin aborts, with the peer rule’s own message', async () => {
+  await assertAborts({ peers: [{ origin: 'https://omarchy.tail1234.ts.net.' }] }, 'config-invalid', /config\.template/)
+})
+
+test('more than one peer aborts', async () => {
+  await assertAborts(
+    { peers: [{ origin: 'https://a.tail1234.ts.net' }, { origin: 'https://b.tail1234.ts.net' }] },
+    'config-invalid',
+    /config\.template/,
+  )
+})
+
+test('a peer that is this daemon’s own publicOrigin aborts', async () => {
+  await assertAborts({ peers: [{ origin: 'https://mimac.tail1234.ts.net' }] }, 'peer-invalid', /other machine/i)
+})
+
+test('a peer that shares this host’s machineName aborts: two hosts would answer to one name', async () => {
+  await assertAborts(
+    { peers: [{ origin: 'https://mimac.othertailnet.ts.net' }] },
+    'peer-invalid',
+    /two hosts share the name mimac: rename one machine in Tailscale/,
+  )
+})
+
+test('a peer whose name cannot travel in a path aborts', async () => {
+  // `[::1]` is a canonical origin, and its first label is not a name `/peers/<name>/` can carry.
+  await assertAborts({ peers: [{ origin: 'http://[::1]:7000' }] }, 'peer-invalid', /hostname/)
+})
