@@ -7,6 +7,10 @@
  * which has the full path the push never carries) and answers it. On the daemon's own machine the
  * device keeps no token, and the sheet says to approve from the phone.
  *
+ * ON ITS OWN HOST (spec 2026-10-07-dos-hosts, design D12; criterion 14): a request the Mac made is read
+ * and answered on the Mac, through the proxy, whichever host serves the app. `useGrant` is handed
+ * that host's api; the target says which host it is.
+ *
  * NO CONSOLE, anywhere here (criterion 41): the token is in this file's hands.
  */
 
@@ -28,6 +32,8 @@ export interface GrantTarget {
   readonly token: string | undefined
   readonly tag: string | undefined
   readonly name: string | undefined
+  /** The host the request lives on, as `apiOn` takes it: `undefined` for the serving one. */
+  readonly host: string | undefined
 }
 
 export type GrantState =
@@ -56,7 +62,7 @@ function said(result: Answered, kind: GrantInfo['kind'] | undefined): string {
   return result.first ? done : `Already answered. ${done}`
 }
 
-/** Reads the request once, and answers it. Whatever ends it also ends its pending. */
+/** Reads the request once, and answers it, with `api` ON THE REQUEST'S HOST. Whatever ends it also ends its pending. */
 export function useGrant(api: Api, target: GrantTarget, onOver: (tag: string | undefined) => void) {
   const [state, setState] = useState<GrantState>(target.token === undefined ? { kind: 'no-token' } : { kind: 'loading' })
   const over = useRef(onOver)
