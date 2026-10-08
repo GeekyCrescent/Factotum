@@ -135,7 +135,9 @@ test('a CLI that fails leaves a warning with its stderr, writes nothing, and is 
 })
 
 test('a titler that does not answer is killed at the deadline, writes nothing (criterion 7)', async () => {
-  const { deps, written, warns, calls } = await rig({ timeoutMs: 200 })
+  // Long enough for a `node` to start and log itself under a loaded suite: with 200 ms it was
+  // sometimes killed before it wrote its call, and the test waited for a call that never came.
+  const { deps, written, warns, calls } = await rig({ timeoutMs: 3_000 })
   createTitler(deps).start(ID, 'title:hang')
   await eventually(async () => (await calls()).length === 1, 'the titler started')
   const [call] = await calls()
