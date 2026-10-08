@@ -297,3 +297,87 @@ test('settled() waits for a notice fired WITHOUT await — what boot.stop relies
   assert.equal(drainedEarly, false, 'settled() resolved while a notice was still in flight')
   assert.equal(delivered, true)
 })
+
+// ---------------------------------------------------------------------------
+// relay(envelope) — a notice raised on the peer (spec 2026-10-07, D6, criteria 15 and 16)
+// ---------------------------------------------------------------------------
+
+const MAC = 'juans-macbook-pro'
+const fromMac = (data: Record<string, unknown> = { host: MAC }): PushEnvelope => ({
+  message: { ...message, path: `/h/${MAC}/m/sessions/s1?ask=tok`, data },
+  moduleId: 'sessions',
+  machine: MAC,
+})
+
+/** The title `public/sw.js` paints, composed the way it composes it (`push` handler). */
+const titleOf = (envelope: PushEnvelope | undefined): string =>
+  envelope?.machine ? `${envelope.machine}: ${envelope.message.title}` : (envelope?.message.title ?? '')
+
+test("relay delivers WITH THE PEER'S MACHINE, so the title is `juans-macbook-pro: …` and not this host's (criterion 15)", async () => {
+  const { deliver, sent } = recorder()
+  const push = await service({ deliver })
+  await push.subscribe(device('phone'), PHONE)
+
+  await push.relay(fromMac())
+
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0]?.envelope, fromMac())
+  assert.equal(titleOf(sent[0]?.envelope), `${MAC}: finished`)
+})
+
+test('relay with no devices of its own does nothing', async () => {
+  const { deliver, sent } = recorder()
+  const push = await service({ deliver })
+
+  await push.relay(fromMac())
+  await push.settled()
+
+  assert.equal(sent.length, 0)
+})
+
+test('relay over the cap sends without data, and logs it', async () => {
+  const { deliver, sent } = recorder()
+  const lines: string[] = []
+  const push = await createPushService({
+    dir: await mkdtemp(join(tmpdir(), 'factotum-svc-')),
+    machine: 'omarchy',
+    subject: 'https://omarchy.example',
+    log: { ...quiet, warn: (line) => void lines.push(line) },
+    generate: () => FAKE_KEYS,
+    deliver,
+  })
+  await push.subscribe(device('phone'), PHONE)
+
+  await push.relay(fromMac({ host: MAC, note: 'x'.repeat(4000) }))
+
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.envelope.message.data, undefined)
+  assert.equal(sent[0]?.envelope.machine, MAC)
+  assert.match(lines.join('\n'), /without its data/)
+})
+
+test('relay is tracked: settled() waits for it, as for a send', async () => {
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let delivered = false
+  const push = await service({
+    deliver: async () => {
+      await gate
+      delivered = true
+      return { statusCode: 201 }
+    },
+  })
+  await push.subscribe(device('phone'), PHONE)
+
+  void push.relay(fromMac())
+  const drained = push.settled().then(() => delivered)
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  release()
+
+  assert.equal(await drained, true)
+})
+
+test('push off: relay resolves and delivers nothing', async () => {
+  const push = await createPushService({ dir: '/nonexistent/factotum/push', machine: 'omarchy', subject: 'https://o', log: quiet })
+  await push.relay(fromMac())
+})

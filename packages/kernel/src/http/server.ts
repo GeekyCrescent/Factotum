@@ -28,6 +28,7 @@ import type { PeerTable } from '../net/peers.ts'
 import type { Proxy } from './proxy.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
+import { acceptRelayed } from '../push/relay.ts'
 
 export interface StaticSite {
   /**
@@ -51,10 +52,10 @@ export interface ServerDeps {
    */
   readonly isReady: () => boolean
   /**
-   * The two push routes below, and the device count `/health` reports to a peer (spec 2026-10-07,
-   * D6). Never a module: the kernel knows no module by name.
+   * The two push routes below, the device count `/health` reports to a peer, and the relay a peer
+   * posts to (spec 2026-10-07, D6). Never a module: the kernel knows no module by name.
    */
-  readonly push: Pick<PushService, 'publicKey' | 'subscribe' | 'count'>
+  readonly push: Pick<PushService, 'publicKey' | 'subscribe' | 'count' | 'relay'>
   /** This machine's addresses, to tell a subscription from here (design D12). */
   readonly interfaces: Interfaces
   /** This host's name, `machineName(publicOrigin)`: the `self` entry of `/hosts`. */
@@ -129,6 +130,13 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
   }
 
   // --- The API ------------------------------------------------------------
+
+  // The relay (spec 2026-10-07, D6) comes BEFORE the origin check because its rule is the opposite:
+  // every other route accepts a request without `Origin`, and this one accepts ONLY that. A daemon
+  // never sends one; a browser always does. Still behind the 503, like everything that delivers.
+  if (method === 'POST' && path === '/push/relay') {
+    return await handleRelay(req, res, deps)
+  }
 
   const origin = req.headers.origin
   if (typeof origin === 'string' && !originAllowed(origin, deps.origin)) {
@@ -279,6 +287,31 @@ async function handleModule(
       return await respond(res, response, resolved.stateDir)
     }
   }
+}
+
+/**
+ * Branch 3 of `handle()`, in the order design D6 numbers it: 503, `Origin`, the body, the machine.
+ *
+ * It answers 202 and does not wait for the push services: the peer gives up after
+ * PUSH_RELAY_TIMEOUT_MS, and a device that takes longer must not turn a delivered notice into a
+ * failure on the other side. `relay` never rejects, and `settled()` covers it at shutdown.
+ */
+async function handleRelay(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
+  if (!deps.isReady()) return sendError(res, 503, 'starting', 'factotum is still starting')
+  if (req.headers.origin !== undefined) {
+    return sendError(res, 403, 'relay-refused', 'the relay takes notices from a peer daemon, never from a browser')
+  }
+  const peers = deps.peers.list()
+  // No peers, no relay (design D1): the route does not exist on a daemon that has none.
+  if (peers.length === 0) return sendError(res, 404, 'not-found', 'no route POST /push/relay')
+
+  const read = await readBodyOrAnswer(req, res)
+  if (!read.ok) return
+  const verdict = acceptRelayed(read.body, peers)
+  if (!verdict.ok) return sendError(res, verdict.status, verdict.code, verdict.message)
+
+  void deps.push.relay(verdict.envelope)
+  return sendJson(res, 202, {})
 }
 
 /**

@@ -18,6 +18,7 @@ import type { Logger, NotificationMessage, PushEnvelope } from '@factotum/core'
 import { inspectKeys, loadOrCreateKeys, type VapidKeys } from './keys.ts'
 import { SubscriptionStore, type Subscription } from './store.ts'
 import { sendToAll, type Deliver } from './send.ts'
+import { fitRelayed } from './relay.ts'
 
 /**
  * Small on purpose. A person has a handful of devices; a cap in the dozens would let a flood of
@@ -52,6 +53,12 @@ export interface PushService {
   readonly canReach: () => boolean
   /** Never rejects. `moduleId` is bound by the registry; `null` is the daemon itself. */
   readonly send: (message: NotificationMessage, moduleId: string | null) => Promise<void>
+  /**
+   * A notice the PEER raised, already checked and rewritten by `POST /push/relay` (spec 2026-10-07,
+   * D6). Delivered to this host's devices with the envelope's OWN `machine` — never forwarded again.
+   * Never rejects; nothing with no devices here.
+   */
+  readonly relay: (envelope: PushEnvelope) => Promise<void>
   readonly publicKey: () => string | undefined
   /** `sameMachine` is the kernel's reading of the request (design D12), stored with the device. */
   readonly subscribe: (subscription: Subscription, origin: { readonly sameMachine: boolean }) => Promise<SubscribeResult>
@@ -115,6 +122,12 @@ export async function createPushService(deps: PushServiceDeps): Promise<PushServ
       await track(sendToAll(envelope(message, moduleId), sendDeps))
     },
 
+    relay: async (relayed) => {
+      if (store.count() === 0) return
+      // `sendToAll`, not `send`: the envelope keeps the peer's machine, and nothing here forwards.
+      await track(sendToAll(fitRelayed(relayed, deps.log), sendDeps))
+    },
+
     publicKey: () => keys.publicKey,
 
     subscribe: async (subscription, origin) => {
@@ -176,6 +189,7 @@ function offService(reason: string): PushService {
   return {
     canReach: () => false,
     send: async () => undefined,
+    relay: async () => undefined,
     publicKey: () => undefined,
     subscribe: async () => ({ kind: 'off', reason }),
     count: () => 0,

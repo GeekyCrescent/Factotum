@@ -107,7 +107,7 @@ async function daemon(peerPort: number, opts: { reachable?: boolean; ready?: boo
     env: 'prod',
     version: 'test',
     startedAt: Date.now(),
-    push: { publicKey: () => undefined, subscribe: async () => ({ kind: 'off', reason: 'off' }), count: () => 0 },
+    push: { publicKey: () => undefined, subscribe: async () => ({ kind: 'off', reason: 'off' }), count: () => 0, relay: async () => undefined },
     machine: 'mimac',
     peers,
     proxy,

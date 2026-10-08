@@ -11,6 +11,7 @@ import { createStaticSite } from './static.ts'
 import { policyFor } from '../net/policy.ts'
 import { Registry } from '../modules/registry.ts'
 import { incomingDir, moduleStateDir, statePaths } from '../config/paths.ts'
+import type { PushEnvelope } from '@factotum/core'
 import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
@@ -27,7 +28,7 @@ const subscription = {
   keys: { p256dh: 'B' + 'x'.repeat(86), auth: 'y'.repeat(22) },
 }
 
-type FakePush = Pick<PushService, 'publicKey' | 'subscribe' | 'count'>
+type FakePush = Pick<PushService, 'publicKey' | 'subscribe' | 'count' | 'relay'>
 
 // NOT a default parameter for the key: passing `undefined` to one ACTIVATES the default, which is
 // how the push-off test first passed a key it meant to withhold.
@@ -35,6 +36,7 @@ const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key:
   publicKey: () => key.publicKey,
   subscribe: async () => result,
   count: () => 3,
+  relay: async () => undefined,
 })
 
 /** The daemon's machine, faked: loopback and its tailnet address (spec 2026-09-18, A6). */
@@ -675,6 +677,124 @@ test('a malformed escape in a parameter is still a 500 module-error, as it was i
     const response = await fetch(`${base}/modules/files/x/%E0%A4%A`)
     assert.equal(response.status, 500)
     assert.match(await response.text(), /module-error/)
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// POST /push/relay (spec 2026-10-07, D6, criterion 16): one test per rule
+// ---------------------------------------------------------------------------
+
+const MAC_PEER = { ...OMARCHY, name: 'juans-macbook-pro', origin: 'https://juans-macbook-pro.tail1234.ts.net:8443' }
+const WITH_MAC: Pick<PeerTable, 'list'> = { list: () => [MAC_PEER] }
+
+const relayBody = (machine = 'juans-macbook-pro') => ({
+  message: { title: 'permission', body: 'proyecto-a', path: '/m/sessions/s1?ask=tok', tag: 's1', data: { askId: 'tok' } },
+  moduleId: 'sessions',
+  machine,
+})
+
+/** A push service that records what it was asked to relay. */
+function relaying(): { push: FakePush; relayed: PushEnvelope[] } {
+  const relayed: PushEnvelope[] = []
+  return { push: { ...onPush(), relay: async (envelope) => void relayed.push(envelope) }, relayed }
+}
+
+async function postRelay(base: string, body: unknown, headers: Record<string, string> = {}) {
+  return await fetch(`${base}/push/relay`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  })
+}
+
+test('the relay answers 503 before READY, and relays nothing', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC, ready: false })
+  try {
+    const res = await postRelay(base, relayBody())
+    assert.equal(res.status, 503)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'starting')
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay refuses ANY Origin with 403 — the accepted one too: a browser always sends one, a daemon never', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    for (const origin of [PUBLIC, FOREIGN]) {
+      const res = await postRelay(base, relayBody(), { origin })
+      assert.equal(res.status, 403, origin)
+      assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    }
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('a machine that is not the declared peer is 403, and nothing is relayed', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const res = await postRelay(base, relayBody('omarchy'))
+    assert.equal(res.status, 403)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('an accepted notice is relayed with its path under /h/<machine>, data.host, and the peer’s machine', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const res = await postRelay(base, relayBody())
+    assert.equal(res.status, 202)
+    assert.equal(relayed.length, 1)
+    assert.equal(relayed[0]?.machine, 'juans-macbook-pro')
+    assert.equal(relayed[0]?.message.path, '/h/juans-macbook-pro/m/sessions/s1?ask=tok')
+    assert.deepEqual(relayed[0]?.message.data, { askId: 'tok', host: 'juans-macbook-pro' })
+  } finally {
+    await close()
+  }
+})
+
+test('a daemon without peers has no relay: 404 (design D1)', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push })
+  try {
+    assert.equal((await postRelay(base, relayBody())).status, 404)
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('a body that is not an envelope is 400; one over the body cap is 413 — the same helper as everywhere', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    assert.equal((await postRelay(base, { machine: 'juans-macbook-pro' })).status, 400)
+    const huge = await fetch(`${base}/push/relay`, { method: 'POST', body: 'x'.repeat(MAX_BODY_BYTES + 1) })
+    assert.equal(huge.status, 413)
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('GET /push/relay is not the relay: it goes through the origin check like the rest of /push and is 404', async () => {
+  const { push } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    assert.equal((await fetch(`${base}/push/relay`)).status, 404)
+    assert.equal((await fetch(`${base}/push/relay`, { headers: { origin: FOREIGN } })).status, 403)
   } finally {
     await close()
   }
