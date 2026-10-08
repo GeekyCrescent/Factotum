@@ -900,6 +900,77 @@
   letter-spacing: 0;
 }
 
+/* --- One heading per host, with peers (spec 2026-10-07-dos-hosts, D12; criteria 10, 11) -------- */
+
+.s-host {
+  margin-top: var(--space-2);
+}
+
+.s-host + .s-host {
+  margin-top: var(--space-4);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.s-host-head {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+}
+
+.s-host-head:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.s-host-head > .icon {
+  color: var(--text-3);
+}
+
+.s-host-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.s-host-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-host-state {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+/* Down: folded, grey, and not a button that does anything. */
+.s-host-down .s-host-head {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.s-host-down .s-host-dot {
+  background: var(--text-3);
+}
+
 .s-item {
   width: 100%;
   min-height: 52px;
