@@ -22,6 +22,7 @@ import {
   FETCH_TIMEOUT_MS,
   GIT_LOCAL_TIMEOUT_MS as STATUS_TIMEOUT_MS,
   GIT_MERGE_TIMEOUT_MS,
+  outerBoundMs,
   runGit,
   type GitRunner,
 } from './git.ts'
@@ -97,7 +98,7 @@ export async function checkFreshness(deps: FreshnessDeps): Promise<FreshnessRepo
   // TWO TRIES, NOT ONE. Measured (audit v2): with no remote, `fetch` exits 0 and `rev-list …@{u}`
   // exits 128. One try made "no network" and "nothing to compare against" the same warning.
   try {
-    await within(git(['fetch', '--quiet'], FETCH_TIMEOUT_MS, deps.cwd), FETCH_TIMEOUT_MS, deps.timers, 'git fetch')
+    await within(git(['fetch', '--quiet'], FETCH_TIMEOUT_MS, deps.cwd), outerBoundMs(FETCH_TIMEOUT_MS), deps.timers, 'git fetch')
   } catch (error) {
     // No network, or a credential that would have asked. NO rev-list: it would count against
     // whatever @{u} the last fetch left, and call that the truth.
@@ -159,7 +160,8 @@ export async function pullIfSafe(deps: PullDeps): Promise<PullOutcome> {
     const ran = await deps.sole(async () => {
       await within(
         git(['merge', '--ff-only', '@{u}'], GIT_MERGE_TIMEOUT_MS, deps.cwd),
-        GIT_MERGE_TIMEOUT_MS,
+        // Past the process's own kill: the section is not left while the merge may still be running.
+        outerBoundMs(GIT_MERGE_TIMEOUT_MS),
         deps.timers,
         'git merge',
       )

@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gitEnv, gitFailureReason, runGit } from './git.ts'
+import { gitEnv, gitFailureReason, outerBoundMs, runGit } from './git.ts'
 
 const exec = promisify(execFile)
 
@@ -110,4 +110,9 @@ test('core.sshCommand in the repo is read and used for a network command', async
   const { GIT_SSH_COMMAND: _dropped, ...env } = process.env
   await assert.rejects(runGit(['fetch', '--quiet'], 5_000, dir, env))
   await exec('test', ['-f', marker])
+})
+
+test("the caller's outer bound leaves room for the probe and the kill, past the process's own budget", () => {
+  assert.equal(outerBoundMs(8_000) > 8_000, true)
+  assert.equal(outerBoundMs(8_000) < 30_000, true, 'a fetch still fails inside criterion 22’s ceiling')
 })

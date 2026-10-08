@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Timers } from '@factotum/core'
 import { checkFreshness, describeFreshness, isFresh, pullIfSafe } from './freshness.ts'
-import { runGit } from './git.ts'
+import { GIT_NET_TIMEOUT_MS, runGit } from './git.ts'
 import { SOLE_SKIPPED } from './locks.ts'
 import { commitIn, git, head, pushFromOther, remoteWithClones, upstream } from './test-git.ts'
 import type { FreshnessReport } from './types.ts'
@@ -353,7 +353,7 @@ test('REAL: a fetch to a remote that does not exist is fetchFailed, well within 
 
   const started = Date.now()
   const report = await checkFreshness({ cwd: remote.site, timers: realTimers })
-  assert.equal(Date.now() - started < 30_000, true)
+  assert.equal(Date.now() - started < GIT_NET_TIMEOUT_MS, true)
   assert.equal(report.fetchFailed, true)
   assert.equal(report.noUpstream, false)
   assert.equal(report.behind, 0)
@@ -373,7 +373,7 @@ test('REAL: an ssh that waits for input fails the fetch within 30 s, and launche
     timers: realTimers,
     git: (args, timeoutMs, cwd) => runGit(args, timeoutMs, cwd, { ...process.env, GIT_SSH_COMMAND: fake }),
   })
-  assert.equal(Date.now() - started < 30_000, true)
+  assert.equal(Date.now() - started < GIT_NET_TIMEOUT_MS, true)
   assert.equal(report.fetchFailed, true)
   assert.equal(isFresh(report), true)
 })

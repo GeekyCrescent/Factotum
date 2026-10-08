@@ -31,6 +31,20 @@ export const GIT_MERGE_TIMEOUT_MS = 15_000
 /** `push`, and the handoff's fetch (corte 2). The ceiling of criterion 22. */
 export const GIT_NET_TIMEOUT_MS = 30_000
 
+/** Reading `core.sshCommand` before a network command: a local config read. */
+const SSH_PROBE_TIMEOUT_MS = 2_000
+/** Margin for the process's own kill to land before the caller's bound gives up on it. */
+const KILL_GRACE_MS = 1_000
+
+/**
+ * The caller's outer bound for a git command given `timeoutMs`: the probe and the kill both fit
+ * inside it. With the same number on both sides, the caller's timer could fire first and release
+ * the site's queue while the process was still alive for a few milliseconds.
+ */
+export function outerBoundMs(timeoutMs: number): number {
+  return timeoutMs + SSH_PROBE_TIMEOUT_MS + KILL_GRACE_MS
+}
+
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const BATCH_SSH = 'ssh -o BatchMode=yes'
 
@@ -130,7 +144,7 @@ function spawnGit(args: readonly string[], timeoutMs: number, cwd: string, env: 
 /** Does this repo set `core.sshCommand`? Unset is exit 1 with no output, which is the common case. */
 async function sshCommandConfigured(cwd: string, base: NodeJS.ProcessEnv): Promise<boolean> {
   const env = gitEnv(base, { sshCommandConfigured: undefined })
-  const outcome = await spawnGit(['config', '--get', 'core.sshCommand'], GIT_LOCAL_TIMEOUT_MS, cwd, env)
+  const outcome = await spawnGit(['config', '--get', 'core.sshCommand'], SSH_PROBE_TIMEOUT_MS, cwd, env)
   return outcome.code === 0 && outcome.stdout.trim() !== ''
 }
 
