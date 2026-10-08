@@ -28,7 +28,7 @@ import type { PeerTable } from '../net/peers.ts'
 import type { Proxy } from './proxy.ts'
 import type { PushService } from '../push/service.ts'
 import { subscriptionSchema } from '../push/schema.ts'
-import { acceptRelayed } from '../push/relay.ts'
+import { acceptRelayed, RELAY_MAX_BODY_BYTES, RELAY_RATE, tokenBucket, type TokenBucket } from '../push/relay.ts'
 
 export interface StaticSite {
   /**
@@ -64,7 +64,12 @@ export interface ServerDeps {
   readonly peers: Pick<PeerTable, 'list'>
   /** `/peers/<name>/…` → the other daemon (D3). */
   readonly proxy: Pick<Proxy, 'handle'>
+  /** How often a peer may relay. Tests inject one on their own clock; the default is RELAY_RATE. */
+  readonly relayBucket?: TokenBucket
 }
+
+/** The deps `handle()` reads: the bucket is decided once, per server. */
+type HandleDeps = ServerDeps & { readonly relayBucket: TokenBucket }
 
 function isPushPath(path: string): boolean {
   return path === '/push' || path.startsWith('/push/')
@@ -83,7 +88,8 @@ function isKernelApiPath(path: string): boolean {
   return isPushPath(path) || path === '/hosts' || path === '/peers' || path.startsWith('/peers/')
 }
 
-export function createServer(deps: ServerDeps): Server {
+export function createServer(serverDeps: ServerDeps): Server {
+  const deps: HandleDeps = { ...serverDeps, relayBucket: serverDeps.relayBucket ?? tokenBucket({ ...RELAY_RATE, now: Date.now }) }
   return createHttpServer((req, res) => {
     void handle(req, res, deps).catch(() => {
       if (!res.headersSent) sendError(res, 500, 'module-error', 'the kernel failed to handle this request')
@@ -92,7 +98,7 @@ export function createServer(deps: ServerDeps): Server {
   })
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
+async function handle(req: IncomingMessage, res: ServerResponse, deps: HandleDeps): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://placeholder')
   const path = normalizePath(url.pathname)
   const method = req.method ?? 'GET'
@@ -291,12 +297,14 @@ async function handleModule(
 
 /**
  * Branch 3 of `handle()`, in the order design D6 numbers it: 503, `Origin`, the body, the machine.
+ * Hardened by the security review of 2026-10-08: a body cap of its own, RELAY_MAX_BODY_BYTES, far
+ * under the API's, and a token bucket charged only for a notice that passed (429).
  *
  * It answers 202 and does not wait for the push services: the peer gives up after
  * PUSH_RELAY_TIMEOUT_MS, and a device that takes longer must not turn a delivered notice into a
  * failure on the other side. `relay` never rejects, and `settled()` covers it at shutdown.
  */
-async function handleRelay(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
+async function handleRelay(req: IncomingMessage, res: ServerResponse, deps: HandleDeps): Promise<void> {
   if (!deps.isReady()) return sendError(res, 503, 'starting', 'factotum is still starting')
   if (req.headers.origin !== undefined) {
     return sendError(res, 403, 'relay-refused', 'the relay takes notices from a peer daemon, never from a browser')
@@ -305,10 +313,13 @@ async function handleRelay(req: IncomingMessage, res: ServerResponse, deps: Serv
   // No peers, no relay (design D1): the route does not exist on a daemon that has none.
   if (peers.length === 0) return sendError(res, 404, 'not-found', 'no route POST /push/relay')
 
-  const read = await readBodyOrAnswer(req, res)
+  const read = await readBodyOrAnswer(req, res, RELAY_MAX_BODY_BYTES)
   if (!read.ok) return
   const verdict = acceptRelayed(read.body, peers)
   if (!verdict.ok) return sendError(res, verdict.status, verdict.code, verdict.message)
+  // Charged only for a notice that would be delivered: garbage costs 8 KiB of reading at most, and
+  // must not starve the peer's real notices out of the bucket.
+  if (!deps.relayBucket.take()) return sendError(res, 429, 'relay-refused', 'too many notices relayed; try again in a minute')
 
   void deps.push.relay(verdict.envelope)
   return sendJson(res, 202, {})
@@ -366,10 +377,11 @@ function normalizePath(pathname: string): string {
 async function readBodyOrAnswer(
   req: IncomingMessage,
   res: ServerResponse,
+  maxBytes: number = MAX_BODY_BYTES,
 ): Promise<{ readonly ok: true; readonly body: unknown } | { readonly ok: false }> {
-  const read = await readJsonBody(req)
+  const read = await readJsonBody(req, maxBytes)
   if (read.kind === 'too-large') {
-    refuseTooLarge(res, read.drained, `bodies are capped at ${MAX_BODY_BYTES} bytes`)
+    refuseTooLarge(res, read.drained, `bodies are capped at ${maxBytes} bytes`)
     return { ok: false }
   }
   if (read.kind === 'invalid') {
@@ -390,17 +402,17 @@ type JsonRead =
  * the drain that followed then waited on a dead stream — a 413 of 2 MB took six seconds to arrive
  * (spec 2026-10-01, B0). Past the cap it keeps reading and discarding, up to DRAIN_MAX_BYTES.
  */
-async function readJsonBody(req: IncomingMessage): Promise<JsonRead> {
+async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<JsonRead> {
   if (req.method === 'GET' || req.method === 'HEAD') return { kind: 'ok', body: undefined }
 
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > MAX_BODY_BYTES + DRAIN_MAX_BYTES) return { kind: 'too-large', drained: false }
-    if (size <= MAX_BODY_BYTES) chunks.push(chunk as Buffer)
+    if (size > maxBytes + DRAIN_MAX_BYTES) return { kind: 'too-large', drained: false }
+    if (size <= maxBytes) chunks.push(chunk as Buffer)
   }
-  if (size > MAX_BODY_BYTES) return { kind: 'too-large', drained: true }
+  if (size > maxBytes) return { kind: 'too-large', drained: true }
   if (size === 0) return { kind: 'ok', body: undefined }
   try {
     return { kind: 'ok', body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }

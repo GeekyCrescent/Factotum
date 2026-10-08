@@ -17,6 +17,7 @@ import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
 import type { PeerTable } from '../net/peers.ts'
 import type { Proxy } from './proxy.ts'
+import { RELAY_MAX_BODY_BYTES, tokenBucket, type TokenBucket } from '../push/relay.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -51,7 +52,7 @@ const NO_PROXY: Pick<Proxy, 'handle'> = {
   handle: async (_req, res) => void res.writeHead(404, { 'content-type': 'application/json' }).end('{}'),
 }
 
-async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[]; peers?: Pick<PeerTable, 'list'> } = {}) {
+async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[]; peers?: Pick<PeerTable, 'list'>; relayBucket?: TokenBucket } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
   await mkdir(join(root, 'assets'), { recursive: true })
@@ -76,6 +77,7 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
     proxy: NO_PROXY,
     interfaces: opts.interfaces ?? MAC,
     isReady: () => opts.ready ?? true,
+    ...(opts.relayBucket !== undefined ? { relayBucket: opts.relayBucket } : {}),
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -795,6 +797,39 @@ test('GET /push/relay is not the relay: it goes through the origin check like th
   try {
     assert.equal((await fetch(`${base}/push/relay`)).status, 404)
     assert.equal((await fetch(`${base}/push/relay`, { headers: { origin: FOREIGN } })).status, 403)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay is throttled by a token bucket: past it, 429 and nothing relayed', async () => {
+  const { push, relayed } = relaying()
+  const now = 0
+  const { base, close } = await start({ push, peers: WITH_MAC, relayBucket: tokenBucket({ capacity: 2, refillMs: 60_000, now: () => now }) })
+  try {
+    // Refused notices are not charged: garbage cannot starve the peer's real ones.
+    assert.equal((await postRelay(base, { machine: 'juans-macbook-pro' })).status, 400)
+    assert.equal((await postRelay(base, relayBody('omarchy'))).status, 403)
+    assert.equal((await postRelay(base, relayBody())).status, 202)
+    assert.equal((await postRelay(base, relayBody())).status, 202)
+    const third = await postRelay(base, relayBody())
+    assert.equal(third.status, 429)
+    assert.equal(((await third.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    assert.equal(relayed.length, 2)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay caps its body at RELAY_MAX_BODY_BYTES, far under the API cap: 413', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const padded = { ...relayBody(), padding: 'x'.repeat(RELAY_MAX_BODY_BYTES) }
+    const res = await postRelay(base, padded)
+    assert.equal(res.status, 413)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'body-too-large')
+    assert.equal(relayed.length, 0)
   } finally {
     await close()
   }

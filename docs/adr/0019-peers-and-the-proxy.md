@@ -134,6 +134,7 @@ Mac:   ctx.notify.send(msg)
          └─► if the peer is reachable and has devices: POST <peer>/push/relay { message, moduleId, machine }
 Linux: POST /push/relay
          503 before READY · 403 relay-refused with any Origin · 404 with no peers
+         429 relay-refused past 20 a minute · 413 over 8 KiB
          400 for a body that is not a notice · 403 relay-refused for a machine that is not the peer's name
          → 202, and delivered to its own devices
 ```
@@ -172,6 +173,13 @@ Linux: POST /push/relay
 - **A compromised peer cannot serve a document under this host's origin**: the proxy forces the
   containment headers above (security review, 2026-10-08). What it can still serve is JSON to `fetch`
   and a raster image, which is what the modules' routes answer anyway.
+- **The relay is throttled and its body is bounded** (security review, 2026-10-08): a token bucket of
+  20 a minute on an injected clock (no timer to own), charged only for a notice that passed, so garbage
+  cannot starve the peer's; a body cap of
+  8 KiB (`RELAY_MAX_BODY_BYTES`), not the API's 1 MiB; caps per field; `moduleId` a module id. **`data`
+  is module-defined, so the kernel bounds its shape rather than its keys**: flat, scalar values only
+  (the questions notice carries `count` as a number), at most 16 short keys and 1536 bytes. Whoever
+  names the peer can still push, but 20 a minute of short text, not a flood.
 - **`/health` now says `devices`**, a count, without the origin check — like `version` and `ready`
   already were.
 - **No cap on concurrent proxied requests.** Low: whoever can open them can already reach the peer.

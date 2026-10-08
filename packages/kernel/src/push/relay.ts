@@ -29,10 +29,45 @@ import { MAX_PLAINTEXT_BYTES } from './send.ts'
 export const PUSH_RELAY_TIMEOUT_MS = 5_000
 
 /**
- * Each text field is bounded by what could ever be sent: an envelope over MAX_PLAINTEXT_BYTES is
- * not delivered by anyone (`send.ts`). The body cap (1 MiB) already bounds the whole.
+ * The relay's own body cap (security review, 2026-10-08), far under the API's 1 MiB: an envelope
+ * over MAX_PLAINTEXT_BYTES is not delivered by anyone (`send.ts`), so twice that is room enough for
+ * JSON's escaping and still nothing worth parsing.
  */
-const text = z.string().max(MAX_PLAINTEXT_BYTES)
+export const RELAY_MAX_BODY_BYTES = 8 * 1024
+
+/**
+ * Per field, in characters (security review, 2026-10-08). Each one well under the push cap, so a
+ * body that passes says something a lock screen can show — not a megabyte the schema has to walk.
+ */
+export const RELAY_LIMITS = {
+  title: 256,
+  body: 1024,
+  tag: 256,
+  path: 1024,
+  short: 64,
+  dataKeys: 16,
+  dataValue: 512,
+  dataBytes: 1536,
+} as const
+
+/**
+ * How many notices a peer may relay: a burst of 20, refilled over a minute. More than the owner
+ * can read, and it bounds what anyone on the tailnet who names the peer can push to the phone.
+ */
+export const RELAY_RATE = { capacity: 20, refillMs: 60_000 } as const
+
+const text = (max: number) => z.string().max(max)
+
+/**
+ * `data` is module-defined: the kernel cannot know its keys, so it cannot list them. What it can
+ * bound is the SHAPE (security review, 2026-10-08): flat, scalar, few keys, few bytes. Not strings
+ * only, as the review proposed: the questions notice carries `count` as a number, and the client
+ * reads it as one (`relevance.ts`). Nothing nested, so nothing the service worker would walk.
+ */
+const dataSchema = z
+  .record(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'data keys are short identifiers'), z.union([text(RELAY_LIMITS.dataValue), z.number().finite(), z.boolean(), z.null()]))
+  .refine((data) => Object.keys(data).length <= RELAY_LIMITS.dataKeys, `data takes at most ${RELAY_LIMITS.dataKeys} keys`)
+  .refine((data) => Buffer.byteLength(JSON.stringify(data), 'utf8') <= RELAY_LIMITS.dataBytes, `data is capped at ${RELAY_LIMITS.dataBytes} bytes`)
 
 /**
  * Dot segments, backslashes, and the escapes that become one of them further on — in the path part
@@ -49,23 +84,24 @@ const pathOnly = (path: string): string => path.split(/[?#]/, 1)[0] ?? ''
  * `/h/<machine>` it is put under.
  */
 const messageSchema = z.object({
-  title: text,
-  body: text,
-  path: text
+  title: text(RELAY_LIMITS.title),
+  body: text(RELAY_LIMITS.body),
+  path: text(RELAY_LIMITS.path)
     .regex(/^\/(?!\/)/, 'must be an absolute path')
     .refine((path) => !ESCAPES_PREFIX.test(pathOnly(path)), 'must not climb out of /h/<machine>')
     // A URL parser drops tabs and newlines silently: `/m/.\t./x` would be a `..` to sw.js.
     .refine((path) => !/[\u0000-\u0020\u007f]/.test(path), 'must not contain whitespace or control characters'),
-  tag: text,
-  actions: z.array(z.object({ action: text, label: text })).max(8).optional(),
-  data: z.record(z.string(), z.unknown()).optional(),
-  until: text.optional(),
+  tag: text(RELAY_LIMITS.tag),
+  actions: z.array(z.object({ action: text(RELAY_LIMITS.short), label: text(RELAY_LIMITS.short) })).max(8).optional(),
+  data: dataSchema.optional(),
+  until: text(RELAY_LIMITS.short).optional(),
 })
 
 /** What a peer posts: the envelope it would have sent to its own devices. */
 export const relayedEnvelopeSchema = z.object({
   message: messageSchema,
-  moduleId: text.nullable(),
+  // A module id, as the registry knows them: it names a pending's store key on the phone.
+  moduleId: z.string().max(RELAY_LIMITS.short).regex(/^[a-z0-9-]+$/, 'must be a module id').nullable(),
   machine: z.string().regex(PEER_NAME, 'must be a machine name'),
 })
 
@@ -119,6 +155,32 @@ export function fitRelayed(envelope: PushEnvelope, log: Logger): PushEnvelope {
   // The machine and nothing else: data can carry a token (ADR-0010).
   log.warn(`a notice relayed from ${envelope.machine} is over ${MAX_PLAINTEXT_BYTES} bytes; sent without its data`)
   return { ...envelope, message }
+}
+
+export interface TokenBucket {
+  /** `true` and one token spent, or `false` when the bucket is empty. */
+  readonly take: () => boolean
+}
+
+/**
+ * A token bucket on an INJECTED CLOCK: it refills lazily from `now()` on each `take`, so it needs no
+ * timer at all — nothing to own, nothing to release at shutdown (CLAUDE.md §6), and a test moves the
+ * clock instead of waiting.
+ */
+export function tokenBucket(options: { readonly capacity: number; readonly refillMs: number; readonly now: () => number }): TokenBucket {
+  const perMs = options.capacity / options.refillMs
+  let tokens = options.capacity
+  let at = options.now()
+  return {
+    take: () => {
+      const now = options.now()
+      tokens = Math.min(options.capacity, tokens + Math.max(0, now - at) * perMs)
+      at = now
+      if (tokens < 1) return false
+      tokens -= 1
+      return true
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
