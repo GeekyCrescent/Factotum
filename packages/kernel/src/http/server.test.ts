@@ -25,13 +25,14 @@ const subscription = {
   keys: { p256dh: 'B' + 'x'.repeat(86), auth: 'y'.repeat(22) },
 }
 
-type FakePush = Pick<PushService, 'publicKey' | 'subscribe'>
+type FakePush = Pick<PushService, 'publicKey' | 'subscribe' | 'count'>
 
 // NOT a default parameter for the key: passing `undefined` to one ACTIVATES the default, which is
 // how the push-off test first passed a key it meant to withhold.
 const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key: { readonly publicKey: string | undefined } = { publicKey: 'B'.repeat(87) }): FakePush => ({
   publicKey: () => key.publicKey,
   subscribe: async () => result,
+  count: () => 3,
 })
 
 /** The daemon's machine, faked: loopback and its tailnet address (spec 2026-09-18, A6). */
@@ -65,6 +66,22 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   return { base, home, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
 }
+
+// ---------------------------------------------------------------------------
+// /health (spec 2026-10-07, D2 and D6): it gains `devices` and nothing else
+// ---------------------------------------------------------------------------
+
+test('/health says how many devices are subscribed, so a peer knows whether to relay', async () => {
+  const { base, close } = await start()
+  try {
+    const body = (await (await fetch(`${base}/health`)).json()) as Record<string, unknown>
+    assert.deepEqual(Object.keys(body).sort(), ['devices', 'environment', 'ready', 'uptimeMs', 'version'])
+    assert.equal(body['devices'], 3)
+    assert.equal(body['version'], 'test')
+  } finally {
+    await close()
+  }
+})
 
 // ---------------------------------------------------------------------------
 // §0.25 — the static fallback used to swallow every GET under /push

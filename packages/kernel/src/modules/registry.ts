@@ -77,7 +77,7 @@ interface Entry {
   readonly handle?: { stop: () => Promise<void> | void }
 }
 
-interface TimerSet {
+export interface TimerSet {
   readonly timers: Timers
   readonly disposeAll: () => void
 }
@@ -89,8 +89,11 @@ interface TimerSet {
  * disabled — with no `ModuleHandle` to call — and the interval still running, so the
  * process never exits on SIGINT. `unref` on top means a module's background work
  * never by itself keeps the daemon alive.
+ *
+ * Exported for the kernel's own background work — the peer probe (spec 2026-10-07, D2) gets a set
+ * of its own from `boot`, disposed in `BootHandle.stop`, by the same rules as a module's.
  */
-function timerSet(): TimerSet {
+export function timerSet(): TimerSet {
   const live = new Set<() => void>()
 
   const track = (cancel: () => void): Disposable => {

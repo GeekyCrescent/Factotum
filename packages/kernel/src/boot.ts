@@ -21,8 +21,8 @@ import { resolveListen, type Interfaces } from './net/resolve.ts'
 import { verifyBound } from './net/verify.ts'
 import { localUrl } from './net/url.ts'
 import { policyFor } from './net/policy.ts'
-import { machineName, PEER_NAME } from './net/peers.ts'
-import { Registry } from './modules/registry.ts'
+import { createPeerTable, machineName, PEER_NAME } from './net/peers.ts'
+import { Registry, timerSet } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
 
 export interface BootOptions {
@@ -33,6 +33,8 @@ export interface BootOptions {
   readonly site?: StaticSite
   readonly interfaces?: Interfaces
   readonly startTimeoutMs?: number
+  /** The peer probe's period. Tests shorten it; nothing else should (design D2). */
+  readonly peerProbeMs?: number
   readonly paths?: StatePaths
   /**
    * A seam, and the only one. Step 11 asks what the socket ACTUALLY bound to, and
@@ -51,6 +53,14 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
   const paths = options.paths ?? statePaths(options.env, options.home)
   const config = await loadRootConfig(options.env, paths)
   checkPeers(config.publicOrigin, config.peers)
+  // Built now and armed at step 12: nothing calls out of the process before the bind is proven.
+  // Its timers are the kernel's own, by the same rules as a module's (CLAUDE.md §6).
+  const peers = createPeerTable({
+    peers: config.peers,
+    log: prefixed('peers'),
+    ...(options.peerProbeMs !== undefined ? { probeMs: options.peerProbeMs } : {}),
+  })
+  const kernelTimers = timerSet()
 
   // 4-5. Where to listen, and whether we are allowed to.
   const listen = resolveListen(config.listen, options.interfaces)
@@ -128,8 +138,10 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     )
   }
 
-  // 12. Only now does anything of a module's start running.
+  // 12. Only now does anything of a module's start running — and the peer probe, which is the
+  // kernel's own background work. A peer that is down costs nothing here: it is probed, not awaited.
   await registry.startAll()
+  peers.start(kernelTimers.timers)
 
   // 13. Ready. Everything before this answered 503 on the API.
   ready = true
@@ -142,6 +154,8 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     localUrl: localUrl(listen.address, listen.port),
     stop: async () => {
       ready = false
+      peers.stop()
+      kernelTimers.disposeAll()
       await registry.stopAll()
       // Notices already on their way — a module's "stopped" among them — are let finish. Each
       // is bounded by its own AbortSignal, so this cannot hang the shutdown.

@@ -48,8 +48,11 @@ export interface ServerDeps {
    * HTML and a supervisor can still tell "starting" from "wedged".
    */
   readonly isReady: () => boolean
-  /** The two push routes below. Never a module: the kernel knows no module by name. */
-  readonly push: Pick<PushService, 'publicKey' | 'subscribe'>
+  /**
+   * The two push routes below, and the device count `/health` reports to a peer (spec 2026-10-07,
+   * D6). Never a module: the kernel knows no module by name.
+   */
+  readonly push: Pick<PushService, 'publicKey' | 'subscribe' | 'count'>
   /** This machine's addresses, to tell a subscription from here (design D12). */
   readonly interfaces: Interfaces
 }
@@ -91,6 +94,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
       environment: deps.env,
       ready: deps.isReady(),
       uptimeMs: Date.now() - deps.startedAt,
+      // A COUNT, as `/push/subscriptions` answers one: the peer's probe reads it to know whether
+      // relaying a notice here would reach anyone. Not behind the origin, like `version`.
+      devices: deps.push.count(),
     })
   }
 

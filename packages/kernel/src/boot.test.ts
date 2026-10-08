@@ -494,3 +494,49 @@ test('a peer whose name cannot travel in a path aborts', async () => {
   // `[::1]` is a canonical origin, and its first label is not a name `/peers/<name>/` can carry.
   await assertAborts({ peers: [{ origin: 'http://[::1]:7000' }] }, 'peer-invalid', /hostname/)
 })
+
+// ---------------------------------------------------------------------------
+// The probe, wired (criterion 3): kernel timers, freed by BootHandle.stop
+// ---------------------------------------------------------------------------
+
+test('the peer is probed at start on kernel timers, and stop leaves no probe running', async () => {
+  // The peer listens on `localhost` and this daemon is `127.0.0.1`: two loopback daemons need two
+  // names, or criterion 2 aborts (design D2).
+  const peerPort = takePort()
+  let hits = 0
+  const peer = createHttpServer((_req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: 'p', ready: true, devices: 0 }))
+  })
+  await new Promise<void>((resolve) => peer.listen(peerPort, 'localhost', resolve))
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 3_000
+    while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  const port = takePort()
+  const paths = await withConfig({ publicOrigin: `http://127.0.0.1:${port}`, peers: [{ origin: `http://localhost:${peerPort}` }] }, port)
+  const handle = await bootWith(paths, [], { peerProbeMs: 30 })
+  try {
+    await until(() => hits >= 2)
+    assert.ok(hits >= 2, 'probed at start and then on its period')
+  } finally {
+    await handle.stop()
+  }
+  const after = hits
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.equal(hits, after, 'no probe after stop')
+  peer.closeAllConnections()
+  await new Promise<void>((resolve) => peer.close(() => resolve()))
+})
+
+test('a peer that is not there at all: the daemon boots and serves', async () => {
+  const port = takePort()
+  const paths = await withConfig({ peers: [{ origin: `http://localhost:${takePort()}` }] }, port)
+  const handle = await bootWith(paths)
+  try {
+    assert.equal((await fetch(`${handle.localUrl}/health`)).status, 200)
+  } finally {
+    await handle.stop()
+  }
+})
