@@ -486,3 +486,133 @@ test('doctor says where the projects registry is and how many projects it has â€
   await writeFile(registry, '{ nope')
   assert.match(await report(home), /projects +.*is BROKEN, so no project loads/)
 })
+
+// ---------------------------------------------------------------------------
+// The peer (spec 2026-10-07, criterion 35, first bullet)
+// ---------------------------------------------------------------------------
+
+const PEER = 'https://omarchy.tail1234.ts.net'
+const withPeer = { ...goodProd, peers: [{ origin: PEER }] }
+
+/** The local daemon is not running; the peer answers whatever `peer` returns. */
+function peerFetch(peer: (url: string) => Promise<Response>, asked: string[] = []): typeof globalThis.fetch {
+  return (async (input: string | URL) => {
+    const url = String(input)
+    asked.push(url)
+    if (url.startsWith(PEER)) return peer(url)
+    throw new Error('no daemon')
+  }) as unknown as typeof globalThis.fetch
+}
+
+const health = (body: unknown, status = 200): Promise<Response> =>
+  Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }))
+
+/** What `fetch` throws when the name does not resolve. Measured on Node 26: `cause.code` is ENOTFOUND. */
+function dnsFailure(code = 'ENOTFOUND'): Promise<Response> {
+  const cause = Object.assign(new Error(`getaddrinfo ${code} omarchy.tail1234.ts.net`), { code })
+  return Promise.reject(new TypeError('fetch failed', { cause }))
+}
+
+test('no peers: says this host runs alone, and asks nobody', async () => {
+  const asked: string[] = []
+  const home = await withConfig('prod', goodProd)
+  const output = await report(home, { fetch: peerFetch(() => health({}), asked) })
+
+  assert.match(output, /peers {7}none/)
+  assert.equal(asked.some((url) => url.startsWith(PEER)), false)
+})
+
+test('a peer that answers: its machineName, its version and its devices, asked on its /health', async () => {
+  const asked: string[] = []
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, {
+    fetch: peerFetch(() => health({ version: '0.4.0', environment: 'prod', ready: true, devices: 2 }), asked),
+  })
+
+  assert.ok(asked.includes(`${PEER}/health`), asked.join(', '))
+  assert.match(output, /peer {8}omarchy  https:\/\/omarchy\.tail1234\.ts\.net/)
+  assert.match(output, /answers \/health: version 0\.4\.0, 2 devices subscribed/)
+})
+
+test('a peer with one device says device, and one with none says so', async () => {
+  const home = await withConfig('prod', withPeer)
+  const one = await report(home, { fetch: peerFetch(() => health({ version: '1', ready: true, devices: 1 })) })
+  assert.match(one, /version 1, 1 device subscribed/)
+
+  const none = await report(home, { fetch: peerFetch(() => health({ version: '1', ready: true, devices: 0 })) })
+  assert.match(none, /version 1, no devices subscribed/)
+})
+
+test('a peer from before devices existed: the version, and devices unknown', async () => {
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, { fetch: peerFetch(() => health({ version: '0.0.0', ready: true })) })
+
+  assert.match(output, /version 0\.0\.0, devices unknown/)
+})
+
+test('a peer that is still starting is said as such, not as down', async () => {
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, { fetch: peerFetch(() => health({ version: '1', ready: false, devices: 0 })) })
+
+  assert.match(output, /version 1, STILL STARTING/)
+})
+
+test('a peer name that does not resolve: the Tailscale DNS remedy, exactly', async () => {
+  // Measured on the Mac (Â§M 2026-10-08): with Tailscale DNS off, *.ts.net does not resolve, and the
+  // probe and the proxy never find the peer. The line has to say the one command that fixes it.
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, { fetch: peerFetch(() => dnsFailure()) })
+
+  assert.match(output, /peer {8}omarchy  https:\/\/omarchy\.tail1234\.ts\.net/)
+  assert.match(output, /CANNOT RESOLVE omarchy\.tail1234\.ts\.net/)
+  assert.match(output, /tailscale set --accept-dns=true$/m)
+})
+
+test('EAI_AGAIN is a name that does not resolve too', async () => {
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, { fetch: peerFetch(() => dnsFailure('EAI_AGAIN')) })
+
+  assert.match(output, /CANNOT RESOLVE/)
+  assert.match(output, /tailscale set --accept-dns=true/)
+})
+
+test('a peer that does not answer: NOT ANSWERING, and no DNS remedy that would mislead', async () => {
+  const home = await withConfig('prod', withPeer)
+  const output = await report(home, {
+    fetch: peerFetch(() => Promise.reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))),
+  })
+
+  assert.match(output, /NOT ANSWERING within 3000ms/)
+  assert.doesNotMatch(output, /accept-dns/)
+})
+
+test('a peer refused for another reason: NOT ANSWERING with the code, never the error message', async () => {
+  const home = await withConfig('prod', withPeer)
+  const cause = Object.assign(new Error('connect ECONNREFUSED 100.85.47.44:443'), { code: 'ECONNREFUSED' })
+  const output = await report(home, { fetch: peerFetch(() => Promise.reject(new TypeError('fetch failed', { cause }))) })
+
+  assert.match(output, /NOT ANSWERING \(ECONNREFUSED\)/)
+  assert.doesNotMatch(output, /100\.85\.47\.44/)
+})
+
+test('a peer whose /health is not 200, or not factotum, is said as such', async () => {
+  const home = await withConfig('prod', withPeer)
+  const bad = await report(home, { fetch: peerFetch(() => health({}, 502)) })
+  assert.match(bad, /\/health answered 502/)
+
+  const html = await report(home, {
+    fetch: peerFetch(() => Promise.resolve(new Response('<html>', { headers: { 'content-type': 'text/html' } }))),
+  })
+  assert.match(html, /answers, but not as a factotum \/health/)
+})
+
+test('the peer is reported even when the bind cannot be resolved', async () => {
+  const home = await withConfig('prod', { ...withPeer, listen: { address: '100.99.99.99', port: 7777 } })
+  const output = await report(home, {
+    interfaces: loopbackOnly,
+    fetch: peerFetch(() => health({ version: '1', ready: true, devices: 0 })),
+  })
+
+  assert.match(output, /CANNOT RESOLVE/)
+  assert.match(output, /peer {8}omarchy/)
+})

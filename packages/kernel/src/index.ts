@@ -12,7 +12,7 @@ export { resolveListen, type Interfaces, type ResolvedListen } from './net/resol
 export { verifyBound } from './net/verify.ts'
 export { localUrl } from './net/url.ts'
 // `doctor` names each peer the way the daemon does (spec 2026-10-07, F0).
-export { machineName } from './net/peers.ts'
+export { machineName, PEER_PROBE_TIMEOUT_MS } from './net/peers.ts'
 export { describePolicy, originAllowed, originPolicy, type OriginPolicy } from './net/origin.ts'
 // `doctor` lives in packages/cli and reaches the kernel only through this file, so the
 // shared isLoopback rule has to be exported or it becomes two copies. See net/policy.ts.
