@@ -26,7 +26,7 @@ import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls }
 import { canSend, uploadsOf, withRefs } from './attachments.ts'
 import type { Api } from './contract.ts'
 import { DictateButton, DictationNotice, useComposerDictation, type DictationControls } from './dictate.tsx'
-import { conflictOf, describe, freshnessOf, messageOf, type Conflict, type Freshness } from './errors.ts'
+import { conflictOf, describe, freshnessOf, launchUnanswered, messageOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
 import { SlashPicker, useSlash, type SlashControls } from './slash-picker.tsx'
@@ -41,9 +41,13 @@ const ASK_WHAT = 'What do you want to do in this project?'
 type Problem =
   | { readonly kind: 'conflict'; readonly conflict: Conflict }
   | { readonly kind: 'stale'; readonly freshness: Freshness }
+  /** A launch on another host the proxy gave up on: it may have started (design D12). */
+  | { readonly kind: 'unanswered' }
   | { readonly kind: 'error'; readonly message: string }
 
-function problemOf(cause: unknown): Problem {
+/** `host`: where the request went, for a launch; `undefined` for the serving host and for a reply. */
+function problemOf(cause: unknown, host: string | undefined): Problem {
+  if (launchUnanswered(cause, host)) return { kind: 'unanswered' }
   const conflict = conflictOf(cause)
   if (conflict !== undefined) return { kind: 'conflict', conflict }
   const freshness = freshnessOf(cause)
@@ -51,8 +55,15 @@ function problemOf(cause: unknown): Problem {
   return { kind: 'error', message: messageOf(cause) }
 }
 
-/** Sends, and turns a failure into the notice it deserves. The text is kept until it went through. */
-function useSend(send: (text: string, force: boolean) => Promise<void>) {
+/**
+ * Sends, and turns a failure into the notice it deserves. The text is kept until it went through.
+ * NEVER RETRIES BY ITSELF — a launch the other host did not answer least of all: `onUnanswered` only
+ * reads that host's sessions again (spec 2026-10-07-dos-hosts, design D12).
+ */
+function useSend(
+  send: (text: string, force: boolean) => Promise<void>,
+  launchOn: { readonly host: string | undefined; readonly onUnanswered: (() => void) | undefined } = { host: undefined, onUnanswered: undefined },
+) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<Problem | undefined>(undefined)
@@ -63,7 +74,9 @@ function useSend(send: (text: string, force: boolean) => Promise<void>) {
       await send(text, force)
       setText('')
     } catch (cause: unknown) {
-      setProblem(problemOf(cause))
+      const problem = problemOf(cause, launchOn.host)
+      setProblem(problem)
+      if (problem.kind === 'unanswered') launchOn.onUnanswered?.()
     } finally {
       setBusy(false)
     }
@@ -81,15 +94,19 @@ function useSend(send: (text: string, force: boolean) => Promise<void>) {
 
 export function LaunchComposer({
   api,
+  host,
   setup,
   wantedSiteId,
   onSite,
   onLaunched,
+  onUnanswered,
   goTo,
   onManage,
 }: {
   /** THIS HOST'S api: the screen is the launch screen of one host (spec 2026-10-07-dos-hosts, D12). */
   readonly api: Api
+  /** That host, as the screen has it: `undefined` for the serving one. */
+  readonly host?: string | undefined
   /** This host's setup: its projects, its catalogue, its uploads. */
   readonly setup: EngineSetupView
   /** The project «Run on» carried over from the other host, chosen if this host has it. */
@@ -97,6 +114,8 @@ export function LaunchComposer({
   /** The project chosen now, for «Run on» to carry over. */
   readonly onSite?: (siteId: string) => void
   readonly onLaunched: (sessionId: string) => void
+  /** A launch on another host came back 502: read that host's sessions again, and nothing more. */
+  readonly onUnanswered?: () => void
   readonly goTo: (sessionId: string) => void
   /** To the projects screen, where one is added (spec 2026-09-29, D10). */
   readonly onManage: () => void
@@ -123,7 +142,7 @@ export function LaunchComposer({
     attach.clear(sent.map((item) => item.key))
     dictation.clear()
     onLaunched(result.sessionId)
-  })
+  }, { host, onUnanswered })
   // `@` lists the project chosen in the select; changing it re-reads the token (criterion 24).
   const picker = usePicker({ api, site, capability: filesOf(setup), text: s.text, setText: s.setText })
   const slash = useSlash({ api, siteId: site?.id, projectLabel: site === undefined ? undefined : (site.name ?? site.id), mode: 'launch', text: s.text, setText: s.setText, textarea: picker.textarea, onAgent: setAgent })
@@ -477,6 +496,17 @@ function Problems({
   readonly onCancelOther: ((sessionId: string) => void) | undefined
 }) {
   if (problem === undefined) return null
+  if (problem.kind === 'unanswered') {
+    return (
+      <div class="notice err" role="alert">
+        <div class="head">
+          <Icon name="warning" size={16} />
+          The other host did not answer — it may have started.
+        </div>
+        <p class="dim-2">Its sessions are being read again. Look for it in the menu before you send this again.</p>
+      </div>
+    )
+  }
   if (problem.kind === 'error') {
     return (
       <div class="notice err" role="alert">

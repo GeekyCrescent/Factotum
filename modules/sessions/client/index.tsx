@@ -14,6 +14,10 @@
  * it NAVIGATES to the other host's launch screen, carrying the project in the path, and the shell
  * mounts the screen again (it is keyed by host).
  *
+ * THE LAST HOST CHOSEN on this device is remembered (`view.launchHost`, its own IndexedDB record), and
+ * «New» with no host goes there once, on mount, while it is reachable. A launch the other host did
+ * not answer is not retried: the composer says it may have started, and this reads that host again.
+ *
  * A SESSION READS ITS OWN SUMMARY (`session.tsx`), so opening one does not depend on it being on the
  * first page of a list (criterion 36). The page here is only for landing on `''` and for noticing
  * that a pending's session is over; `GET sessions` leaves out what is archived and what belongs to a
@@ -34,7 +38,7 @@ import { LaunchComposer } from './composer.tsx'
 import type { ViewProps } from './contract.ts'
 import { SessionsDrawer } from './drawer.tsx'
 import { messageOf } from './errors.ts'
-import { launchPath, launchRest, runOnChoices } from './hosts.ts'
+import { launchPath, launchRest, rememberedLaunchHost, runOnChoices, type RunOnChoice } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { ProjectsScreen } from './projects.tsx'
 import { firstWithSession, pickRelevant, resolvedBy } from './relevance.ts'
@@ -56,6 +60,7 @@ function SessionsView(view: ViewProps) {
   const onSite = useCallback((siteId: string) => {
     chosenSite.current = siteId
   }, [])
+  useRememberedLaunchHost(view, launch?.siteId, launch !== undefined)
 
   const refresh = useCallback(async () => {
     try {
@@ -120,7 +125,9 @@ function SessionsView(view: ViewProps) {
   if (launch !== undefined) {
     // The first pending WITH A SESSION: a folder request has none, and must not hide an ask's strip.
     const other = firstWithSession(pending)
-    const runOn = (host: string | undefined) => navigate(launchPath(chosenSite.current), { host: host ?? null })
+    // Remembered BEFORE going: the launch screen there, mounted anew, reads it.
+    const runOn = (choice: RunOnChoice) =>
+      void view.launchHost.write(choice.name).then(() => navigate(launchPath(chosenSite.current), { host: choice.key ?? null }))
     return (
       <div class="s-screen">
         <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer}>
@@ -139,6 +146,7 @@ function SessionsView(view: ViewProps) {
         <div class="s-dock">
           <LaunchComposer
             api={api}
+            host={view.host}
             setup={setup}
             wantedSiteId={launch.siteId}
             onSite={onSite}
@@ -146,6 +154,7 @@ function SessionsView(view: ViewProps) {
               void refresh()
               navigate(id)
             }}
+            onUnanswered={() => void refresh()}
             goTo={(id) => navigate(id)}
             onManage={() => navigate(PROJECTS)}
           />
@@ -158,10 +167,39 @@ function SessionsView(view: ViewProps) {
 }
 
 /**
+ * «New» on the serving host goes to the host last chosen on this device, if it is a reachable peer
+ * (criterion 12). DECIDED ONCE EACH TIME the screen becomes the launcher, as soon as `GET /hosts` has
+ * answered — never later, under someone already typing. Every other launch screen stays where it is.
+ */
+function useRememberedLaunchHost(view: ViewProps, siteId: string | undefined, launching: boolean): void {
+  const { host, hosts, launchHost, navigate } = view
+  const decided = useRef(false)
+  const alive = useRef(true)
+  useEffect(
+    () => () => {
+      alive.current = false
+    },
+    [],
+  )
+  useEffect(() => {
+    if (!launching) {
+      decided.current = false
+      return
+    }
+    if (decided.current || host !== undefined || hosts.length === 0) return
+    decided.current = true
+    void launchHost.read().then((saved) => {
+      const target = rememberedLaunchHost(saved, hosts)
+      if (alive.current && target !== undefined) navigate(launchPath(siteId), { host: target, replace: true })
+    })
+  }, [launching, host, hosts, launchHost, navigate, siteId])
+}
+
+/**
  * «Run on»: the hosts this screen can be the launch screen of — the serving one and every reachable
  * peer (`runOnChoices`). Nothing with fewer than two, so a daemon without peers looks as it did.
  */
-function RunOn({ view, onPick }: { readonly view: ViewProps; readonly onPick: (host: string | undefined) => void }) {
+function RunOn({ view, onPick }: { readonly view: ViewProps; readonly onPick: (choice: RunOnChoice) => void }) {
   const choices = runOnChoices(view.hosts, view.host)
   if (choices.length === 0) return null
   return (
@@ -172,7 +210,8 @@ function RunOn({ view, onPick }: { readonly view: ViewProps; readonly onPick: (h
         value={view.host ?? ''}
         onChange={(event) => {
           const value = (event.target as HTMLSelectElement).value
-          onPick(value === '' ? undefined : value)
+          const choice = choices.find((c) => (c.key ?? '') === value)
+          if (choice !== undefined) onPick(choice)
         }}
       >
         {choices.map((choice) => (

@@ -37,6 +37,16 @@ export interface HostView {
   readonly lastSeenAt: string | null
 }
 
+/**
+ * The host this device last chose to launch on, kept by the shell in its own IndexedDB record
+ * (`launch`, never `device`: design D12). `read` gives the name AS STORED; which one is the serving
+ * host, and whether it is up, the launcher decides (`rememberedLaunchHost`). Neither ever throws.
+ */
+export interface LaunchHostStore {
+  readonly read: () => Promise<string | undefined>
+  readonly write: (name: string) => Promise<void>
+}
+
 export interface ViewProps {
   /** This module on the screen's host: everything the screen does goes there. */
   readonly api: Api
@@ -46,6 +56,7 @@ export interface ViewProps {
   readonly apiOn: (host: string | undefined) => Api
   /** Every host, the serving one first; empty until `GET /hosts` first answers. */
   readonly hosts: readonly HostView[]
+  readonly launchHost: LaunchHostStore
   readonly rest: string
   readonly search: string
   readonly navigate: (rest: string, options?: NavigateOptions) => void

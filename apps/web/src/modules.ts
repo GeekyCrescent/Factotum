@@ -33,6 +33,14 @@ export interface ModuleViewProps {
   /** Every host, the serving one first; empty until `GET /hosts` first answers (`hosts.ts`). */
   readonly hosts: readonly HostView[]
   /**
+   * The host this device last chose to launch on, in IndexedDB under its OWN key (`pending-db.ts`,
+   * design D12): the name as stored, for the module to judge against `hosts`.
+   */
+  readonly launchHost: {
+    readonly read: () => Promise<string | undefined>
+    readonly write: (name: string) => Promise<void>
+  }
+  /**
    * What follows `/m/<id>/` in the path, `''` at the module's root. KEPT IN STEP WITH THE URL: when
    * the module navigates, or Back is pressed, the screen re-renders with the new value.
    *

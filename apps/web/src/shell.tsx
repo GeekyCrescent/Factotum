@@ -22,6 +22,7 @@ import { navIcon, type ShellIcon } from './icons.ts'
 import { clientFor, type ModuleClient } from './modules.ts'
 import { landing, ordered } from './nav.ts'
 import { forModule } from './pending.ts'
+import { readLaunchHost, writeLaunchHost } from './pending-db.ts'
 import { resubscribe, type EnableResult } from './push.ts'
 import { navigatePath, pathOf, type NavigateOptions, type Screen } from './router.ts'
 import { usePending, type Pendings } from './use-pending.ts'
@@ -32,6 +33,8 @@ const DRAWER = 'drawer'
 /** Where the sidebar stays (shell.css says the same width). */
 const WIDE = '(min-width: 1024px)'
 const RAIL_KEY = 'factotum.rail'
+/** One object for the life of the page, like every prop a module may key an effect on. */
+const LAUNCH_HOST = { read: readLaunchHost, write: writeLaunchHost } as const
 
 export function Shell({ initialSearch }: { readonly initialSearch: string }) {
   const route = useRoute(initialSearch)
@@ -245,6 +248,7 @@ function ModuleView({
       host={host}
       apiOn={apiOnFor(id)}
       hosts={hosts}
+      launchHost={LAUNCH_HOST}
       rest={rest}
       search={route.search}
       navigate={navigate}
