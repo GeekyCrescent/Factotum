@@ -233,6 +233,12 @@ export function HostDrawer({ api, host, rest, navigate, pending, query, selectin
     setFailure(undefined)
   }, [onSelecting])
 
+  // Folded or gone down while selecting: the selection goes with the part, or it would come back as
+  // "0 selected" the next time this host is shown.
+  const leave = useRef(onSelecting)
+  leave.current = onSelecting
+  useEffect(() => () => leave.current(false), [])
+
   // Another host began selecting: what was picked here goes, since a selection never mixes hosts.
   useEffect(() => {
     if (selecting) return

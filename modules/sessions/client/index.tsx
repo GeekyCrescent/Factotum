@@ -135,7 +135,8 @@ function SessionsView(view: ViewProps) {
     const other = firstWithSession(pending)
     // Remembered BEFORE going: the launch screen there, mounted anew, reads it.
     const runOn = (choice: RunOnChoice) =>
-      void view.launchHost.write(choice.name).then(() => navigate(launchPath(chosenSite.current), { host: choice.key ?? null }))
+      // REPLACED, not pushed: Back must not land on the launcher just left, which would send it here again.
+      void view.launchHost.write(choice.name).then(() => navigate(launchPath(chosenSite.current), { host: choice.key ?? null, replace: true }))
     return (
       <div class="s-screen">
         <TopBar title="New session" pendingTotal={view.pendingTotal} onMenu={view.openDrawer}>
@@ -214,6 +215,9 @@ function useRememberedLaunchHost(view: ViewProps, siteId: string | undefined, la
   const { host, hosts, launchHost, navigate } = view
   const decided = useRef(false)
   const alive = useRef(true)
+  // Read when the stored host arrives: the owner may have left the launcher while IndexedDB answered.
+  const stillLaunching = useRef(launching)
+  stillLaunching.current = launching
   useEffect(
     () => () => {
       alive.current = false
@@ -229,7 +233,7 @@ function useRememberedLaunchHost(view: ViewProps, siteId: string | undefined, la
     decided.current = true
     void launchHost.read().then((saved) => {
       const target = rememberedLaunchHost(saved, hosts)
-      if (alive.current && target !== undefined) navigate(launchPath(siteId), { host: target, replace: true })
+      if (alive.current && stillLaunching.current && target !== undefined) navigate(launchPath(siteId), { host: target, replace: true })
     })
   }, [launching, host, hosts, launchHost, navigate, siteId])
 }

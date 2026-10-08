@@ -72,11 +72,18 @@ export function SessionsDrawer({ apiOn, hosts, rest, navigate, pending }: Drawer
             onSelecting={(on) => select(group.key, on)}
           />
         )
-        // One host, or GET /hosts not answered yet: no heading, as before there were two.
-        if (groups.length === 1) return part
         const name = group.name ?? ''
+        // ALWAYS a HostBlock, headed or not: the same tree when the first GET /hosts adds a peer, so
+        // the serving host's part is not mounted again and loses nothing.
         return (
-          <HostBlock key={group.key ?? ''} group={group} now={now} folded={hostsFolded.folded.has(name)} onToggle={() => hostsFolded.toggle(name)}>
+          <HostBlock
+            key={group.key ?? ''}
+            group={group}
+            heading={groups.length > 1}
+            now={now}
+            folded={hostsFolded.folded.has(name)}
+            onToggle={() => hostsFolded.toggle(name)}
+          >
             {part}
           </HostBlock>
         )
@@ -91,17 +98,22 @@ export function SessionsDrawer({ apiOn, hosts, rest, navigate, pending }: Drawer
  */
 function HostBlock({
   group,
+  heading,
   now,
   folded,
   onToggle,
   children,
 }: {
   readonly group: HostGroup<unknown>
+  /** One host, or GET /hosts not answered yet: no heading, and the drawer is as it was. */
+  readonly heading: boolean
   readonly now: number
   readonly folded: boolean
   readonly onToggle: () => void
   readonly children: ComponentChildren
 }) {
+  // The same element with and without a heading, so its part stays mounted when one appears.
+  if (!heading) return <section>{children}</section>
   const shut = folded || !group.reachable
   return (
     <section class={group.reachable ? 's-host' : 's-host s-host-down'} aria-label={group.name}>

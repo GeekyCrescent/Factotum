@@ -501,7 +501,7 @@ function Problems({
       <div class="notice err" role="alert">
         <div class="head">
           <Icon name="warning" size={16} />
-          The other host did not answer — it may have started.
+          The other host did not answer. It may have started.
         </div>
         <p class="dim-2">Its sessions are being read again. Look for it in the menu before you send this again.</p>
       </div>
