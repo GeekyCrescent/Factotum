@@ -114,11 +114,24 @@ export async function checkFreshness(deps: FreshnessDeps): Promise<FreshnessRepo
     )
     const parsed = Number.parseInt(count.trim(), 10)
     return { ...NOTHING_COMPARED, ...tree, behind: Number.isNaN(parsed) ? 0 : parsed }
-  } catch {
-    // The fetch worked, so there is no upstream to count against. A branch nobody pushes is
-    // a choice, not a failure: no warning.
-    return { ...NOTHING_COMPARED, ...tree, noUpstream: true }
+  } catch (error) {
+    // No upstream — git SAID so: a branch nobody pushes is a choice, not a failure, and gets no
+    // warning. ANYTHING ELSE (a timeout, another fatal) is a comparison that did not happen, and says
+    // so as main did (code review, 2026-10-08).
+    if (isNoUpstream(error)) return { ...NOTHING_COMPARED, ...tree, noUpstream: true }
+    return { ...NOTHING_COMPARED, ...tree, remoteWarning: `could not compare against the remote: ${message(error)}` }
   }
+}
+
+/**
+ * Exit 128 with git's own words for "there is no @{u}", measured on git 2.x: `fatal: no upstream
+ * configured for branch '<name>'`, and on a detached HEAD `fatal: HEAD does not point to a branch`.
+ * `runGit` puts the exit code and that line in the message. A git in another language fails this
+ * test and shows a warning instead: the safe side.
+ */
+function isNoUpstream(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : ''
+  return /\(exit 128\)/.test(text) && /fatal: (no upstream configured for branch|HEAD does not point to a branch)/.test(text)
 }
 
 /** The report before anything was found. Spread first, so each path names only what it found. */

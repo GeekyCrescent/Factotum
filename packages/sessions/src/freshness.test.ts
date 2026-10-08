@@ -143,12 +143,38 @@ test('NO UPSTREAM is not a failure: noUpstream, never fetchFailed, and no warnin
   const report = await checkFreshness({
     cwd: CWD,
     timers,
-    git: fakeGit({ status: '', fetch: '', 'rev-list': new Error("fatal: no upstream configured for branch 'main'") }),
+    git: fakeGit({ status: '', fetch: '', 'rev-list': new Error("git rev-list failed (exit 128): fatal: no upstream configured for branch 'main'") }),
   })
   assert.equal(report.noUpstream, true)
   assert.equal(report.fetchFailed, false)
   assert.equal(report.remoteWarning, undefined)
   assert.equal(isFresh(report), true)
+})
+
+test('a detached HEAD has no upstream either: noUpstream, no warning', async () => {
+  const { timers } = trackingTimers()
+  const report = await checkFreshness({
+    cwd: CWD,
+    timers,
+    git: fakeGit({ status: '', fetch: '', 'rev-list': new Error('git rev-list failed (exit 128): fatal: HEAD does not point to a branch') }),
+  })
+  assert.equal(report.noUpstream, true)
+  assert.equal(report.remoteWarning, undefined)
+})
+
+test('any other rev-list failure is a warning, NOT noUpstream: a timeout, or another fatal (review 2026-10-08)', async () => {
+  for (const error of [
+    new Error('git rev-list did not finish within 5000ms'),
+    new Error("git rev-list failed (exit 128): fatal: ambiguous argument 'HEAD..@{u}': unknown revision"),
+    new Error("git rev-list failed (exit 1): fatal: no upstream configured for branch 'main'"),
+  ]) {
+    const { timers } = trackingTimers()
+    const report = await checkFreshness({ cwd: CWD, timers, git: fakeGit({ status: '', fetch: '', 'rev-list': error }) })
+    assert.equal(report.noUpstream, false, error.message)
+    assert.equal(report.fetchFailed, false)
+    assert.match(report.remoteWarning ?? '', /^could not compare against the remote: /, error.message)
+    assert.equal(isFresh(report), true, 'a warning, not a stop: as main did')
+  }
 })
 
 test('a pull error makes the report not fresh, and is described', () => {
