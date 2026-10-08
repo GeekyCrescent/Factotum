@@ -12,13 +12,11 @@
  *     one people learn to click past.
  */
 
-import { execFile } from 'node:child_process'
 import type { Timers } from '@factotum/core'
+import { FETCH_TIMEOUT_MS, GIT_LOCAL_TIMEOUT_MS as STATUS_TIMEOUT_MS, runGit, type GitRunner } from './git.ts'
 import type { FreshnessReport } from './types.ts'
 
-/** Long enough for a `git fetch` over a slow link, short enough not to be a hang. */
-export const FETCH_TIMEOUT_MS = 8_000
-const STATUS_TIMEOUT_MS = 5_000
+export { FETCH_TIMEOUT_MS }
 /** A dirty tree with a thousand files does not need a thousand names in an event. */
 const MAX_DIRTY_LISTED = 20
 
@@ -33,16 +31,7 @@ export interface FreshnessDeps {
    */
   readonly timers: Timers
   /** A seam for tests, so nothing here needs a real repository over a real network. */
-  readonly git?: (args: readonly string[], timeoutMs: number, cwd: string) => Promise<string>
-}
-
-function runGit(args: readonly string[], timeoutMs: number, cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile('git', [...args], { cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      if (error) reject(error)
-      else resolve(stdout)
-    })
-  })
+  readonly git?: GitRunner
 }
 
 /**
