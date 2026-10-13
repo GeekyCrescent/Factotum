@@ -50,3 +50,10 @@ test('the template does NOT ship an extraOrigins escape hatch switched on', asyn
   const parsed = rootConfigSchema.parse(await template())
   assert.deepEqual(parsed.listen.extraOrigins, [])
 })
+
+test('the template declares `peers: []`, so the key is there to read and no peer is on', async () => {
+  // Read RAW: the schema defaults `peers` to [], so the parsed value would pass with the key absent.
+  const raw = await template()
+  assert.deepEqual(raw['peers'], [])
+  assert.deepEqual(rootConfigSchema.parse(raw).peers, [])
+})

@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Logger, NotificationMessage, PushEnvelope } from '@factotum/core'
@@ -8,6 +10,9 @@ import { MAX_SUBSCRIPTIONS, createPushService } from './service.ts'
 import type { Deliver } from './send.ts'
 import type { Subscription } from './store.ts'
 import type { VapidKeys } from './keys.ts'
+import { PUSH_RELAY_TIMEOUT_MS } from './relay.ts'
+import { timerSet } from '../modules/registry.ts'
+import type { PeerState } from '../net/peers.ts'
 
 const FAKE_KEYS: VapidKeys = { publicKey: 'B'.repeat(87), privateKey: 'p'.repeat(43) }
 /** Every device in these tests is a phone: the kernel read the request as not this machine. */
@@ -296,4 +301,351 @@ test('settled() waits for a notice fired WITHOUT await — what boot.stop relies
 
   assert.equal(drainedEarly, false, 'settled() resolved while a notice was still in flight')
   assert.equal(delivered, true)
+})
+
+// ---------------------------------------------------------------------------
+// relay(envelope) — a notice raised on the peer (spec 2026-10-07, D6, criteria 15 and 16)
+// ---------------------------------------------------------------------------
+
+const MAC = 'juans-macbook-pro'
+const fromMac = (data: Record<string, unknown> = { host: MAC }): PushEnvelope => ({
+  message: { ...message, path: `/h/${MAC}/m/sessions/s1?ask=tok`, data },
+  moduleId: 'sessions',
+  machine: MAC,
+})
+
+/** The title `public/sw.js` paints, composed the way it composes it (`push` handler). */
+const titleOf = (envelope: PushEnvelope | undefined): string =>
+  envelope?.machine ? `${envelope.machine}: ${envelope.message.title}` : (envelope?.message.title ?? '')
+
+test("relay delivers WITH THE PEER'S MACHINE, so the title is `juans-macbook-pro: …` and not this host's (criterion 15)", async () => {
+  const { deliver, sent } = recorder()
+  const push = await service({ deliver })
+  await push.subscribe(device('phone'), PHONE)
+
+  await push.relay(fromMac())
+
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0]?.envelope, fromMac())
+  assert.equal(titleOf(sent[0]?.envelope), `${MAC}: finished`)
+})
+
+test('relay with no devices of its own does nothing', async () => {
+  const { deliver, sent } = recorder()
+  const push = await service({ deliver })
+
+  await push.relay(fromMac())
+  await push.settled()
+
+  assert.equal(sent.length, 0)
+})
+
+test('relay over the cap sends without data, and logs it', async () => {
+  const { deliver, sent } = recorder()
+  const lines: string[] = []
+  const push = await createPushService({
+    dir: await mkdtemp(join(tmpdir(), 'factotum-svc-')),
+    machine: 'omarchy',
+    subject: 'https://omarchy.example',
+    log: { ...quiet, warn: (line) => void lines.push(line) },
+    generate: () => FAKE_KEYS,
+    deliver,
+  })
+  await push.subscribe(device('phone'), PHONE)
+
+  await push.relay(fromMac({ host: MAC, note: 'x'.repeat(4000) }))
+
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.envelope.message.data, undefined)
+  assert.equal(sent[0]?.envelope.machine, MAC)
+  assert.match(lines.join('\n'), /without its data/)
+})
+
+test('relay is tracked: settled() waits for it, as for a send', async () => {
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let delivered = false
+  const push = await service({
+    deliver: async () => {
+      await gate
+      delivered = true
+      return { statusCode: 201 }
+    },
+  })
+  await push.subscribe(device('phone'), PHONE)
+
+  void push.relay(fromMac())
+  const drained = push.settled().then(() => delivered)
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  release()
+
+  assert.equal(await drained, true)
+})
+
+test('push off: relay resolves and delivers nothing', async () => {
+  const push = await createPushService({ dir: '/nonexistent/factotum/push', machine: 'omarchy', subject: 'https://o', log: quiet })
+  await push.relay(fromMac())
+})
+
+// ---------------------------------------------------------------------------
+// send() forwards to the peer, and canReach() counts its devices (spec 2026-10-07, D6, criterion 17)
+//
+// The peer is a real server on loopback: what is checked is what goes over the wire — the URL, the
+// body, and the absence of `Origin`.
+// ---------------------------------------------------------------------------
+
+interface Posted {
+  readonly url: string
+  readonly origin: string | undefined
+  readonly type: string | undefined
+  readonly body: PushEnvelope
+}
+
+/** A peer daemon's `/push/relay`, recording what it receives. `hold` keeps it from answering. */
+async function relayPeer(opts: { status?: number; hold?: boolean } = {}) {
+  const posted: Posted[] = []
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    req.on('end', () => {
+      posted.push({
+        url: req.url ?? '',
+        origin: req.headers.origin,
+        type: req.headers['content-type'],
+        body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as PushEnvelope,
+      })
+      if (opts.hold !== true) res.writeHead(opts.status ?? 202, { 'content-type': 'application/json' }).end('{}')
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+  return {
+    posted,
+    url: new URL(`http://127.0.0.1:${port}/push/relay`),
+    close: () => {
+      server.closeAllConnections()
+      return new Promise<void>((resolve) => server.close(() => resolve()))
+    },
+  }
+}
+
+const peerState = (over: Partial<PeerState> = {}): PeerState => ({
+  name: 'omarchy',
+  origin: 'https://omarchy.tail1234.ts.net',
+  reachable: true,
+  lastSeenAt: '2026-10-08T10:00:00.000Z',
+  version: '1',
+  devices: 1,
+  ...over,
+})
+
+/** The peer table as the push service reads it: the last probe, and where the relay is. */
+function peerTable(state: PeerState, url: URL | undefined) {
+  return { list: () => [state], relayUrl: (name: string) => (name === state.name ? url : undefined) }
+}
+
+async function forwarding(opts: {
+  state?: PeerState
+  url?: URL | undefined
+  deliver?: Deliver
+  dir?: string
+  timeoutMs?: number
+  log?: Logger
+}) {
+  const timers = timerSet()
+  const push = await createPushService({
+    dir: opts.dir ?? (await mkdtemp(join(tmpdir(), 'factotum-svc-'))),
+    machine: 'mimac',
+    subject: 'https://mimac.example',
+    log: opts.log ?? quiet,
+    generate: () => FAKE_KEYS,
+    ...(opts.deliver !== undefined ? { deliver: opts.deliver } : {}),
+    peers: {
+      table: peerTable(opts.state ?? peerState(), opts.url),
+      timers: timers.timers,
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    },
+  })
+  return { push, timers }
+}
+
+test('the relay timeout is the one design D6 names', () => {
+  assert.equal(PUSH_RELAY_TIMEOUT_MS, 5_000)
+})
+
+test('WITH 0 DEVICES OF ITS OWN and the peer at 1, send() reaches the peer — the old early return would not', async () => {
+  const peer = await relayPeer()
+  const { deliver, sent } = recorder()
+  const { push } = await forwarding({ url: peer.url, deliver })
+  try {
+    assert.equal(push.count(), 0)
+    await push.send(message, 'probe')
+
+    assert.equal(peer.posted.length, 1)
+    assert.equal(peer.posted[0]?.url, '/push/relay')
+    assert.deepEqual(peer.posted[0]?.body, { message, moduleId: 'probe', machine: 'mimac' })
+    assert.equal(peer.posted[0]?.origin, undefined, 'a daemon never sends Origin: the relay refuses it')
+    assert.equal(peer.posted[0]?.type, 'application/json')
+    assert.equal(sent.length, 0)
+  } finally {
+    await peer.close()
+  }
+})
+
+test('with devices of its own AND a peer with devices, send() goes to both', async () => {
+  const peer = await relayPeer()
+  const { deliver, sent } = recorder()
+  const { push } = await forwarding({ url: peer.url, deliver })
+  try {
+    await push.subscribe(device('phone'), PHONE)
+    await push.send(message, 'probe')
+
+    assert.equal(peer.posted.length, 1)
+    assert.equal(sent.length, 1)
+  } finally {
+    await peer.close()
+  }
+})
+
+test('the two are independent: a peer that does not answer does not hold the own devices back', async () => {
+  const peer = await relayPeer({ hold: true })
+  const { deliver, sent } = recorder()
+  const { push } = await forwarding({ url: peer.url, deliver, timeoutMs: 200 })
+  try {
+    await push.subscribe(device('phone'), PHONE)
+    void push.send(message, 'probe')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    assert.equal(sent.length, 1, 'delivered while the peer still has not answered')
+    await push.settled()
+  } finally {
+    await peer.close()
+  }
+})
+
+test('a peer with no devices, or unreachable at the last probe, is not called', async () => {
+  for (const state of [peerState({ devices: 0 }), peerState({ reachable: false })]) {
+    const peer = await relayPeer()
+    const { push } = await forwarding({ state, url: peer.url })
+    try {
+      await push.send(message, 'probe')
+      await push.settled()
+      assert.equal(peer.posted.length, 0, JSON.stringify(state))
+    } finally {
+      await peer.close()
+    }
+  }
+})
+
+test('a peer that hangs is given up on after the relay timeout, on kernel timers, and settled() covers it', async () => {
+  const peer = await relayPeer({ hold: true })
+  const lines: string[] = []
+  const { push } = await forwarding({ url: peer.url, timeoutMs: 100, log: { ...quiet, warn: (line) => void lines.push(line) } })
+  try {
+    const started = Date.now()
+    void push.send(message, 'probe')
+    await push.settled()
+
+    assert.equal(peer.posted.length, 1)
+    assert.ok(Date.now() - started < 2_000, 'bounded by the timeout, not by the peer')
+    assert.match(lines.join('\n'), /relay to omarchy: no answer within 100ms/)
+    assert.doesNotMatch(lines.join('\n'), /finished|proyecto-a|127\.0\.0\.1/, 'no content and no URL in the log')
+  } finally {
+    await peer.close()
+  }
+})
+
+test('a peer that refuses is logged with its status, and send still resolves', async () => {
+  const peer = await relayPeer({ status: 403 })
+  const lines: string[] = []
+  const { push } = await forwarding({ url: peer.url, log: { ...quiet, warn: (line) => void lines.push(line) } })
+  try {
+    await push.send(message, 'probe')
+    assert.match(lines.join('\n'), /relay to omarchy answered 403/)
+  } finally {
+    await peer.close()
+  }
+})
+
+test('a peer that is not listening: send never rejects', async () => {
+  const peer = await relayPeer()
+  await peer.close()
+  const lines: string[] = []
+  const { push } = await forwarding({ url: peer.url, log: { ...quiet, warn: (line) => void lines.push(line) } })
+
+  await push.send(message, 'probe')
+
+  assert.match(lines.join('\n'), /relay to omarchy: no answer$/m)
+})
+
+test('a peer whose relay URL cannot be built is not called', async () => {
+  const { push } = await forwarding({ url: undefined })
+  await push.send(message, 'probe')
+  await push.settled()
+})
+
+test('relay() NEVER forwards: a relayed notice goes to own devices only, even with a reachable peer', async () => {
+  const peer = await relayPeer()
+  const { deliver, sent } = recorder()
+  const { push } = await forwarding({ url: peer.url, deliver })
+  try {
+    await push.subscribe(device('phone'), PHONE)
+    await push.relay(fromMac())
+    await push.settled()
+
+    assert.equal(sent.length, 1)
+    assert.equal(peer.posted.length, 0)
+  } finally {
+    await peer.close()
+  }
+})
+
+test('canReach: no devices here and the peer at 1 → true (criterion 17)', async () => {
+  const { push } = await forwarding({ url: undefined })
+  assert.equal(push.canReach(), true)
+})
+
+test('canReach: no devices here and the peer down, or at 0 → false, and the gate denies at once', async () => {
+  for (const state of [peerState({ reachable: false }), peerState({ devices: 0 })]) {
+    const { push } = await forwarding({ state, url: undefined })
+    assert.equal(push.canReach(), false, JSON.stringify(state))
+  }
+})
+
+test('canReach reads the LAST probe: the peer going down turns it false with no call', async () => {
+  let state = peerState()
+  const timers = timerSet()
+  const push = await createPushService({
+    dir: await mkdtemp(join(tmpdir(), 'factotum-svc-')),
+    machine: 'mimac',
+    subject: 'https://mimac.example',
+    log: quiet,
+    generate: () => FAKE_KEYS,
+    peers: { table: { list: () => [state], relayUrl: () => undefined }, timers: timers.timers },
+  })
+  assert.equal(push.canReach(), true)
+  state = peerState({ reachable: false })
+  assert.equal(push.canReach(), false)
+})
+
+test('PUSH OFF HERE still forwards: the relay needs no VAPID keys, and canReach counts the peer', async () => {
+  const peer = await relayPeer()
+  const timers = timerSet()
+  const push = await createPushService({
+    dir: '/nonexistent/factotum/push',
+    machine: 'mimac',
+    subject: 'https://m',
+    log: quiet,
+    peers: { table: peerTable(peerState(), peer.url), timers: timers.timers },
+  })
+  try {
+    assert.equal(push.status().kind, 'off')
+    assert.equal(push.canReach(), true)
+    await push.send(message, 'probe')
+    await push.settled()
+    assert.equal(peer.posted.length, 1)
+    assert.equal(peer.posted[0]?.body.machine, 'mimac')
+  } finally {
+    await peer.close()
+  }
 })

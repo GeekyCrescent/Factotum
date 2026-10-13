@@ -146,7 +146,9 @@ not being on 443 — which is exactly what changed.
   forgotten. Since attachments ([ADR-0012](adr/0012-binary-bodies-as-a-route-kind.md)), what
   sits behind that gap includes the photos and documents you uploaded, not only history text.
   Since `@` references, it also includes the **names** of the files in your projects and shared
-  folders (`GET /modules/sessions/files`: names and kinds, never contents).
+  folders (`GET /modules/sessions/files`: names and kinds, never contents). **With a peer
+  declared, the gap reaches the other host too**: everything its modules serve sits behind
+  this host's proxy ([ADR-0019](adr/0019-peers-and-the-proxy.md)).
 - **There is no rate limit.**
 - **It does not stop a process on this machine from subscribing a device of its own** to
   push notifications (`POST /push/subscriptions` with no `Origin`). See *What leaves the
@@ -238,6 +240,38 @@ the one that cost an afternoon — all of it measured on Chrome 153 / Android:
   fetched, manifest parsed — and Chrome quietly downgrades the install to a **home
   screen shortcut** that opens in a tab. No 404, no console error, no warning.
 
+## Two hosts: the proxy and the relay
+
+One app can drive two machines — say, a Mac that sleeps and a Linux box that does not. The
+phone talks to **one** of them; that daemon reaches the other. How to set it up is
+[docs/hosts.md](hosts.md). Why it is shaped this way is
+[ADR-0019](adr/0019-peers-and-the-proxy.md). What it changes in the model:
+
+- **The other host is a declared peer**, `peers: [{ "origin": … }]` in the config, never
+  discovered. One at most. Its origin is checked with the same rule as `publicOrigin`.
+- **A proxy, not CORS.** `/peers/<name>/modules/…` is forwarded to the peer, so the browser
+  sees one origin: one service worker, one push subscription, and the origin policy above
+  unchanged. The proxy is **behind** the origin check and the 503, like every API route. The
+  daemon calls the peer **without `Origin`**, which the peer accepts the way it accepts a
+  supervisor or the permission hook.
+- **It is not an open proxy.** Only the declared peer, only `/modules/<id>/…` and `/health`,
+  only `GET`, `HEAD` and `POST`, headers by allow-list both ways, and no redirect is followed.
+  The log carries the route's shape and never the rest of it: the capability tokens travel in
+  the path.
+- **The relay**, `POST /push/relay`, is how a notice raised on the other host reaches the phone
+  subscribed to this one. **It is the one route with the opposite rule**: it accepts only a
+  request **without** `Origin`, so a browser can never post to it, and only a notice that names
+  the declared peer. It keeps the peer's name in the title and never forwards again.
+- **`/health` now says `devices`**, a count, so the peer knows whether forwarding a notice would
+  reach anyone. Not behind the origin, like `version`.
+- **What it does not close:** anyone on the tailnet can post a notice to your phone by naming the
+  peer — the same tailnet that can already launch agents. And the `Host` gap above now reaches
+  the peer.
+
+**Each host needs Tailscale DNS on** — `tailscale set --accept-dns=true`. Without it the
+`*.ts.net` name of the other one does not resolve, and the peer looks down for no visible
+reason. `factotum doctor` says so.
+
 ## When it refuses to start
 
 Every failure names three things: what it looked for, what it found, and what to do.
@@ -257,6 +291,9 @@ Tailscale interface number **changes across reboots**. Use `listen.address`. On 
 **`is not in a private range`** — you pointed it at a public address.
 
 **`refusing to listen on 0.0.0.0`** — see above.
+
+**`peer-invalid`** — the peer in `peers` is this host's own `publicOrigin`, has the same machine
+name as this host, or has a name a path cannot carry. The message says which, and what to change.
 
 **`port N is already in use`** — probably the other environment, or something else
 entirely. `dev` and `prod` are meant to run at once; the defaults are 7777 and 7778.

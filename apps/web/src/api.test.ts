@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { moduleApi, readResponse } from './api.ts'
+import { apiFor, apiOnFor, moduleApi, readResponse } from './api.ts'
 
 type Failure = Error & { status?: number; body?: unknown }
 
@@ -68,4 +68,43 @@ test('upload sends the bytes with no JSON content type, to the module’s own pr
   } finally {
     globalThis.fetch = real
   }
+})
+
+// --- Two hosts (spec 2026-10-07-dos-hosts, design D12, tasks E2) ---------------------------------
+
+test('url() is the base plus the path: this host under /modules, another under /peers/<host>', () => {
+  assert.equal(moduleApi('sessions').url('uploads/u1/a.png'), '/modules/sessions/uploads/u1/a.png')
+  assert.equal(moduleApi('sessions').url('/setup'), '/modules/sessions/setup')
+  assert.equal(moduleApi('sessions', 'mac').url('uploads/u1/a.png'), '/peers/mac/modules/sessions/uploads/u1/a.png')
+})
+
+test('a request on another host goes through the kernel proxy, /peers/<host>/modules/<id>/', async () => {
+  const real = globalThis.fetch
+  const asked: string[] = []
+  globalThis.fetch = async (input) => {
+    asked.push(String(input))
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    await apiFor('sessions', 'mac').get('setup')
+    await apiFor('sessions').get('setup')
+    assert.deepEqual(asked, ['/peers/mac/modules/sessions/setup', '/modules/sessions/setup'])
+  } finally {
+    globalThis.fetch = real
+  }
+})
+
+test('apiFor keeps one object per host and module, and never shares it across hosts', () => {
+  assert.equal(apiFor('sessions', 'mac'), apiFor('sessions', 'mac'))
+  assert.equal(apiFor('sessions'), apiFor('sessions'))
+  assert.notEqual(apiFor('sessions', 'mac'), apiFor('sessions'))
+  assert.notEqual(apiFor('sessions', 'mac'), apiFor('sessions', 'omarchy'))
+  assert.notEqual(apiFor('sessions', 'mac'), apiFor('inbox', 'mac'))
+})
+
+test('apiOnFor is one function per module, and it is apiFor with the id bound', () => {
+  assert.equal(apiOnFor('sessions'), apiOnFor('sessions'))
+  assert.notEqual(apiOnFor('sessions'), apiOnFor('inbox'))
+  assert.equal(apiOnFor('sessions')('mac'), apiFor('sessions', 'mac'))
+  assert.equal(apiOnFor('sessions')(undefined), apiFor('sessions'))
 })

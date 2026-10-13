@@ -13,16 +13,18 @@
 
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
-import { fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
+import { apiFor, apiOnFor, fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
 import { CenterState, FallbackBar } from './bar.tsx'
 import { PUSH_API, rememberPush, Settings, type SettingsLink } from './device.tsx'
 import { Drawer } from './drawer.tsx'
+import { useHosts, type HostView } from './hosts.ts'
 import { navIcon, type ShellIcon } from './icons.ts'
-import { apiFor, clientFor, type ModuleClient } from './modules.ts'
+import { clientFor, type ModuleClient } from './modules.ts'
 import { landing, ordered } from './nav.ts'
 import { forModule } from './pending.ts'
+import { readLaunchHost, writeLaunchHost } from './pending-db.ts'
 import { resubscribe, type EnableResult } from './push.ts'
-import { pathOf, type Screen } from './router.ts'
+import { navigatePath, pathOf, type NavigateOptions, type Screen } from './router.ts'
 import { usePending, type Pendings } from './use-pending.ts'
 import { useRoute, type Route } from './use-route.ts'
 
@@ -31,12 +33,16 @@ const DRAWER = 'drawer'
 /** Where the sidebar stays (shell.css says the same width). */
 const WIDE = '(min-width: 1024px)'
 const RAIL_KEY = 'factotum.rail'
+/** One object for the life of the page, like every prop a module may key an effect on. */
+const LAUNCH_HOST = { read: readLaunchHost, write: writeLaunchHost } as const
 
 export function Shell({ initialSearch }: { readonly initialSearch: string }) {
   const route = useRoute(initialSearch)
   const pendings = usePending()
   const { result, retry } = useModules()
   const push = usePushAtStart()
+  // Once for the whole app (design D12): every screen and drawer section gets the same list.
+  const hosts = useHosts()
 
   const modules = result.state === 'ready' ? ordered(result.modules) : []
   const target = route.screen.kind === 'root' ? landing(modules)?.id : undefined
@@ -62,6 +68,7 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
         modules={modules}
         screen={route.screen}
         pending={pendings.all}
+        hosts={hosts}
         onClose={closeOverlay}
         onFold={() => setRailOpen(false)}
         select={route.go}
@@ -88,7 +95,15 @@ export function Shell({ initialSearch }: { readonly initialSearch: string }) {
             go={route.go}
           />
         ) : (
-          <Screens screen={route.screen} modules={modules} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
+          <Screens
+            screen={route.screen}
+            modules={modules}
+            route={route}
+            pendings={pendings}
+            hosts={hosts}
+            bar={bar}
+            openDrawer={openDrawer}
+          />
         )}
       </main>
     </div>
@@ -100,6 +115,7 @@ function Screens({
   modules,
   route,
   pendings,
+  hosts,
   bar,
   openDrawer,
 }: {
@@ -107,6 +123,7 @@ function Screens({
   readonly modules: readonly ModuleSummary[]
   readonly route: Route
   readonly pendings: Pendings
+  readonly hosts: readonly HostView[]
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
@@ -166,7 +183,18 @@ function Screens({
   }
 
   return (
-    <ModuleView client={client} id={screen.id} rest={screen.rest} label={label} route={route} pendings={pendings} bar={bar} openDrawer={openDrawer} />
+    <ModuleView
+      client={client}
+      id={screen.id}
+      host={screen.host}
+      rest={screen.rest}
+      label={label}
+      route={route}
+      pendings={pendings}
+      hosts={hosts}
+      bar={bar}
+      openDrawer={openDrawer}
+    />
   )
 }
 
@@ -177,19 +205,23 @@ function Screens({
 function ModuleView({
   client,
   id,
+  host,
   rest,
   label,
   route,
   pendings,
+  hosts,
   bar,
   openDrawer,
 }: {
   readonly client: ModuleClient
   readonly id: string
+  readonly host: string | undefined
   readonly rest: string
   readonly label: string
   readonly route: Route
   readonly pendings: Pendings
+  readonly hosts: readonly HostView[]
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
@@ -197,8 +229,9 @@ function ModuleView({
   const { all, resolve } = pendings
   const own = useMemo(() => forModule(all, id), [all, id])
   const navigate = useCallback(
-    (next: string, options?: { readonly replace?: boolean }) => go(pathOf({ kind: 'module', id, rest: next }), options),
-    [go, id],
+    (next: string, options?: NavigateOptions) =>
+      go(navigatePath(id, next, host, options), options?.replace === undefined ? undefined : { replace: options.replace }),
+    [go, id, host],
   )
   const setOverlay = useCallback(
     (name: string | undefined) => (name === undefined ? closeOverlay() : openOverlay(name)),
@@ -206,9 +239,16 @@ function ModuleView({
   )
   const resolvePending = useCallback((tag: string) => resolve(id, tag), [resolve, id])
 
+  // KEYED BY HOST (design D12): changing host mounts the screen again, so nothing chosen on the
+  // previous host — a project, an entry, an attachment — survives into a request to this one.
   const view = (
     <client.View
-      api={apiFor(id)}
+      key={host ?? ''}
+      api={apiFor(id, host)}
+      host={host}
+      apiOn={apiOnFor(id)}
+      hosts={hosts}
+      launchHost={LAUNCH_HOST}
       rest={rest}
       search={route.search}
       navigate={navigate}

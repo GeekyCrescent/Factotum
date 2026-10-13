@@ -37,8 +37,16 @@ const timers: Timers = {
 }
 
 const CATALOG: readonly CatalogEntry[] = [{ id: 'free', label: 'Free prompt', invoke: { kind: 'none' } }]
-const CLEAN: FreshnessReport = { clean: true, behind: 0, dirtyFiles: [], remoteWarning: undefined }
-const DIRTY: FreshnessReport = { clean: false, behind: 0, dirtyFiles: ['sibling-wrote-this.md'], remoteWarning: undefined }
+const CLEAN: FreshnessReport = {
+  clean: true,
+  behind: 0,
+  dirtyFiles: [],
+  remoteWarning: undefined,
+  fetchFailed: false,
+  noUpstream: false,
+  pullError: undefined,
+}
+const DIRTY: FreshnessReport = { ...CLEAN, clean: false, dirtyFiles: ['sibling-wrote-this.md'] }
 
 /** The fake CLI keeps a `linger` session running for a minute; `quick` ends at once. */
 const LINGER = 'linger'

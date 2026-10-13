@@ -11,12 +11,13 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks'
-import type { ModuleSummary } from './api.ts'
+import { apiFor, apiOnFor, type ModuleSummary } from './api.ts'
+import type { HostView } from './hosts.ts'
 import { Icon } from './icon.tsx'
 import { navIcon } from './icons.ts'
-import { apiFor, clientFor } from './modules.ts'
+import { clientFor } from './modules.ts'
 import { forModule, type Pending } from './pending.ts'
-import { pathOf, type Screen } from './router.ts'
+import { navigatePath, pathOf, type Screen } from './router.ts'
 
 export interface DrawerProps {
   readonly open: boolean
@@ -24,13 +25,15 @@ export interface DrawerProps {
   readonly modules: readonly ModuleSummary[]
   readonly screen: Screen
   readonly pending: readonly Pending[]
+  /** Every host, from the shell's one `useHosts()`. */
+  readonly hosts: readonly HostView[]
   readonly onClose: () => void
   /** Folds the always-there sidebar of a wide screen away. */
   readonly onFold: () => void
   readonly select: (path: string) => void
 }
 
-export function Drawer({ open, modules, screen, pending, onClose, onFold, select }: DrawerProps) {
+export function Drawer({ open, modules, screen, pending, hosts, onClose, onFold, select }: DrawerProps) {
   const close = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -67,7 +70,7 @@ export function Drawer({ open, modules, screen, pending, onClose, onFold, select
         </div>
         <div class="sections">
           {modules.map((module) => (
-            <ModuleSection key={module.id} module={module} screen={screen} pending={pending} select={select} />
+            <ModuleSection key={module.id} module={module} screen={screen} pending={pending} hosts={hosts} select={select} />
           ))}
         </div>
         <nav class="foot" aria-label="Modules">
@@ -113,22 +116,28 @@ function ModuleSection({
   module,
   screen,
   pending,
+  hosts,
   select,
 }: {
   readonly module: ModuleSummary
   readonly screen: Screen
   readonly pending: readonly Pending[]
+  readonly hosts: readonly HostView[]
   readonly select: (path: string) => void
 }) {
   const client = clientFor(module.id)
   if (module.status.kind !== 'enabled' || client?.Drawer === undefined) return null
   const Section = client.Drawer
   const rest = screen.kind === 'module' && screen.id === module.id ? screen.rest : ''
+  // No host of its own (design D12): `navigate` without the key goes to the serving host.
   return (
     <Section
       api={apiFor(module.id)}
+      host={undefined}
+      apiOn={apiOnFor(module.id)}
+      hosts={hosts}
       rest={rest}
-      navigate={(next) => select(pathOf({ kind: 'module', id: module.id, rest: next }))}
+      navigate={(next, options) => select(navigatePath(module.id, next, undefined, options))}
       pending={forModule(pending, module.id)}
     />
   )

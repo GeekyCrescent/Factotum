@@ -11,6 +11,11 @@
  * `pending` resolves its pending (criterion 22), so the ☰ count does not keep something already
  * answered on another device.
  *
+ * EACH REQUEST ON ITS OWN HOST (spec 2026-10-07-dos-hosts, design D12; criterion 14). The screen's
+ * projects are its host's (`api`), but a folder request is followed, read and answered on the host
+ * that made it: `apiOn(host)`, the host from the pending's `data.host`. One made on this screen, or
+ * opened from a `?grant=`, is this screen's host's.
+ *
  * NO CONSOLE (criterion 41): tokens pass through here.
  */
 
@@ -25,7 +30,8 @@ import { Icon } from './icon.tsx'
 import { ContextMenu, type MenuAt } from './context-menu.tsx'
 import { shortPath } from './format.ts'
 import { AddFolderDialog, ConfirmSheet, DeleteProjectSheet, EditProjectDialog, NewProjectDialog, type NewProject } from './project-forms.tsx'
-import { grantOf } from './relevance.ts'
+import { hostKey } from './hosts.ts'
+import { grantOf, hostOf } from './relevance.ts'
 import { toneClass } from './tone.ts'
 
 const POLL_MS = 2_000
@@ -33,6 +39,12 @@ const POLL_MS = 2_000
 interface Requested {
   readonly requestId: string
   readonly label: string
+}
+
+/** A request this screen follows until it ends, and the host it lives on. */
+interface Followed {
+  readonly label: string
+  readonly host: string | undefined
 }
 
 interface Outcome {
@@ -66,7 +78,8 @@ function outcomeOf(label: string, status: GrantStatus): Outcome['message'] {
 }
 
 export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
-  const { api, pending, resolvePending } = view
+  const { api, apiOn, hosts, pending, resolvePending } = view
+  const here = view.host
   const [page, setPage] = useState<ProjectsPage | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [requested, setRequested] = useState<readonly Requested[]>([])
@@ -93,27 +106,34 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
   }, [refresh])
 
   useEffect(() => {
-    if (token !== undefined) setOpen({ kind: 'grant', target: { token, tag: undefined, name: undefined } })
-  }, [token])
+    if (token !== undefined) setOpen({ kind: 'grant', target: { token, tag: undefined, name: undefined, host: here } })
+  }, [token, here])
 
-  const grants = useMemo(() => pending.flatMap((p) => grantOf(p) ?? []), [pending])
+  const grants = useMemo(
+    () =>
+      pending.flatMap((p) => {
+        const grant = grantOf(p)
+        return grant === undefined ? [] : [{ ...grant, host: hostKey(hostOf(p), hosts) }]
+      }),
+    [pending, hosts],
+  )
   const followed = useMemo(() => {
-    const ids = new Map<string, string>()
-    for (const r of requested) ids.set(r.requestId, r.label)
-    for (const g of grants) if (!ids.has(g.requestId)) ids.set(g.requestId, g.name ?? 'the folder')
+    const ids = new Map<string, Followed>()
+    for (const r of requested) ids.set(r.requestId, { label: r.label, host: here })
+    for (const g of grants) if (!ids.has(g.requestId)) ids.set(g.requestId, { label: g.name ?? 'the folder', host: g.host })
     return ids
-  }, [requested, grants])
-  const followedKey = [...followed.keys()].sort().join(',')
+  }, [requested, grants, here])
+  const followedKey = [...followed].map(([id, f]) => `${f.host ?? ''}|${id}`).sort().join(',')
 
   // Every request still followed, now and every POLL_MS: those that ended leave, with what happened.
   useEffect(() => {
     if (followed.size === 0) return undefined
     let live = true
     const check = async () => {
-      for (const [requestId, label] of followed) {
+      for (const [requestId, { label, host }] of followed) {
         let status: GrantStatus
         try {
-          status = await api.get<GrantStatus>(`projects/requests/${requestId}`)
+          status = await apiOn(host).get<GrantStatus>(`projects/requests/${requestId}`)
         } catch (cause: unknown) {
           if ((cause as { status?: number }).status !== 404) continue
           status = { status: 'unknown' }
@@ -132,7 +152,7 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
       clearInterval(timer)
     }
     // `followedKey` stands for `followed`: the same ids must not restart the poll on every render.
-  }, [api, followedKey, resolvePending, refresh])
+  }, [apiOn, followedKey, resolvePending, refresh])
 
   /** A request from a dialog. Throws, so the dialog shows why; closes it when it went through. */
   const ask = async (path: 'projects' | 'shared', body: unknown, label: string) => {
@@ -234,7 +254,7 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
             </div>
           </div>
         ))}
-        {[...followed].map(([requestId, label]) => {
+        {[...followed].map(([requestId, { label }]) => {
           const held = grants.find((g) => g.requestId === requestId)
           return (
             <div key={requestId} class="notice ask" role="status">
@@ -246,7 +266,7 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
                 <p class="dim-2">Approve it on your phone.</p>
               ) : (
                 <div class="acts">
-                  <button type="button" class="btn" onClick={() => setOpen({ kind: 'grant', target: { token: held.grantId, tag: held.tag, name: held.name } })}>
+                  <button type="button" class="btn" onClick={() => setOpen({ kind: 'grant', target: { token: held.grantId, tag: held.tag, name: held.name, host: held.host } })}>
                     Review
                   </button>
                 </div>
@@ -503,6 +523,7 @@ function GrantSheet({ view, target, onClose, onOver }: { readonly view: ViewProp
     },
     [resolvePending, onOver],
   )
-  const { state, answer } = useGrant(view.api, target, over)
+  // On the request's host: apiOn(here) is the screen's own api, so nothing changes with one host.
+  const { state, answer } = useGrant(view.apiOn(target.host), target, over)
   return <GrantPanel target={target} state={state} answer={answer} onClose={onClose} />
 }

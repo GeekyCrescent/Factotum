@@ -134,6 +134,22 @@ export const ERROR_CODES = [
    * apart if they share one.
    */
   'conflict',
+  /**
+   * The other host did not answer through the proxy: marked unreachable by the probe, no answer
+   * within the timeout, or a redirect, which is never followed (spec 2026-10-07, D3). It earns a
+   * code because the client says something no status can: the other host may have done it — a
+   * launch that ends here is never retried — and its list is refreshed instead. The peer's name
+   * travels in the message.
+   */
+  'peer-unreachable',
+  /**
+   * `POST /push/relay` refused a notice (spec 2026-10-07, D6): it carried `Origin`, which a daemon
+   * never sends and a browser always does, or it named a machine that is not the declared peer —
+   * or, as a 429, the peer relayed more than its token bucket allows (security review, 2026-10-08).
+   * Not `unknown-origin`: an origin this host ACCEPTS is refused here too, and a client that read
+   * that code would go looking for a policy problem that is not there.
+   */
+  'relay-refused',
 ] as const
 
 export type ErrorCode = (typeof ERROR_CODES)[number]

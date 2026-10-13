@@ -10,15 +10,26 @@
  *   - the report says WHAT was found — how many commits behind, which files are dirty
  *     — and not a generic "the repo is not clean", because the generic version is the
  *     one people learn to click past.
+ *
+ * AND BEHIND IS A REASON TO PULL, NOT TO STOP (spec 2026-10-07-dos-hosts, D5). `pullIfSafe`
+ * fast-forwards a clean tree to `@{u}` — never a merge commit, never a rebase — and only when
+ * this launch is the project's sole holder. What stops a launch is a dirty tree, or a
+ * fast-forward that could not be made: `isFresh` is read AFTER the pull.
  */
 
-import { execFile } from 'node:child_process'
 import type { Timers } from '@factotum/core'
+import {
+  FETCH_TIMEOUT_MS,
+  GIT_LOCAL_TIMEOUT_MS as STATUS_TIMEOUT_MS,
+  GIT_MERGE_TIMEOUT_MS,
+  outerBoundMs,
+  runGit,
+  type GitRunner,
+} from './git.ts'
+import { SOLE_SKIPPED, type SoleSkipped } from './locks.ts'
 import type { FreshnessReport } from './types.ts'
 
-/** Long enough for a `git fetch` over a slow link, short enough not to be a hang. */
-export const FETCH_TIMEOUT_MS = 8_000
-const STATUS_TIMEOUT_MS = 5_000
+export { FETCH_TIMEOUT_MS }
 /** A dirty tree with a thousand files does not need a thousand names in an event. */
 const MAX_DIRTY_LISTED = 20
 
@@ -33,16 +44,7 @@ export interface FreshnessDeps {
    */
   readonly timers: Timers
   /** A seam for tests, so nothing here needs a real repository over a real network. */
-  readonly git?: (args: readonly string[], timeoutMs: number, cwd: string) => Promise<string>
-}
-
-function runGit(args: readonly string[], timeoutMs: number, cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile('git', [...args], { cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      if (error) reject(error)
-      else resolve(stdout)
-    })
-  })
+  readonly git?: GitRunner
 }
 
 /**
@@ -69,7 +71,6 @@ async function within<T>(work: Promise<T>, ms: number, timers: Timers, what: str
 export async function checkFreshness(deps: FreshnessDeps): Promise<FreshnessReport> {
   const git = deps.git ?? runGit
   const dirtyFiles: string[] = []
-  let remoteWarning: string | undefined
 
   try {
     const status = await within(
@@ -86,16 +87,25 @@ export async function checkFreshness(deps: FreshnessDeps): Promise<FreshnessRepo
     // Not being able to ask is not the same as being clean, and saying so beats
     // claiming either.
     return {
+      ...NOTHING_COMPARED,
       clean: false,
-      behind: 0,
-      dirtyFiles: [],
       remoteWarning: `could not read the working tree: ${message(error)}`,
     }
   }
 
-  let behind = 0
+  const tree = { clean: dirtyFiles.length === 0, dirtyFiles: dirtyFiles.slice(0, MAX_DIRTY_LISTED) }
+
+  // TWO TRIES, NOT ONE. Measured (audit v2): with no remote, `fetch` exits 0 and `rev-list …@{u}`
+  // exits 128. One try made "no network" and "nothing to compare against" the same warning.
   try {
-    await within(git(['fetch', '--quiet'], FETCH_TIMEOUT_MS, deps.cwd), FETCH_TIMEOUT_MS, deps.timers, 'git fetch')
+    await within(git(['fetch', '--quiet'], FETCH_TIMEOUT_MS, deps.cwd), outerBoundMs(FETCH_TIMEOUT_MS), deps.timers, 'git fetch')
+  } catch (error) {
+    // No network, or a credential that would have asked. NO rev-list: it would count against
+    // whatever @{u} the last fetch left, and call that the truth.
+    return { ...NOTHING_COMPARED, ...tree, fetchFailed: true, remoteWarning: `could not fetch: ${message(error)}` }
+  }
+
+  try {
     const count = await within(
       git(['rev-list', '--count', 'HEAD..@{u}'], STATUS_TIMEOUT_MS, deps.cwd),
       STATUS_TIMEOUT_MS,
@@ -103,24 +113,86 @@ export async function checkFreshness(deps: FreshnessDeps): Promise<FreshnessRepo
       'git rev-list',
     )
     const parsed = Number.parseInt(count.trim(), 10)
-    behind = Number.isNaN(parsed) ? 0 : parsed
+    return { ...NOTHING_COMPARED, ...tree, behind: Number.isNaN(parsed) ? 0 : parsed }
   } catch (error) {
-    // No remote, no upstream, no network, or a fetch that asked for a password. All
-    // of them mean the same thing here: cannot compare, carry on.
-    remoteWarning = `could not compare against the remote: ${message(error)}`
-  }
-
-  return {
-    clean: dirtyFiles.length === 0,
-    behind,
-    dirtyFiles: dirtyFiles.slice(0, MAX_DIRTY_LISTED),
-    remoteWarning,
+    // No upstream — git SAID so: a branch nobody pushes is a choice, not a failure, and gets no
+    // warning. ANYTHING ELSE (a timeout, another fatal) is a comparison that did not happen, and says
+    // so as main did (code review, 2026-10-08).
+    if (isNoUpstream(error)) return { ...NOTHING_COMPARED, ...tree, noUpstream: true }
+    return { ...NOTHING_COMPARED, ...tree, remoteWarning: `could not compare against the remote: ${message(error)}` }
   }
 }
 
-/** Fresh enough to launch without asking. */
+/**
+ * Exit 128 with git's own words for "there is no @{u}", measured on git 2.x: `fatal: no upstream
+ * configured for branch '<name>'`, and on a detached HEAD `fatal: HEAD does not point to a branch`.
+ * `runGit` puts the exit code and that line in the message. A git in another language fails this
+ * test and shows a warning instead: the safe side.
+ */
+function isNoUpstream(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : ''
+  return /\(exit 128\)/.test(text) && /fatal: (no upstream configured for branch|HEAD does not point to a branch)/.test(text)
+}
+
+/** The report before anything was found. Spread first, so each path names only what it found. */
+const NOTHING_COMPARED: FreshnessReport = {
+  clean: true,
+  behind: 0,
+  dirtyFiles: [],
+  remoteWarning: undefined,
+  fetchFailed: false,
+  noUpstream: false,
+  pullError: undefined,
+}
+
+export type PullOutcome =
+  | { readonly kind: 'pulled'; readonly commits: number }
+  /** Another holder was in the project when the section came round: nothing was touched. */
+  | { readonly kind: 'skipped' }
+  | { readonly kind: 'failed'; readonly pullError: string }
+
+export interface PullDeps extends FreshnessDeps {
+  /** What `checkFreshness` counted. The merge goes to that same `@{u}`, so it is what moved. */
+  readonly behind: number
+  /**
+   * `SiteLocks.soleSection` with the site and this launch's holder bound: runs `fn` inside the
+   * site's queue only if this launch is its sole holder, and keeps every `acquire` out meanwhile.
+   */
+  readonly sole: <T>(fn: () => Promise<T>) => Promise<T | SoleSkipped>
+}
+
+/**
+ * Fast-forwards to `@{u}`. ONLY on a clean tree, which the caller has checked: on a clean tree
+ * `merge --ff-only` fails only by divergence, and then it moves nothing.
+ *
+ * Never throws: a failure is a `pullError`, which the launch shows as `stale` (criterion 19).
+ */
+export async function pullIfSafe(deps: PullDeps): Promise<PullOutcome> {
+  const git = deps.git ?? runGit
+  try {
+    const ran = await deps.sole(async () => {
+      await within(
+        git(['merge', '--ff-only', '@{u}'], GIT_MERGE_TIMEOUT_MS, deps.cwd),
+        // Past the process's own kill: the section is not left while the merge may still be running.
+        outerBoundMs(GIT_MERGE_TIMEOUT_MS),
+        deps.timers,
+        'git merge',
+      )
+      return 'merged' as const
+    })
+    return ran === SOLE_SKIPPED ? { kind: 'skipped' } : { kind: 'pulled', commits: deps.behind }
+  } catch (error) {
+    return { kind: 'failed', pullError: `cannot-fast-forward: ${message(error)}` }
+  }
+}
+
+/**
+ * Fresh enough to launch without asking: a clean tree, and no fast-forward that failed.
+ *
+ * Behind is NOT in it any more: it is a reason to pull, and the launch reads this after the pull.
+ */
 export function isFresh(report: FreshnessReport): boolean {
-  return report.clean && report.behind === 0
+  return report.clean && report.pullError === undefined
 }
 
 /** What the owner reads. Says what was found, never just that something was. */
@@ -132,6 +204,7 @@ export function describeFreshness(report: FreshnessReport): string {
     parts.push(`${report.dirtyFiles.length} uncommitted file${report.dirtyFiles.length === 1 ? '' : 's'}: ${names}`)
   }
   if (report.remoteWarning !== undefined) parts.push(report.remoteWarning)
+  if (report.pullError !== undefined) parts.push(report.pullError)
   return parts.length === 0 ? 'clean and up to date' : parts.join('; ')
 }
 

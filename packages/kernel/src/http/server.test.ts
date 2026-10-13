@@ -11,9 +11,13 @@ import { createStaticSite } from './static.ts'
 import { policyFor } from '../net/policy.ts'
 import { Registry } from '../modules/registry.ts'
 import { incomingDir, moduleStateDir, statePaths } from '../config/paths.ts'
+import type { PushEnvelope } from '@factotum/core'
 import type { PushService, SubscribeResult } from '../push/service.ts'
 import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
+import type { PeerTable } from '../net/peers.ts'
+import type { Proxy } from './proxy.ts'
+import { RELAY_MAX_BODY_BYTES, tokenBucket, type TokenBucket } from '../push/relay.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -25,20 +29,30 @@ const subscription = {
   keys: { p256dh: 'B' + 'x'.repeat(86), auth: 'y'.repeat(22) },
 }
 
-type FakePush = Pick<PushService, 'publicKey' | 'subscribe'>
+type FakePush = Pick<PushService, 'publicKey' | 'subscribe' | 'count' | 'relay'>
 
 // NOT a default parameter for the key: passing `undefined` to one ACTIVATES the default, which is
 // how the push-off test first passed a key it meant to withhold.
 const onPush = (result: SubscribeResult = { kind: 'subscribed', count: 1 }, key: { readonly publicKey: string | undefined } = { publicKey: 'B'.repeat(87) }): FakePush => ({
   publicKey: () => key.publicKey,
   subscribe: async () => result,
+  count: () => 3,
+  relay: async () => undefined,
 })
 
 /** The daemon's machine, faked: loopback and its tailnet address (spec 2026-09-18, A6). */
 const MAC_IP = '100.71.174.49'
 const MAC = (() => ({ lo0: [{ address: '127.0.0.1', internal: true }], utun4: [{ address: MAC_IP, internal: false }] })) as unknown as Interfaces
 
-async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[] } = {}) {
+/** The peer table as `/hosts` reads it. */
+const NO_PEERS: Pick<PeerTable, 'list'> = { list: () => [] }
+
+/** The proxy has its own tests (`proxy.test.ts`); here it only has to be there. */
+const NO_PROXY: Pick<Proxy, 'handle'> = {
+  handle: async (_req, res) => void res.writeHead(404, { 'content-type': 'application/json' }).end('{}'),
+}
+
+async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Interfaces; modules?: readonly ComposedModule[]; peers?: Pick<PeerTable, 'list'>; relayBucket?: TokenBucket } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'factotum-site-'))
   await writeFile(join(root, 'index.html'), '<!doctype html><title>factotum</title>')
   await mkdir(join(root, 'assets'), { recursive: true })
@@ -58,13 +72,119 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
     startedAt: Date.now(),
     site: createStaticSite(root),
     push: opts.push ?? onPush(),
+    machine: 'mimac',
+    peers: opts.peers ?? NO_PEERS,
+    proxy: NO_PROXY,
     interfaces: opts.interfaces ?? MAC,
     isReady: () => opts.ready ?? true,
+    ...(opts.relayBucket !== undefined ? { relayBucket: opts.relayBucket } : {}),
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   return { base, home, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
 }
+
+// ---------------------------------------------------------------------------
+// /health (spec 2026-10-07, D2 and D6): it gains `devices` and nothing else
+// ---------------------------------------------------------------------------
+
+test('/health says how many devices are subscribed, so a peer knows whether to relay', async () => {
+  const { base, close } = await start()
+  try {
+    const body = (await (await fetch(`${base}/health`)).json()) as Record<string, unknown>
+    assert.deepEqual(Object.keys(body).sort(), ['devices', 'environment', 'ready', 'uptimeMs', 'version'])
+    assert.equal(body['devices'], 3)
+    assert.equal(body['version'], 'test')
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// /hosts and /peers (spec 2026-10-07, criteria 1 and 4)
+// ---------------------------------------------------------------------------
+
+const OMARCHY = {
+  name: 'omarchy',
+  origin: 'https://omarchy.tail1234.ts.net',
+  reachable: true,
+  lastSeenAt: '2026-10-08T10:00:00.000Z',
+  version: '1.0.0',
+  devices: 1,
+}
+
+test('GET /hosts and GET /peers/x/y never answer the static index.html (criterion 4)', async () => {
+  // The same hole /push had: the static branch runs before the origin check and falls back to
+  // index.html for anything it does not own.
+  const { base, close } = await start()
+  try {
+    for (const path of ['/hosts', '/peers', '/peers/x/y', '/peers/omarchy/modules/sessions/sessions']) {
+      const response = await fetch(`${base}${path}`)
+      assert.doesNotMatch(await response.text(), /<title>/, path)
+      assert.match(response.headers.get('content-type') ?? '', /json/, path)
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('the exclusions are exact prefixes: /hostsx and /peersx are still the client’s', async () => {
+  const { base, close } = await start()
+  try {
+    for (const path of ['/hostsx', '/peersx', '/pushup']) {
+      assert.match(await (await fetch(`${base}${path}`)).text(), /<title>factotum/, path)
+    }
+  } finally {
+    await close()
+  }
+})
+
+test('the shape of GET /hosts: this host first, as self, then the peer with when it was seen (criterion 1)', async () => {
+  const { base, close } = await start({ peers: { list: () => [OMARCHY] } })
+  try {
+    const response = await fetch(`${base}/hosts`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), [
+      { name: 'mimac', self: true, reachable: true },
+      { name: 'omarchy', self: false, reachable: true, lastSeenAt: '2026-10-08T10:00:00.000Z' },
+    ])
+  } finally {
+    await close()
+  }
+})
+
+test('a peer never seen says so with null, and a daemon without peers lists only itself', async () => {
+  const never = { ...OMARCHY, reachable: false, lastSeenAt: undefined }
+  const one = await start({ peers: { list: () => [never] } })
+  try {
+    const hosts = (await (await fetch(`${one.base}/hosts`)).json()) as unknown[]
+    assert.deepEqual(hosts[1], { name: 'omarchy', self: false, reachable: false, lastSeenAt: null })
+  } finally {
+    await one.close()
+  }
+  const none = await start()
+  try {
+    assert.deepEqual(await (await fetch(`${none.base}/hosts`)).json(), [{ name: 'mimac', self: true, reachable: true }])
+  } finally {
+    await none.close()
+  }
+})
+
+test('GET /hosts is behind the origin check and the 503, like the rest of the API', async () => {
+  const open = await start()
+  try {
+    assert.equal((await fetch(`${open.base}/hosts`, { headers: { origin: FOREIGN } })).status, 403)
+    assert.equal((await fetch(`${open.base}/hosts`, { headers: { origin: PUBLIC } })).status, 200)
+  } finally {
+    await open.close()
+  }
+  const starting = await start({ ready: false })
+  try {
+    assert.equal((await fetch(`${starting.base}/hosts`)).status, 503)
+  } finally {
+    await starting.close()
+  }
+})
 
 // ---------------------------------------------------------------------------
 // §0.25 — the static fallback used to swallow every GET under /push
@@ -559,6 +679,157 @@ test('a malformed escape in a parameter is still a 500 module-error, as it was i
     const response = await fetch(`${base}/modules/files/x/%E0%A4%A`)
     assert.equal(response.status, 500)
     assert.match(await response.text(), /module-error/)
+  } finally {
+    await close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// POST /push/relay (spec 2026-10-07, D6, criterion 16): one test per rule
+// ---------------------------------------------------------------------------
+
+const MAC_PEER = { ...OMARCHY, name: 'juans-macbook-pro', origin: 'https://juans-macbook-pro.tail1234.ts.net:8443' }
+const WITH_MAC: Pick<PeerTable, 'list'> = { list: () => [MAC_PEER] }
+
+const relayBody = (machine = 'juans-macbook-pro') => ({
+  message: { title: 'permission', body: 'proyecto-a', path: '/m/sessions/s1?ask=tok', tag: 's1', data: { askId: 'tok' } },
+  moduleId: 'sessions',
+  machine,
+})
+
+/** A push service that records what it was asked to relay. */
+function relaying(): { push: FakePush; relayed: PushEnvelope[] } {
+  const relayed: PushEnvelope[] = []
+  return { push: { ...onPush(), relay: async (envelope) => void relayed.push(envelope) }, relayed }
+}
+
+async function postRelay(base: string, body: unknown, headers: Record<string, string> = {}) {
+  return await fetch(`${base}/push/relay`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  })
+}
+
+test('the relay answers 503 before READY, and relays nothing', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC, ready: false })
+  try {
+    const res = await postRelay(base, relayBody())
+    assert.equal(res.status, 503)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'starting')
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay refuses ANY Origin with 403 — the accepted one too: a browser always sends one, a daemon never', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    for (const origin of [PUBLIC, FOREIGN]) {
+      const res = await postRelay(base, relayBody(), { origin })
+      assert.equal(res.status, 403, origin)
+      assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    }
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('a machine that is not the declared peer is 403, and nothing is relayed', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const res = await postRelay(base, relayBody('omarchy'))
+    assert.equal(res.status, 403)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('an accepted notice is relayed with its path under /h/<machine>, data.host, and the peer’s machine', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const res = await postRelay(base, relayBody())
+    assert.equal(res.status, 202)
+    assert.equal(relayed.length, 1)
+    assert.equal(relayed[0]?.machine, 'juans-macbook-pro')
+    assert.equal(relayed[0]?.message.path, '/h/juans-macbook-pro/m/sessions/s1?ask=tok')
+    assert.deepEqual(relayed[0]?.message.data, { askId: 'tok', host: 'juans-macbook-pro' })
+  } finally {
+    await close()
+  }
+})
+
+test('a daemon without peers has no relay: 404 (design D1)', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push })
+  try {
+    assert.equal((await postRelay(base, relayBody())).status, 404)
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('a body that is not an envelope is 400; one over the body cap is 413 — the same helper as everywhere', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    assert.equal((await postRelay(base, { machine: 'juans-macbook-pro' })).status, 400)
+    const huge = await fetch(`${base}/push/relay`, { method: 'POST', body: 'x'.repeat(MAX_BODY_BYTES + 1) })
+    assert.equal(huge.status, 413)
+    assert.equal(relayed.length, 0)
+  } finally {
+    await close()
+  }
+})
+
+test('GET /push/relay is not the relay: it goes through the origin check like the rest of /push and is 404', async () => {
+  const { push } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    assert.equal((await fetch(`${base}/push/relay`)).status, 404)
+    assert.equal((await fetch(`${base}/push/relay`, { headers: { origin: FOREIGN } })).status, 403)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay is throttled by a token bucket: past it, 429 and nothing relayed', async () => {
+  const { push, relayed } = relaying()
+  const now = 0
+  const { base, close } = await start({ push, peers: WITH_MAC, relayBucket: tokenBucket({ capacity: 2, refillMs: 60_000, now: () => now }) })
+  try {
+    // Refused notices are not charged: garbage cannot starve the peer's real ones.
+    assert.equal((await postRelay(base, { machine: 'juans-macbook-pro' })).status, 400)
+    assert.equal((await postRelay(base, relayBody('omarchy'))).status, 403)
+    assert.equal((await postRelay(base, relayBody())).status, 202)
+    assert.equal((await postRelay(base, relayBody())).status, 202)
+    const third = await postRelay(base, relayBody())
+    assert.equal(third.status, 429)
+    assert.equal(((await third.json()) as { error: { code: string } }).error.code, 'relay-refused')
+    assert.equal(relayed.length, 2)
+  } finally {
+    await close()
+  }
+})
+
+test('the relay caps its body at RELAY_MAX_BODY_BYTES, far under the API cap: 413', async () => {
+  const { push, relayed } = relaying()
+  const { base, close } = await start({ push, peers: WITH_MAC })
+  try {
+    const padded = { ...relayBody(), padding: 'x'.repeat(RELAY_MAX_BODY_BYTES) }
+    const res = await postRelay(base, padded)
+    assert.equal(res.status, 413)
+    assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'body-too-large')
+    assert.equal(relayed.length, 0)
   } finally {
     await close()
   }

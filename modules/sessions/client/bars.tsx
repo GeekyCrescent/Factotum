@@ -5,6 +5,7 @@
  * nothing from the shell.
  */
 
+import type { ComponentChildren } from 'preact'
 import { Icon } from './icon.tsx'
 import { sessionOf, type Pending } from './relevance.ts'
 
@@ -30,10 +31,13 @@ export function TopBar({
   title,
   pendingTotal,
   onMenu,
+  children,
 }: {
   readonly title: string
   readonly pendingTotal: number
   readonly onMenu: () => void
+  /** What goes at the right of the title: the launcher's «Run on». */
+  readonly children?: ComponentChildren
 }) {
   return (
     <header class="topbar">
@@ -41,6 +45,7 @@ export function TopBar({
       <div class="title">
         <h1>{title}</h1>
       </div>
+      {children}
     </header>
   )
 }

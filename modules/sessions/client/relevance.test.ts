@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SessionState, SessionSummary } from '../types.ts'
-import { askFor, firstWithSession, grantOf, pickRelevant, questionsFor, questionsOf, resolvedBy, withLogBatches, type Pending } from './relevance.ts'
+import type { HostView } from './contract.ts'
+import { askFor, firstWithSession, grantOf, hostOf, landingReady, onHost, otherHosts, pickRelevant, questionsFor, questionsOf, resolvedBy, withLogBatches, type Pending } from './relevance.ts'
 
 const TOKEN = 'a'.repeat(43)
 
@@ -193,4 +194,69 @@ test('withLogBatches adds only what the pendings and the URL do not already have
     [BATCH, TOKEN],
     [OTHER, undefined],
   ])
+})
+
+// ---------------------------------------------------------------------------
+// Two hosts (spec 2026-10-07-dos-hosts, design D12; criteria 10, 14)
+// ---------------------------------------------------------------------------
+
+const LINUX: HostView = { name: 'omarchy', self: true, reachable: true, lastSeenAt: null }
+const MAC: HostView = { name: 'mac', self: false, reachable: true, lastSeenAt: '2026-10-08T10:00:00.000Z' }
+const MAC_DOWN: HostView = { ...MAC, reachable: false }
+/** A pending the relay brought from the Mac: `data.host` is its name (design D6). */
+const fromMac = (sessionId: string): Pending => ({ ...pending(sessionId), data: { ...pending(sessionId).data, host: 'mac' } })
+
+test('hostOf: the name the relay put in data.host; none (or not a name) is the serving host', () => {
+  assert.equal(hostOf(fromMac('m1')), 'mac')
+  assert.equal(hostOf(pending('l1')), undefined)
+  assert.equal(hostOf({ ...pending('l1'), data: { sessionId: 'l1', host: '' } }), undefined)
+  assert.equal(hostOf({ ...pending('l1'), data: { sessionId: 'l1', host: 7 } }), undefined)
+})
+
+test('onHost: each host gets its own pendings; the serving host’s own name counts as the serving host', () => {
+  const linux = pending('l1')
+  const mac = fromMac('m1')
+  const named: Pending = { ...pending('l2'), data: { sessionId: 'l2', host: 'omarchy' } }
+  assert.deepEqual(onHost([linux, mac, named], [LINUX, MAC], undefined), [linux, named])
+  assert.deepEqual(onHost([linux, mac, named], [LINUX, MAC], 'mac'), [mac])
+})
+
+test('one pending of each host: landing goes to the first, WITH its host (criterion 14)', () => {
+  const page = [session('l1', 'running', NEW)]
+  assert.deepEqual(pickRelevant([fromMac('m1'), pending('l1')], page, [LINUX, MAC]), { kind: 'session', id: 'm1', host: 'mac' })
+  assert.deepEqual(pickRelevant([pending('l1'), fromMac('m1')], page, [LINUX, MAC]), { kind: 'session', id: 'l1' })
+})
+
+test('WITH THE MAC DOWN, landing on the Linux skips the Mac’s pending and lands on its own (criterion 10)', () => {
+  const page = [session('l1', 'finished', NEW)]
+  assert.deepEqual(pickRelevant([fromMac('m1')], page, [LINUX, MAC_DOWN]), { kind: 'session', id: 'l1' })
+  assert.deepEqual(pickRelevant([fromMac('m1')], [], [LINUX, MAC_DOWN]), { kind: 'new' })
+})
+
+test('landing on another host’s screen: a session of its page stays on that host', () => {
+  const macPage = [session('m2', 'running', NEW)]
+  assert.deepEqual(pickRelevant([], macPage, [LINUX, MAC], 'mac'), { kind: 'session', id: 'm2', host: 'mac' })
+  // Its pending of the serving host goes home: no host.
+  assert.deepEqual(pickRelevant([pending('l1')], macPage, [LINUX, MAC], 'mac'), { kind: 'session', id: 'l1' })
+})
+
+test('resolvedBy per host: a pending is resolved only by the sessions of ITS host (criterion 14)', () => {
+  const linuxPage = [session('x', 'finished', NEW)]
+  const macPage = [session('m1', 'finished', NEW), session('x', 'running', NEW)]
+  const all = [pending('x'), fromMac('m1'), fromMac('x')]
+  assert.deepEqual(resolvedBy(all, linuxPage, [LINUX, MAC]), ['ask:x'])
+  assert.deepEqual(resolvedBy(all, macPage, [LINUX, MAC], 'mac'), ['ask:m1'])
+})
+
+test('otherHosts: the hosts besides this screen’s with a pending to check, never one that is down (criterion 10)', () => {
+  assert.deepEqual(otherHosts([pending('l1'), fromMac('m1'), fromMac('m2')], [LINUX, MAC], undefined), ['mac'])
+  assert.deepEqual(otherHosts([fromMac('m1')], [LINUX, MAC_DOWN], undefined), [])
+  assert.deepEqual(otherHosts([pending('l1'), fromMac('m1')], [LINUX, MAC], 'mac'), [undefined])
+  assert.deepEqual(otherHosts([pending('l1')], [], undefined), [])
+})
+
+test('landingReady waits for GET /hosts only when a pending names a host', () => {
+  assert.equal(landingReady([pending('l1')], []), true)
+  assert.equal(landingReady([fromMac('m1')], []), false)
+  assert.equal(landingReady([fromMac('m1')], [LINUX, MAC]), true)
 })

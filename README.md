@@ -171,6 +171,11 @@ factotum start --env dev     # 7778 by default, while prod keeps 7777
 
 State lives in `~/.factotum/<env>/`. Nothing about one environment touches the other.
 
+## Two hosts
+
+One app can drive two machines — a Mac that sleeps and a Linux box that does not, each with its
+own projects. [docs/hosts.md](docs/hosts.md) is how to set it up.
+
 ## Keeping it up
 
 `factotum start` runs in the foreground and dies with your terminal. To have it come

@@ -12,7 +12,7 @@
 import type { Server } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import type { AddressInfo } from 'node:net'
-import { prefixed, type AnyModule, type BootHandle, type Environment } from '@factotum/core'
+import { prefixed, type AnyModule, type BootHandle, type Environment, type PeerConfig } from '@factotum/core'
 import { createPushService } from './push/service.ts'
 import { BootError } from './errors.ts'
 import { loadRootConfig, composeModules } from './config/load.ts'
@@ -21,8 +21,10 @@ import { resolveListen, type Interfaces } from './net/resolve.ts'
 import { verifyBound } from './net/verify.ts'
 import { localUrl } from './net/url.ts'
 import { policyFor } from './net/policy.ts'
-import { Registry } from './modules/registry.ts'
+import { createPeerTable, machineName, PEER_NAME } from './net/peers.ts'
+import { Registry, timerSet } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
+import { createProxy } from './http/proxy.ts'
 
 export interface BootOptions {
   readonly env: Environment
@@ -32,6 +34,8 @@ export interface BootOptions {
   readonly site?: StaticSite
   readonly interfaces?: Interfaces
   readonly startTimeoutMs?: number
+  /** The peer probe's period. Tests shorten it; nothing else should (design D2). */
+  readonly peerProbeMs?: number
   readonly paths?: StatePaths
   /**
    * A seam, and the only one. Step 11 asks what the socket ACTUALLY bound to, and
@@ -46,9 +50,19 @@ export interface BootOptions {
 export async function boot(options: BootOptions): Promise<BootHandle> {
   const startedAt = Date.now()
 
-  // 1-3. Environment, config, and the cross-check that catches a copied config.
+  // 1-3. Environment, config, and the cross-checks that catch a copied config and a wrong peer.
   const paths = options.paths ?? statePaths(options.env, options.home)
   const config = await loadRootConfig(options.env, paths)
+  checkPeers(config.publicOrigin, config.peers)
+  // Built now and armed at step 12: nothing calls out of the process before the bind is proven.
+  // Its timers are the kernel's own, by the same rules as a module's (CLAUDE.md §6).
+  const peers = createPeerTable({
+    peers: config.peers,
+    log: prefixed('peers'),
+    ...(options.peerProbeMs !== undefined ? { probeMs: options.peerProbeMs } : {}),
+  })
+  const kernelTimers = timerSet()
+  const proxy = createProxy({ peers, timers: kernelTimers.timers, log: prefixed('proxy') })
 
   // 4-5. Where to listen, and whether we are allowed to.
   const listen = resolveListen(config.listen, options.interfaces)
@@ -72,6 +86,10 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     // subscribe (no secure context), so nothing is ever sent there to object to it.
     subject: config.publicOrigin,
     log: prefixed('push'),
+    // The peer a notice is also forwarded to (spec 2026-10-07, D6). It forwards by the probe's last
+    // reading, and the probe only runs from step 12: until then nothing is forwarded, and nothing
+    // here sends anything either.
+    peers: { table: peers, timers: kernelTimers.timers },
   })
 
   // 8. Contexts and route tables. Still nothing running.
@@ -101,6 +119,9 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     version: options.version,
     startedAt,
     push,
+    machine: machineName(config.publicOrigin),
+    peers,
+    proxy,
     // `main.ts` injects none: without the default, prod would compare against nothing.
     interfaces: options.interfaces ?? networkInterfaces,
     ...(options.site !== undefined ? { site: options.site } : {}),
@@ -126,8 +147,10 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     )
   }
 
-  // 12. Only now does anything of a module's start running.
+  // 12. Only now does anything of a module's start running — and the peer probe, which is the
+  // kernel's own background work. A peer that is down costs nothing here: it is probed, not awaited.
   await registry.startAll()
+  peers.start(kernelTimers.timers)
 
   // 13. Ready. Everything before this answered 503 on the API.
   ready = true
@@ -140,22 +163,52 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     localUrl: localUrl(listen.address, listen.port),
     stop: async () => {
       ready = false
+      // Before closing: `close` waits for open requests, and a proxied upload to a peer that fell
+      // asleep would hold it for up to two minutes. Nothing new reaches the proxy past `ready`.
+      proxy.abortAll()
+      peers.stop()
       await registry.stopAll()
       // Notices already on their way — a module's "stopped" among them — are let finish. Each
-      // is bounded by its own AbortSignal, so this cannot hang the shutdown.
+      // is bounded by its own AbortSignal, so this cannot hang the shutdown. A forward to the peer
+      // arms its deadline on the KERNEL's timers, so those are disposed only after this.
       await push.settled()
+      kernelTimers.disposeAll()
       await close(server)
     },
   }
 }
 
 /**
- * The first label of the public hostname: `juans-macbook-pro`, not the whole
- * `juans-macbook-pro.tailbd0167.ts.net`. It is what tells two machines' notices apart on a
- * phone, and a notification title has no room for a tailnet suffix.
+ * Criterion 2 of spec 2026-10-07. A peer is the network surface — where this daemon sends requests —
+ * so a wrong one ABORTS (CLAUDE.md §5). The schema already refused a non-canonical origin and a
+ * second peer; what it cannot see is this daemon's own name.
  */
-function machineName(publicOrigin: string): string {
-  return new URL(publicOrigin).hostname.split('.')[0] ?? publicOrigin
+function checkPeers(publicOrigin: string, peers: readonly PeerConfig[]): void {
+  const self = machineName(publicOrigin)
+  for (const { origin } of peers) {
+    if (origin === publicOrigin) {
+      throw new BootError(
+        'peer-invalid',
+        `the peer ${origin} is this daemon's own publicOrigin`,
+        'a peer is the OTHER machine: put its publicOrigin in `peers`, or remove the entry',
+      )
+    }
+    const name = machineName(origin)
+    if (name === self) {
+      throw new BootError(
+        'peer-invalid',
+        `this host and the peer ${origin} are both called ${name}`,
+        `two hosts share the name ${name}: rename one machine in Tailscale`,
+      )
+    }
+    if (!PEER_NAME.test(name)) {
+      throw new BootError(
+        'peer-invalid',
+        `the peer ${origin} is named ${name}, which cannot travel in /peers/<name>/`,
+        'name the peer by its hostname (letters, digits and dashes), e.g. https://other.tailnet.ts.net',
+      )
+    }
+  }
 }
 
 function listenOrExplain(

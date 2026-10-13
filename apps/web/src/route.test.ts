@@ -21,3 +21,10 @@ test('the query is NOT part of rest: it travels separately as `search` (criterio
   // through `search` — the v4 of the spec got this wrong.
   assert.equal(restOf('/m/sessions/019a', 'sessions'), '019a')
 })
+
+test('a leading /h/<host> is not part of the rest (spec 2026-10-07-dos-hosts, design D12)', () => {
+  assert.equal(restOf('/h/mac/m/sessions/019a', 'sessions'), '019a')
+  assert.equal(restOf('/h/mac/m/sessions', 'sessions'), '')
+  assert.equal(restOf('/h/mac/m/sessions/', 'sessions'), '')
+  assert.equal(restOf('/h/mac/m/sessions-old/x', 'sessions'), '')
+})

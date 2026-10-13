@@ -442,3 +442,186 @@ test('a keys.json it cannot use leaves push OFF and the daemon serving (criterio
     await handle.stop()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Peers (spec 2026-10-07, criterion 2): the network surface, so they ABORT
+// ---------------------------------------------------------------------------
+
+/** Every abort below must carry a remedy (CLAUDE.md §5), and none of them may leave a socket open. */
+async function assertAborts(overrides: Record<string, unknown>, code: string, remedy: RegExp) {
+  const port = takePort()
+  const paths = await withConfig(overrides, port)
+  let error: BootError | undefined
+  try {
+    // A boot that should have aborted and did not is stopped, so a red run fails instead of hanging.
+    await (await bootWith(paths)).stop()
+  } catch (caught) {
+    error = caught as BootError
+  }
+  assert.equal(error?.code, code)
+  assert.match(error?.remedy ?? '', remedy)
+  // Refused before the bind: the port is still free.
+  const probe = createHttpServer()
+  await new Promise<void>((resolve, reject) => probe.once('error', reject).listen(port, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+}
+
+test('a peer that is not a canonical origin aborts, with the peer rule’s own message', async () => {
+  await assertAborts({ peers: [{ origin: 'https://omarchy.tail1234.ts.net.' }] }, 'config-invalid', /config\.template/)
+})
+
+test('more than one peer aborts', async () => {
+  await assertAborts(
+    { peers: [{ origin: 'https://a.tail1234.ts.net' }, { origin: 'https://b.tail1234.ts.net' }] },
+    'config-invalid',
+    /config\.template/,
+  )
+})
+
+test('a peer that is this daemon’s own publicOrigin aborts', async () => {
+  await assertAborts({ peers: [{ origin: 'https://mimac.tail1234.ts.net' }] }, 'peer-invalid', /other machine/i)
+})
+
+test('a peer that shares this host’s machineName aborts: two hosts would answer to one name', async () => {
+  await assertAborts(
+    { peers: [{ origin: 'https://mimac.othertailnet.ts.net' }] },
+    'peer-invalid',
+    /two hosts share the name mimac: rename one machine in Tailscale/,
+  )
+})
+
+test('a peer whose name cannot travel in a path aborts', async () => {
+  // `[::1]` is a canonical origin, and its first label is not a name `/peers/<name>/` can carry.
+  await assertAborts({ peers: [{ origin: 'http://[::1]:7000' }] }, 'peer-invalid', /hostname/)
+})
+
+// ---------------------------------------------------------------------------
+// The probe, wired (criterion 3): kernel timers, freed by BootHandle.stop
+// ---------------------------------------------------------------------------
+
+test('the peer is probed at start on kernel timers, and stop leaves no probe running', async () => {
+  // The peer listens on `localhost` and this daemon is `127.0.0.1`: two loopback daemons need two
+  // names, or criterion 2 aborts (design D2).
+  const peerPort = takePort()
+  let hits = 0
+  const peer = createHttpServer((_req, res) => {
+    hits += 1
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: 'p', ready: true, devices: 0 }))
+  })
+  await new Promise<void>((resolve) => peer.listen(peerPort, 'localhost', resolve))
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 3_000
+    while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  const port = takePort()
+  const paths = await withConfig({ publicOrigin: `http://127.0.0.1:${port}`, peers: [{ origin: `http://localhost:${peerPort}` }] }, port)
+  const handle = await bootWith(paths, [], { peerProbeMs: 30 })
+  try {
+    await until(() => hits >= 2)
+    assert.ok(hits >= 2, 'probed at start and then on its period')
+    // Criterion 1, end to end: the name is machineName of each origin.
+    const hosts = await json<{ name: string; self: boolean; reachable: boolean }[]>(await fetch(`${handle.localUrl}/hosts`))
+    assert.deepEqual(hosts.map(({ name, self, reachable }) => ({ name, self, reachable })), [
+      { name: '127', self: true, reachable: true },
+      { name: 'localhost', self: false, reachable: true },
+    ])
+  } finally {
+    await handle.stop()
+  }
+  const atStop = hits
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  // At most the probe already on the wire when stop ran; a live 30 ms interval would add about five.
+  assert.ok(hits <= atStop + 1, `${hits - atStop} probes after stop`)
+  peer.closeAllConnections()
+  await new Promise<void>((resolve) => peer.close(() => resolve()))
+})
+
+test('a peer that is not there at all: the daemon boots and serves', async () => {
+  const port = takePort()
+  const paths = await withConfig({ peers: [{ origin: `http://localhost:${takePort()}` }] }, port)
+  const handle = await bootWith(paths)
+  try {
+    assert.equal((await fetch(`${handle.localUrl}/health`)).status, 200)
+    assert.deepEqual(await json(await fetch(`${handle.localUrl}/hosts`)), [
+      { name: 'mimac', self: true, reachable: true },
+      { name: 'localhost', self: false, reachable: false, lastSeenAt: null },
+    ])
+  } finally {
+    await handle.stop()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The relay, wired (spec 2026-10-07, D6, criteria 15 and 17): a module's notice reaches the peer
+// ---------------------------------------------------------------------------
+
+test('with no devices here and the peer at 1, a module can reach the owner, and its notice is POSTed to the peer’s relay', async () => {
+  const peerPort = takePort()
+  const relayed: { machine: string; moduleId: string | null; origin: string | undefined }[] = []
+  const peer = createHttpServer((req, res) => {
+    if (req.url === '/push/relay') {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { machine: string; moduleId: string | null }
+        relayed.push({ machine: body.machine, moduleId: body.moduleId, origin: req.headers.origin })
+        res.writeHead(202, { 'content-type': 'application/json' }).end('{}')
+      })
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: 'p', ready: true, devices: 1 }))
+  })
+  await new Promise<void>((resolve) => peer.listen(peerPort, 'localhost', resolve))
+
+  let canReach: () => boolean = () => false
+  const notifier: AnyModule = {
+    id: 'notifier',
+    routes: (ctx) => {
+      canReach = () => ctx.notify.canReach()
+      return {
+        'POST /ring': async () => {
+          await ctx.notify.send({ title: 'ring', body: 'b', path: '/m/notifier', tag: 't' })
+          return { status: 200, body: {} }
+        },
+      }
+    },
+  }
+
+  const port = takePort()
+  const paths = await withConfig(
+    {
+      publicOrigin: `http://127.0.0.1:${port}`,
+      peers: [{ origin: `http://localhost:${peerPort}` }],
+      modules: { notifier: { enabled: true } },
+    },
+    port,
+  )
+  const handle = await bootWith(paths, [notifier], { peerProbeMs: 30 })
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 3_000
+    while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  let peerOpen = true
+  const closePeer = async () => {
+    if (!peerOpen) return
+    peerOpen = false
+    peer.closeAllConnections()
+    await new Promise<void>((resolve) => peer.close(() => resolve()))
+  }
+  try {
+    await until(() => canReach())
+    assert.equal(canReach(), true, 'the peer’s devices count once the probe has seen it')
+
+    assert.equal((await fetch(`${handle.localUrl}/modules/notifier/ring`, { method: 'POST' })).status, 200)
+    assert.deepEqual(relayed, [{ machine: '127', moduleId: 'notifier', origin: undefined }])
+
+    // The peer goes away: once the probe says so, nobody can be reached, and the gate would deny.
+    await closePeer()
+    await until(() => !canReach())
+    assert.equal(canReach(), false, 'a peer that is down counts no devices')
+  } finally {
+    await handle.stop()
+    await closePeer()
+  }
+})

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isAlive, SiteLocks } from './locks.ts'
+import { isAlive, SiteLocks, SOLE_SKIPPED } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
 
@@ -257,6 +257,84 @@ test('all() lists one entry per holder in the new layout, and drops an empty sit
 
   assert.deepEqual(all.map((e) => [e.siteId, e.holderId]).sort(), [['work', 's1'], ['work', 's2']])
   assert.deepEqual((await readdir(paths.locks)).sort(), ['work'])
+})
+
+// ---------------------------------------------------------------------------
+// soleSection — the pull before launching (spec 2026-10-07-dos-hosts, D5)
+// ---------------------------------------------------------------------------
+
+test('soleSection runs its task when the caller is the ONLY holder, and answers what it returned', async () => {
+  const { locks } = await fresh()
+  await locks.acquire('work', 's1', AT, SHARED)
+  assert.equal(await locks.soleSection('work', 's1', async () => 'merged'), 'merged')
+})
+
+test('soleSection with another holder does NOT run the task, and answers skipped', async () => {
+  const { locks } = await fresh()
+  await locks.acquire('work', 's1', AT, SHARED)
+  await locks.acquire('work', 's2', AT, SHARED)
+  let ran = false
+  const result = await locks.soleSection('work', 's1', async () => {
+    ran = true
+  })
+  assert.equal(result, SOLE_SKIPPED)
+  assert.equal(ran, false)
+})
+
+test('soleSection for a caller that holds nothing is skipped too, even on an empty site', async () => {
+  const { locks } = await fresh()
+  assert.equal(await locks.soleSection('work', 'ghost', async () => 'merged'), SOLE_SKIPPED)
+  await locks.acquire('work', 's1', AT, SHARED)
+  assert.equal(await locks.soleSection('work', 'ghost', async () => 'merged'), SOLE_SKIPPED)
+})
+
+test('soleSection with an OLD-layout lock on the site is skipped', async () => {
+  const { locks, paths } = await fresh()
+  await locks.acquire('work', 's1', AT, SHARED)
+  await writeFile(paths.lockFile('work'), JSON.stringify({ sessionId: 'old', pid: 1, acquiredAt: AT }))
+  assert.equal(await locks.soleSection('work', 's1', async () => 'merged'), SOLE_SKIPPED)
+})
+
+test('an acquire that arrives while the task runs WAITS for it to finish', async () => {
+  const { locks } = await fresh()
+  await locks.acquire('work', 's1', AT, SHARED)
+  let release: () => void = () => undefined
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const order: string[] = []
+  const section = locks.soleSection('work', 's1', async () => {
+    order.push('task started')
+    await held
+    order.push('task done')
+  })
+  // Let the section start before the acquire is queued.
+  while (order.length === 0) await new Promise((resolve) => setImmediate(resolve))
+  const second = locks.acquire('work', 's2', AT, SHARED).then((result) => {
+    order.push('acquired')
+    return result
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.deepEqual(order, ['task started'], 'nobody came in while the task ran')
+  assert.equal((await locks.holders('work')).length, 1)
+
+  release()
+  await section
+  assert.deepEqual(await second, { ok: true })
+  assert.deepEqual(order, ['task started', 'task done', 'acquired'])
+})
+
+test('a task that throws rejects soleSection, and does not close the site to the next acquire', async () => {
+  const { locks } = await fresh()
+  await locks.acquire('work', 's1', AT, SHARED)
+  await assert.rejects(
+    locks.soleSection('work', 's1', async () => {
+      throw new Error('merge failed')
+    }),
+    /merge failed/,
+  )
+  assert.deepEqual(await locks.acquire('work', 's2', AT, SHARED), { ok: true })
 })
 
 // ---------------------------------------------------------------------------

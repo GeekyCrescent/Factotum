@@ -65,6 +65,10 @@ export const REMOVING_HOLDER = 'removing'
 
 const EXCLUSIVE = (): LockMode => 'exclusive'
 
+/** What `soleSection` answers when it did not run its task: someone else holds the site too. */
+export const SOLE_SKIPPED = 'skipped'
+export type SoleSkipped = typeof SOLE_SKIPPED
+
 /**
  * Does this pid exist? Signal 0 performs the permission and existence checks and
  * delivers nothing, so it asks without killing.
@@ -176,6 +180,25 @@ export class SiteLocks {
       } catch (error) {
         if (!RMDIR_FINE.has(codeOf(error) ?? '')) throw error
       }
+    })
+  }
+
+  /**
+   * Runs `fn` INSIDE the site's queue, and only if `holderId` is the site's SOLE holder; otherwise
+   * answers `skipped` and runs nothing (spec 2026-10-07-dos-hosts, D5).
+   *
+   * WHY THE QUEUE. The pull before launching counts the project's holders right after the acquire,
+   * and then spends up to 8 s in a `git fetch`. In a `concurrent` project another `shared` session
+   * can come in meanwhile, and a `merge` under a working agent rewrites its files. So the holders are
+   * read AGAIN here, inside the queue every `acquire` goes through: while `fn` runs, nothing comes in.
+   * Keep `fn` short and bounded — the merge has its own 15 s ceiling — or it keeps the site closed.
+   */
+  soleSection<T>(siteId: string, holderId: string, fn: () => Promise<T>): Promise<T | SoleSkipped> {
+    return this.#run(siteId, async (): Promise<T | SoleSkipped> => {
+      if ((await this.#readLegacy(siteId)).exists) return SOLE_SKIPPED
+      const holders = await this.#readHolders(siteId)
+      if (holders.ids.length !== 1 || holders.ids[0] !== holderId) return SOLE_SKIPPED
+      return await fn()
     })
   }
 

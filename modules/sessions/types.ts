@@ -236,6 +236,9 @@ export interface FreshnessReport {
   readonly behind: number
   readonly dirtyFiles: readonly string[]
   readonly remoteWarning: string | undefined
+  readonly fetchFailed: boolean
+  readonly noUpstream: boolean
+  readonly pullError: string | undefined
 }
 
 export type LaunchResult =

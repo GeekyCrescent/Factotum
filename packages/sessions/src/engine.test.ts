@@ -535,6 +535,8 @@ test('a reply reopens a finished session, bumps its turns and asks for the lock 
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
   await settle(engine, id)
+  // The state is written before the lock comes back: wait for the lock, not only the state.
+  await turnOver(locks, 'work')
   assert.equal(await locks.heldBy('work'), undefined)
 
   const second = await engine.reply(id, QUICK)
@@ -571,9 +573,10 @@ test('resuming onto a site another session holds is refused, with that sessionâ€
   const first = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })
   const id = first.outcome === 'started' ? first.sessionId : ''
   await settle(engine, id)
+  await turnOver(locks, 'work')
 
   // Somebody else takes the site in between.
-  await locks.acquire('work', 'some-other-session', new Date().toISOString())
+  assert.deepEqual(await locks.acquire('work', 'some-other-session', new Date().toISOString()), { ok: true })
 
   const result = await engine.reply(id, QUICK)
   assert.equal(result.outcome, 'busy')
@@ -793,10 +796,12 @@ test('a DIRTY repo is refused with the report, and `force` launches over it', as
   const id = forced.outcome === 'started' ? forced.sessionId : ''
   await settle(engine, id)
 
-  // And the report is the first thing in the log, so the decision is recoverable; the prompt follows.
-  const [first, second] = (await readPage(engine, id, 0)).events
-  assert.match(first?.kind === 'message' ? first.text : '', /launched over a freshness warning/)
-  assert.equal(second?.kind === 'message' ? second.text : '', QUICK)
+  // What the pull did, then the report, first in the log, so the decision is recoverable; the
+  // prompt follows. A dirty tree is never pulled, with force or without (spec 2026-10-07-dos-hosts, S10).
+  const [first, second, third] = (await readPage(engine, id, 0)).events
+  assert.equal(first?.kind === 'message' ? first.text : '', 'not pulled: working tree has changes')
+  assert.match(second?.kind === 'message' ? second.text : '', /launched over a freshness warning/)
+  assert.equal(third?.kind === 'message' ? third.text : '', QUICK)
 })
 
 test('a refused stale launch does not keep the lock', async () => {

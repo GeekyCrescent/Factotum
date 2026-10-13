@@ -101,5 +101,8 @@ test('formatBytes and uploadUrl', () => {
   assert.equal(formatBytes(640 * 1024), '640 KB')
   assert.equal(formatBytes(1.25 * MB), '1.3 MB')
   assert.equal(formatBytes(20 * MB), '20 MB')
-  assert.equal(uploadUrl(ID, 'a.png'), `/modules/sessions/uploads/${ID}/a.png`)
+  // `api.url` stands in for the shell's: the base of the api's host plus the path.
+  const on = (base: string) => ({ url: (path: string) => base + path })
+  assert.equal(uploadUrl(on('/modules/sessions/'), ID, 'a.png'), `/modules/sessions/uploads/${ID}/a.png`)
+  assert.equal(uploadUrl(on('/peers/mac/modules/sessions/'), ID, 'a b.png'), `/peers/mac/modules/sessions/uploads/${ID}/a%20b.png`)
 })

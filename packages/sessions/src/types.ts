@@ -256,6 +256,12 @@ export interface FreshnessReport {
   readonly dirtyFiles: readonly string[]
   /** Why the comparison could not be made. Never a reason to refuse to start. */
   readonly remoteWarning: string | undefined
+  /** The `fetch` threw: no network, a credential. `behind` is then 0, never counted against a stale `@{u}`. */
+  readonly fetchFailed: boolean
+  /** The `fetch` worked and there is no `@{u}` to count against. NOT a failure, and it leaves no note. */
+  readonly noUpstream: boolean
+  /** Set by `pullIfSafe` when the fast-forward could not be made (`cannot-fast-forward: …`). */
+  readonly pullError: string | undefined
 }
 
 /**
@@ -271,7 +277,7 @@ export type LaunchResult =
   | { readonly outcome: 'started'; readonly sessionId: string }
   /** The site already has a live session. Carries its id, for criterion 17. */
   | { readonly outcome: 'busy'; readonly sessionId: string }
-  /** A git site that is dirty or behind, and `force` was not set. */
+  /** A git site that is dirty or could not fast-forward, and `force` was not set. */
   | { readonly outcome: 'stale'; readonly freshness: FreshnessReport }
   /** Unknown site, unknown or disabled catalog entry, session not resumable. */
   | { readonly outcome: 'rejected'; readonly reason: string }

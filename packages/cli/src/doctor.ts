@@ -19,7 +19,9 @@ import {
   describePolicy,
   inspectPush,
   localUrl,
+  machineName,
   MAX_SUBSCRIPTIONS,
+  PEER_PROBE_TIMEOUT_MS,
   moduleStateDir,
   policyFor,
   resolveListen,
@@ -119,7 +121,7 @@ async function reportEnvironment(
     return
   }
 
-  const { listen, modules, publicOrigin } = parsed.data
+  const { listen, modules, peers, publicOrigin } = parsed.data
   out(`  config      ${paths.config}`)
   out(`  public      ${publicOrigin}`)
 
@@ -147,6 +149,7 @@ async function reportEnvironment(
     // can be listening on an address no interface holds, so probing would only buy
     // a timeout. The public origin is still worth showing.
     out(`  origins     ${publicOrigin} (publicOrigin)`)
+    await reportPeers(peers, out, doFetch)
     out('')
     return
   }
@@ -162,6 +165,7 @@ async function reportEnvironment(
   await reportServe(env, publicOrigin, localUrl(resolved.address, resolved.port), out, run)
   await reportLive(localUrl(resolved.address, resolved.port), out, doFetch)
   await reportPush(publicOrigin, paths, out)
+  await reportPeers(peers, out, doFetch)
 
   out('')
 }
@@ -317,4 +321,76 @@ async function describeRegistry(file: string): Promise<string> {
       return `${file}: ${read.registry.projects.length} project(s), ${read.registry.shared.length} shared${skipped}`
     }
   }
+}
+
+/** Codes `getaddrinfo` gives a name that does not resolve. EAI_AGAIN is what some Linux resolvers say. */
+const UNRESOLVED = new Set(['ENOTFOUND', 'EAI_AGAIN'])
+
+/**
+ * Each declared peer (spec 2026-10-07, criterion 35, first bullet): its name as the daemon keys it,
+ * and what its `/health` says — asked on its PUBLIC origin, the way the probe and the proxy reach it.
+ *
+ * THE NAME NOT RESOLVING GETS ITS OWN LINE. Measured on the Mac: with Tailscale DNS off, `*.ts.net`
+ * does not resolve, and the probe and the proxy fail without saying why. That has one remedy, so
+ * doctor prints it. Any other failure prints its code, never the error's message.
+ */
+async function reportPeers(
+  peers: readonly { readonly origin: string }[],
+  out: (line: string) => void,
+  doFetch: typeof globalThis.fetch,
+): Promise<void> {
+  if (peers.length === 0) {
+    out('  peers       none — this host runs alone')
+    return
+  }
+  for (const { origin } of peers) {
+    out(`  peer        ${machineName(origin)}  ${origin}`)
+    out(`              ${await describePeer(origin, doFetch)}`)
+  }
+}
+
+async function describePeer(origin: string, doFetch: typeof globalThis.fetch): Promise<string> {
+  let response: Response
+  try {
+    response = await doFetch(new URL('/health', origin).href, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(PEER_PROBE_TIMEOUT_MS),
+      headers: { accept: 'application/json' },
+    })
+  } catch (error) {
+    return describeUnreachable(origin, error)
+  }
+  if (response.status !== 200) {
+    await response.body?.cancel()
+    return `NOT ANSWERING — its /health answered ${response.status}`
+  }
+  const body = (await response.json().catch(() => undefined)) as
+    | { version?: unknown; ready?: unknown; devices?: unknown }
+    | undefined
+  if (typeof body?.version !== 'string' || typeof body.ready !== 'boolean') {
+    return 'answers, but not as a factotum /health'
+  }
+  const state = body.ready ? describeDevices(body.devices) : 'STILL STARTING'
+  return `answers /health: version ${body.version}, ${state}`
+}
+
+function describeDevices(devices: unknown): string {
+  if (typeof devices !== 'number') return 'devices unknown (a factotum from before peers)'
+  if (devices === 0) return 'no devices subscribed'
+  return `${devices} device${devices === 1 ? '' : 's'} subscribed`
+}
+
+function describeUnreachable(origin: string, error: unknown): string {
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return `NOT ANSWERING within ${PEER_PROBE_TIMEOUT_MS}ms — asleep, off, or its daemon is down`
+  }
+  const code = error instanceof Error ? (error.cause as { code?: unknown } | undefined)?.code : undefined
+  if (typeof code === 'string' && UNRESOLVED.has(code)) {
+    return [
+      `CANNOT RESOLVE ${new URL(origin).hostname} — so the daemon cannot reach it either.`,
+      '              If Tailscale DNS is off on this machine, turn it on:',
+      '              tailscale set --accept-dns=true',
+    ].join('\n')
+  }
+  return `NOT ANSWERING${typeof code === 'string' ? ` (${code})` : ''}`
 }

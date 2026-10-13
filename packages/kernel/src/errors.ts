@@ -30,6 +30,7 @@ export type BootErrorCode =
   | 'route-upload-invalid'
   | 'port-in-use'
   | 'bind-mismatch'
+  | 'peer-invalid'
 
 /**
  * Every message must answer three questions: what was looked for, what was found,
