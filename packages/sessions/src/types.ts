@@ -300,11 +300,17 @@ export interface SessionSummary {
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
   readonly autoTitle: string | undefined
   readonly archived: boolean
+  /**
+   * When the owner last wrote into it, and what every list is ordered by.
+   * ALWAYS SET: `touchedOf` resolves the fallback for a meta written before the field, so a screen
+   * sorts and shows this one field and nothing else.
+   */
+  readonly touchedAt: string
 }
 
 /**
- * Which sessions. `site` undefined is every session of a project that is registered and there,
- * newest first: what `/m/sessions` lands on, so it never lands on one that answers 409.
+ * Which sessions. `site` undefined is every session of a project that is registered and there, LAST
+ * INTERACTION FIRST: what `/m/sessions` lands on, so it never lands on one that answers 409.
  */
 export interface Page {
   readonly page: number

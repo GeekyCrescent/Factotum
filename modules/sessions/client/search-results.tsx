@@ -13,7 +13,7 @@ import { useEffect, useState } from 'preact/hooks'
 import type { SearchHit } from '../types.ts'
 import type { Api } from './contract.ts'
 import { day } from './format.ts'
-import { nameOf } from './history.ts'
+import { nameOf, touchedOf } from './history.ts'
 import { toneClass } from './tone.ts'
 
 const DEBOUNCE_MS = 300
@@ -81,7 +81,7 @@ export function SearchResults({
         >
           <span class="s-hit-head">
             <b>{nameOf(hit.summary)}</b>
-            <span class="s-conv-date num">{day(hit.summary.startedAt, now)}</span>
+            <span class="s-conv-date num">{day(touchedOf(hit.summary), now)}</span>
           </span>
           <small>
             {labelOf(hit.summary.siteId)}

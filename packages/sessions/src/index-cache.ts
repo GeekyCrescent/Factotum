@@ -11,7 +11,10 @@
  * projects come from here, and before it is built nobody can say which ids are free.
  */
 
-import type { SessionMeta, SessionStore } from './store.ts'
+import { touchedOf, type SessionMeta, type SessionStore } from './store.ts'
+
+/** Descending, for ISO instants and for ids alike — both compare lexicographically. */
+const down = (a: string, b: string): number => (a < b ? 1 : a > b ? -1 : 0)
 
 export class SessionIndex {
   readonly #metas = new Map<string, SessionMeta>()
@@ -46,9 +49,17 @@ export class SessionIndex {
     return this.#metas.get(id)
   }
 
-  /** Newest first: the ids are UUIDv7, so sorting by id is sorting by time. */
+  /**
+   * LAST INTERACTION FIRST, and this is THE order of the history: the lists,
+   * each project's newest few, the search and the landing all read it from here, so a conversation
+   * replied to this morning is at the top of every one of them.
+   *
+   * It used to be the id alone — UUIDv7, so creation order — and that is still the tie-break: two
+   * conversations touched in the same millisecond, and a clock that went backwards, are left in a
+   * stable order rather than whichever one the sort happened to see first.
+   */
   all(): readonly SessionMeta[] {
-    return [...this.#metas.values()].sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+    return [...this.#metas.values()].sort((a, b) => down(touchedOf(a), touchedOf(b)) || down(a.id, b.id))
   }
 
   bySite(siteId: string): readonly SessionMeta[] {

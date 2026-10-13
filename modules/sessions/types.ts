@@ -265,6 +265,13 @@ export interface SessionSummary {
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
   readonly autoTitle: string | undefined
   readonly archived: boolean
+  /**
+   * When the owner last wrote into it: what the drawer orders by and the date
+   * it shows. This daemon's engine always sets it; `undefined` is a summary PROXIED FROM ANOTHER
+   * HOST running a build from before the field, which is why the client resolves it through
+   * `touchedOf` (`client/history.ts`) instead of reading this straight.
+   */
+  readonly touchedAt: string | undefined
 }
 
 export interface Page {

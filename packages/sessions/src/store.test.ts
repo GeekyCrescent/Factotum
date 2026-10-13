@@ -4,7 +4,7 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sessionPaths } from './paths.ts'
-import { SessionStore } from './store.ts'
+import { SessionStore, touchedOf } from './store.ts'
 import type { EventInput } from './types.ts'
 
 /**
@@ -259,6 +259,48 @@ test('A TITLE AND AN ARCHIVE DATE SURVIVE every later patchMeta — the hand-lis
   const meta = await store.readMeta(ID)
   assert.equal(meta?.title, 'Fix the parser')
   assert.equal(meta?.archivedAt, '2026-09-29T00:00:00.000Z')
+})
+
+// ---------------------------------------------------------------------------
+// touchedAt — when the owner last wrote into it, and the order of the history
+// ---------------------------------------------------------------------------
+
+test('THE LAUNCH IS THE FIRST INTERACTION: create writes touchedAt as the start', async () => {
+  const { store } = await freshStore()
+  const meta = await started(store)
+  assert.equal(meta.touchedAt, '2026-09-15T00:00:00.000Z')
+  assert.equal(touchedOf(meta), '2026-09-15T00:00:00.000Z')
+})
+
+test('touchedAt SURVIVES every later patchMeta — the trap of CLAUDE.md §2, again (criterion 29)', async () => {
+  const { store } = await freshStore()
+  await started(store)
+  const replied = '2026-09-20T09:00:00.000Z'
+  await store.patchMeta(ID, (m) => ({ ...m, touchedAt: replied }))
+  // What the titler, an archive and a reconcile do: patches that know nothing about the field.
+  await store.patchMeta(ID, (m) => ({ ...m, autoTitle: 'Plan' }))
+  await store.patchMeta(ID, (m) => ({ ...m, state: 'failed', reason: 'crash', endedAt: '2026-09-20T09:30:00.000Z' }))
+  const meta = await store.readMeta(ID)
+  assert.equal(meta?.touchedAt, replied)
+  assert.equal(touchedOf(meta!), replied, 'the field wins over the end of the turn it started')
+})
+
+test('A META FROM BEFORE THE FIELD still has an order: the end of its last turn, else its start', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  await store.patchMeta(ID, (m) => ({ ...m, endedAt: '2026-09-16T00:00:00.000Z' }))
+
+  const strip = async (...fields: readonly string[]) => {
+    const raw = JSON.parse(await readFile(paths.metaFile(ID), 'utf8')) as Record<string, unknown>
+    for (const field of fields) delete raw[field]
+    await writeFile(paths.metaFile(ID), JSON.stringify(raw))
+    return (await store.readMeta(ID))!
+  }
+
+  const old = await strip('touchedAt')
+  assert.equal(old.touchedAt, undefined)
+  assert.equal(touchedOf(old), '2026-09-16T00:00:00.000Z')
+  assert.equal(touchedOf(await strip('touchedAt', 'endedAt')), '2026-09-15T00:00:00.000Z')
 })
 
 test('the observer hears every meta written and every session removed', async () => {

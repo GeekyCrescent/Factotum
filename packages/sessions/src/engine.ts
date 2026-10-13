@@ -702,6 +702,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         endedAt: undefined,
         reason: undefined,
         turns: current.turns + 1,
+        // THE SECOND AND LAST WRITER of `touchedAt`: this is the owner writing into it, and it is
+        // what lifts the conversation to the top of its project. A rename, an archive, the titler's
+        // title and a reconcile all go through `patchMeta` too and none of them is an interaction.
+        touchedAt: setup.now().toISOString(),
       }))
       if (reopened === undefined) return { outcome: 'rejected', reason: DELETED }
       // A session from before `sitePath` existed: said, not assumed (criterion 35).

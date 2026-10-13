@@ -19,6 +19,41 @@ async function storeWith(ids: readonly string[]): Promise<SessionStore> {
   return store
 }
 
+// ---------------------------------------------------------------------------
+// The order of the history: the last interaction first
+// ---------------------------------------------------------------------------
+
+test('THE LAST INTERACTION FIRST, not the newest conversation: a reply to the older one lifts it', async () => {
+  const store = await storeWith([A, B])
+  const index = new SessionIndex()
+  await index.build(store)
+  assert.deepEqual(index.all().map((m) => m.id), [B, A], 'created later, so first while neither was replied to')
+
+  // What `reply` writes, and nothing else: A is the older conversation and the one just written into.
+  store.observe({ written: (m) => index.put(m), removed: (id) => index.drop(id) })
+  await store.patchMeta(A, (m) => ({ ...m, touchedAt: '2099-01-01T00:00:00.000Z' }))
+  assert.deepEqual(index.all().map((m) => m.id), [A, B])
+})
+
+test('a meta from before the field is ordered by the end of its last turn, against one that has it', async () => {
+  const store = await storeWith([A, B])
+  const index = new SessionIndex()
+  // A: no `touchedAt`, a turn that ended late. B: created later, written into early.
+  await store.patchMeta(A, (m) => ({ ...m, touchedAt: undefined, endedAt: '2026-10-10T00:00:00.000Z' }))
+  await store.patchMeta(B, (m) => ({ ...m, touchedAt: '2026-10-01T00:00:00.000Z' }))
+  await index.build(store)
+  assert.deepEqual(index.all().map((m) => m.id), [A, B])
+})
+
+test('TWO TOUCHED IN THE SAME INSTANT fall back to the id — UUIDv7, so creation order', async () => {
+  const store = await storeWith([A, B])
+  const index = new SessionIndex()
+  const same = '2026-10-14T00:00:00.000Z'
+  for (const id of [A, B]) await store.patchMeta(id, (m) => ({ ...m, touchedAt: same }))
+  await index.build(store)
+  assert.deepEqual(index.all().map((m) => m.id), [B, A])
+})
+
 test('the index reads every meta once, newest first, and is ready after', async () => {
   const store = await storeWith([A, B])
   const index = new SessionIndex()
