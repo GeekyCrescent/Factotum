@@ -11,7 +11,7 @@
 import type { SessionIndex } from './index-cache.ts'
 import { isSessionId } from './id.ts'
 import type { SiteTable } from './projects.ts'
-import type { RemoveOutcome, SessionMeta, SessionStore } from './store.ts'
+import { touchedOf, type RemoveOutcome, type SessionMeta, type SessionStore } from './store.ts'
 import type {
   Page,
   ProjectsPage,
@@ -77,6 +77,8 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
     title: meta.title,
     autoTitle: meta.autoTitle,
     archived: meta.archivedAt !== undefined,
+    // RESOLVED HERE, not on the screen: the fallback for an old meta is one rule, in `touchedOf`.
+    touchedAt: touchedOf(meta),
   }
 }
 
@@ -177,7 +179,7 @@ export function createHistory(deps: HistoryDeps): History {
         const all = index.bySite(entry.id)
         const active = all.filter((meta) => meta.archivedAt === undefined)
         const status = table.status(entry.id) === 'ok' ? 'ok' : 'missing'
-        // The newest few, and every running one even when it is older: what is live never hides.
+        // The few last written into, and every running one even when it is older: what is live never hides.
         const recent = active.slice(0, RECENT_PER_PROJECT)
         const running = active.slice(RECENT_PER_PROJECT).filter((meta) => meta.state === 'running')
         return {

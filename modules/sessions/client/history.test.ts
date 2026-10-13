@@ -11,12 +11,15 @@ const session = (
   state: SessionState = 'finished',
   title?: string,
   autoTitle?: string,
+  /** When the owner last wrote into it. Defaults to the start, which most of these tests only need. */
+  touchedAt: string = startedAt,
 ): SessionSummary => ({
   id,
   siteId,
   entryId: 'free',
   state,
   startedAt,
+  touchedAt,
   endedAt: undefined,
   reason: undefined,
   turns: 1,
@@ -123,6 +126,32 @@ test('one group per project, in the registry’s order, newest conversation firs
   assert.equal(groups[0]?.project?.color, 3)
   assert.equal(groups[0]?.entries[0]?.siteLabel, 'Alpha app')
   assert.equal(groups[1]?.entries[0]?.title, 'Renamed')
+})
+
+test('THE LAST INTERACTION ORDERS THE ROWS, not the start: an old conversation replied to today is first', () => {
+  const groups = history(
+    [
+      project('alpha', [
+        // Started in August, written into today; started in September and never answered since.
+        session('old', 'alpha', '2026-08-01T10:00:00Z', 'x', 'finished', undefined, undefined, '2026-10-14T09:00:00Z'),
+        session('new', 'alpha', '2026-09-29T09:00:00Z'),
+      ]),
+    ],
+    new Map(),
+    new Map(),
+    '',
+  )
+  assert.deepEqual(labels(groups), [['alpha', ['old', 'new']]])
+  assert.equal(groups[0]?.entries[0]?.touchedAt, '2026-10-14T09:00:00Z', 'and the row is dated by the same instant')
+})
+
+test('A SUMMARY FROM A HOST THAT PREDATES THE FIELD still sorts and still shows a date', () => {
+  // What `touchedOf` is for: a peer's `/projects` answered without `touchedAt`, and the drawer must
+  // not leave the row undated or hand the comparator an `undefined`.
+  const old = { ...session('o', 'alpha', '2026-09-01T10:00:00Z'), touchedAt: undefined }
+  const groups = history([project('alpha', [old, session('n', 'alpha', '2026-09-02T10:00:00Z')])], new Map(), new Map(), '')
+  assert.deepEqual(labels(groups), [['alpha', ['n', 'o']]])
+  assert.equal(groups[0]?.entries[1]?.touchedAt, '2026-09-01T10:00:00Z')
 })
 
 test('what waits on the owner comes first, then what runs, and neither repeats in its project', () => {

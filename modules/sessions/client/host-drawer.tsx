@@ -535,11 +535,12 @@ function Row({ entry, compact, rows }: { readonly entry: Entry; readonly compact
         ) : null}
         <span class="s-conv-title">{entry.title}</span>
         {entry.state === 'failed' ? <Icon name="x-circle" size={14} /> : null}
-        {entry.startedAt === undefined ? null : <span class="s-conv-date num">{day(entry.startedAt, rows.now)}</span>}
+        {entry.touchedAt === undefined ? null : <span class="s-conv-date num">{day(entry.touchedAt, rows.now)}</span>}
       </button>
     )
   }
-  const when = entry.startedAt === undefined ? '' : ago(entry.startedAt, rows.now)
+  // The last interaction, the key the list is sorted by — not the start, which would read as unsorted.
+  const when = entry.touchedAt === undefined ? '' : ago(entry.touchedAt, rows.now)
   return (
     <button
       type="button"

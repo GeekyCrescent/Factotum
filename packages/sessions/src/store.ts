@@ -85,6 +85,29 @@ export interface SessionMeta {
   readonly autoTitle: string | undefined
   /** When it was archived. `undefined`: not archived. */
   readonly archivedAt: string | undefined
+  /**
+   * WHEN THE OWNER LAST WROTE INTO IT: the launch, then every reply. What the history is ordered by
+   * (`touchedOf`), because a conversation one talked to this morning is nearer than one opened last
+   * month and never answered.
+   *
+   * The store owns it — `create` writes it and `reply` is the only other writer — so it is in the
+   * `NewSession` omit list, not a field a caller may pass. Same rule as `sitePath`:
+   * `string | undefined` AND REQUIRED, and listed in `#readMeta` or the next `patchMeta` erases it.
+   * `undefined` is a meta from before the field, and `touchedOf` says what it means.
+   */
+  readonly touchedAt: string | undefined
+}
+
+/**
+ * The order of the history, as ONE function: when the owner last wrote into
+ * this conversation, and for a meta from before `touchedAt` the best the file still offers — the end
+ * of its last turn, else its start. Never `undefined`, so a comparator needs no second rule.
+ *
+ * The fallback is what makes the change retroactive: every conversation already on disk sorts by
+ * roughly when it was last worked on, without a migration that rewrites five hundred metas.
+ */
+export function touchedOf(meta: SessionMeta): string {
+  return meta.touchedAt ?? meta.endedAt ?? meta.startedAt
 }
 
 /**
@@ -100,7 +123,10 @@ export interface StoreObserver {
 export type RemoveOutcome = 'removed' | 'unknown' | 'running'
 
 /** Everything but the parts the store owns. */
-export type NewSession = Omit<SessionMeta, 'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'autoTitle' | 'archivedAt'>
+export type NewSession = Omit<
+  SessionMeta,
+  'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'autoTitle' | 'archivedAt' | 'touchedAt'
+>
 
 export class SessionStore {
   readonly #paths: SessionPaths
@@ -194,6 +220,7 @@ export class SessionStore {
         title: typeof json.title === 'string' ? json.title : undefined,
         autoTitle: typeof json.autoTitle === 'string' ? json.autoTitle : undefined,
         archivedAt: typeof json.archivedAt === 'string' ? json.archivedAt : undefined,
+        touchedAt: typeof json.touchedAt === 'string' ? json.touchedAt : undefined,
       }
     } catch {
       return undefined
@@ -234,6 +261,8 @@ export class SessionStore {
         title: undefined,
         autoTitle: undefined,
         archivedAt: undefined,
+        // The launch IS the first interaction, and the id's own time is already this instant.
+        touchedAt: session.startedAt,
       }
       await this.#writeMeta(meta)
       this.#nextSeq.set(session.id, 0)
@@ -324,8 +353,11 @@ export class SessionStore {
    *
    * Sorted by id and that is deliberate: the ids are UUIDv7, so lexicographic order IS
    * chronological order, and listing the most recent N costs the same with five
-   * thousand sessions as with fifty. It is also why there is no in-memory index — the
-   * predecessor needed one only because it sorted by last event.
+   * thousand sessions as with fifty.
+   *
+   * THIS IS NO LONGER THE ORDER OF THE HISTORY. It is the order the index is BUILT in, and nothing
+   * reads it for a list: a list is ordered by `touchedOf`, which only the index — already in memory
+   * for the lists, the projects screen and the search — can sort by without reading the disk again.
    */
   async listIds(): Promise<readonly string[]> {
     try {

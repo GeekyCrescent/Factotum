@@ -6,6 +6,10 @@
  * BUILT FROM THE PROJECTS, not from a page of sessions: `GET projects` gives each project its newest
  * few and its total, so a project with a hundred conversations shows eight and "Show more", and one
  * whose folder is missing shows none (criterion 25).
+ *
+ * ORDERED BY THE LAST INTERACTION, never by when a conversation was created.
+ * The daemon already picks each project's few by the same key, and the date on the row is that same
+ * key: a list sorted by one instant and labelled with another reads as not sorted at all.
  */
 
 import type { Color, ProjectStatus, ProjectView, SessionState, SessionSummary } from '../types.ts'
@@ -31,7 +35,8 @@ export interface Entry {
    * know whether there is one to clear. `undefined` for a waiting entry with no summary loaded.
    */
   readonly manualTitle: string | undefined
-  readonly startedAt: string | undefined
+  /** When the owner last wrote into it: what the row is sorted by and the date it shows. */
+  readonly touchedAt: string | undefined
   readonly state: SessionState
   /** What it asks for, only when it waits on the owner. */
   readonly detail: string | undefined
@@ -52,6 +57,15 @@ export interface Group {
   readonly entries: readonly Entry[]
   /** Set on a project's group only. */
   readonly project?: ProjectInfo
+}
+
+/**
+ * When the owner last wrote into a conversation. The engine's `touchedOf` seen from here: the field
+ * it resolves, and the same fallback for a summary PROXIED FROM A HOST that predates it, so one old
+ * host in the drawer cannot leave a row undated — or crash the comparator.
+ */
+export function touchedOf(session: Pick<SessionSummary, 'touchedAt' | 'endedAt' | 'startedAt'>): string {
+  return session.touchedAt ?? session.endedAt ?? session.startedAt
 }
 
 export function titleOf(prompt: string | undefined): string {
@@ -110,7 +124,7 @@ export function history(
   for (const project of projects) {
     for (const session of [...project.sessions, ...(more.get(project.id) ?? [])]) loaded.set(session.id, session)
   }
-  const newest = [...loaded.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+  const newest = [...loaded.values()].sort((a, b) => touchedOf(b).localeCompare(touchedOf(a)) || b.id.localeCompare(a.id))
   const entryOf = (session: SessionSummary, detail: string | undefined = undefined): Entry => {
     const project = byId.get(session.siteId)
     return {
@@ -120,7 +134,7 @@ export function history(
       color: project?.color,
       title: nameOf(session),
       manualTitle: session.title,
-      startedAt: session.startedAt,
+      touchedAt: touchedOf(session),
       state: session.state,
       detail,
     }
@@ -132,7 +146,7 @@ export function history(
     const site = w.site ?? id.slice(0, 8)
     const project = byId.get(site)
     const label = project?.name ?? site
-    return { id, site, siteLabel: label, color: project?.color, title: label, manualTitle: undefined, startedAt: undefined, state: 'running', detail: w.detail }
+    return { id, site, siteLabel: label, color: project?.color, title: label, manualTitle: undefined, touchedAt: undefined, state: 'running', detail: w.detail }
   })
   const free = newest.filter((s) => !waiting.has(s.id))
   const running = free.filter((s) => s.state === 'running').map((s) => entryOf(s))

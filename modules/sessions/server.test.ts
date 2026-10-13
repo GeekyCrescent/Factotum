@@ -683,6 +683,7 @@ const SUMMARY = {
   entryId: 'free',
   state: 'finished' as const,
   startedAt: '2026-09-29T00:00:00.000Z',
+  touchedAt: '2026-09-29T00:00:00.000Z',
   endedAt: undefined,
   reason: undefined,
   turns: 1,

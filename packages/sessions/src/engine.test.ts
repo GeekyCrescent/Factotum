@@ -1604,6 +1604,49 @@ test('THE INDEX SEES WHAT RECONCILE WROTE: a session a crash left running lists 
   assert.deepEqual(page.sessions.map((s) => [s.id, s.state]), [[stale, 'failed']])
 })
 
+test('A REPLY LIFTS THE CONVERSATION to the top of the list, the project and the search', async () => {
+  // END TO END, through the engine, because one order crosses four readers of one index: `list`,
+  // `projects`, `search` and what `summaryOf` hands the screens. Only this test sees them agree.
+  const { engine } = await world()
+  const older = await finished(engine)
+  const newer = await finished(engine)
+
+  const ids = async () => (await engine.list({ page: 0, site: undefined, archived: false })).sessions.map((s) => s.id)
+  assert.deepEqual(await ids(), [newer, older], 'created later, so first while neither has been replied to')
+
+  await engine.reply(older, QUICK)
+  await settle(engine, older)
+
+  assert.deepEqual(await ids(), [older, newer])
+  assert.deepEqual(
+    (await engine.projects()).projects[0]?.sessions.map((s) => s.id),
+    [older, newer],
+  )
+  assert.deepEqual(
+    (await engine.search(QUICK)).map((hit) => hit.summary.id),
+    [older, newer],
+  )
+
+  // And the summary carries the instant the screens sort and label by, past the start.
+  const summary = await engine.summary(older)
+  const lifted = summary.kind === 'ok' ? summary.summary : undefined
+  assert.notEqual(lifted, undefined, JSON.stringify(summary))
+  assert.equal(lifted !== undefined && lifted.touchedAt > lifted.startedAt, true, 'the reply moved it on')
+})
+
+test('TIDYING THE HISTORY IS NOT WRITING INTO IT: a rename and an archive leave the order alone', async () => {
+  const { engine } = await world()
+  const older = await finished(engine)
+  const newer = await finished(engine)
+
+  await engine.rename(older, 'Mine')
+  await engine.archive(older, true)
+  await engine.archive(older, false)
+
+  const page = await engine.list({ page: 0, site: undefined, archived: false })
+  assert.deepEqual(page.sessions.map((s) => s.id), [newer, older])
+})
+
 test('RENAME: trimmed, cut to 80, and it survives the next turn’s patchMeta; EMPTY CLEARS IT (criteria 29, 30; 2026-09-30 crit. 23)', async () => {
   const { engine } = await world()
   const id = await finished(engine)

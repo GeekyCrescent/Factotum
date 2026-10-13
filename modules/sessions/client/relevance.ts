@@ -15,6 +15,7 @@
 import { askTokenFrom, questionsTokenFrom } from '../ask-token.ts'
 import type { SessionSummary } from '../types.ts'
 import type { HostView } from './contract.ts'
+import { touchedOf } from './history.ts'
 import { hostKey, isUnreachable } from './hosts.ts'
 
 export interface Pending {
@@ -79,9 +80,12 @@ export function onHost(pending: readonly Pending[], hosts: readonly HostView[], 
 const landing = (id: string, host: string | undefined): Landing => (host === undefined ? { kind: 'session', id } : { kind: 'session', id, host })
 
 /**
- * `/m/sessions` with nothing after it: a live pending, else the newest running, else the newest —
- * of `sessions`, the page of the screen's host `here`. A pending of a host that is DOWN is skipped:
- * landing there would only show that it does not answer (criterion 10).
+ * `/m/sessions` with nothing after it: a live pending, else the running one last written into, else
+ * the one last written into — of `sessions`, the page of the screen's host `here`. A pending of a
+ * host that is DOWN is skipped: landing there would only show that it does not answer (criterion 10).
+ *
+ * "NEWEST" IS THE LAST INTERACTION, the same key the drawer is ordered by, so
+ * landing lands on the first row of the list and not on something further down it.
  */
 export function pickRelevant(
   pending: readonly Pending[],
@@ -95,7 +99,7 @@ export function pickRelevant(
     if (id !== undefined && !isUnreachable(host, hosts)) return landing(id, host)
   }
   const newest = (list: readonly SessionSummary[]) =>
-    list.reduce<SessionSummary | undefined>((best, s) => (best === undefined || s.startedAt > best.startedAt ? s : best), undefined)
+    list.reduce<SessionSummary | undefined>((best, s) => (best === undefined || touchedOf(s) > touchedOf(best) ? s : best), undefined)
   const pick = newest(sessions.filter((s) => s.state === 'running')) ?? newest(sessions)
   return pick === undefined ? { kind: 'new' } : landing(pick.id, here)
 }

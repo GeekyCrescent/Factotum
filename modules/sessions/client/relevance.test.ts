@@ -6,12 +6,13 @@ import { askFor, firstWithSession, grantOf, hostOf, landingReady, onHost, otherH
 
 const TOKEN = 'a'.repeat(43)
 
-const session = (id: string, state: SessionState, startedAt: string): SessionSummary => ({
+const session = (id: string, state: SessionState, startedAt: string, touchedAt = startedAt): SessionSummary => ({
   id,
   siteId: 'demo',
   entryId: 'free',
   state,
   startedAt,
+  touchedAt,
   endedAt: undefined,
   reason: undefined,
   turns: 1,
@@ -44,6 +45,12 @@ test('otherwise the most recent RUNNING one, even if a finished one is newer', (
 test('otherwise the most recent of all', () => {
   const page = [session('a', 'finished', OLD), session('b', 'failed', NEW)]
   assert.deepEqual(pickRelevant([], page), { kind: 'session', id: 'b' })
+})
+
+test('"the most recent" IS THE LAST INTERACTION: the one started first but written into last', () => {
+  // The same key the drawer is ordered by, so landing lands on its first row.
+  const page = [session('started-last', 'finished', NEW), session('written-into-last', 'finished', OLD, NEWER)]
+  assert.deepEqual(pickRelevant([], page), { kind: 'session', id: 'written-into-last' })
 })
 
 test('with no session at all, a new one', () => {
