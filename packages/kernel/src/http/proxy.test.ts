@@ -645,17 +645,39 @@ test('a raster image stays inline — an <img> and a tap must still show it — 
   }
 })
 
-test('JSON keeps its own headers, plus nosniff', async () => {
+test('JSON is rebuilt as exactly application/json, never sniffed, and sandboxed too', async () => {
   const w = await world(json(200, { ok: true }, { 'cache-control': 'no-store' }))
   try {
     const response = await raw(w.self.port, '/peers/localhost/modules/sessions/sessions')
     assert.equal(response.headers['content-type'], 'application/json')
+    assert.equal(response.headers['cache-control'], 'no-store')
     assert.equal(response.headers['x-content-type-options'], 'nosniff')
     assert.equal(response.headers['content-disposition'], undefined)
-    assert.equal(response.headers['content-security-policy'], undefined)
+    // `fetch` reads JSON and never paints it, so the sandbox costs nothing and closes the case where
+    // a browser is navigated to the URL directly.
+    assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox")
     assert.deepEqual(JSON.parse(response.body), { ok: true })
   } finally {
     await w.close()
+  }
+})
+
+test('the peer cannot smuggle a second type past the JSON or image branch (parser differential)', async () => {
+  // A browser that reads the LAST type of a list would paint `text/html`; the raw value never passes.
+  for (const type of ['application/json, text/html', 'image/png, text/html', 'application/json; x=", text/html"']) {
+    const w = await world((_req, res) => {
+      res.writeHead(200, { 'content-type': type, 'content-disposition': 'inline', 'content-security-policy': 'default-src *' })
+      res.end('<script>alert(1)</script>')
+    })
+    try {
+      const response = await raw(w.self.port, '/peers/localhost/modules/sessions/uploads/u1/x')
+      assert.equal(response.headers['content-type'], 'application/octet-stream', type)
+      assert.equal(response.headers['x-content-type-options'], 'nosniff', type)
+      assert.equal(response.headers['content-security-policy'], "default-src 'none'; sandbox", type)
+      assert.equal(response.headers['content-disposition'], 'attachment', type)
+    } finally {
+      await w.close()
+    }
   }
 })
 

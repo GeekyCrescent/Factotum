@@ -96,10 +96,15 @@ to a URL that function built.
 
   Never `Origin`, `Cookie`, `Host` or `Forwarded`, and nothing `tailscale serve` adds. The last three
   coming back are `serve-file.ts`'s containment headers, and **containment is never the peer's to
-  decide**: `x-content-type-options: nosniff` is forced on every proxied response; JSON keeps the
-  peer's other headers; the four raster types `rasterTypeOf` paints stay inline (the chat shows them
-  in an `<img>`) with `content-security-policy: default-src 'none'; sandbox` forced; anything else gets
-  that CSP **and** `content-disposition: attachment`, overriding whatever the peer sent. **`content-length` does not come back**: the body goes out chunked,
+  decide**: `x-content-type-options: nosniff` and `content-security-policy: default-src 'none';
+  sandbox` are forced on every proxied response. **The `content-type` is rebuilt, never passed
+  through**: only a single `type/subtype` with no comma is believed, because `application/json,
+  text/html` reads as JSON to one parser and as HTML to a browser that takes the last type. JSON
+  goes out as exactly `application/json`; the four raster types `rasterTypeOf` paints go out as
+  their bare type and stay inline (the chat shows them in an `<img>`), keeping the peer's
+  disposition for the file name; anything else, an unparseable type included, goes out as
+  `application/octet-stream` with `content-disposition: attachment`, overriding whatever the peer
+  sent. **`content-length` does not come back**: the body goes out chunked,
   so a peer that compressed could never leave the length disagreeing with the bytes. A GET that
   announced a length would leave the peer waiting for bytes that never come, and on a kept-alive
   connection read the next request as its body; so `content-length` goes out only with a body, and

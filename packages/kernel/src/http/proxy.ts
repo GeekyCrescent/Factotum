@@ -297,21 +297,34 @@ const SANDBOX = "default-src 'none'; sandbox"
 /** The four raster types `rasterTypeOf` paints (`@factotum/core`, `sniff.ts`). SVG is not one. */
 const INLINE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
+/** One `type/subtype` and nothing that could hide a second one: no comma anywhere in the value. */
+const SINGLE_MEDIA = /^\s*([a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+)\s*(;[^,]*)?$/i
+
 /**
  * The response headers, with CONTAINMENT DECIDED HERE AND NEVER BY THE PEER (security review,
- * 2026-10-08). Whatever the peer says, nothing is sniffed. JSON keeps the peer's headers — it is
- * what `fetch` reads, never painted. A raster image stays inline, because the chat paints it with an
- * `<img>` and a tap opens it in a tab (`rows.tsx`), but is sandboxed. Anything else is a sandboxed
- * download, whatever disposition and policy the peer sent: a compromised peer must not be able to
- * serve a document under this host's origin.
+ * 2026-10-08). Whatever the peer says, nothing is sniffed and everything is sandboxed.
+ *
+ * THE TYPE IS REBUILT, NEVER PASSED THROUGH. A value like `application/json, text/html` reads as
+ * JSON to a parser that takes the first type and as HTML to a browser that takes the last; only a
+ * single media type is believed, and what goes out is the bare type this code chose.
+ *
+ * - JSON goes out as exactly `application/json`: `fetch` reads it, a browser never paints it.
+ * - A raster image stays inline, because the chat paints it with an `<img>` and a tap opens it in a
+ *   tab (`rows.tsx`).
+ * - Anything else, an unparseable type included, is an `application/octet-stream` download: a
+ *   compromised peer must not be able to serve a document under this host's origin.
  */
 function pickResponse(headers: IncomingMessage['headers']): Record<string, string> {
-  const picked = pick(headers, RESPONSE_HEADERS)
-  const media = (picked['content-type'] ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? ''
-  const contained = { ...picked, 'x-content-type-options': 'nosniff' }
-  if (media === 'application/json') return contained
-  if (INLINE_TYPES.has(media)) return { ...contained, 'content-security-policy': SANDBOX }
-  return { ...contained, 'content-security-policy': SANDBOX, 'content-disposition': 'attachment' }
+  const { 'content-type': rawType, 'content-disposition': disposition, ...rest } = pick(headers, RESPONSE_HEADERS)
+  const media = SINGLE_MEDIA.exec(rawType ?? '')?.[1]?.toLowerCase()
+  const contained = { ...rest, 'x-content-type-options': 'nosniff', 'content-security-policy': SANDBOX }
+  if (media === 'application/json') return { ...contained, 'content-type': 'application/json' }
+  // An image keeps the peer's disposition: it carries the file name for a save, and with the type
+  // rebuilt and nothing sniffed it cannot turn the bytes into a document.
+  if (media !== undefined && INLINE_TYPES.has(media)) {
+    return disposition === undefined ? { ...contained, 'content-type': media } : { ...contained, 'content-type': media, 'content-disposition': disposition }
+  }
+  return { ...contained, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment' }
 }
 
 /**
