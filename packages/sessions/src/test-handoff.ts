@@ -8,7 +8,7 @@
  * five kinds, five statuses. The two lists are short on purpose.
  */
 
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PeerCaller, PeerResponse, Timers } from '@factotum/core'
 import { SessionIndex } from './index-cache.ts'
@@ -21,7 +21,14 @@ import type { HandoffHost, HandoffProject } from './handoff/host.ts'
 import type { Wire } from './handoff/wire.ts'
 
 export type { Wire }
-import type { World } from './test-repos.ts'
+import { sh, world, type World } from './test-repos.ts'
+import { KeyedQueue } from './keyed-queue.ts'
+import { createTarget, type Target } from './handoff/target.ts'
+import { remoteKey } from './handoff/git.ts'
+import { wipCommit } from './handoff/wip.ts'
+import { handoffBase, makeBundle } from './handoff/git-bundle.ts'
+import { sessionFiles } from './handoff/files.ts'
+import { buildManifest, type ManifestEntry } from './handoff/manifest.ts'
 
 export const testTimers: Timers = {
   setInterval: (fn, ms) => {
@@ -150,4 +157,119 @@ export function fakePeer(name: string, state: { route: Route | undefined; reacha
 /** The projects of a `World` as two hosts see them: the source's clone and the target's. */
 export function worldProjects(w: World, sourceId = 'vault', targetId = 'obsidian'): { readonly source: HandoffProject[]; readonly target: HandoffProject[] } {
   return { source: [{ id: sourceId, path: w.source }], target: [{ id: targetId, path: w.target }] }
+}
+
+/** Timers a test moves by hand: `advance(ms)` fires what is due, in order. */
+export function manualTimers(): Timers & { readonly advance: (ms: number) => Promise<void>; readonly pending: () => number } {
+  let now = 0
+  let seq = 0
+  const due = new Map<number, { at: number; fn: () => void; every?: number }>()
+  const add = (fn: () => void, ms: number, every?: number): Disposable => {
+    const id = (seq += 1)
+    due.set(id, { at: now + ms, fn, ...(every !== undefined ? { every } : {}) })
+    return { [Symbol.dispose]: () => void due.delete(id) }
+  }
+  return {
+    setTimeout: (fn, ms) => add(fn, ms),
+    setInterval: (fn, ms) => add(fn, ms, ms),
+    pending: () => due.size,
+    advance: async (ms) => {
+      const end = now + ms
+      for (;;) {
+        const next = [...due.entries()].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0]
+        if (next === undefined) break
+        const [id, timer] = next
+        now = timer.at
+        if (timer.every === undefined) due.delete(id)
+        else due.set(id, { ...timer, at: timer.at + timer.every })
+        timer.fn()
+        // Let what the timer queued run before the next one.
+        for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve))
+      }
+      now = end
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The target, driven by hand: the source's REAL git and files, the steps of D9 one by one
+// ---------------------------------------------------------------------------
+
+export interface TargetScenario {
+  readonly w: World
+  readonly source: TestHost
+  readonly target: TestHost
+  readonly t: Target
+  readonly queue: KeyedQueue
+  readonly hid: string
+  readonly siteId: string
+  readonly key: string
+  readonly sessions: SessionMeta[]
+}
+
+export interface ScenarioOptions {
+  readonly timers?: Timers
+  readonly ttlMs?: number
+  /** Before the sessions exist: commits, ignore rules, files on either side. */
+  readonly setup?: (w: World) => Promise<void>
+  readonly sessions?: number
+}
+
+export async function targetScenario(options: ScenarioOptions = {}): Promise<TargetScenario> {
+  const w = await world()
+  await options.setup?.(w)
+  const projects = worldProjects(w)
+  const source = await makeHost({ name: 'mac', projects: projects.source, env: w.env, peers: fakePeer('omarchy', { route: undefined, reachable: true }) })
+  const target = await makeHost({ name: 'omarchy', projects: projects.target, env: w.env, peers: fakePeer('mac', { route: undefined, reachable: true }) })
+  const timed = options.timers === undefined ? target : { ...target, host: { ...target.host, timers: options.timers } }
+  const queue = new KeyedQueue()
+  const t = createTarget({ host: timed.host, queue, ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}) })
+  const sessions: SessionMeta[] = []
+  for (let i = 0; i < (options.sessions ?? 1); i += 1) sessions.push(await addSession(source, { siteId: 'vault', transcript: `{"turn":${i}}\n` }))
+  return { w, source, target: timed, t, queue, hid: uuidv7(Date.now()), siteId: 'obsidian', key: remoteKey(w.bare) ?? '', sessions }
+}
+
+export async function prepareBody(sc: TargetScenario, over: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const head = await sh(sc.w.env, sc.w.source, 'rev-parse', 'HEAD')
+  return { key: sc.key, branch: 'main', head, sessionIds: sc.sessions.map((s) => s.id), to: 'omarchy', ...over }
+}
+
+export interface Built {
+  readonly head: string
+  readonly wip: string | undefined
+  readonly tree: string
+  readonly entries: readonly ManifestEntry[]
+  readonly sources: ReadonlyMap<number, string>
+}
+
+/** Steps 6 and 7 of the source, for real: the WIP, the bundle, the files, the manifest. */
+export async function build(sc: TargetScenario, branchHead?: string): Promise<Built> {
+  const work = join(sc.source.home, 'work', sc.hid)
+  await mkdir(work, { recursive: true })
+  const made = await wipCommit(sc.w.source, { indexFile: join(work, 'index'), hid: sc.hid, host: 'omarchy', base: sc.w.env })
+  const bundle = await makeBundle(sc.w.source, { hid: sc.hid, head: made.head, wip: made.wip, base: handoffBase(branchHead), out: join(work, 'code.bundle'), env: sc.w.env })
+  const files = (await Promise.all(sc.sessions.map(async (s) => (await sessionFiles(sc.source.host, s.id)).files))).flat()
+  const manifest = await buildManifest(files, bundle === undefined ? undefined : { abs: bundle, bytes: (await stat(bundle)).size })
+  return { head: made.head, wip: made.wip, tree: made.tree, entries: manifest.entries, sources: manifest.sources }
+}
+
+/** What the kernel does with an upload: the bytes, in a file of its own that the handler must move. */
+export async function incoming(sc: TargetScenario, source: string): Promise<{ readonly path: string; readonly bytes: number }> {
+  const dir = join(sc.target.home, '.incoming')
+  await mkdir(dir, { recursive: true })
+  const path = join(dir, uuidv7(Date.now()))
+  await copyFile(source, path)
+  return { path, bytes: (await stat(path)).size }
+}
+
+/** Step 7: the manifest and every file. Answers the first refusal, or the last answer. */
+export async function deliver(sc: TargetScenario, built: Built): Promise<Wire> {
+  const manifest = await sc.t.manifest(sc.hid, sc.siteId, built.entries)
+  if (manifest.kind !== 'ok') return manifest
+  let last: Wire = manifest
+  for (const entry of built.entries) {
+    last = await sc.t.file(sc.hid, sc.siteId, String(entry.n), await incoming(sc, built.sources.get(entry.n) ?? ''))
+    if (last.kind !== 'ok') return last
+  }
+  return last
 }

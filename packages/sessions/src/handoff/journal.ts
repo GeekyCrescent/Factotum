@@ -67,6 +67,12 @@ const journalSchema = z.object({
   prevHead: sha.optional(),
   branchHead: sha.optional(),
   branchCreated: z.boolean().optional(),
+  /**
+   * On the target, from `prepare`: this host's name as the SOURCE calls it — the `to` of the handoff
+   * event. A module never learns its own host's name (the kernel keeps `publicOrigin`), so the one
+   * that dialled it says it.
+   */
+  targetName: z.string().optional(),
   /** On the target, from `prepare` (v4.2): the only sessions a manifest may carry. */
   sessionIds: z.array(z.string()).optional(),
   /** The target's TTL is re-armed from this after a restart (D9). */
