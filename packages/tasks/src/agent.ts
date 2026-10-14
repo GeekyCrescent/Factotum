@@ -16,7 +16,7 @@
 import type { Logger } from '@factotum/core'
 import { createFromAgent, type Changed, type OpContext } from './board/ops.ts'
 import type { BoardStore } from './board/store.ts'
-import { MAX_AREA_CHARS, MAX_NOTES_CHARS, MAX_TITLE_CHARS, parseAgentTask } from './shape.ts'
+import { MAX_AREA_CHARS, MAX_NOTES_CHARS, MAX_TITLE_CHARS, parseAgentTask, SESSION_ID_PATTERN, SITE_ID_PATTERN } from './shape.ts'
 import type { AgentCall, AgentTool, AgentToolImpl, AgentToolResult, Result } from './types.ts'
 
 export const CREATE_TASK = 'create_task'
@@ -59,6 +59,12 @@ export function createAgentTools(deps: AgentDeps): AgentToolImpl {
     if (input.name !== CREATE_TASK) return text(`The task board has no tool called ${input.name}.`, true)
     if (typeof input.raw !== 'object' || input.raw === null || Array.isArray(input.raw)) {
       return text('The arguments must be an object with at least a "title".', true)
+    }
+    // What the sessions module hands over is stored on the card: it must pass the board's own schema,
+    // or the next start would refuse the whole file (a site id of 65 characters is a legal config there).
+    if (!SITE_ID_PATTERN.test(input.siteId) || !SESSION_ID_PATTERN.test(input.sessionId)) {
+      deps.log.warn(`create_task refused: session ${input.sessionId.slice(0, 64)} has an id the board cannot store`)
+      return text("The owner's board cannot file a task for this project; mention it in your reply instead.", true)
     }
     const shaped = parseAgentTask(input.raw)
     if (!shaped.ok) return text(`The task was not added: ${shaped.field} ${shaped.reason}. Fix it and call again.`, true)

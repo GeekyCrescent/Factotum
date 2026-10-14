@@ -183,6 +183,8 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 /** Names already reported as clashing: one warning per name for the life of the process. */
 const warned = new Set<string>()
+/** Not a tool name (a name cannot hold a space): the key of the one warning about a throwing family. */
+const THROWING = ' throwing family'
 
 /**
  * The families' tools as listed now, each with the family that runs it. A family whose `tools()` throws
@@ -196,6 +198,11 @@ function extraTools(deps: McpDeps): readonly { readonly tool: McpTool; readonly 
     try {
       tools = family.tools()
     } catch {
+      // Listed as nothing, and said once: a family that vanishes in silence is a bug nobody sees.
+      if (!warned.has(THROWING)) {
+        warned.add(THROWING)
+        deps.warn?.('a tool family failed to list its tools; it lists nothing')
+      }
       continue
     }
     for (const tool of tools) {

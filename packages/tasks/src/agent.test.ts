@@ -113,3 +113,10 @@ test('crit. 41: the log says a card was created, by id and session, never with i
   assert.equal(log.lines.some((line) => line.includes('SECRET')), false)
   assert.ok(log.lines.some((line) => line.includes('create_task') && line.includes(SESSION)))
 })
+
+test('a project id the board could not store is refused before writing: the next start must still open it', async (t) => {
+  const { agent, store } = await rig(t)
+  const result = await agent.call(call({ title: 'x' }, { siteId: 'a'.repeat(65) }))
+  assert.equal(result.isError, true)
+  assert.equal(store.current().tasks.length, 0)
+})
