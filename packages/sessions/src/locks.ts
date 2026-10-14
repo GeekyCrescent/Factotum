@@ -64,6 +64,15 @@ export interface LockEntry {
 /** What a lock holds while its project is deleted: not a session id, so nothing mistakes it. */
 export const REMOVING_HOLDER = 'removing'
 
+/**
+ * What a lock holds while its project is moved to the other host: `handoff-<hid>` (spec
+ * 2026-10-07-dos-hosts, D9). Like `removing`, it blocks EVERY mode — a `concurrent` project's shared
+ * session included (criterion 29) — and it is never a session id.
+ */
+export const HANDOFF_HOLDER_PREFIX = 'handoff-'
+
+export const isHandoffHolder = (holderId: string): boolean => holderId.startsWith(HANDOFF_HOLDER_PREFIX)
+
 const EXCLUSIVE = (): LockMode => 'exclusive'
 
 /** What `soleSection` answers when it did not run its task: someone else holds the site too. */
@@ -155,8 +164,10 @@ export class SiteLocks {
       if (legacy.exists) return { ok: false, heldBy: legacy.info }
 
       const holders = await this.#readHolders(siteId)
-      // 2. A project being deleted. Nothing comes in, whatever its mode.
+      // 2. A project being deleted, or moved to the other host. Nothing comes in, whatever its mode.
       if (holders.byId.has(REMOVING_HOLDER)) return { ok: false, heldBy: holders.byId.get(REMOVING_HOLDER) }
+      const handoff = holders.ids.find(isHandoffHolder)
+      if (handoff !== undefined) return { ok: false, heldBy: holders.byId.get(handoff) }
       // 3. The same holder twice: two replies to one finished session.
       if (holders.byId.has(holderId)) return { ok: false, heldBy: holders.byId.get(holderId) }
       // 4. Exclusive loses to anyone; told the oldest READABLE one, or nobody if none can be read.

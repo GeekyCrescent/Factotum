@@ -28,7 +28,7 @@ import { uuidv7 } from './id.ts'
 import { createLister, listFiles, MAX_ENTRIES } from './listing.ts'
 import { CRASH_REASON, ORPHAN_REASON, reconcile as reconcileLocks } from './lifecycle.ts'
 import { noticeFor } from './notices.ts'
-import { REMOVING_HOLDER, SiteLocks, type LockMode } from './locks.ts'
+import { isHandoffHolder, REMOVING_HOLDER, SiteLocks, type LockMode } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { createAskTable, type AnswerResult as TableAnswer } from './permissions/asks.ts'
 import { decide as decidePure, resolveTarget } from './permissions/decide.ts'
@@ -74,6 +74,8 @@ export const PROMPT_CHARS = 140
 
 const STOPPED = 'engine stopped'
 const BEING_REMOVED = 'this project is being removed'
+/** A `handoff-*` holder (spec 2026-10-07-dos-hosts, D9): `rejected`, never `busy` — there is no session to cancel. */
+export const HANDING_OFF = 'this project is being moved to another host'
 const DELETED = 'that conversation was deleted'
 const CANCELLED_REASON = 'cancelled by the owner'
 const SHUTDOWN_REASON = 'the daemon was shutting down'
@@ -570,6 +572,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         }
       }
       if (holder.sessionId === REMOVING) return { outcome: 'rejected', reason: BEING_REMOVED }
+      if (isHandoffHolder(holder.sessionId)) return { outcome: 'rejected', reason: HANDING_OFF }
       return { outcome: 'busy', sessionId: holder.sessionId }
     }
 
@@ -683,6 +686,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         return { outcome: 'rejected', reason: `site "${meta.siteId}" is locked but the lock cannot be read` }
       }
       if (holder.sessionId === REMOVING) return { outcome: 'rejected', reason: BEING_REMOVED }
+      if (isHandoffHolder(holder.sessionId)) return { outcome: 'rejected', reason: HANDING_OFF }
       return { outcome: 'busy', sessionId: holder.sessionId }
     }
 
@@ -955,7 +959,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // Runs inside `start()`, which the registry bounds with MODULE_START_TIMEOUT_MS. So the
     // notices reconcile raises are NOT awaited — `announce` never is — or a slow push service
     // could get the whole module disabled at boot (spec D7).
-    await reconcileLocks({ store, locks, log, now: setup.now, announce })
+    await reconcileLocks({ store, locks, log, now: setup.now, announce, handoffJournal: async (hid, siteId) => (await lstat(paths.journalFile(hid, siteId)).catch(() => undefined)) !== undefined })
     // AFTER the locks (D6): what the last daemon's services left is killed and closed. Never throws.
     await services.reconcile()
     // AFTER reconciling, so a session a crash left `running` is read as the `failed` it now is.

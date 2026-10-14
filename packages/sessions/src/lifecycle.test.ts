@@ -406,3 +406,59 @@ test('ONE live daemon pid among several locks aborts before releasing ANY of the
   assert.equal((await locks.all()).length, 3)
   assert.match(lines.join('\n'), /another daemon may own/)
 })
+
+// ---------------------------------------------------------------------------
+// The handoff's holder (spec 2026-10-07-dos-hosts, D11, criterion 32)
+// ---------------------------------------------------------------------------
+
+const HID = '0199e0c0-0000-7000-8000-0000000000aa'
+
+test('a handoff-<hid> holder WITH its journal is not released: the journal decides it', async () => {
+  const { store, locks } = await world()
+  await locks.acquire('vault', `handoff-${HID}`, AT)
+  const asked: string[] = []
+  const { log } = silentLog()
+  await reconcile({ store, locks, log, now: NOW, handoffJournal: async (hid, siteId) => (asked.push(`${hid}/${siteId}`), true) })
+  assert.equal((await locks.heldBy('vault'))?.sessionId, `handoff-${HID}`)
+  assert.deepEqual(asked, [`${HID}/vault`])
+})
+
+test('a handoff-<hid> holder WITHOUT a journal is released, with a line in the log', async () => {
+  const { store, locks } = await world()
+  await locks.acquire('vault', `handoff-${HID}`, AT)
+  const { log, lines } = silentLog()
+  await reconcile({ store, locks, log, now: NOW, handoffJournal: async () => false })
+  assert.equal(await locks.heldBy('vault'), undefined)
+  assert.match(lines.join('\n'), /handoff.*no journal/)
+})
+
+test('a handoff-* holder whose name is not a handoff id is released without asking for a journal', async () => {
+  const { store, locks } = await world()
+  await locks.acquire('vault', 'handoff-../../etc', AT)
+  let asked = false
+  await reconcile({ store, locks, log: silentLog().log, now: NOW, handoffJournal: async () => (asked = true) })
+  assert.equal(asked, false)
+  assert.equal(await locks.heldBy('vault'), undefined)
+})
+
+test('ROW 1 skips the handoff-* holders: one whose old pid now looks alive does not stop an orphan session lock elsewhere (v4.2)', async () => {
+  const { paths, store, locks } = await world(777)
+  // The handoff's holder was taken by a daemon (pid 999) long gone; the OS has given 999 to another process.
+  await new SiteLocks(paths, 999).acquire('vault', `handoff-${HID}`, AT)
+  await store.create({ id: sid(1), siteId: 'work', entryId: 'free', startedAt: AT, sitePath: undefined, agent: undefined, prompt: undefined })
+  await locks.acquire('work', sid(1), AT)
+
+  await reconcile({ store, locks, log: silentLog().log, now: NOW, alive: (pid) => pid === 999, handoffJournal: async () => true })
+
+  assert.equal((await store.readMeta(sid(1)))?.state, 'failed')
+  assert.equal(await locks.heldBy('work'), undefined)
+  assert.equal((await locks.heldBy('vault'))?.sessionId, `handoff-${HID}`)
+})
+
+test('ROW 1 still gives up on a SESSION lock with a live pid, as before', async () => {
+  const { paths, store, locks } = await world(777)
+  await new SiteLocks(paths, 999).acquire('work', sid(2), AT)
+  const { log, lines } = silentLog()
+  await reconcile({ store, locks, log, now: NOW, alive: (pid) => pid === 999, handoffJournal: async () => true })
+  assert.match(lines.join('\n'), /another daemon may own/)
+})

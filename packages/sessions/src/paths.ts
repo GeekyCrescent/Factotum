@@ -55,12 +55,23 @@ export interface SessionPaths {
   readonly servicesRegistry: string
   /** A session's service output. INSIDE its directory, so deleting the session takes it along (criterion 22). */
   readonly servicesDir: (sessionId: string) => string
+  /**
+   * The handoff's own state (spec 2026-10-07-dos-hosts, D11): `handoff/<hid>/run.json` on the source,
+   * `handoff/<hid>/<siteId>.json` — the journal of one project — on both sides, and next to it
+   * `handoff/<hid>/<siteId>/` with `staging/`, `replaced/`, `code.bundle` and the temporary index.
+   * The `hid` is checked with `isSessionId` BEFORE it reaches any of these (D13).
+   */
+  readonly handoff: string
+  readonly handoffDir: (hid: string) => string
+  readonly journalFile: (hid: string, siteId: string) => string
+  readonly handoffWork: (hid: string, siteId: string) => string
 }
 
 export function sessionPaths(stateDir: string): SessionPaths {
   const locks = join(stateDir, 'locks')
   const sessions = join(stateDir, 'sessions')
   const sessionDir = (sessionId: string): string => join(sessions, sessionId)
+  const handoff = join(stateDir, 'handoff')
 
   return {
     root: stateDir,
@@ -79,5 +90,9 @@ export function sessionPaths(stateDir: string): SessionPaths {
     mcpConfigFile: (sessionId) => join(sessionDir(sessionId), 'mcp.json'),
     servicesRegistry: join(stateDir, 'services.json'),
     servicesDir: (sessionId) => join(sessionDir(sessionId), 'services'),
+    handoff,
+    handoffDir: (hid) => join(handoff, hid),
+    journalFile: (hid, siteId) => join(handoff, hid, `${siteId}.json`),
+    handoffWork: (hid, siteId) => join(handoff, hid, siteId),
   }
 }

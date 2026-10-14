@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isAlive, SiteLocks, SOLE_SKIPPED } from './locks.ts'
+import { HANDOFF_HOLDER_PREFIX, isAlive, SiteLocks, SOLE_SKIPPED } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
 
@@ -349,4 +349,24 @@ test('a pid that cannot exist is not alive', () => {
   assert.equal(isAlive(0), false)
   assert.equal(isAlive(-1), false)
   assert.equal(isAlive(2 ** 30), false)
+})
+
+// ---------------------------------------------------------------------------
+// The handoff's holder (spec 2026-10-07-dos-hosts, D9, criterion 29): it blocks EVERY mode
+// ---------------------------------------------------------------------------
+
+test('a SHARED acquire loses to a handoff-* holder in a concurrent project, and is told so (criterion 29)', async () => {
+  const { locks } = await fresh()
+  const holder = `${HANDOFF_HOLDER_PREFIX}0199e0c0-0000-7000-8000-000000000001`
+  assert.deepEqual(await locks.acquire('vault', holder, AT), { ok: true })
+  const shared = await locks.acquire('vault', 's1', AT, () => 'shared')
+  assert.equal(shared.ok, false)
+  assert.equal(shared.ok ? undefined : shared.heldBy?.sessionId, holder)
+})
+
+test('a handoff-* acquire is exclusive like any other: it loses to a session already there', async () => {
+  const { locks } = await fresh()
+  await locks.acquire('vault', 's1', AT, () => 'shared')
+  const handoff = await locks.acquire('vault', `${HANDOFF_HOLDER_PREFIX}x`, AT)
+  assert.equal(handoff.ok, false)
 })

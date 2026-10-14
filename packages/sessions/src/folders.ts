@@ -16,7 +16,7 @@ import { basename, dirname } from 'node:path'
 import type { Logger, NotificationMessage, Notifier, Timers } from '@factotum/core'
 import type { History } from './history.ts'
 import type { SessionIndex } from './index-cache.ts'
-import type { SiteLocks } from './locks.ts'
+import { isHandoffHolder, type SiteLocks } from './locks.ts'
 import { MAX_PENDING_GRANTS, type GrantRequest, type GrantTable } from './permissions/grants.ts'
 import type { SiteTable } from './projects.ts'
 import { checkCandidate, type CandidateWorld, type DiskProbe } from './sites.ts'
@@ -285,7 +285,9 @@ export function createFolders(deps: FoldersDeps): Folders {
       // EXCLUSIVE, always: it loses to any session, one or N (spec 2026-10-03, criterion 16).
       const acquired = await deps.locks.acquire(id, deps.removing, deps.now().toISOString(), () => 'exclusive')
       if (!acquired.ok) {
-        return change(acquired.heldBy === undefined ? `project "${id}" is locked and the lock cannot be read` : 'a session is running in that project')
+        if (acquired.heldBy === undefined) return change(`project "${id}" is locked and the lock cannot be read`)
+        // Moved to the other host (spec 2026-10-07-dos-hosts, D9): the same words a launch gets.
+        return change(isHandoffHolder(acquired.heldBy.sessionId) ? 'this project is being moved to another host' : 'a session is running in that project')
       }
       try {
         const result = await registry.update(async (current) =>
