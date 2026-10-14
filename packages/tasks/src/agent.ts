@@ -80,7 +80,8 @@ function filer(deps: AgentDeps): (filing: Filing) => Promise<AgentToolResult> {
     // What the sessions module hands over is stored on the card: it must pass the board's own schema,
     // or the next start would refuse the whole file (a site id of 65 characters is a legal config there).
     if (!SITE_ID_PATTERN.test(input.siteId) || !SESSION_ID_PATTERN.test(input.sessionId)) {
-      deps.log.warn(`create_task refused: session ${input.sessionId.slice(0, 64)} has an id the board cannot store`)
+      // A fixed line: on agent-tasks these ids come straight from an HTTP body, and could carry anything.
+      deps.log.warn('create_task refused: a session or project id the board cannot store')
       return text("The owner's board cannot file a task for this project; mention it in your reply instead.", true)
     }
     const shaped = parseAgentTask(input.raw)
@@ -112,7 +113,7 @@ function filer(deps: AgentDeps): (filing: Filing) => Promise<AgentToolResult> {
       return await file(filing)
     } catch {
       // A fixed line: the input is the agent's text, and this log carries none of it (criterion 41).
-      deps.log.error(`create_task from session ${String(filing.sessionId).slice(0, 64)} failed unexpectedly`)
+      deps.log.error('create_task failed unexpectedly')
       return UNAVAILABLE
     }
   }

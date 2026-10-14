@@ -138,3 +138,17 @@ test('stop disarms the interval', async (t) => {
   await reminders.stop()
   assert.deepEqual(timers.pending(), [])
 })
+
+test('with no device to reach, nothing is marked: the reminder stays due for when one subscribes', async (t) => {
+  const r = await rig(t, [task({ id: 'r', status: 'todo', remindAt: at(-MINUTE) })])
+  const unreachable = createReminders({
+    store: r.store,
+    now: () => NOW,
+    timers: r.timers.timers,
+    notify: { canReach: () => false, send: async () => undefined },
+    log: r.log,
+  })
+  await unreachable.tick()
+  assert.equal(r.store.current().tasks[0]?.remindedAt, null)
+  assert.deepEqual(due(r.store.current(), NOW).send.map((x) => x.id), ['r'])
+})

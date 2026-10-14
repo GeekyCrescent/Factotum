@@ -22,6 +22,11 @@ import type { AgentToolImpl, AgentToolResult, Relay } from './types.ts'
 export const RELAY_TIMEOUT_MS = 10_000
 
 const UNREACHABLE = toolText("The owner's task board is unreachable; tell the owner in your reply instead. Do not try again.", true)
+/** A timeout does not say whether the board filed it (`PeerResponse`): the agent must not say it did not. */
+const UNKNOWN = toolText(
+  "The owner's task board did not answer in time, so it is unknown whether the task was added; tell the owner in your reply. Do not try again.",
+  true,
+)
 
 /** A tool result as the board host answers it: a list of text parts, and `isError` or not. */
 function isResult(body: unknown): body is AgentToolResult {
@@ -47,9 +52,13 @@ export function createRelay(deps: { readonly relayTo: string; readonly peers: Pe
       if (!shaped.ok) return toolText(`The task was not added: ${shaped.field} ${shaped.reason}. Fix it and call again.`, true)
       if (deps.peers === undefined) return UNREACHABLE
       const answer = await deps.peers.json(deps.relayTo, 'POST', 'agent-tasks', { ...shaped.value, sessionId: input.sessionId, siteId: input.siteId }, { timeoutMs: RELAY_TIMEOUT_MS })
-      if (answer.ok && isResult(answer.body)) return answer.body
+      // Rebuilt, not passed through: only text parts and a boolean `isError` reach the agent.
+      if (answer.ok && isResult(answer.body)) {
+        const content = answer.body.content.map((part) => ({ type: 'text' as const, text: part.text }))
+        return answer.body.isError === true ? { content, isError: true } : { content }
+      }
       deps.log.warn(`create_task from session ${input.sessionId} could not reach the board on ${deps.relayTo} (${answer.ok ? 'not a result' : answer.reason})`)
-      return UNREACHABLE
+      return !answer.ok && answer.reason === 'timeout' ? UNKNOWN : UNREACHABLE
     },
   }
   return {

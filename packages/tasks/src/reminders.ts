@@ -65,6 +65,9 @@ export function createReminders(deps: RemindersDeps): Reminders {
   let running: Promise<void> | undefined
 
   const pass = async (): Promise<void> => {
+    // Nobody subscribed: marking now would lose the reminder for good. It stays due, and is sent when a
+    // device subscribes — or is «missed» once it is 24 h late (criterion 36).
+    if (!deps.notify.canReach()) return
     let picked: { send: readonly Task[]; missed: readonly Task[] } = { send: [], missed: [] }
     const written = await deps.store.change((board) => {
       const now = deps.now()
@@ -88,7 +91,8 @@ export function createReminders(deps: RemindersDeps): Reminders {
       picked.send.map(async (card) => {
         try {
           await deps.notify.send(noticeOf(card))
-          deps.log.info(`reminder of ${card.id} sent`)
+          // Handed to the push service: `send` has no acknowledgement of delivery.
+          deps.log.info(`reminder of ${card.id} handed to push`)
         } catch {
           deps.log.warn(`reminder of ${card.id} could not be sent`)
         }

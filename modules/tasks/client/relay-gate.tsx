@@ -19,7 +19,7 @@ import type { ViewProps } from './contract.ts'
 import { relayTarget } from './where.ts'
 
 export function RelayGate({ props, children }: { readonly props: ViewProps; readonly children: ComponentChildren }) {
-  const { api, navigate, hosts } = props
+  const { api, navigate, hosts, rest } = props
   const [where, setWhere] = useState<WhereView | undefined>(undefined)
 
   useEffect(() => {
@@ -35,14 +35,28 @@ export function RelayGate({ props, children }: { readonly props: ViewProps; read
   }, [api])
 
   const relayTo = where?.mode === 'relay' ? where.host : undefined
-  const target = relayTo === undefined ? undefined : relayTarget(relayTo, hosts)
+  // Reached through /h/<host>/ and STILL a relay: two relays pointing at each other (or at themselves).
+  // Jumping again would loop; it is said instead.
+  const looped = relayTo !== undefined && props.host !== undefined
+  const target = relayTo === undefined || looped ? undefined : relayTarget(relayTo, hosts)
   useEffect(() => {
     if (relayTo === undefined || target === undefined) return
-    if (target.kind === 'self') navigate('', { host: null, replace: true })
-    else if (target.kind === 'peer') navigate('', { host: relayTo, replace: true })
-  }, [relayTo, target?.kind, navigate])
+    // The same screen there — a card, Triage, «What's next?» — not only the board's root.
+    if (target.kind === 'self') navigate(rest, { host: null, replace: true })
+    else if (target.kind === 'peer') navigate(rest, { host: relayTo, replace: true })
+  }, [relayTo, target?.kind, navigate, rest])
 
   if (relayTo === undefined) return <>{children}</>
+  if (looped) {
+    return (
+      <div class="t-screen t-pad">
+        <div class="notice err" role="alert">
+          <div class="head">No host keeps the board</div>
+          <p>This host relays to {relayTo}, and {relayTo} relays too. One of them must have tasks in board mode.</p>
+        </div>
+      </div>
+    )
+  }
   if (target?.kind === 'unreachable') {
     return (
       <div class="t-screen">

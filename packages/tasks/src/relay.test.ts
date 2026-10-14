@@ -66,7 +66,6 @@ test('R1: a bad input is refused here, without spending a call to the board host
 test('R1, crit. 29: unreachable, a timeout or an answer that is not a result is «the board is unreachable», never retried', async (t) => {
   for (const response of [
     { ok: false, status: undefined, reason: 'unreachable', body: undefined },
-    { ok: false, status: undefined, reason: 'timeout', body: undefined },
     { ok: false, status: 500, reason: 'http', body: { error: 'x' } },
     { ok: true, status: 200, body: { not: 'a result' } },
   ] as const) {
@@ -110,4 +109,21 @@ test('agent-tasks without a peer, or with a body that is not one, is an isError 
   assert.equal((await withPeer.created.tasks.fromPeer({ title: 'x' })).isError, true)
   assert.equal((await withPeer.created.tasks.fromPeer('nope')).isError, true)
   assert.equal(withPeer.created.tasks.triage().length, 0)
+})
+
+test('R1: a timeout says it is UNKNOWN whether the task was added — it may have been', async (t) => {
+  const caller = peers(() => ({ ok: false, status: undefined, reason: 'timeout', body: undefined }))
+  const { created } = await make(t, { mode: 'relay', relayTo: 'omarchy' }, { peers: caller })
+  if (!created.ok || !('relay' in created)) throw new Error('expected relay')
+  const result = await created.relay.agent.call(call({ title: 'x' }))
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /unknown whether the task was added/)
+})
+
+test('R1: the board host answer is rebuilt: text parts and a boolean isError, nothing else', async (t) => {
+  const body = { content: [{ type: 'text', text: 'capped', extra: 1 }], isError: true, injected: 'x' }
+  const caller = peers(() => ({ ok: true, status: 200, body }))
+  const { created } = await make(t, { mode: 'relay', relayTo: 'omarchy' }, { peers: caller })
+  if (!created.ok || !('relay' in created)) throw new Error('expected relay')
+  assert.deepEqual(await created.relay.agent.call(call({ title: 'x' })), { content: [{ type: 'text', text: 'capped' }], isError: true })
 })
