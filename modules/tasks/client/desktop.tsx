@@ -23,6 +23,7 @@ export function DesktopBoard({
   addTo,
   dropOn,
   rootRef,
+  triage,
 }: {
   readonly columns: Readonly<Record<Column, readonly Task[]>>
   readonly opened: ReadonlySet<Pinned>
@@ -34,6 +35,8 @@ export function DesktopBoard({
   /** The column under a drag, if any: its rail lights up. */
   readonly dropOn: Column | undefined
   readonly rootRef: RefObject<HTMLDivElement>
+  /** Triage as the first column, while it holds something (redesign of Triage, direction A). */
+  readonly triage?: ComponentChildren
 }) {
   const counts = {
     backlog: columns.backlog.length,
@@ -55,6 +58,7 @@ export function DesktopBoard({
   return (
     <div class="t-board" ref={rootRef}>
       <div class="t-scroll" data-scroll ref={strip}>
+        {triage}
         {boardLayout(counts, opened).map(({ status, shape }) =>
           shape === 'rail' ? (
             <section key={status} class={dropOn === status ? 't-rail t-rail-target' : 't-rail'} data-column={status} aria-label={`${labelOf(status)}, empty`}>

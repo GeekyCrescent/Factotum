@@ -25,6 +25,7 @@ import type { ViewProps } from './contract.ts'
 import { DesktopBoard } from './desktop.tsx'
 import { useBoardEdge } from './edge.ts'
 import { NextSheet } from './next.tsx'
+import { TriageCards, TriageColumn } from './triage-card.tsx'
 import { useBoardDrag } from './drag.ts'
 import { FilterMenus, FilterSheet } from './filters.tsx'
 import { Icon } from './icon.tsx'
@@ -49,6 +50,7 @@ import {
 import { OverdueStrip, Tabs } from './phone.tsx'
 import { TaskSheet } from './task-sheet.tsx'
 import { useBoard, useWide } from './use-board.ts'
+import { useDecide, useTriage } from './use-triage.ts'
 
 /** On this device only (criterion 13). */
 const FILTER_KEY = 'factotum.tasks.filter'
@@ -84,7 +86,23 @@ export function Board({
   const dictation = peerModule('sessions', undefined)
   const board = useBoard(api)
   const { edge, hostProjects } = useBoardEdge(props)
-  const wide = useWide()
+  const wideNow = useWide()
+  // On a wide screen Triage is the first column of the board, so its cards are read here too.
+  const triage = useTriage(api, wideNow && (board.view?.triage ?? 0) > 0)
+  const { act: boardAct } = board
+  const { reload: triageReload } = triage
+  /** A change, then Triage read again: a card accepted from the column leaves it. */
+  const actAll = useCallback(
+    async (path: string, body?: unknown): Promise<boolean> => {
+      const sent = await boardAct(path, body)
+      if (triage.list !== undefined) await triageReload()
+      return sent
+    },
+    [boardAct, triageReload, triage.list],
+  )
+  const triageTasks = wideNow && (board.view?.triage ?? 0) > 0 ? triage.list?.tasks : undefined
+  const decider = useDecide(actAll, triageTasks)
+  const wide = wideNow
   const [filter, setFilterState] = useState<Filter>(readFilter)
   const [tab, setTab] = useState<Column>('todo')
   const [closeLater, setCloseLater] = useState(false)
@@ -232,7 +250,8 @@ export function Board({
               <Icon name="lightbulb" size={20} />
             </button>
           )}
-          {view.triage > 0 ? (
+          {/* On a wide screen Triage is the board's first column: the chip is the phone's way in. */}
+          {view.triage > 0 && !(wide && triageTasks !== undefined) ? (
             <button type="button" class="t-triage" onClick={() => navigate('triage')}>
               <Icon name="tray" size={wide ? 16 : 20} />
               <span class="sr-only">Triage, {view.triage} waiting</span>
@@ -303,7 +322,26 @@ export function Board({
             addTo={addTo}
             dropOn={dragging?.drop?.status}
             rootRef={root}
+            {...(triageTasks === undefined || triageTasks.length === 0
+              ? {}
+              : {
+                  triage: (
+                    <TriageColumn count={triageTasks.length}>
+                      <TriageCards
+                        tasks={triageTasks}
+                        today={today}
+                        busy={decider.busy}
+                        listRef={decider.listRef}
+                        open={open}
+                        decide={(id, index, what) => void decider.decide(id, index, what)}
+                      />
+                    </TriageColumn>
+                  ),
+                })}
           />
+          <p class="sr-only" role="status">
+            {decider.said}
+          </p>
         </>
       ) : (
         <>
@@ -328,9 +366,10 @@ export function Board({
           key={openTask}
           api={api}
           id={openTask}
-          view={view}
+          // With the cards of Triage in it, so one opened from the column is live and can be edited.
+          view={triageTasks === undefined ? view : { ...view, tasks: [...view.tasks, ...triageTasks] }}
           today={today}
-          act={board.act}
+          act={actAll}
           error={board.error}
           onClose={() => navigate('')}
           edge={edge}

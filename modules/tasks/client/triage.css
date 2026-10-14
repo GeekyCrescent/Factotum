@@ -53,11 +53,6 @@ button.t-triage:hover {
   bottom: calc(100% + var(--space-1));
 }
 
-.t-triage-acts [aria-disabled='true'] {
-  opacity: 0.5;
-  cursor: progress;
-}
-
 /* The dictation's notice («dictation is off on this host»…), above the field like the length note. */
 .t-capture-mic-note {
   position: absolute;
@@ -83,91 +78,148 @@ button.t-triage:hover {
   border: 1px solid var(--line-strong);
 }
 
-/* --- The list -------------------------------------------------------------- */
+/* --- Triage, direction A: the board's card with one row of decision ------------------------- */
 
-.t-triage-lead {
+.t-tlead {
   margin: 0;
   padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.t-tpage {
+  padding: 0 var(--space-3) var(--space-6);
+  max-width: 560px;
+}
+
+.t-tcard {
+  display: grid;
+}
+
+/* Still being read: the outline says «not settled yet», without a colour that means anything else. */
+.t-tcard-reading {
+  border-style: dashed;
+}
+
+.t-tcard-open {
+  min-height: 0;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+
+.t-tsrc {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  font-size: var(--text-caption);
+  color: var(--text-3);
+}
+
+.t-twrote {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.t-treading {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.t-tfailed {
+  color: var(--err);
+}
+
+.t-tacts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1h) var(--space-3);
+}
+
+.t-tseg {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  overflow: hidden;
+}
+
+.t-tseg button {
+  min-height: var(--hit);
+  padding: 0 var(--space-4);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+  transition-property: background-color, color;
+  transition-duration: var(--dur-press);
+}
+
+/* Todo is where most of Triage goes: the one in the accent. */
+.t-tseg button:first-child {
+  color: var(--accent-text);
+}
+
+.t-tseg button + button {
+  border-left: 1px solid var(--line);
+}
+
+.t-tseg button:hover {
+  background: var(--surface-2);
+}
+
+.t-tseg button:active {
+  background: var(--chip-on);
+}
+
+.t-tseg [aria-disabled='true'],
+.t-tdiscard[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.t-tdiscard {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.t-tdiscard:hover {
+  color: var(--err);
+}
+
+/* --- On a wide screen: Triage is the first column, amber because it waits on the owner -------- */
+
+.t-tcol {
+  padding: 0 var(--space-1h) var(--space-1h);
+  border: 1px solid var(--ask-border);
+  border-radius: var(--radius-10);
+  background: var(--ask-bg);
+}
+
+.t-tcol-head {
+  color: var(--ask);
+}
+
+.t-tcol-head h2 {
+  color: var(--ask);
+}
+
+.t-tcol .t-card-title {
   font-size: var(--text-small);
 }
 
-.t-triage-list {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 var(--space-6);
-  max-width: 720px;
-}
-
-.t-triage-item {
-  display: grid;
-  gap: var(--space-1h);
-  padding: var(--space-3) var(--space-4) var(--space-2h);
-  border-bottom: 1px solid var(--line);
-}
-
-.t-triage-src,
-.t-triage-fields,
-.t-triage-reading {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
+/* Smaller than the phone's thumb targets, still 36 px: from 900 px a tablet is a finger too. */
+.t-tcol .t-tseg button {
+  min-height: 36px;
+  padding: 0 var(--space-3);
   font-size: var(--text-caption);
-  color: var(--text-2);
 }
 
-.t-triage-src {
-  gap: var(--space-1h);
-}
-
-.t-triage-fields span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.t-triage-title {
-  margin: 0;
-  font-size: var(--text-body);
-  font-weight: 500;
-  line-height: 1.35;
-  text-wrap: pretty;
-  overflow-wrap: anywhere;
-}
-
-.t-triage-reading {
-  gap: var(--space-1h);
-  color: var(--text-2);
-}
-
-.t-triage-failed {
-  margin: 0;
-  font-size: var(--text-caption);
-  color: var(--err);
-}
-
-.t-triage-raw {
-  margin: 0;
-  font-size: var(--text-caption);
-  overflow-wrap: anywhere;
-}
-
-.t-triage-acts {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-
-.t-triage-acts .btn {
-  flex: 1;
-  max-width: 160px;
-  min-height: var(--hit);
-}
-
-.t-triage-discard {
-  color: var(--err);
+.t-tcol .t-tdiscard {
+  width: 36px;
+  height: 36px;
 }
 
 .t-spin {
