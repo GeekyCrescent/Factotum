@@ -35,6 +35,7 @@
 }
 
 .t-cycle {
+  white-space: nowrap;
   font-size: var(--text-heading);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -82,6 +83,27 @@
   max-width: 14rem;
 }
 
+/* On the phone the filters are one row that scrolls sideways, not three rows above the cards. */
+@media (max-width: 899px) {
+  .t-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .t-filters select {
+    flex: none;
+    max-width: 11rem;
+  }
+}
+
+.t-field input,
+.t-field select,
+.t-field textarea {
+  width: 100%;
+  min-width: 0;
+}
+
 .t-field textarea {
   padding-block: var(--space-2);
   resize: vertical;
@@ -92,7 +114,7 @@
 .t-columns {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(15rem, 1fr);
+  grid-auto-columns: minmax(9.5rem, 1fr);
   gap: var(--space-3);
   overflow-x: auto;
   padding-bottom: var(--space-3);
@@ -101,6 +123,10 @@
 
 .t-column {
   display: grid;
+  /* One track that may shrink: otherwise it takes the min-content of a card and spills over. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-width: 0;
   gap: var(--space-2);
   padding: var(--space-2);
   border-radius: var(--radius-10);
@@ -159,6 +185,7 @@
 
 .t-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   list-style: none;
   margin: 0;
@@ -204,7 +231,7 @@
   min-height: var(--hit);
   display: grid;
   gap: var(--space-1);
-  padding: var(--space-2h) var(--space-3);
+  padding: var(--space-2h) var(--space-2h);
   border: 0;
   background: none;
   color: var(--text);
@@ -248,6 +275,10 @@
 
 .t-grip {
   flex: none;
+  /* Desktop only (the phone has no grip): a mouse does not need the 44 px of a finger. */
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
   align-self: center;
   color: var(--text-3);
   cursor: grab;
@@ -315,6 +346,7 @@
 }
 
 .t-field {
+  min-width: 0;
   display: grid;
   gap: var(--space-1);
   font-size: var(--text-caption);

@@ -40,7 +40,7 @@ export function QuickCapture({
         type="text"
         value={text}
         maxLength={200}
-        placeholder={`Add to ${label}`}
+        placeholder={sticky ? `Add to ${label}` : 'Add a card'}
         aria-label={`New card in ${label}`}
         enterKeyHint="done"
         onInput={(event) => setText((event.target as HTMLInputElement).value)}
