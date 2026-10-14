@@ -60,6 +60,17 @@ export interface ModuleViewProps {
    * name goes to that host, `null` to the serving one, and without the key it stays on this one.
    */
   readonly navigate: (rest: string, options?: NavigateOptions) => void
+  /**
+   * ANOTHER MODULE'S api, on a host (`undefined`: the serving one) — the client edge between modules
+   * (spec 2026-10-14-tareas-kanban, design D9; ADR-0021). `undefined` when the serving server does not
+   * have that module switched on. A contract, not a boundary: the page is one origin.
+   */
+  readonly peerModule: (id: string, host: string | undefined) => ModuleApi | undefined
+  /**
+   * Go to ANOTHER module's screen: `/m/<id>/<rest>`, or `/h/<host>/m/<id>/<rest>`. The options are
+   * `navigate`'s: `host` a name goes there, `null` to the serving host, without it this screen's host.
+   */
+  readonly openModule: (id: string, rest: string, options?: NavigateOptions) => void
   readonly openDrawer: () => void
   /** The module's own overlay (a sheet), which Android's Back closes first. */
   readonly overlay: string | undefined

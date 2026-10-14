@@ -161,6 +161,19 @@ export function apiOnFor(id: string): (host: string | undefined) => ModuleApi {
   return created
 }
 
+/**
+ * THE CLIENT EDGE BETWEEN MODULES (spec 2026-10-14-tareas-kanban, design D9; ADR-0021): another
+ * module's api, on the serving host or on another one. `undefined` when the server serving the app
+ * does not have that module switched on — the shell already knows, from `GET /modules`.
+ *
+ * A CONTRACT, NOT A BOUNDARY: the page is one origin, and any script on it can call any route. What
+ * this gives a module is a sanctioned way to say «I use sessions», instead of a hand-built URL.
+ */
+export function peerModuleFor(modules: readonly ModuleSummary[]): (id: string, host: string | undefined) => ModuleApi | undefined {
+  const enabled = new Set(modules.filter((module) => module.status.kind === 'enabled').map((module) => module.id))
+  return (id, host) => (enabled.has(id) ? apiFor(id, host) : undefined)
+}
+
 // ---------------------------------------------------------------------------
 // Push: the daemon's own two routes, like `/modules` above — not a module's
 // ---------------------------------------------------------------------------
