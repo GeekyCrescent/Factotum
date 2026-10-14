@@ -974,6 +974,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     await services.reconcile()
     // AFTER reconciling, so a session a crash left `running` is read as the `failed` it now is.
     await ensureIndex()
+    // The handoff's journals (spec 2026-10-07-dos-hosts, D11): AFTER the locks, which left its holders
+    // to it. Only journals and holders here — no git, no peer; the rest is armed on the module's timers.
+    await handoff.atStart()
+    handoff.schedule()
   }
 
   function view(): EngineSetupView {

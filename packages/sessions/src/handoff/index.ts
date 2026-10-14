@@ -16,6 +16,7 @@ import { compute, createPreviews, PreviewError } from './preview.ts'
 import { sessionsCheck, targetProjects } from './snapshot.ts'
 import { createSource, type SourceDeps } from './source.ts'
 import { createTarget } from './target.ts'
+import { createResume } from './resume.ts'
 import { accepted, invalid, notFound, ok, refuse, type Wire } from './wire.ts'
 
 export interface HandoffApi {
@@ -43,6 +44,13 @@ export interface HandoffApi {
   readonly done: (hid: string, siteId: string) => Promise<Wire>
   readonly status: (hid: string, siteId: string) => Promise<Wire>
   // --- the module's life ---
+  /** Inside `start()`, after the locks are reconciled: the journals and the holders only (D11, moment 1). */
+  readonly atStart: () => Promise<void>
+  /** Arms moments 2 and 3 and the daily prune (D11). */
+  readonly schedule: () => void
+  /** Moment 2 itself, which `schedule` runs on a timer of 0; and moment 3's one pass. Tests call them. */
+  readonly afterStart: () => Promise<void>
+  readonly poll: () => Promise<void>
   /** Disarms every timer of the handoff. The engine's `stop()`. */
   readonly stop: () => void
   /** For tests: resolves when the handoff `start` began is over. */
@@ -68,6 +76,7 @@ export function createHandoff(host: HandoffHost, options: HandoffOptions = {}): 
   const queue = new KeyedQueue()
   const target = createTarget({ host, queue, ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}) })
   const source = createSource({ host, ...options.source })
+  const resume = createResume({ host, queue, source, target, ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}) })
   const previews = createPreviews({ run: async (to) => (await compute(host, to)).plan, timers: host.timers, now: host.now, log: host.log })
   let running: Promise<void> = Promise.resolve()
   let busy = false
@@ -88,7 +97,11 @@ export function createHandoff(host: HandoffHost, options: HandoffOptions = {}): 
       const { plan } = await compute(host, to)
       const planned: Run = { ...base, siteIds: plan.projects.map((p) => p.siteId), state: 'running', skipped: plan.skipped.map((s) => ({ ...s })), totals: plan.totals }
       await writeRun(host.paths, planned)
-      for (const project of plan.projects) await queue.run(project.siteId, () => source.moveProject(hid, to, project))
+      for (const project of plan.projects) {
+        const journal = await queue.run(project.siteId, () => source.moveProject(hid, to, project))
+        // The peer may come back later: the interval asks it then (D11, moment 3).
+        if (journal.phase === 'pending-peer') resume.wake()
+      }
       await writeRun(host.paths, { ...planned, state: 'finished' })
     } catch (error) {
       const failure = error instanceof PreviewError ? error.reason : 'internal'
@@ -166,7 +179,14 @@ export function createHandoff(host: HandoffHost, options: HandoffOptions = {}): 
     abort: target.abort,
     done: target.done,
     status: target.status,
-    stop: () => target.stop(),
+    atStart: resume.atStart,
+    schedule: resume.schedule,
+    afterStart: resume.afterStart,
+    poll: resume.poll,
+    stop: () => {
+      target.stop()
+      resume.stop()
+    },
     settled: () => running,
   }
 }

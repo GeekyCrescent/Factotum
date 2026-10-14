@@ -78,13 +78,13 @@ export function createSource(deps: SourceDeps) {
     }
   }
 
-  function stepsOf(hid: string, to: string, project: PlannedProject) {
+  function stepsOf(hid: string, to: string, project: PlannedProject, existing?: Journal) {
     const path = host.projects().find((p) => p.id === project.siteId)?.path
     const route = (step: string) => `handoff/${hid}/${project.targetSiteId}/${step}`
     const work = host.paths.handoffWork(hid, project.siteId)
     const bundlePath = join(work, 'code.bundle')
 
-    let journal: Journal = {
+    let journal: Journal = existing ?? {
       ...newJournal({ hid, siteId: project.siteId, role: 'source', peer: to, phase: 'locking', at: host.now().toISOString() }),
       peerSiteId: project.targetSiteId,
       branch: project.branch,
@@ -263,17 +263,57 @@ export function createSource(deps: SourceDeps) {
       return await cleanAndRelease(journal)
     }
 
-    return { run, recover }
+    /**
+     * A `pending-peer` (also one a restart made of `committing`), when the peer is back (D11, row
+     * «pending-peer»): `status`, by the table of step 10. Still unknown: it stays as it is.
+     */
+    async function settlePending(): Promise<Journal> {
+      const answer = await host.peers.json(to, 'GET', route('status'), undefined, { timeoutMs: NOTICE_TIMEOUT_MS })
+      await heard(answer)
+      if (!answer.ok) return journal
+      const phase = (answer.body as { phase?: unknown }).phase
+      let outcome: Outcome = 'pending-peer'
+      if (phase === 'committed' || phase === 'done') outcome = 'committed'
+      else if (phase === 'abort-failed') outcome = 'aborted'
+      else if (phase === 'prepared' || phase === 'aborted') outcome = await abortCommitting()
+      if (outcome === 'committed') return await finish()
+      if (outcome === 'aborted') return await abortLocal(undefined, false)
+      return journal
+    }
+
+    /** The startup's `locked` and `sending` (D11, column 2): aborted here, without the peer. */
+    const abortAfterRestart = async () => await abortLocal('restarted', false)
+
+    return { run, recover, settlePending, abortAfterRestart, finish }
+  }
+
+  /** The steps of a journal found on disk, for the startup (D11). */
+  function resumeOf(journal: Journal) {
+    const project: PlannedProject = {
+      siteId: journal.siteId,
+      targetSiteId: journal.peerSiteId ?? '',
+      branch: journal.branch ?? '',
+      head: journal.head ?? '',
+      sessions: journal.sessionIds ?? [],
+      localCommits: 0,
+      changedFiles: 0,
+      newUntracked: [],
+      bytes: 0,
+      warnings: [],
+    }
+    return stepsOf(journal.hid, journal.peer, project, journal)
   }
 
   /**
    * Steps 13–15, also the startup's row `acked` (D11): clean the source if it is still what travelled,
    * drop the bundle, `done`, let go — and tell the peer once, without waiting for it to work out.
    */
-  async function cleanAndRelease(start: Journal): Promise<Journal> {
+  async function cleanAndRelease(start: Journal, tellPeer = true): Promise<Journal> {
     let journal = start
     const path = host.projects().find((p) => p.id === journal.siteId)?.path
     const work = host.paths.handoffWork(journal.hid, journal.siteId)
+    // After a restart the work folder may be gone; the temporary index of `wipTree` lives in it.
+    await mkdir(work, { recursive: true })
     if (path !== undefined && journal.head !== undefined && journal.tree !== undefined) {
       const cleaned = await cleanSource(path, { hid: journal.hid, head: journal.head, wip: journal.wip, tree: journal.tree, indexFile: join(work, 'index'), ...(host.gitEnv !== undefined ? { env: host.gitEnv } : {}) })
       if (cleaned !== 'cleaned') {
@@ -287,11 +327,11 @@ export function createSource(deps: SourceDeps) {
     await writeJournal(host.paths, journal)
     await host.locks.release(journal.siteId, holderOf(journal.hid))
     // ONCE, and nobody retries it: the target's leftovers go with it or with its prune (v4.1).
-    await host.peers.json(journal.peer, 'POST', `handoff/${journal.hid}/${journal.peerSiteId}/done`, {}, { timeoutMs: NOTICE_TIMEOUT_MS })
+    if (tellPeer) await host.peers.json(journal.peer, 'POST', `handoff/${journal.hid}/${journal.peerSiteId}/done`, {}, { timeoutMs: NOTICE_TIMEOUT_MS })
     return journal
   }
 
-  return { moveProject, cleanAndRelease }
+  return { moveProject, cleanAndRelease, resumeOf }
 }
 
 export type Source = ReturnType<typeof createSource>
