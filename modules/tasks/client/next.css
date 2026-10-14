@@ -1,0 +1,78 @@
+/*
+ * «What's next?» (F2), prefixed `t-` like the rest of the module. Grafito tokens by name only: no colour values
+ * here, and every transition names its properties.
+ */
+
+.t-next-open {
+  flex: none;
+}
+
+.t-next {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+}
+
+.t-next-thinking:empty {
+  display: none;
+}
+
+.t-next-thinking,
+.t-next-at,
+.t-next-error {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  font-size: var(--text-small);
+}
+
+.t-next-error {
+  color: var(--err);
+}
+
+.t-next-note {
+  margin: 0;
+  font-size: var(--text-body);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.t-next-list {
+  display: grid;
+  gap: var(--space-1h);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: next;
+}
+
+.t-next-row {
+  width: 100%;
+  min-height: var(--hit);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2h) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.t-next-row:hover {
+  background: var(--surface-2);
+}
+
+.t-next-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.t-next-why {
+  font-size: var(--text-small);
+  line-height: 1.4;
+}

@@ -4,7 +4,8 @@
  *
  * WHAT `rest` MEANS: `''` the board; `cycles` the history; `cycles/<id>` one closed cycle; anything
  * else a card id, opened as a sheet over the board — the path a reminder's push will open (D6).
- * `triage` is the AI's inbox (E4), and `triage/<id>` a card of it open to edit. A card id is a UUIDv7,
+ * `triage` is the AI's inbox (E4), and `triage/<id>` a card of it open to edit; `next` is «What's
+ * next?» as a sheet over the board (F2). A card id is a UUIDv7,
  * so it can never be one of these words.
  */
 
@@ -12,6 +13,7 @@ import './client.css'
 import './cards.css'
 import './sheets.css'
 import './triage.css'
+import './next.css'
 import { Board } from './board.tsx'
 import type { ViewProps } from './contract.ts'
 import { CycleDetail, Cycles } from './cycles.tsx'
@@ -20,9 +22,11 @@ import { Triage } from './triage.tsx'
 
 const CYCLES = 'cycles'
 const TRIAGE = 'triage'
+const NEXT = 'next'
 
 function TasksView(props: ViewProps) {
   const { rest } = props
+  if (rest === NEXT) return <Board props={props} openTask={undefined} asking />
   if (rest === TRIAGE) return <Triage props={props} editing={undefined} />
   if (rest.startsWith(`${TRIAGE}/`)) return <Triage props={props} editing={safeDecode(rest.slice(TRIAGE.length + 1))} />
   if (rest === CYCLES) return <Cycles props={props} />

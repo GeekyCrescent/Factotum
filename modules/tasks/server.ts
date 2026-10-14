@@ -104,6 +104,13 @@ function routeTable(holder: Holder): RouteTable {
       return ok({ tasks: cards, pending })
     }),
 
+    // 202: claude thinks outside this request; the screen asks GET /next until it is done (criterion 38).
+    'POST /next': withTasks((tasks) => {
+      const result = tasks.runNext()
+      return result.ok ? ok(result.value, 202) : failure(result.error)
+    }),
+    'GET /next': withTasks((tasks) => ok(tasks.nextStatus())),
+
     'POST /cycles/close': withTasks(async (tasks, req) => answer(await tasks.closeCycles(req.body), (closed) => ({ closed }))),
     'GET /cycles': withTasks((tasks) => ok({ cycles: tasks.cycles() })),
     'GET /cycles/:id': withTasks((tasks, req) => {

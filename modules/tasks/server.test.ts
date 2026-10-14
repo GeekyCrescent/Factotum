@@ -72,7 +72,11 @@ function fakeTasks(calls: Calls, over: Partial<Tasks> = {}): Tasks {
     cycle: (id) => (id === CLOSED.id ? CLOSED : undefined),
     triage: () => [{ ...CARD, status: 'triage', cycle: null, source: { kind: 'capture', raw: 'card', parse: 'pending' } }],
     capture: answer('capture', { ok: true, value: { ...CARD, status: 'triage', cycle: null } }),
-    runNext: () => ({ ok: false, error: { code: 'not-yet', reason: 'later' } }),
+    runNext: () => {
+      calls.log.push('runNext')
+      return { ok: true, value: { started: true } }
+    },
+    nextStatus: () => ({ running: false, last: { at: 'n', items: [{ id: 'c1', why: 'due' }], note: '' }, error: null }),
     agent: AGENT,
     stop: async () => {
       calls.log.push('stop')
@@ -296,4 +300,22 @@ test('GET /triage lists the cards in triage and how many are still being read (c
   const body = response.body as { tasks: Task[]; pending: number }
   assert.equal(body.tasks.length, 1)
   assert.equal(body.pending, 1)
+})
+
+test("POST /next is a 202 that starts a run; one already running is a 409 (criterion 38)", async () => {
+  const { routes, calls } = await started()
+  const response = await call(routes, 'POST /next')
+  assert.equal(response.status, 202)
+  assert.deepEqual(response.body, { started: true })
+  assert.deepEqual(calls.log, ['runNext'])
+  const busy = await started({ runNext: () => ({ ok: false, error: { code: 'conflict', reason: 'already thinking' } }) })
+  assert.equal((await call(busy.routes, 'POST /next')).status, 409)
+})
+
+test('GET /next answers where it stands and the last answer, with no-store (criterion 40)', async () => {
+  const { routes } = await started()
+  const response = await call(routes, 'GET /next')
+  assert.equal(response.status, 200)
+  assert.equal(response.headers?.['cache-control'], 'no-store')
+  assert.deepEqual((response.body as { last: { items: unknown[] } }).last.items, [{ id: 'c1', why: 'due' }])
 })

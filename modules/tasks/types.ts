@@ -144,6 +144,20 @@ export interface TasksLink {
   readonly clear: () => void
 }
 
+/** The last answer of «What's next?» (design D5): real cards only, each with why. */
+export interface NextResult {
+  readonly at: string
+  readonly items: readonly { readonly id: string; readonly why: string }[]
+  readonly note: string
+}
+
+/** Where «What's next?» stands (criteria 38–40): running, the last answer kept, and why the last run failed. */
+export interface NextStatus {
+  readonly running: boolean
+  readonly last: NextResult | null
+  readonly error: string | null
+}
+
 export interface Tasks {
   readonly board: (filter?: { readonly cycle?: CycleId }) => BoardView
   readonly get: (id: string) => Task | undefined
@@ -160,6 +174,7 @@ export interface Tasks {
   readonly triage: () => readonly Task[]
   readonly capture: (input: unknown) => Promise<Result<Task>>
   readonly runNext: () => Result<{ readonly started: true }>
+  readonly nextStatus: () => NextStatus
   readonly agent: AgentToolImpl
   readonly stop: () => Promise<void>
 }

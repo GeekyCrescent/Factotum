@@ -21,6 +21,8 @@ export type {
   CycleRange,
   CycleSummary,
   Estimate,
+  NextResult,
+  NextStatus,
   Priority,
   ProjectRef,
   Result,

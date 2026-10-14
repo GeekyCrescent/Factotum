@@ -23,6 +23,7 @@ import { QuickCapture, useCaptureKey, type Target } from './capture.tsx'
 import { CloseCycle } from './close-cycle.tsx'
 import type { ViewProps } from './contract.ts'
 import { DesktopBoard } from './desktop.tsx'
+import { NextSheet } from './next.tsx'
 import { useBoardDrag } from './drag.ts'
 import { FilterMenus, FilterSheet } from './filters.tsx'
 import { Icon } from './icon.tsx'
@@ -67,7 +68,16 @@ function writeFilter(filter: Filter): void {
   }
 }
 
-export function Board({ props, openTask }: { readonly props: ViewProps; readonly openTask: string | undefined }) {
+export function Board({
+  props,
+  openTask,
+  asking = false,
+}: {
+  readonly props: ViewProps
+  readonly openTask: string | undefined
+  /** `/m/tasks/next`: «What's next?» open over the board. */
+  readonly asking?: boolean
+}) {
   const { api, navigate, openDrawer, pendingTotal } = props
   const board = useBoard(api)
   const wide = useWide()
@@ -174,7 +184,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
     )
   }
 
-  const closing = view.needsClose && !closeLater && openTask === undefined
+  const closing = view.needsClose && !closeLater && openTask === undefined && !asking
   const late = overdueOf(view.tasks, today)
   const week = weekLine(weekOf(view.tasks, view.openCycle, view.openRange, today))
   const counts: Record<Column, number> = {
@@ -207,6 +217,16 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
             </button>
           ) : null}
           <span class="t-bar-gap" />
+          {wide ? (
+            <button type="button" class="btn sm quiet t-next-open" onClick={() => navigate('next')}>
+              <Icon name="lightbulb" size={16} />
+              What's next?
+            </button>
+          ) : (
+            <button type="button" class="icon-btn" aria-label="What's next?" onClick={() => navigate('next')}>
+              <Icon name="lightbulb" size={20} />
+            </button>
+          )}
           {view.triage > 0 ? (
             <button type="button" class="t-triage" onClick={() => navigate('triage')}>
               <Icon name="tray" size={wide ? 16 : 20} />
@@ -293,6 +313,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
       {openTask === undefined ? null : (
         <TaskSheet key={openTask} api={api} id={openTask} view={view} today={today} act={board.act} error={board.error} onClose={() => navigate('')} />
       )}
+      {asking ? <NextSheet api={api} view={view} today={today} open={open} onClose={() => navigate('')} /> : null}
       {closing ? <CloseCycle view={view} today={today} act={board.act} error={board.error} onLater={() => setCloseLater(true)} /> : null}
     </div>
   )

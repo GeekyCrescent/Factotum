@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BOARD_FILE } from './board/store.ts'
@@ -152,9 +152,20 @@ test('a capture that is not one is a 400 with its field, and nothing is written'
   assert.equal(tasks.board().triage, 0)
 })
 
+test("«What's next?» through the facade: started at once, a conflict while it runs, and the answer on the board", async (t) => {
+  const seed = JSON.stringify(board([task({ id: 'a', status: 'todo', cycle: '2026-W42', title: 'Alpha' })]))
+  const { tasks, dir } = await harness(t, { timeZone: ZONE }, seed, { timers: realTimers, claudeBin: FAKE })
+  await mkdir(join(dir, 'run'), { recursive: true })
+  await writeFile(join(dir, 'run', 'fake-claude.answer'), JSON.stringify({ items: [{ id: 't0', why: 'It is due.' }, { id: 't7', why: 'Invented.' }], note: 'Go.' }))
+  assert.deepEqual(ok(tasks.runNext()), { started: true })
+  assert.deepEqual(errorOf(tasks.runNext()), { code: 'conflict' })
+  await eventually(() => !tasks.nextStatus().running, 'the run ended')
+  assert.deepEqual(tasks.nextStatus().last?.items, [{ id: 'a', why: 'It is due.' }])
+  assert.equal(tasks.nextStatus().error, null)
+})
+
 test('the members still to come answer not-yet, and the agent lists no tool', async (t) => {
   const { tasks } = await harness(t)
-  assert.deepEqual(errorOf(tasks.runNext()), { code: 'not-yet' })
   assert.deepEqual(tasks.agent.tools(), [])
   const result = await tasks.agent.call({ sessionId: 's', siteId: 'x', toolUseId: undefined, name: 'create_task', raw: {} })
   assert.equal(result.isError, true)
