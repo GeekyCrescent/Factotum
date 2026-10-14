@@ -23,7 +23,8 @@
  */
 
 import type { Logger } from '@factotum/core'
-import { isAlive, type LockEntry } from './locks.ts'
+import { HANDOFF_HOLDER_PREFIX, isAlive, isHandoffHolder, type LockEntry } from './locks.ts'
+import { isSessionId } from './id.ts'
 import type { SessionStore } from './store.ts'
 import type { SessionState } from './types.ts'
 
@@ -60,6 +61,13 @@ export interface ReconcileDeps {
    * Optional like its neighbours; the engine always passes it.
    */
   readonly announce?: (sessionId: string, siteId: string, state: SessionState, reason: string | undefined) => void
+  /**
+   * Whether `handoff/<hid>/<siteId>.json` exists (spec 2026-10-07-dos-hosts, D11). A `handoff-<hid>`
+   * holder WITH its journal is not this function's to release: the journal decides it. WITHOUT one it
+   * is a holder nothing explains — the journal is written before the acquire — and goes. Absent, no
+   * holder has a journal: what this function did before the handoff existed.
+   */
+  readonly handoffJournal?: (hid: string, siteId: string) => Promise<boolean>
 }
 
 export const ORPHAN_REASON =
@@ -102,7 +110,11 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
   // unrelated process would look alive here. That is the known cost of asking about
   // a pid, it is the same cost the predecessor pays, and the port is the real mutual
   // exclusion — this is a second opinion, not the mechanism.)
-  const held = entries.find((entry) => entry.info !== undefined && alive(entry.info.pid))
+  //
+  // A `handoff-*` holder is LEFT OUT (v4.2): it can outlive its daemon by days (`pending-peer`), and
+  // its old pid is far likelier to have been handed to another process — which would leave EVERY
+  // project unreconciled. Its journal decides it, never its pid.
+  const held = entries.find((entry) => entry.info !== undefined && !isHandoffHolder(entry.holderId ?? '') && alive(entry.info.pid))
   if (held?.info !== undefined) {
     deps.log.warn(
       `lock on site "${held.siteId}" is held by live pid ${held.info.pid}; another daemon may own ` +
@@ -113,6 +125,15 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
 
   for (const entry of entries) {
     const { siteId, info } = entry
+
+    // The handoff's holder: kept when its journal explains it, released when nothing does.
+    if (entry.holderId !== undefined && isHandoffHolder(entry.holderId)) {
+      const hid = entry.holderId.slice(HANDOFF_HOLDER_PREFIX.length)
+      if (isSessionId(hid) && (await deps.handoffJournal?.(hid, siteId)) === true) continue
+      deps.log.warn(`released a handoff lock on site "${siteId}": it has no journal`)
+      await deps.locks.releaseEntry(entry)
+      continue
+    }
 
     // ROW 6 — a lock with no readable holder. Nothing can be said about a session, so
     // release and move on.

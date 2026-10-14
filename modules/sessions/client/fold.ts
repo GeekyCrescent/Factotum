@@ -103,6 +103,8 @@ export type Row =
   | SubagentRow
   | QuestionsRow
   | ServiceRow
+  /** One crossing to or from the other host (spec 2026-10-07-dos-hosts, D8): where it was, and where it went. */
+  | { readonly kind: 'handoff'; readonly seq: number; readonly at: string; readonly from: string; readonly to: string }
 
 export function fold(events: readonly SessionEvent[]): readonly Row[] {
   const rows: Row[] = []
@@ -224,6 +226,9 @@ function pair(events: readonly SessionEvent[]): readonly Row[] {
         rows[index] = { ...row, end: { outcome: event.outcome, at: event.at, code: event.code, signal: event.signal, reason: event.reason } }
         break
       }
+      case 'handoff':
+        rows.push({ kind: 'handoff', seq: event.seq, at: event.at, from: event.from, to: event.to })
+        break
       case 'tool':
         open.set(event.name, [...(open.get(event.name) ?? []), rows.length])
         rows.push({ kind: 'call', seq: event.seq, name: event.name, input: event.input, result: undefined })

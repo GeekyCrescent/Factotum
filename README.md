@@ -174,7 +174,8 @@ State lives in `~/.factotum/<env>/`. Nothing about one environment touches the o
 ## Two hosts
 
 One app can drive two machines — a Mac that sleeps and a Linux box that does not, each with its
-own projects. [docs/hosts.md](docs/hosts.md) is how to set it up.
+own projects. [docs/hosts.md](docs/hosts.md) is how to set it up. «Me voy» moves your idle conversations and their uncommitted
+work from one to the other, daemon to daemon, without pushing anything.
 
 ## Keeping it up
 

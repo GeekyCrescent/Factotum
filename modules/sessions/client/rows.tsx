@@ -113,6 +113,15 @@ function LogRow({
       return <QuestionsRowView row={row} running={running} onOpen={onOpenQuestions} />
     case 'service':
       return <ServiceRowView row={row} onOpen={onOpenService} />
+    case 'handoff':
+      return (
+        <li class="s-row s-handoff-row">
+          <span class="s-gut" />
+          <p class="dim-2">
+            Moved from {row.from} to {row.to}
+          </p>
+        </li>
+      )
   }
 }
 

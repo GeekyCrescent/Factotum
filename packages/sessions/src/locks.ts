@@ -34,6 +34,7 @@
 
 import { mkdir, open, readFile, readdir, rmdir, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { KeyedQueue } from './keyed-queue.ts'
 import type { SessionPaths } from './paths.ts'
 
 export interface LockInfo {
@@ -62,6 +63,15 @@ export interface LockEntry {
 
 /** What a lock holds while its project is deleted: not a session id, so nothing mistakes it. */
 export const REMOVING_HOLDER = 'removing'
+
+/**
+ * What a lock holds while its project is moved to the other host: `handoff-<hid>` (spec
+ * 2026-10-07-dos-hosts, D9). Like `removing`, it blocks EVERY mode — a `concurrent` project's shared
+ * session included (criterion 29) — and it is never a session id.
+ */
+export const HANDOFF_HOLDER_PREFIX = 'handoff-'
+
+export const isHandoffHolder = (holderId: string): boolean => holderId.startsWith(HANDOFF_HOLDER_PREFIX)
 
 const EXCLUSIVE = (): LockMode => 'exclusive'
 
@@ -133,7 +143,7 @@ const RMDIR_FINE = new Set(['ENOTEMPTY', 'EEXIST', 'ENOENT', 'ENOTDIR'])
 export class SiteLocks {
   readonly #paths: SessionPaths
   readonly #pid: number
-  readonly #queues = new Map<string, Promise<unknown>>()
+  readonly #queue = new KeyedQueue()
 
   constructor(paths: SessionPaths, pid: number = process.pid) {
     this.#paths = paths
@@ -154,8 +164,10 @@ export class SiteLocks {
       if (legacy.exists) return { ok: false, heldBy: legacy.info }
 
       const holders = await this.#readHolders(siteId)
-      // 2. A project being deleted. Nothing comes in, whatever its mode.
+      // 2. A project being deleted, or moved to the other host. Nothing comes in, whatever its mode.
       if (holders.byId.has(REMOVING_HOLDER)) return { ok: false, heldBy: holders.byId.get(REMOVING_HOLDER) }
+      const handoff = holders.ids.find(isHandoffHolder)
+      if (handoff !== undefined) return { ok: false, heldBy: holders.byId.get(handoff) }
       // 3. The same holder twice: two replies to one finished session.
       if (holders.byId.has(holderId)) return { ok: false, heldBy: holders.byId.get(holderId) }
       // 4. Exclusive loses to anyone; told the oldest READABLE one, or nobody if none can be read.
@@ -276,20 +288,9 @@ export class SiteLocks {
 
   // --- inside -------------------------------------------------------------
 
-  /**
-   * One site's queue. A REJECTED TASK DOES NOT LEAK into the next one: a disk error in one acquire
-   * must not leave the site closed until a restart (criterion 6c). The entry is deleted by IDENTITY,
-   * only when nothing has queued behind it, so the map does not grow with the sites.
-   */
+  /** One site's queue: `KeyedQueue`, with its rule that a rejected task does not poison the next (criterion 6c). */
   #run<T>(siteId: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.#queues.get(siteId) ?? Promise.resolve()
-    const next = previous.catch(() => undefined).then(task)
-    const tail = next.catch(() => undefined)
-    this.#queues.set(siteId, tail)
-    void tail.then(() => {
-      if (this.#queues.get(siteId) === tail) this.#queues.delete(siteId)
-    })
-    return next
+    return this.#queue.run(siteId, task)
   }
 
   /** The holder's file, created with `'wx'`: the same id twice loses here even past the queue. */

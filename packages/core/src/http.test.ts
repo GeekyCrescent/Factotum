@@ -37,8 +37,9 @@ const request = (extra: Partial<ModuleRequest> = {}): ModuleRequest => ({
   ...extra,
 })
 
-test('the upload ceilings: 32 MiB for a route, 4 MiB drained after a refusal', () => {
-  assert.equal(MAX_UPLOAD_BYTES, 32 * 1024 * 1024)
+test('the upload ceilings: 256 MiB for a route, 4 MiB drained after a refusal', () => {
+  // 256 MiB since spec 2026-10-07 (D7, the amendment to ADR-0012): a conversation's transcript.
+  assert.equal(MAX_UPLOAD_BYTES, 256 * 1024 * 1024)
   assert.equal(DRAIN_MAX_BYTES, 4 * 1024 * 1024)
   assert.ok(MAX_BODY_BYTES < DRAIN_MAX_BYTES && DRAIN_MAX_BYTES < MAX_UPLOAD_BYTES)
 })

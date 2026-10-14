@@ -34,7 +34,8 @@
  * typecheck fail both times.
  */
 
-import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
+import type { Logger, Notifier, PeerCaller, ReceivedFile, Timers } from '@factotum/core'
+import type { HandoffApi } from './handoff-types.ts'
 
 // --- configuration, already parsed by config.ts ----------------------------
 
@@ -203,6 +204,8 @@ export interface EngineSetup {
   readonly titles: TitlesConfig
   /** The ceiling of one upload: `UPLOAD_MAX_BYTES` from `config.ts`, the one literal (spec 2026-10-01, D4). */
   readonly uploadMaxBytes?: number
+  /** `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4). REQUIRED here: `server.ts` cannot forget it. */
+  readonly peers: PeerCaller
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -246,6 +249,7 @@ export type LaunchResult =
   | { readonly outcome: 'busy'; readonly sessionId: string }
   | { readonly outcome: 'stale'; readonly freshness: FreshnessReport }
   | { readonly outcome: 'rejected'; readonly reason: string }
+  | { readonly outcome: 'moved'; readonly to: string }
 
 export interface SessionSummary {
   readonly id: string
@@ -272,6 +276,8 @@ export interface SessionSummary {
    * `touchedOf` (`client/history.ts`) instead of reading this straight.
    */
   readonly touchedAt: string | undefined
+  /** The host it was moved to (spec 2026-10-07-dos-hosts, D8). `undefined` from a host before the field. */
+  readonly movedTo?: string | undefined
 }
 
 export interface Page {
@@ -316,6 +322,8 @@ export type SessionEvent = { readonly seq: number; readonly at: string } & (
     }
   | QuestionsEvent
   | ServiceEvent
+  /** One per crossing to or from the other host (spec 2026-10-07-dos-hosts, D8). */
+  | { readonly kind: 'handoff'; readonly from: string; readonly to: string; readonly hid: string }
 )
 
 // --- Questions the agent asks the owner (spec 2026-10-01-preguntas-con-opciones, D6 bis) ---
@@ -770,6 +778,8 @@ export interface UsageCount {
 }
 
 export interface SessionEngine {
+  /** The handoff (spec 2026-10-07-dos-hosts, D13). Optional in this copy, like `upload`: the real engine always has it. */
+  readonly handoff?: HandoffApi
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
   readonly reply: (id: string, text: string) => Promise<LaunchResult>

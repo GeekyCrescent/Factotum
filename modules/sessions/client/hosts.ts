@@ -175,3 +175,12 @@ export const LAST_SEEN_TICK_MS = 5_000
 export function lastSeenTicks(hosts: readonly HostView[]): boolean {
   return hosts.some((host) => !host.self && !host.reachable && host.lastSeenAt !== null)
 }
+
+/**
+ * Where a host's sessions can move (spec 2026-10-07-dos-hosts, K3): another host that is up, when this
+ * one is up too. With at most one peer (design D1) there is one, or none.
+ */
+export function moveTargetOf(group: Pick<HostGroup<unknown>, 'name' | 'reachable'>, hosts: readonly HostView[]): string | undefined {
+  if (!group.reachable || group.name === undefined) return undefined
+  return hosts.find((host) => host.name !== group.name && host.reachable)?.name
+}

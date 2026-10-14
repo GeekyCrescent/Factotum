@@ -95,9 +95,96 @@ it, and once relayed through the Linux box.
 - **The Mac asleep is a normal state.** Its sessions are unreachable until it wakes; nothing else
   stops. A launch on the Mac that times out says it **may** have started, and is not retried.
 
-## What it does not do yet
+## Moving sessions: «Me voy» and «Volví»
 
-- **A session does not move between hosts.** It stays on the host that launched it. To carry on
-  elsewhere, start a new session there; the code gets there however it gets there today, by git.
+From the drawer, the **…** beside a host's heading offers **Move my sessions to <other host>**. A sheet
+shows first what would go and what would not, and why; nothing moves until you confirm. Why it is
+built this way is [ADR-0020](adr/0020-session-handoff-between-hosts.md).
+
+### What is portable
+
+A project moves when it is **a git repo with an `origin`, cloned on both hosts**. The two are paired
+by their remote, not by their name or path (the vault can be `personal` on the Mac and `obsidian` on
+the Linux box). A project that only one host has, or that is not a repo, stays where it is — and is
+still launched there from either app.
+
+**Git needs read access to each remote, without asking anything**: the pull before a launch and the
+handoff's `fetch` only read. Nothing of a handoff writes to the remote. `factotum doctor` says, per
+project, «reads origin without asking» or what failed.
+
+### What goes, and what does not
+
+- **Goes:** every conversation not archived, touched in the last 24 hours and not running — its log,
+  its meta, the attachments you sent in it, and the CLI's transcript with its folder, so it carries on
+  where it was. And its project's code: the commits of the branch the remote does not have and the
+  uncommitted work, **in a `git bundle` from one daemon to the other, never through the remote**. On
+  the other host the same branch is at the same commit, and your work is there as uncommitted changes.
+- **Does not go:** a running conversation (and then nothing of its project), background services
+  (stopped here first, and named in the report), anything git ignores, the CLI's per-project memory.
+- **One owner at a time.** On the host it left, a conversation says «Moved to <host>» and takes no
+  reply. Coming back, the copy that went on replaces it, with one line in the log per crossing.
+- **New files nobody ignored go too**, like a `.env`: the preview lists them by name before you
+  confirm. They go to your other machine only.
+
+### When a project stays
+
+The preview and the report say why, in plain words. The ones worth knowing:
+
+- **«<host> has commits on <branch> that this host doesn't»** (`target-ahead`): something — often the
+  Obsidian Git plugin — pushed from the other side. Pull them here first, then move.
+- **«That project has uncommitted changes on <host>»** (`target-dirty`): the other side must be clean,
+  and must stay clean until the move ends.
+- **One conversation that cannot go holds its whole project back**: a project's code travels whole, so
+  no conversation is left behind on a tree that was cleaned.
+
+### Ignore rules outside the repo must match
+
+`.gitignore` travels with the code. **`core.excludesFile` (usually `~/.config/git/ignore`) and
+`.git/info/exclude` do not** — they are each machine's. When they differ:
+
+- towards the host that ignores a file the other does not, the move stops with **«<host> ignores these
+  files and has its own copy»** (`target-ignored-collision`), and nothing is touched;
+- the other way, the file shows up as a change there, the tree is never clean, and every move is
+  `target-dirty` — for ever.
+
+The real cases on these machines: the Mac ignores `**/.claude/settings.local.json` in
+`~/.config/git/ignore`, and the vault has `.obsidian/plugins/obsidian-git/obsidian_askpass.sh` in its
+`.git/info/exclude`. **The remedy:** put the rules a project needs in its own `.gitignore`; or copy the
+same lines into the same files on both hosts. `factotum doctor` compares them per project with the
+other host («ignore rules match omarchy», or which file differs), and the preview warns.
+
+### If the other host never answers
+
+If the other host stops answering after the commit was sent, the project waits as **«Waiting for
+<host>»**, still locked here: it may or may not have been installed there. When the host comes back,
+the daemon asks and finishes on its own. If it never comes back, **Keep them here** in the report
+unlocks it — and if the other host did install them, the two copies now go on apart.
+
+### `ABORT-FAILED` in `doctor`
+
+If the other host could not undo a failed move completely, its journal says `abort-failed`, and
+`factotum doctor` **on that host** shows its id, the project, the steps left, and its folder
+(`~/.factotum/<env>/modules/sessions/handoff/<hid>/<project>/`). What each step means:
+
+- `restoreSession`: a conversation that was replaced is in `replaced/<id>/` of that folder. Move it
+  back to `~/.factotum/<env>/modules/sessions/sessions/<id>/` (replacing what is there).
+- `restoreTranscript`: a transcript is in `replaced/cli/<folder>/`. Move `<id>.jsonl` and `<id>/` back
+  to `~/.claude/projects/<folder>/`.
+- `discardImported`, `removeTranscript`, `removeUpload`: what arrived is still installed; delete it.
+- `restoreTarget`: the repo is not back where it was. If you edited it meanwhile, your changes are in
+  `refs/factotum/handoff-rescue/<hid>` (`git show` it); then put the branch back with `git checkout`.
+
+When it is all back, delete that folder and its journal (`…/handoff/<hid>/<project>.json`). Nothing of
+an `abort-failed` is ever pruned on its own.
+
+### What is kept, and for how long
+
+The source keeps the uncommitted work it sent in `refs/factotum/handoff-backup/<hid>`, and the target
+keeps anything it had to rescue in `refs/factotum/handoff-rescue/<hid>`, for 14 days. Each daemon
+prunes its own leftovers at start and once a day.
+
+## What it does not do
+
 - **More than two hosts.** `peers` takes one.
 - **Discovery.** A peer is whatever the config says, and nothing else.
+- **Moving on its own** when the lid closes or the network drops: it is a button.

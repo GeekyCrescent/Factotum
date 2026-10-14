@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { conflictOf, describe, freshnessOf, launchUnanswered, messageOf } from './errors.ts'
+import { conflictOf, describe, freshnessOf, launchUnanswered, messageOf, movedOf } from './errors.ts'
 
 /** What `apps/web/src/api.ts` throws: an ordinary Error with the status and the body on it. */
 const failed = (status: number, body: unknown) => Object.assign(new Error(`${status}`), { status, body })
@@ -47,4 +47,11 @@ test('a 502 to a launch ON ANOTHER HOST is unanswered: it may have started, so i
   assert.equal(launchUnanswered(failed(409, { conflict: { sessionId: 'x' } }), 'mac'), false)
   assert.equal(launchUnanswered(failed(0, undefined), 'mac'), false)
   assert.equal(launchUnanswered(new Error('plain'), 'mac'), false)
+})
+
+test('a 409 with moved names the host the conversation went to (spec 2026-10-07-dos-hosts, criterion 29)', () => {
+  assert.equal(movedOf(failed(409, { moved: { to: 'omarchy' } })), 'omarchy')
+  assert.equal(movedOf(failed(409, { conflict: { sessionId: 'x' } })), undefined)
+  assert.equal(movedOf(failed(400, { moved: { to: 'omarchy' } })), undefined)
+  assert.equal(movedOf(new Error('plain')), undefined)
 })

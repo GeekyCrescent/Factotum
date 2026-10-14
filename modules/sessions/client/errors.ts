@@ -29,6 +29,12 @@ export function conflictOf(cause: unknown): Conflict | undefined {
     : undefined
 }
 
+/** The 409 of a reply to a conversation moved to another host: that host's name (spec 2026-10-07-dos-hosts). */
+export function movedOf(cause: unknown): string | undefined {
+  const error = cause as { status?: number; body?: { moved?: { to?: unknown } } }
+  return error?.status === 409 && typeof error.body?.moved?.to === 'string' ? error.body.moved.to : undefined
+}
+
 export function freshnessOf(cause: unknown): Freshness | undefined {
   const error = cause as { status?: number; body?: { freshness?: Freshness } }
   return error?.status === 409 && error.body?.freshness !== undefined ? error.body.freshness : undefined

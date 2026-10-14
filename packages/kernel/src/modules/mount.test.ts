@@ -102,6 +102,12 @@ test('an upload route within the kernel ceiling compiles, and still matches like
   assert.ok(matchRoute(compiled, 'POST', '/uploads'))
 })
 
+test('the ceiling is 256 MiB: a route declaring exactly that mounts, one byte more aborts (spec 2026-10-07, N1)', () => {
+  const MIB_256 = 256 * 1024 * 1024
+  assert.ok(matchRoute(routes({ 'POST /big': uploadRoute(MIB_256, ok) }), 'POST', '/big'))
+  assert.throws(() => routes({ 'POST /big': uploadRoute(MIB_256 + 1, ok) }), (error: BootError) => error.code === 'route-upload-invalid')
+})
+
 test('an upload route over the ceiling, at zero, negative or fractional, aborts start with a remedy', () => {
   for (const maxBytes of [MAX_UPLOAD_BYTES + 1, 0, -1, 1.5, Number.NaN]) {
     assert.throws(

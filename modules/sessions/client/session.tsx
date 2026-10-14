@@ -174,6 +174,10 @@ function Live({
   // The strip goes to the session's own host (criterion 14): a pending of the Mac opens /h/<mac>/….
   const otherHost = other === undefined ? null : (hostKey(hostOf(other), view.hosts) ?? null)
   const hostName = barHost(view.host, view.hosts)
+  // ONE OWNER AT A TIME (spec 2026-10-07-dos-hosts, D8, criterion 29): moved, it is read-only here. The
+  // summary says so, or a reply's 409 does when the summary was read before the handoff.
+  const [movedNow, setMovedNow] = useState<string | undefined>(undefined)
+  const movedTo = summary?.movedTo ?? movedNow
   // Held after its pending is resolved: the answer stays where the buttons were (design D6).
   const held = useRef<AskRef | undefined>(undefined)
   const found = askFor(id, view.pending, view.search) ?? held.current
@@ -323,17 +327,39 @@ function Live({
             }}
           />
         ))}
-        {running ? null : (
+        {movedTo !== undefined ? (
+          <MovedBanner to={movedTo} onOpen={() => view.navigate(id, { host: hostKey(movedTo, view.hosts) ?? null })} />
+        ) : running ? null : (
           <ReplyComposer
             api={api}
             setup={setup}
             sessionId={id}
             project={summary === undefined ? undefined : { id: summary.siteId, label: project?.name ?? summary.siteId, color: project?.color }}
             onSent={restart}
+            onMoved={setMovedNow}
             goTo={(to) => view.navigate(to)}
           />
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * «Moved to omarchy · Open» where the reply box was (spec 2026-10-07-dos-hosts, D12, K2): the
+ * conversation goes on there, and Open takes the owner to it.
+ */
+function MovedBanner({ to, onOpen }: { readonly to: string; readonly onOpen: () => void }) {
+  return (
+    <div class="notice s-moved" role="status">
+      <div class="head">
+        <Icon name="arrow-up" size={16} />
+        Moved to {to}
+      </div>
+      <p class="dim-2">This conversation goes on there. It is read-only here.</p>
+      <button type="button" class="btn" onClick={onOpen}>
+        Open
+      </button>
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sessionPaths } from './paths.ts'
-import { SessionStore, touchedOf } from './store.ts'
+import { parseMeta, SessionStore, touchedOf, type SessionMeta } from './store.ts'
 import type { EventInput } from './types.ts'
 
 /**
@@ -369,4 +369,145 @@ test('A meta.json WHOSE id IS NOT ITS DIRECTORY is not that session, and an id t
   assert.equal(await store.readMeta(ID), undefined)
   assert.equal(await store.remove('../../elsewhere', () => false), 'unknown')
   assert.equal(await store.remove('not-an-id', () => false), 'unknown')
+})
+
+// ---------------------------------------------------------------------------
+// The handoff (spec 2026-10-07-dos-hosts, D8): movedTo, parseMeta, and the three imports
+// ---------------------------------------------------------------------------
+
+test('movedTo and movedAt survive a patchMeta of another field: they are in the hand-written list', async () => {
+  const { store } = await freshStore()
+  await started(store)
+  await store.patchMeta(ID, (meta) => ({ ...meta, movedTo: 'omarchy', movedAt: '2026-10-14T00:00:00.000Z' }))
+  await store.patchMeta(ID, (meta) => ({ ...meta, title: 'renamed' }))
+  const meta = await store.readMeta(ID)
+  assert.equal(meta?.movedTo, 'omarchy')
+  assert.equal(meta?.movedAt, '2026-10-14T00:00:00.000Z')
+  assert.equal(meta?.title, 'renamed')
+})
+
+test('a new session is not moved', async () => {
+  const { store } = await freshStore()
+  const meta = await started(store)
+  assert.equal(meta.movedTo, undefined)
+  assert.equal(meta.movedAt, undefined)
+})
+
+test('parseMeta reads a meta with every field of SessionMeta back as it was, and a broken one as undefined', async () => {
+  const { store } = await freshStore()
+  await started(store)
+  const full = await store.patchMeta(ID, (meta) => ({
+    ...meta,
+    state: 'finished',
+    endedAt: '2026-10-14T01:00:00.000Z',
+    reason: 'r',
+    turns: 3,
+    agentPid: 1234,
+    sitePath: '/p',
+    prompt: 'p',
+    agent: 'a',
+    title: 't',
+    autoTitle: 'at',
+    archivedAt: '2026-10-14T02:00:00.000Z',
+    touchedAt: '2026-10-14T03:00:00.000Z',
+    movedTo: 'omarchy',
+    movedAt: '2026-10-14T04:00:00.000Z',
+  }))
+  assert.deepEqual(parseMeta(ID, JSON.parse(JSON.stringify(full))), full)
+  assert.equal(parseMeta(ID, { id: 'another-id', siteId: 'x' }), undefined)
+  assert.equal(parseMeta(ID, 'not an object'), undefined)
+  assert.equal(parseMeta(ID, null), undefined)
+})
+
+/** An imported session's directory, as `staging/<id>/session/` holds it: its meta and its log. */
+async function stagedSession(id: string, siteId: string, events: readonly EventInput[]): Promise<{ dir: string; meta: SessionMeta }> {
+  const { store } = await freshStore()
+  const meta = await started(store, id)
+  for (const event of events) await store.append(id, event)
+  const patched = (await store.patchMeta(id, (m) => ({ ...m, siteId, state: 'finished', sitePath: '/on/the/source' }))) ?? meta
+  return { dir: store.sessionDir(id), meta: patched }
+}
+
+function recording(store: SessionStore) {
+  const written: SessionMeta[] = []
+  const removed: string[] = []
+  store.observe({ written: (meta) => written.push(meta), removed: (id) => removed.push(id) })
+  return { written, removed }
+}
+
+test('importSession installs the directory with the meta IT IS GIVEN, not the one that came in it, and the index hears it (criterion 25)', async () => {
+  const { store, paths } = await freshStore()
+  const seen = recording(store)
+  const staged = await stagedSession(ID, 'personal', [msg('one'), msg('two')])
+  const here = { ...staged.meta, siteId: 'obsidian', sitePath: '/home/ferro/Ferro/Obsidian', movedTo: undefined, movedAt: undefined }
+  await store.importSession(ID, staged.dir, join(paths.root, 'replaced'), async () => undefined, here)
+
+  assert.deepEqual(await store.readMeta(ID), here)
+  assert.deepEqual(JSON.parse(await readFile(paths.metaFile(ID), 'utf8')).siteId, 'obsidian')
+  assert.deepEqual(seen.written.at(-1), here)
+  // The log came along, and the next event follows it.
+  const appended = await store.append(ID, msg('three'))
+  assert.equal(appended.seq, 2)
+})
+
+test('importSession over an existing session: before(replace) runs before the old one moves to replacedDir, before(install) before the rename', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  await store.append(ID, msg('old'))
+  const staged = await stagedSession(ID, 'work', [msg('a'), msg('b'), msg('c')])
+  const replacedDir = join(paths.root, 'handoff', 'h', 'work', 'replaced')
+  const steps: string[] = []
+  await store.importSession(ID, staged.dir, replacedDir, async (step) => {
+    // The intention is written BEFORE the move: at each call, the move has not happened yet.
+    const oldStillThere = (await readdir(paths.sessions)).includes(ID)
+    const replacedThere = await readdir(replacedDir).then((names) => names.includes(ID), () => false)
+    steps.push(`${step}:${oldStillThere}:${replacedThere}`)
+  }, staged.meta)
+  assert.deepEqual(steps, ['replace:true:false', 'install:false:true'])
+  assert.match(await readFile(join(replacedDir, ID, 'events.jsonl'), 'utf8'), /"old"/)
+  assert.equal((await store.read(ID, 0)).events.length, 3)
+  assert.equal((await store.append(ID, msg('d'))).seq, 3, 'the seq cache was reset')
+})
+
+test('importSession: when before() throws, nothing is moved', async () => {
+  const { store, paths } = await freshStore()
+  await started(store)
+  const staged = await stagedSession(ID, 'work', [msg('a')])
+  const replacedDir = join(paths.root, 'replaced')
+  await assert.rejects(store.importSession(ID, staged.dir, replacedDir, async () => { throw new Error('journal') }, staged.meta))
+  assert.equal((await readdir(paths.sessions)).includes(ID), true)
+  assert.equal(await readdir(replacedDir).catch(() => 'absent'), 'absent')
+  assert.equal((await readdir(staged.dir)).includes('meta.json'), true, 'the staged session is where it was')
+
+  const fresh = await freshStore()
+  const staged2 = await stagedSession(ID, 'work', [msg('a')])
+  let calls = 0
+  await assert.rejects(fresh.store.importSession(ID, staged2.dir, join(fresh.paths.root, 'replaced'), async () => { calls += 1; throw new Error('journal') }, staged2.meta))
+  assert.equal(calls, 1)
+  assert.equal(await readdir(fresh.paths.sessions).then((n) => n.includes(ID)), false)
+})
+
+test('discardImported removes the session WITHOUT a tombstone and tells the index; restoreSession brings the old one back, writable', async () => {
+  const { store, paths } = await freshStore()
+  const old = await started(store)
+  await store.append(ID, msg('old'))
+  const seen = recording(store)
+  const staged = await stagedSession(ID, 'work', [msg('a'), msg('b')])
+  const replacedDir = join(paths.root, 'replaced')
+  await store.importSession(ID, staged.dir, replacedDir, async () => undefined, staged.meta)
+
+  await store.discardImported(ID)
+  assert.deepEqual(seen.removed, [ID])
+  assert.equal(await store.readMeta(ID), undefined)
+
+  await store.restoreSession(ID, join(replacedDir, ID))
+  assert.deepEqual(await store.readMeta(ID), old)
+  assert.deepEqual(seen.written.at(-1), old)
+  // No tombstone: the restored conversation takes events again, after its own last one.
+  assert.equal((await store.append(ID, msg('after'))).seq, 1)
+})
+
+test('discardImported of a session that never got installed does not fail', async () => {
+  const { store } = await freshStore()
+  await store.discardImported(ID)
 })

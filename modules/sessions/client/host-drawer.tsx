@@ -31,7 +31,7 @@ import { ago, day } from './format.ts'
 import { history, type Entry, type Group, type Waiting } from './history.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
-import { ContextMenu, useLongPress, type MenuAt } from './context-menu.tsx'
+import { ContextMenu, MenuItem, useLongPress, type MenuAt } from './context-menu.tsx'
 import { ConversationSheet } from './conversation-menu.tsx'
 import { useDrag, type Dragging } from './drag.ts'
 import {
@@ -737,25 +737,4 @@ function waitingOf(pending: readonly Pending[]): Waiting {
     waiting.set(id, { site: text('siteId'), detail: detail || 'Waiting for you' })
   }
   return waiting
-}
-
-function MenuItem({
-  icon,
-  label,
-  danger = false,
-  disabled,
-  onChoose,
-}: {
-  readonly icon: SessionIcon
-  readonly label: string
-  readonly danger?: boolean
-  readonly disabled: boolean
-  readonly onChoose: () => void
-}) {
-  return (
-    <button type="button" role="menuitem" class={danger ? 's-ctx-item s-danger' : 's-ctx-item'} disabled={disabled} onClick={onChoose}>
-      <Icon name={icon} size={16} />
-      {label}
-    </button>
-  )
 }

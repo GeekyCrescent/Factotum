@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NotificationMessage, Timers } from '@factotum/core'
 import { createEngine, REMOVING } from './engine.ts'
+import { summaryOf } from './history.ts'
 import { uuidv7 } from './id.ts'
-import { SiteLocks } from './locks.ts'
+import { HANDOFF_HOLDER_PREFIX, SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
 import { memoryRegistry, type MemoryRegistry } from './test-registry.ts'
@@ -581,4 +582,50 @@ test('PINS: pinnedOf reads the registry in memory and never touches the disk of 
   // The folder was never created: `projects()` would mark it missing, but the pins are still read.
   await engine.pinProject('web', 'review', true)
   assert.deepEqual(engine.pinnedOf('web'), ['review'])
+})
+
+// ---------------------------------------------------------------------------
+// A project being MOVED to the other host (spec 2026-10-07-dos-hosts, D9, criterion 29)
+// ---------------------------------------------------------------------------
+
+test('WHILE A PROJECT IS BEING MOVED, a launch, a reply and a delete are refused “being moved”, never busy — also when it is concurrent (criterion 29)', async () => {
+  const { engine, root, stateDir } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+  await engine.updateProject('web', { name: undefined, color: undefined, concurrent: true })
+  const done = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
+  const doneId = done.outcome === 'started' ? done.sessionId : ''
+  await turnOver(stateDir, 'web')
+
+  const locks = new SiteLocks(sessionPaths(stateDir))
+  const holder = `${HANDOFF_HOLDER_PREFIX}${uuidv7(Date.now())}`
+  assert.deepEqual(await locks.acquire('web', holder, new Date().toISOString()), { ok: true })
+  try {
+    const moving = { outcome: 'rejected', reason: 'this project is being moved to another host' }
+    assert.deepEqual(await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false }), moving)
+    assert.deepEqual(await engine.reply(doneId, 'again'), moving)
+    assert.deepEqual(await engine.removeProject('web'), { outcome: 'conflict', reason: 'this project is being moved to another host' })
+  } finally {
+    await locks.release('web', holder)
+  }
+})
+
+/** The session's lock is let go after its state is written: wait for it, as the engine tests do. */
+async function turnOver(stateDir: string, siteId: string): Promise<void> {
+  const locks = new SiteLocks(sessionPaths(stateDir))
+  const deadline = Date.now() + 10_000
+  while ((await locks.heldBy(siteId)) !== undefined && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+}
+
+test('A CONVERSATION MOVED TO THE OTHER HOST is read-only here: a reply is `moved`, and takes no lock (criterion 29)', async () => {
+  const { engine, root, stateDir } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+  const done = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
+  const id = done.outcome === 'started' ? done.sessionId : ''
+  await turnOver(stateDir, 'web')
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  await store.patchMeta(id, (meta) => ({ ...meta, movedTo: 'omarchy', movedAt: new Date().toISOString() }))
+
+  assert.deepEqual(await engine.reply(id, 'again'), { outcome: 'moved', to: 'omarchy' })
+  assert.equal(summaryOf((await store.readMeta(id))!).movedTo, 'omarchy', 'the summary says where it went')
+  assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('web'), undefined, 'no lock was taken')
 })

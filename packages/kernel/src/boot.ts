@@ -25,6 +25,7 @@ import { createPeerTable, machineName, PEER_NAME } from './net/peers.ts'
 import { Registry, timerSet } from './modules/registry.ts'
 import { createServer, type ServerDeps, type StaticSite } from './http/server.ts'
 import { createProxy } from './http/proxy.ts'
+import { createPeerCalls } from './net/peer-calls.ts'
 
 export interface BootOptions {
   readonly env: Environment
@@ -63,6 +64,9 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
   })
   const kernelTimers = timerSet()
   const proxy = createProxy({ peers, timers: kernelTimers.timers, log: prefixed('proxy') })
+  // What `ctx.peers` is made of (D4): the same table and the same kernel timers as the proxy. The
+  // registry binds each module's id onto it.
+  const peerCalls = createPeerCalls({ table: peers, timers: kernelTimers.timers, log: prefixed('peers') })
 
   // 4-5. Where to listen, and whether we are allowed to.
   const listen = resolveListen(config.listen, options.interfaces)
@@ -97,6 +101,7 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
     paths,
     env: options.env,
     push,
+    peers: peerCalls,
     ...(options.startTimeoutMs !== undefined ? { startTimeoutMs: options.startTimeoutMs } : {}),
   }
   const registry = await Registry.create(composed, registryDeps)
@@ -166,6 +171,9 @@ export async function boot(options: BootOptions): Promise<BootHandle> {
       // Before closing: `close` waits for open requests, and a proxied upload to a peer that fell
       // asleep would hold it for up to two minutes. Nothing new reaches the proxy past `ready`.
       proxy.abortAll()
+      // Same for a module's own calls to its twin: they end as `{ ok: false }` now, so a `stop()`
+      // waiting on one is not held by a peer that went to sleep.
+      peerCalls.abortAll()
       peers.stop()
       await registry.stopAll()
       // Notices already on their way — a module's "stopped" among them — are let finish. Each

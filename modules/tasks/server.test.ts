@@ -104,6 +104,12 @@ function context(errors: string[] = [], now = new Date('2026-10-13T23:00:00Z')):
     now: () => now,
     timers: { setInterval: () => ({ [Symbol.dispose]: () => undefined }), setTimeout: () => ({ [Symbol.dispose]: () => undefined }) },
     notify: { canReach: () => false, send: async () => undefined },
+    // No peers: `ctx.peers` answers every call `unreachable`, as the kernel does with an empty table.
+    peers: {
+      list: () => [],
+      json: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+      upload: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+    },
   }
 }
 

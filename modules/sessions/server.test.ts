@@ -70,6 +70,12 @@ function context(config: { sites: never[]; catalog: never[] }): ModuleContext<ne
     now: () => new Date('2026-09-15T00:00:00.000Z'),
     timers,
     notify: { canReach: () => false, send: async () => undefined },
+    // No peers: `ctx.peers` answers every call `unreachable`, as the kernel does with an empty table.
+    peers: {
+      list: () => [],
+      json: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+      upload: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+    },
   }
 }
 
@@ -136,6 +142,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     // silence, and tsc would not say so: this list is what does.
     'notify',
     'now',
+    // The handoff's line to this module's twin on the other host (spec 2026-10-07-dos-hosts, D4).
+    'peers',
     // The permission boundary is the REGISTRY now, with the three things the folder rules need
     // around it (spec 2026-09-29, D1). Half of it arriving is half a boundary, and this list is
     // what catches that, which is why it is spelled out.
@@ -1520,4 +1528,13 @@ test('POST /projects/:id/pins: a bad id, name or body is a 400 and the engine is
   assert.equal((await pin({ id: 'web' }, { name: 'a', pinned: 'yes' })).status, 400)
   assert.equal((await pin({ id: 'web' }, {})).status, 400)
   assert.equal(asked, 0)
+})
+
+test('a reply to a conversation moved to the other host is a 409 that names it (spec 2026-10-07-dos-hosts, criterion 29)', async () => {
+  const { table } = await started(fakeEngine({ reply: async () => ({ outcome: 'moved', to: 'omarchy' }) }))
+  const response = await call(table, 'POST /sessions/:id/reply', request('POST', '/sessions/x/reply', { params: { id: 'x' }, body: { text: 'hi' } }))
+  assert.equal(response.status, 409)
+  assert.deepEqual((response.body as { moved: unknown }).moved, { to: 'omarchy' })
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
+  assert.match((response.body as ErrorBody).error.message, /moved to omarchy/)
 })

@@ -6,6 +6,8 @@
  */
 
 import type { ComponentChildren } from 'preact'
+import { Icon } from './icon.tsx'
+import type { SessionIcon } from './icons.ts'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 
 /** How long a finger has to stay down for a long press. */
@@ -114,4 +116,26 @@ export function useLongPress(open: (at: MenuAt) => void) {
       return was
     },
   }
+}
+
+/** One choice of a context menu. */
+export function MenuItem({
+  icon,
+  label,
+  danger = false,
+  disabled,
+  onChoose,
+}: {
+  readonly icon: SessionIcon
+  readonly label: string
+  readonly danger?: boolean
+  readonly disabled: boolean
+  readonly onChoose: () => void
+}) {
+  return (
+    <button type="button" role="menuitem" class={danger ? 's-ctx-item s-danger' : 's-ctx-item'} disabled={disabled} onClick={onChoose}>
+      <Icon name={icon} size={16} />
+      {label}
+    </button>
+  )
 }

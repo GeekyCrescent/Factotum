@@ -268,6 +268,15 @@ phone talks to **one** of them; that daemon reaches the other. How to set it up 
   peer — the same tailnet that can already launch agents. And the `Host` gap above now reaches
   the peer.
 
+- **Moving sessions** (ADR-0020) goes through the same channel: the sessions module on one host calls
+  its twin on the other with `ctx.peers`, which only reaches `/modules/<its own id>/…` on the
+  declared peer, without `Origin`. Those routes — `/modules/sessions/handoff/…` — have no
+  credential, like every route here; what they have is shape: ids that must be ids, a `prepare` that
+  must name this host's remote, a manifest that fixes what may be written and where, size caps, one
+  handoff received at a time, and a project let go an hour after `prepare` at the latest. The code
+  travels in a `git bundle` between the two daemons; **nothing of a handoff writes to a git
+  remote**.
+
 **Each host needs Tailscale DNS on** — `tailscale set --accept-dns=true`. Without it the
 `*.ts.net` name of the other one does not resolve, and the peer looks down for no visible
 reason. `factotum doctor` says so.
