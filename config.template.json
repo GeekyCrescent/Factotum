@@ -50,7 +50,11 @@
     "inbox: a digest of your mail when you press Check mail. passwordFile is an ABSOLUTE path to a",
     "Google app password in a 0600 file — and an app password can do EVERYTHING with the account,",
     "not only read. sources are accounts forwarded into this one; use read \"all\" for them. Read",
-    "docs/inbox.md before turning it on."
+    "docs/inbox.md before turning it on.",
+    "",
+    "tasks: the kanban board. It lives on ONE host, the one that is always on (mode board); on the",
+    "other host use mode relay with relayTo, the board host's machine name. There is NO backup of",
+    "the board. Read docs/tasks.md before turning it on."
   ],
   "environment": "prod",
   "listen": {
@@ -113,6 +117,12 @@
           ]
         }
       ]
+    },
+    "tasks": {
+      "enabled": false,
+      "mode": "board",
+      "timeZone": "Australia/Sydney",
+      "model": "sonnet"
     }
   }
 }
