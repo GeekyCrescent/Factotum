@@ -58,6 +58,31 @@ button.t-triage:hover {
   cursor: progress;
 }
 
+/* The dictation's notice («dictation is off on this host»…), above the field like the length note. */
+.t-capture-mic-note {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  top: calc(100% + var(--space-1));
+  z-index: 21;
+}
+
+.t-capture-sticky .t-capture-mic-note {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.t-capture-mic-note:empty {
+  display: none;
+}
+
+.t-capture-mic-note .d-notice {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+}
+
 /* --- The list -------------------------------------------------------------- */
 
 .t-triage-lead {

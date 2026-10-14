@@ -13,7 +13,7 @@
 
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
-import { apiFor, apiOnFor, fetchModules, type ModuleSummary, type ModulesResult } from './api.ts'
+import { apiFor, apiOnFor, fetchModules, peerModuleFor, type ModuleApi, type ModuleSummary, type ModulesResult } from './api.ts'
 import { CenterState, FallbackBar } from './bar.tsx'
 import { PUSH_API, rememberPush, Settings, type SettingsLink } from './device.tsx'
 import { Drawer } from './drawer.tsx'
@@ -127,6 +127,13 @@ function Screens({
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
+  // Before any return: a hook is called on every render, in the same order. Keyed by the ENABLED IDS,
+  // not the array: `modules` is rebuilt on every render of the shell, and a module keys effects on this.
+  const enabledKey = modules
+    .filter((module) => module.status.kind === 'enabled')
+    .map((module) => module.id)
+    .join('|')
+  const peerModule = useMemo(() => peerModuleFor(modules), [enabledKey])
   if (screen.kind === 'root') {
     // With a module to land on, the shell's effect replaces this entry right after this render.
     if (landing(modules) !== undefined) return null
@@ -192,6 +199,7 @@ function Screens({
       route={route}
       pendings={pendings}
       hosts={hosts}
+      peerModule={peerModule}
       bar={bar}
       openDrawer={openDrawer}
     />
@@ -211,6 +219,7 @@ function ModuleView({
   route,
   pendings,
   hosts,
+  peerModule,
   bar,
   openDrawer,
 }: {
@@ -222,6 +231,7 @@ function ModuleView({
   readonly route: Route
   readonly pendings: Pendings
   readonly hosts: readonly HostView[]
+  readonly peerModule: (id: string, host: string | undefined) => ModuleApi | undefined
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
@@ -232,6 +242,12 @@ function ModuleView({
     (next: string, options?: NavigateOptions) =>
       go(navigatePath(id, next, host, options), options?.replace === undefined ? undefined : { replace: options.replace }),
     [go, id, host],
+  )
+  // A5: the router follows no `href`, so going to another module is `navigate` with another id.
+  const openModule = useCallback(
+    (other: string, next: string, options?: NavigateOptions) =>
+      go(navigatePath(other, next, host, options), options?.replace === undefined ? undefined : { replace: options.replace }),
+    [go, host],
   )
   const setOverlay = useCallback(
     (name: string | undefined) => (name === undefined ? closeOverlay() : openOverlay(name)),
@@ -252,6 +268,8 @@ function ModuleView({
       rest={rest}
       search={route.search}
       navigate={navigate}
+      peerModule={peerModule}
+      openModule={openModule}
       openDrawer={openDrawer}
       overlay={route.overlay === DRAWER ? undefined : route.overlay}
       setOverlay={setOverlay}

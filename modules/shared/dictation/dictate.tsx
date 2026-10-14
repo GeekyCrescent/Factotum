@@ -12,8 +12,13 @@
  *
  * The box is never touched on failure, and the microphone is let go on stop, on failure and on unmount.
  * A locked screen is out of scope (owner's decision): Android cuts the microphone there.
+ *
+ * SHARED SINCE 2026-10-14 (spec tareas-kanban, D10): it moved here from the sessions module, as ADR-0015
+ * foresaw, when the task board wanted it too. It imports only preact and its neighbours, and receives
+ * its `api` as an argument: the server side of the dictation stays in the sessions module.
  */
 
+import './dictation.css'
 import type { RefObject } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Api } from './contract.ts'
@@ -332,7 +337,7 @@ export function DictateButton({ dictation }: { readonly dictation: DictationCont
   return (
     <button
       type="button"
-      class={`s-mic s-mic-${state}`}
+      class={`d-mic d-mic-${state}`}
       aria-label={label}
       title={label}
       aria-pressed={state === 'recording'}
@@ -342,14 +347,14 @@ export function DictateButton({ dictation }: { readonly dictation: DictationCont
       {state === 'recording' ? (
         <>
           <Icon name="stop" size={16} />
-          <span class="s-mic-clock" aria-hidden="true">
+          <span class="d-mic-clock" aria-hidden="true">
             {formatClock(dictation.seconds)}
           </span>
         </>
       ) : state === 'idle' ? (
         <Icon name="microphone" size={18} />
       ) : (
-        <span class="s-mic-spin">
+        <span class="d-mic-spin">
           <Icon name="circle-notch" size={18} />
         </span>
       )}
@@ -361,7 +366,7 @@ export function DictateButton({ dictation }: { readonly dictation: DictationCont
 export function DictationNotice({ dictation }: { readonly dictation: DictationControls }) {
   if (dictation.notice === undefined) return null
   return (
-    <p class="s-attach-notice s-mic-notice" role="status">
+    <p class="d-notice" role="status">
       <Icon name="warning" size={14} />
       {dictation.notice}
     </p>

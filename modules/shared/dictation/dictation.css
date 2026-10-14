@@ -1,0 +1,81 @@
+/*
+ * The dictation's button, its clock and its notice (design D10), prefixed `d-`: shared by every module that
+ * mounts the microphone. The same rules the sessions module had as `.s-mic*`, renamed and moved; the notice is
+ * a COPY of `.s-attach-notice`, which stays in sessions for the file uploads. Its own `d-spin`, because
+ * `s-spin` belongs to the sessions module's sheet.
+ */
+
+/* --- Dictation (spec 2026-10-03-dictado-por-voz, D10) ------------------------------------------ */
+
+/* Looks like `+` (36 px), but the target is 44 px: the ::after reaches 4 px past each edge (criterion 31). */
+.d-mic {
+  position: relative;
+  flex: none;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 var(--space-1h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.d-mic::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+.d-mic:hover {
+  color: var(--text);
+}
+
+.d-mic-recording {
+  border-color: var(--err);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.d-mic-recording:hover {
+  color: var(--err);
+}
+
+.d-mic-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-small);
+}
+
+.d-mic:disabled {
+  cursor: default;
+}
+
+.d-mic-spin {
+  display: inline-grid;
+  animation: d-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .d-mic-spin {
+    animation: none;
+  }
+}
+
+.d-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: 0 var(--space-3);
+  color: var(--err);
+  font-size: var(--text-small);
+}
+
+@keyframes d-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

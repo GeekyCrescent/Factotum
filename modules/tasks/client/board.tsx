@@ -23,6 +23,8 @@ import { QuickCapture, useCaptureKey, type Target } from './capture.tsx'
 import { CloseCycle } from './close-cycle.tsx'
 import type { ViewProps } from './contract.ts'
 import { DesktopBoard } from './desktop.tsx'
+import { useBoardEdge } from './edge.ts'
+import { NextSheet } from './next.tsx'
 import { useBoardDrag } from './drag.ts'
 import { FilterMenus, FilterSheet } from './filters.tsx'
 import { Icon } from './icon.tsx'
@@ -67,9 +69,21 @@ function writeFilter(filter: Filter): void {
   }
 }
 
-export function Board({ props, openTask }: { readonly props: ViewProps; readonly openTask: string | undefined }) {
-  const { api, navigate, openDrawer, pendingTotal } = props
+export function Board({
+  props,
+  openTask,
+  asking = false,
+}: {
+  readonly props: ViewProps
+  readonly openTask: string | undefined
+  /** `/m/tasks/next`: «What's next?» open over the board. */
+  readonly asking?: boolean
+}) {
+  const { api, navigate, openDrawer, pendingTotal, peerModule } = props
+  // The microphone: the sessions module's dictation on the host serving the app (criterion 25).
+  const dictation = peerModule('sessions', undefined)
   const board = useBoard(api)
+  const { edge, hostProjects } = useBoardEdge(props)
   const wide = useWide()
   const [filter, setFilterState] = useState<Filter>(readFilter)
   const [tab, setTab] = useState<Column>('todo')
@@ -77,6 +91,8 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
   const [filtering, setFiltering] = useState(false)
   const [opened, setOpened] = useState<ReadonlySet<Pinned>>(new Set())
   const [target, setTarget] = useState<Target>('todo')
+  // A column's «+» points the capture at that column: until the field is left, Enter adds there by hand.
+  const [pointed, setPointed] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const captureInput = useRef<HTMLInputElement>(null)
   useCaptureKey(captureInput, wide && board.view !== undefined)
@@ -93,8 +109,9 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
 
   const open = useCallback((id: string) => navigate(encodeURIComponent(id)), [navigate])
   const add = (title: string, status: Target): Promise<boolean> => board.act('tasks', { title, status })
-  // To Triage, read by claude (criterion 21). The projects for the closed list arrive with the edge to sessions (G1).
-  const capture = (text: string): Promise<boolean> => board.act('capture', { text })
+  // To Triage, read by claude (criterion 21), with the projects of every host that answered (S12).
+  const capture = (text: string): Promise<boolean> =>
+    board.act('capture', hostProjects === undefined || hostProjects.length === 0 ? { text } : { text, projects: hostProjects })
   const toggle = (status: Pinned): void =>
     setOpened((was) => {
       const next = new Set(was)
@@ -104,6 +121,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
     })
   const addTo = (status: Target): void => {
     setTarget(status)
+    setPointed(true)
     captureInput.current?.focus()
   }
 
@@ -171,7 +189,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
     )
   }
 
-  const closing = view.needsClose && !closeLater && openTask === undefined
+  const closing = view.needsClose && !closeLater && openTask === undefined && !asking
   const late = overdueOf(view.tasks, today)
   const week = weekLine(weekOf(view.tasks, view.openCycle, view.openRange, today))
   const counts: Record<Column, number> = {
@@ -204,6 +222,16 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
             </button>
           ) : null}
           <span class="t-bar-gap" />
+          {wide ? (
+            <button type="button" class="btn sm quiet t-next-open" onClick={() => navigate('next')}>
+              <Icon name="lightbulb" size={16} />
+              What's next?
+            </button>
+          ) : (
+            <button type="button" class="icon-btn" aria-label="What's next?" onClick={() => navigate('next')}>
+              <Icon name="lightbulb" size={20} />
+            </button>
+          )}
           {view.triage > 0 ? (
             <button type="button" class="t-triage" onClick={() => navigate('triage')}>
               <Icon name="tray" size={wide ? 16 : 20} />
@@ -256,7 +284,15 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
       {wide ? (
         <>
           <div class="t-toolbar">
-            <QuickCapture target={target} label={labelOf(target)} add={add} capture={capture} input={captureInput} />
+            <QuickCapture
+              target={target}
+              label={labelOf(target)}
+              add={add}
+              {...(pointed ? {} : { capture })}
+              input={captureInput}
+              onLeave={() => setPointed(false)}
+              {...(dictation === undefined ? {} : { dictation })}
+            />
             <FilterMenus view={view} filter={filter} setFilter={setFilter} />
           </div>
           <DesktopBoard
@@ -273,7 +309,14 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
         <>
           <Tabs tab={tab} setTab={setTab} counts={counts} />
           <div class="t-phone-column">{list(tab, false)}</div>
-          <QuickCapture sticky target={phoneTarget} label={labelOf(phoneTarget)} add={add} capture={capture} />
+          <QuickCapture
+            sticky
+            target={phoneTarget}
+            label={labelOf(phoneTarget)}
+            add={add}
+            capture={capture}
+            {...(dictation === undefined ? {} : { dictation })}
+          />
         </>
       )}
 
@@ -281,8 +324,20 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
         <FilterSheet view={view} filter={filter} setFilter={setFilter} shown={shown.length} onClose={() => setFiltering(false)} />
       ) : null}
       {openTask === undefined ? null : (
-        <TaskSheet key={openTask} api={api} id={openTask} view={view} today={today} act={board.act} error={board.error} onClose={() => navigate('')} />
+        <TaskSheet
+          key={openTask}
+          api={api}
+          id={openTask}
+          view={view}
+          today={today}
+          act={board.act}
+          error={board.error}
+          onClose={() => navigate('')}
+          edge={edge}
+          {...(hostProjects === undefined ? {} : { hostProjects })}
+        />
       )}
+      {asking ? <NextSheet api={api} view={view} today={today} open={open} onClose={() => navigate('')} /> : null}
       {closing ? <CloseCycle view={view} today={today} act={board.act} error={board.error} onLater={() => setCloseLater(true)} /> : null}
     </div>
   )

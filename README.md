@@ -158,6 +158,14 @@ the mailbox** — no moving, no deleting, nothing marked as read.
 is in.** [docs/inbox.md](docs/inbox.md) says how to create one, what it exposes, what goes to
 Claude, what is kept, and how to revoke it. ADR-0018 is the why.
 
+## Tasks
+
+A kanban board for everything you have to do: six columns, weekly cycles that close on Monday,
+capture by text or voice that Claude turns into a card in **Triage**, **What's next?**, reminders by
+push, agents that create tasks and are launched from a card. It lives on **one** host — the one that
+is always on — and the other host opens it there. **There is no backup.** [docs/tasks.md](docs/tasks.md)
+says where to put it, what goes to Claude and to the push, and who can create cards. ADR-0021 is the why.
+
 ## Two environments
 
 `dev` and `prod` are separate configs, separate state and separate ports, and they
@@ -251,6 +259,8 @@ packages/kernel   config, bind, origin policy, registry, HTTP. Knows no module
 packages/sessions the session engine: subprocess, event log, locks, permissions.
                   Knows nothing about HTTP, and no module depends on it
 packages/inbox    the mail digest: IMAP read-only, classification, digests on disk.
+                  Knows nothing about HTTP either
+packages/tasks    the task board: cards, cycles, Triage, reminders, in one JSON file.
                   Knows nothing about HTTP either
 packages/cli      the `factotum` binary — and the composition root
 modules/          the bundled modules, plus local.ts where yours go

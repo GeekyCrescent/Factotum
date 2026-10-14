@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { apiFor, apiOnFor, moduleApi, readResponse } from './api.ts'
+import { apiFor, apiOnFor, moduleApi, peerModuleFor, readResponse } from './api.ts'
 
 type Failure = Error & { status?: number; body?: unknown }
 
@@ -107,4 +107,47 @@ test('apiOnFor is one function per module, and it is apiFor with the id bound', 
   assert.notEqual(apiOnFor('sessions'), apiOnFor('inbox'))
   assert.equal(apiOnFor('sessions')('mac'), apiFor('sessions', 'mac'))
   assert.equal(apiOnFor('sessions')(undefined), apiFor('sessions'))
+})
+
+// --- the client edge between modules (spec 2026-10-14-tareas-kanban, design D9; ADR-0021) ------
+
+test('peerModuleFor: another module’s api on the serving host, the same object apiFor caches', () => {
+  const peer = peerModuleFor([
+    { id: 'sessions', status: { kind: 'enabled' } },
+    { id: 'tasks', status: { kind: 'enabled' } },
+  ])
+  assert.equal(peer('sessions', undefined), apiFor('sessions'))
+})
+
+test('peerModuleFor: on another host it is that host’s copy, through /peers/<host>/', () => {
+  const peer = peerModuleFor([{ id: 'sessions', status: { kind: 'enabled' } }])
+  assert.equal(peer('sessions', 'omarchy'), apiFor('sessions', 'omarchy'))
+  assert.notEqual(peer('sessions', 'omarchy'), peer('sessions', undefined))
+})
+
+test('peerModuleFor: undefined for a module the server does not declare, or declares disabled', () => {
+  const peer = peerModuleFor([
+    { id: 'tasks', status: { kind: 'enabled' } },
+    { id: 'inbox', status: { kind: 'disabled', reason: 'no config' } },
+  ])
+  assert.equal(peer('sessions', undefined), undefined)
+  assert.equal(peer('inbox', undefined), undefined)
+  assert.equal(peer('sessions', 'omarchy'), undefined)
+})
+
+test('the /peers/<host>/ prefix: a peer module’s call goes to the other host’s copy', async () => {
+  const seen: string[] = []
+  const real = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    seen.push(String(input))
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  try {
+    const peer = peerModuleFor([{ id: 'sessions', status: { kind: 'enabled' } }])
+    await peer('sessions', 'omarchy')?.get('setup')
+    await peer('sessions', undefined)?.get('setup')
+  } finally {
+    globalThis.fetch = real
+  }
+  assert.deepEqual(seen, ['/peers/omarchy/modules/sessions/setup', '/modules/sessions/setup'])
 })

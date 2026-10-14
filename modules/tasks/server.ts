@@ -14,7 +14,7 @@
 
 import type { FactotumModule, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
 import { tasksConfigSchema } from './config.ts'
-import { CYCLE_ID_PATTERN, type CreateTasks, type Result, type TaskError, type Tasks, type TasksLink } from './types.ts'
+import { CYCLE_ID_PATTERN, type CreateTasks, type Relay, type Result, type TaskError, type Tasks, type TasksLink } from './types.ts'
 
 /** Never cached: titles and notes must not stay on the device's disk (as `sessions` and `inbox`). */
 const NO_STORE: Readonly<Record<string, string>> = { 'cache-control': 'no-store' }
@@ -56,12 +56,20 @@ function answer<T>(result: Result<T>, shape: (value: T) => unknown = (value) => 
   return result.ok ? ok(shape(result.value)) : failure(result.error)
 }
 
+function relayed(relay: Relay): ModuleResponse {
+  const where = relay.where()
+  const host = where.mode === 'relay' ? where.host : 'another host'
+  return { status: 501, headers: NO_STORE, body: { error: { code: 'relay', message: `the board lives on ${host}`, host } } }
+}
+
 function badCycle(): ModuleResponse {
   return failure({ code: 'invalid', field: 'cycle', reason: 'a cycle is YYYY-Www, the week with two digits' })
 }
 
 interface Holder {
   tasks?: Tasks
+  /** Relay mode (block R): no board here, only where it is. */
+  relay?: Relay
 }
 
 function routeTable(holder: Holder): RouteTable {
@@ -69,6 +77,8 @@ function routeTable(holder: Holder): RouteTable {
   const withTasks =
     (handler: (tasks: Tasks, req: ModuleRequest) => Promise<ModuleResponse> | ModuleResponse) =>
     async (req: ModuleRequest): Promise<ModuleResponse> => {
+      // Relay mode keeps no board: every board route is a 501 that says where the board is (crit. 29b).
+      if (holder.relay !== undefined) return relayed(holder.relay)
       const tasks = holder.tasks
       if (tasks === undefined) return STARTING
       return await handler(tasks, req)
@@ -104,6 +114,22 @@ function routeTable(holder: Holder): RouteTable {
       return ok({ tasks: cards, pending })
     }),
 
+    // 202: claude thinks outside this request; the screen asks GET /next until it is done (criterion 38).
+    'POST /next': withTasks((tasks) => {
+      const result = tasks.runNext()
+      return result.ok ? ok(result.value, 202) : failure(result.error)
+    }),
+    'GET /next': withTasks((tasks) => ok(tasks.nextStatus())),
+
+    // Both modes: where the board lives (crit. 29b). The screen asks this first, and jumps.
+    'GET /where': async () => {
+      if (holder.relay !== undefined) return ok(holder.relay.where())
+      return holder.tasks === undefined ? STARTING : ok(holder.tasks.where())
+    },
+    // Board mode only: a create_task the relay of the other host forwarded (design D8). Always 200 with
+    // the tool's result — the relay hands it to its agent as it is, refusals included.
+    'POST /agent-tasks': withTasks(async (tasks, req) => ok(await tasks.fromPeer(req.body))),
+
     'POST /cycles/close': withTasks(async (tasks, req) => answer(await tasks.closeCycles(req.body), (closed) => ({ closed }))),
     'GET /cycles': withTasks((tasks) => ok({ cycles: tasks.cycles() })),
     'GET /cycles/:id': withTasks((tasks, req) => {
@@ -138,6 +164,7 @@ export function tasksModule(createTasks: CreateTasks, link: TasksLink, options: 
         now,
         timers: ctx.timers,
         notify: ctx.notify,
+        peers: ctx.peers,
       })
       if (!created.ok) {
         // The kernel keeps a failed start's reason in the module's state and does NOT log it
@@ -145,14 +172,15 @@ export function tasksModule(createTasks: CreateTasks, link: TasksLink, options: 
         ctx.log.error(`tasks is off: ${created.reason}`)
         throw new Error(created.reason)
       }
-      const tasks = created.tasks
+      const running = 'relay' in created ? created.relay : created.tasks
+      if ('relay' in created) holder.relay = created.relay
+      else holder.tasks = created.tasks
       // LAST: nothing above can leave a filled link behind a `start` that threw (design D12).
-      link.fill(tasks.agent)
-      holder.tasks = tasks
+      link.fill(running.agent)
       return {
         stop: async () => {
           link.clear()
-          await tasks.stop()
+          await running.stop()
         },
       }
     },

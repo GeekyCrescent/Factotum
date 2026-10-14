@@ -30,3 +30,21 @@ export type CaptureOutput = z.infer<typeof captureOutputSchema>
  * a schema declaring draft 2020-12 is refused before the call (requirements §0.9).
  */
 export const CAPTURE_JSON_SCHEMA = JSON.stringify(z.toJSONSchema(captureOutputSchema, { target: 'draft-7', io: 'input' }))
+
+/**
+ * «What's next?» (design D5). LOOSE ON PURPOSE in zod: one item over a limit must cost that item, not
+ * the answer (`next.ts` validates and trims each one). The JSON Schema still says the limits to claude.
+ */
+export const nextOutputSchema = z.object({
+  items: z.array(z.object({ id: z.string(), why: z.string() })),
+  note: z.string(),
+})
+
+export type NextOutput = z.infer<typeof nextOutputSchema>
+
+const nextPromiseSchema = z.object({
+  items: z.array(z.object({ id: z.string(), why: z.string().max(200) })).max(7),
+  note: z.string().max(280),
+})
+
+export const NEXT_JSON_SCHEMA = JSON.stringify(z.toJSONSchema(nextPromiseSchema, { target: 'draft-7', io: 'input' }))

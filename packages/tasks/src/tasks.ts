@@ -4,8 +4,7 @@
  * EVERY INPUT FROM OUTSIDE ARRIVES AS `unknown` and is shaped here (`shape.ts`) before an op sees it,
  * so the `400` with its field comes from one place. Every change goes through the store's queue.
  *
- * WHAT IS STILL TO COME answers «not yet»: «What's next?» and the agent (blocks F and H). Relay mode
- * does not start: it needs block R.
+ * RELAY MODE (block R) builds no board at all: `relay.ts`.
  *
  * NOTHING HERE LOGS A TITLE, notes or subtasks (criterion 41): the store logs codes and the facade
  * logs nothing about a card.
@@ -13,26 +12,27 @@
 
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { z } from 'zod'
 import { uuidv7 } from '@factotum/sessions'
 import { createCapturer } from './ai/capture.ts'
-import { runClaude } from './ai/run.ts'
-import { captureOutputSchema, CAPTURE_JSON_SCHEMA } from './ai/schema.ts'
+import { runClaude, type RunResult } from './ai/run.ts'
+import { createAgentTools, createPeerIntake } from './agent.ts'
+import { createRelay } from './relay.ts'
+import { createReminders } from './reminders.ts'
+import { createNext } from './ai/next.ts'
+import { captureOutputSchema, CAPTURE_JSON_SCHEMA, NEXT_JSON_SCHEMA, nextOutputSchema } from './ai/schema.ts'
 import { acceptTask, closeCycles, createTask, linkSession, moveTask, patchTask, removeTask, type Changed, type OpContext } from './board/ops.ts'
 import { openBoardStore } from './board/store.ts'
 import { boardView, cycleSummaries } from './board/view.ts'
 import { parseTasksConfig } from './config.ts'
 import { parseAccept, parseCapture, parseClose, parseLink, parseMove, parseNewTask, parsePatch, type Shaped } from './shape.ts'
-import type { AgentToolImpl, Board, CreateTasksResult, Result, Task, Tasks, TasksDeps } from './types.ts'
+import type { Board, CreateTasksResult, Result, Task, Tasks, TasksDeps } from './types.ts'
 
 /** A capture is read within this, or it is `failed` and keeps its text (criterion 22). */
 export const PARSE_TIMEOUT_MS = 30_000
+/** «What's next?» answers within this (criterion 38). */
+export const NEXT_TIMEOUT_MS = 60_000
 
-const NOT_YET = (what: string): Result<never> => ({ ok: false, error: { code: 'not-yet', reason: `${what} arrives with the second cut` } })
-
-const SECOND_CUT_AGENT: AgentToolImpl = {
-  tools: () => [],
-  call: async () => ({ content: [{ type: 'text', text: 'Creating tasks is not available on this board yet.' }], isError: true }),
-}
 
 function invalid<T>(shaped: Shaped<unknown> & { readonly ok: false }): Result<T> {
   return { ok: false, error: { code: 'invalid', field: shaped.field, reason: shaped.reason } }
@@ -46,7 +46,10 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
   const parsed = parseTasksConfig(deps.config)
   if (!parsed.ok) return { ok: false, reason: parsed.reason }
   if (parsed.config.mode === 'relay') {
-    return { ok: false, reason: 'relay mode is not available yet: it forwards to the board host and arrives with block R' }
+    // No board on this host: where it is, and create_task forwarded there (block R).
+    const relayTo = parsed.config.relayTo
+    if (relayTo === undefined) return { ok: false, reason: 'relay mode needs relayTo: the name of the host that keeps the board' }
+    return { ok: true, relay: createRelay({ relayTo, peers: deps.peers, log: deps.log }) }
   }
   const timeZone = parsed.timeZone
 
@@ -67,24 +70,24 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
     return { ok: false, reason: `the folder claude runs in could not be prepared (${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'})` }
   }
   const { model, effort } = parsed.config
-  const capturer = createCapturer({
-    store,
-    opContext,
-    log: deps.log,
-    run: (prompt, signal) =>
+  /** One kind of run: its schema, both ways, and its timeout. Everything else is the board's. */
+  const runner =
+    <T>(jsonSchema: string, output: z.ZodType<T>, timeoutMs: number) =>
+    (prompt: string, signal: AbortSignal): Promise<RunResult<T>> =>
       runClaude({
         prompt,
-        jsonSchema: CAPTURE_JSON_SCHEMA,
-        output: captureOutputSchema,
+        jsonSchema,
+        output,
         model,
         effort,
         cwd: runDir,
         timers: deps.timers,
         signal,
-        timeoutMs: PARSE_TIMEOUT_MS,
+        timeoutMs,
         ...(deps.claudeBin === undefined ? {} : { bin: deps.claudeBin }),
-      }),
-  })
+      })
+  const capturer = createCapturer({ store, opContext, log: deps.log, run: runner(CAPTURE_JSON_SCHEMA, captureOutputSchema, PARSE_TIMEOUT_MS) })
+  const nexter = createNext({ store, opContext, log: deps.log, run: runner(NEXT_JSON_SCHEMA, nextOutputSchema, NEXT_TIMEOUT_MS) })
 
   /** Shape the input, then run the op on the board of that moment. */
   const shaped =
@@ -94,6 +97,10 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
       if (!input.ok) return invalid(input)
       return cardOf(await store.change(op(input.value)))
     }
+
+  // D12, step 2: the reminders' tick is armed, and its first pass is NOT awaited (design D6).
+  const reminders = createReminders({ store, now: deps.now, timers: deps.timers, notify: deps.notify, log: deps.log })
+  reminders.start()
 
   const tasks: Tasks = {
     board: (filter) => boardView(store.current(), deps.now(), timeZone, filter),
@@ -136,12 +143,15 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
       const input = parseCapture(raw)
       return input.ok ? capturer.capture(input.value) : invalid(input)
     },
-    runNext: () => NOT_YET("«What's next?»"),
-    agent: SECOND_CUT_AGENT,
+    runNext: () => nexter.start(),
+    nextStatus: () => nexter.status(),
+    agent: createAgentTools({ store, opContext, log: deps.log }),
+    where: () => ({ mode: 'board' }),
+    fromPeer: createPeerIntake({ store, opContext, log: deps.log }, deps.peers),
 
     stop: async () => {
       // The runs first: what they would have written is decided by the next start (criterion 23c).
-      await capturer.stop()
+      await Promise.all([capturer.stop(), nexter.stop(), reminders.stop()])
       await store.idle()
     },
   }

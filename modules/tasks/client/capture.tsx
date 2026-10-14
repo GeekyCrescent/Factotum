@@ -1,10 +1,15 @@
 /**
- * Two captures in one field:
- * - BY HAND (criterion 9): a title and Enter, straight to the column it was typed for — Backlog or
- *   Todo, the only two the owner creates in. No AI.
- * - WITH AI (criteria 21–24): the ✦ button sends the text to `POST /capture`; the card lands in Triage at
- *   once and claude fills it in afterwards. The field then says so, until the next keystroke. The
- *   microphone joins it with the shared dictation (G3).
+ * Two captures in one field (the owner's choice, 2026-10-15: Enter goes to the AI):
+ * - WITH AI (criteria 21–24), Enter or ✦: the text goes to `POST /capture`; the card lands in Triage at
+ *   once and claude fills it in afterwards. The field then says so, until the next keystroke. This is
+ *   the fast path the 10 s of criterion 24 is about.
+ * - BY HAND (criterion 9), the «+»: straight to the column it was typed for — Backlog or Todo, the only
+ *   two the owner creates in. No AI.
+ * Without a `capture` (no AI on this board, or a column's «+» pointed the field at its column), Enter
+ * adds by hand, as before.
+ * THE MICROPHONE (G3, criterion 25) is the shared dictation of the sessions module on the host serving
+ * the app. `<CaptureMic>` exists only when that module runs there, so its hook is never called
+ * conditionally; while it records or transcribes, nothing is sent.
  *
  * TWO SHAPES (redesign A): on the desktop a field in the toolbar that `N` focuses from anywhere on the
  * board, and that a column's «+» points at its column; on the phone, fixed at the bottom of the screen.
@@ -12,6 +17,9 @@
 
 import type { RefObject } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
+import type { Api as DictationApi } from '../../shared/dictation/contract.ts'
+import { DictateButton, DictationNotice, useDictation } from '../../shared/dictation/dictate.tsx'
+import { appendDictation } from '../../shared/dictation/dictation.ts'
 import { Icon } from './icon.tsx'
 
 /** A title typed by hand is at most this (`shape.ts`); a capture for claude can be longer. */
@@ -39,6 +47,49 @@ export function useCaptureKey(input: RefObject<HTMLInputElement>, enabled: boole
   }, [input, enabled])
 }
 
+/** The microphone of the capture: its own component, so `useDictation` runs on every render of it. */
+function CaptureMic({
+  api,
+  text,
+  setText,
+  field,
+  onBusy,
+}: {
+  readonly api: DictationApi
+  readonly text: string
+  readonly setText: (text: string) => void
+  readonly field: RefObject<HTMLInputElement>
+  readonly onBusy: (busy: boolean) => void
+}) {
+  // The text AS IT IS when the transcript lands, not as it was when the recording started.
+  const current = useRef(text)
+  current.current = text
+  const dictation = useDictation({
+    api,
+    append: (transcript) => setText(appendDictation(current.current, transcript)),
+    focus: () =>
+      queueMicrotask(() => {
+        const box = field.current
+        if (box === null) return
+        box.focus()
+        box.setSelectionRange(box.value.length, box.value.length)
+      }),
+  })
+  useEffect(() => {
+    onBusy(dictation.busy)
+    // Unmounted while it recorded (the module went away): the capture must not stay blocked.
+    return () => onBusy(false)
+  }, [dictation.busy, onBusy])
+  return (
+    <>
+      <DictateButton dictation={dictation} />
+      <div class="t-capture-mic-note">
+        <DictationNotice dictation={dictation} />
+      </div>
+    </>
+  )
+}
+
 export function QuickCapture({
   target,
   label,
@@ -46,6 +97,8 @@ export function QuickCapture({
   capture,
   sticky = false,
   input,
+  onLeave,
+  dictation,
 }: {
   readonly target: Target
   readonly label: string
@@ -56,10 +109,15 @@ export function QuickCapture({
   /** The phone's: fixed at the bottom of the screen. */
   readonly sticky?: boolean
   readonly input?: RefObject<HTMLInputElement>
+  /** The field lost the focus: a column's «+» stops pointing at its column. */
+  readonly onLeave?: () => void
+  /** The sessions module's api on the serving host, when it runs there: the microphone. */
+  readonly dictation?: DictationApi
 }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [sent, setSent] = useState(false)
+  const [listening, setListening] = useState(false)
   const own = useRef<HTMLInputElement>(null)
   const field = input ?? own
   const tooLong = text.trim().length > MAX_TITLE_CHARS
@@ -67,7 +125,8 @@ export function QuickCapture({
   /** The text stays until the card is saved: a failure keeps what was typed. */
   const send = async (save: (text: string) => Promise<boolean>, toTriage: boolean): Promise<void> => {
     const typed = text.trim()
-    if (typed === '' || saving) return
+    // Recording or transcribing: the text is not all there yet.
+    if (typed === '' || saving || listening) return
     setSaving(true)
     if (await save(typed)) {
       setText('')
@@ -75,13 +134,37 @@ export function QuickCapture({
     }
     setSaving(false)
   }
-  const submit = (event: Event): void => {
-    event.preventDefault()
-    // Too long for a title: the note under the field says so, and the AI button is the way.
+  const byHand = (): void => {
+    // Too long for a title: the note by the field says so, and Enter is the way.
     if (tooLong) return
     void send((title) => add(title, target), false)
   }
-  const placeholder = sent ? 'In Triage, claude is reading it. Add another' : sticky ? `Add to ${label}` : `Add to ${label}, press N from anywhere`
+  const submit = (event: Event): void => {
+    event.preventDefault()
+    if (capture === undefined) byHand()
+    else void send(capture, true)
+    // In the gesture: a tap on ✦ can move the focus on some phones, and the keyboard must stay up.
+    field.current?.focus()
+  }
+  /**
+   * The field was left: a column's «+» stops pointing at its column. Not when the focus went to a button
+   * of this same form (its own «+»), nor when the whole window lost it (alt-tab to copy a text).
+   */
+  const leave = (event: FocusEvent): void => {
+    if (onLeave === undefined || !document.hasFocus()) return
+    const to = event.relatedTarget
+    if (to instanceof Node && (event.currentTarget as HTMLInputElement).form?.contains(to)) return
+    onLeave()
+  }
+  const placeholder = sent
+    ? 'In Triage, claude is reading it. Add another'
+    : capture === undefined
+      ? sticky
+        ? `Add to ${label}`
+        : `Add to ${label}, press N from anywhere`
+      : sticky
+        ? 'Capture a task'
+        : 'Capture a task, press N from anywhere'
 
   return (
     <form class={sticky ? 't-capture t-capture-sticky' : 't-capture t-capture-bar'} onSubmit={submit}>
@@ -95,7 +178,7 @@ export function QuickCapture({
         aria-invalid={tooLong}
         {...(tooLong ? { 'aria-describedby': 't-capture-long' } : {})}
         placeholder={placeholder}
-        aria-label={capture === undefined ? `New card in ${label}` : `New card: Enter adds it to ${label}, the AI button sends it to Triage`}
+        aria-label={capture === undefined ? `New card in ${label}` : 'Capture a task: Enter sends it to Triage'}
         enterKeyHint="done"
         onInput={(event) => {
           setSent(false)
@@ -104,30 +187,67 @@ export function QuickCapture({
         onKeyDown={(event) => {
           if (event.key === 'Escape') (event.target as HTMLInputElement).blur()
         }}
+        onBlur={leave}
       />
-      {capture === undefined ? null : (
-        <button
-          type="button"
-          class="icon-btn t-capture-ai"
-          aria-label="Capture with AI, to Triage"
-          title="Capture with AI, to Triage"
-          disabled={text.trim() === '' || saving}
-          // The field keeps the focus: on the phone the keyboard stays up for the next capture.
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => {
-            void send(capture, true)
-            field.current?.focus()
+      {dictation === undefined ? null : (
+        <CaptureMic
+          api={dictation}
+          text={text}
+          setText={(next) => {
+            setSent(false)
+            setText(next)
           }}
-        >
-          <Icon name="sparkle" size={18} />
-        </button>
+          field={field}
+          onBusy={setListening}
+        />
       )}
-      <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving || tooLong}>
-        <Icon name="plus" size={18} />
-      </button>
+      {capture === undefined ? (
+        <button
+          type="submit"
+          class="icon-btn"
+          aria-label={`Add to ${label}`}
+          disabled={text.trim() === '' || saving}
+          onPointerDown={(event) => event.preventDefault()}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <Icon name="plus" size={18} />
+        </button>
+      ) : (
+        <>
+          {/* Both keep the field's focus: on the phone the keyboard stays up for the next capture. */}
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label={`Add to ${label} by hand, without AI`}
+            title={`Add to ${label} by hand, without AI`}
+            disabled={text.trim() === '' || saving || tooLong || listening}
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              byHand()
+              field.current?.focus()
+            }}
+          >
+            <Icon name="plus" size={18} />
+          </button>
+          <button
+            type="submit"
+            class="icon-btn t-capture-ai"
+            aria-label="Send to Triage, read by AI"
+            title="Send to Triage, read by AI (Enter)"
+            disabled={text.trim() === '' || saving || listening}
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <Icon name="sparkle" size={18} />
+          </button>
+        </>
+      )}
       {tooLong ? (
         <span id="t-capture-long" class="t-capture-long">
-          Over {MAX_TITLE_CHARS} characters for a title: ✦ sends it to Triage
+          {capture === undefined
+            ? `Over ${MAX_TITLE_CHARS} characters for a title`
+            : `Over ${MAX_TITLE_CHARS} characters to add by hand: Enter sends it to Triage`}
         </span>
       ) : null}
       <span class="sr-only" role="status">

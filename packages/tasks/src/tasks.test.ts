@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BOARD_FILE } from './board/store.ts'
 import { createTasks } from './tasks.ts'
 import { createTasksLink } from './link.ts'
 import { fileURLToPath } from 'node:url'
-import { board, captureLog, eventually, fakeTimers, NOW, realTimers, silentNotify, task, ZONE } from './test-support.ts'
+import { board, captureLog, eventually, fakeTimers, manualTimers, NOW, realTimers, silentNotify, task, ZONE } from './test-support.ts'
 
 const FAKE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url))
 import type { Result, Tasks, TasksDeps } from './types.ts'
@@ -33,6 +33,7 @@ async function harness(
   const deps: TasksDeps = { config, stateDir: dir, log, now: () => clock.now, timers: fakeTimers(), notify: silentNotify, ...over }
   const created = await createTasks(deps)
   if (!created.ok) throw new Error(`expected tasks, got: ${created.reason}`)
+  if (!('tasks' in created)) throw new Error('expected a board, got a relay')
   t.after(() => created.tasks.stop())
   return { tasks: created.tasks, dir, clock, log }
 }
@@ -152,12 +153,24 @@ test('a capture that is not one is a 400 with its field, and nothing is written'
   assert.equal(tasks.board().triage, 0)
 })
 
-test('the members still to come answer not-yet, and the agent lists no tool', async (t) => {
+test("«What's next?» through the facade: started at once, a conflict while it runs, and the answer on the board", async (t) => {
+  const seed = JSON.stringify(board([task({ id: 'a', status: 'todo', cycle: '2026-W42', title: 'Alpha' })]))
+  const { tasks, dir } = await harness(t, { timeZone: ZONE }, seed, { timers: realTimers, claudeBin: FAKE })
+  await mkdir(join(dir, 'run'), { recursive: true })
+  await writeFile(join(dir, 'run', 'fake-claude.answer'), JSON.stringify({ items: [{ id: 't0', why: 'It is due.' }, { id: 't7', why: 'Invented.' }], note: 'Go.' }))
+  assert.deepEqual(ok(tasks.runNext()), { started: true })
+  assert.deepEqual(errorOf(tasks.runNext()), { code: 'conflict' })
+  await eventually(() => !tasks.nextStatus().running, 'the run ended')
+  assert.deepEqual(tasks.nextStatus().last?.items, [{ id: 'a', why: 'It is due.' }])
+  assert.equal(tasks.nextStatus().error, null)
+})
+
+test('the agent lists create_task and puts its card in triage through the facade (criterion 26)', async (t) => {
   const { tasks } = await harness(t)
-  assert.deepEqual(errorOf(tasks.runNext()), { code: 'not-yet' })
-  assert.deepEqual(tasks.agent.tools(), [])
-  const result = await tasks.agent.call({ sessionId: 's', siteId: 'x', toolUseId: undefined, name: 'create_task', raw: {} })
-  assert.equal(result.isError, true)
+  assert.deepEqual(tasks.agent.tools().map((tool) => tool.name), ['create_task'])
+  const result = await tasks.agent.call({ sessionId: '01920000-0000-7000-8000-00000000000a', siteId: 'web', toolUseId: undefined, name: 'create_task', raw: { title: 'From an agent' } })
+  assert.equal(result.isError, undefined)
+  assert.equal(tasks.triage()[0]?.source.kind, 'agent')
 })
 
 test('stop waits for the writes in flight', async (t) => {
@@ -192,8 +205,15 @@ test('a bad block does not start, with the reason of the config (criterion 1)', 
   assert.match(await refused({ timeZone: 'Mars/Olympus' }), /^tasks\.timeZone:/)
 })
 
-test('relay mode does not start in the first cut, and says why', async () => {
-  assert.match(await refused({ mode: 'relay', relayTo: 'omarchy' }), /relay/)
+test('relay mode starts with no board file: it keeps no board (block R)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tasks-facade-'))
+  try {
+    const created = await createTasks({ config: { mode: 'relay', relayTo: 'omarchy' }, stateDir: dir, log: captureLog(), now: () => NOW, timers: fakeTimers(), notify: silentNotify })
+    assert.ok(created.ok && 'relay' in created)
+    await assert.rejects(readFile(join(dir, BOARD_FILE), 'utf8'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('a damaged board does not start (criterion 3)', async () => {
@@ -215,4 +235,19 @@ test('the link lists nothing until filled, and nothing after it is cleared', asy
 
   link.clear()
   assert.deepEqual(link.family.tools(), [])
+})
+
+test('the facade arms the reminders: one interval, and a due reminder goes out by itself (criterion 34)', async (t) => {
+  const due = new Date(NOW.getTime() - 60_000).toISOString()
+  const seed = JSON.stringify(board([task({ id: 'r', status: 'todo', cycle: '2026-W42', remindAt: due })]))
+  const sent: string[] = []
+  const timers = manualTimers()
+  const { tasks } = await harness(t, { timeZone: ZONE }, seed, {
+    timers: timers.timers,
+    notify: { canReach: () => true, send: async (message) => void sent.push(message.path) },
+  })
+  assert.deepEqual(timers.pending(), [60_000])
+  await eventually(() => sent.length === 1, 'the reminder')
+  assert.deepEqual(sent, ['/m/tasks/r'])
+  assert.notEqual(tasks.get('r')?.remindedAt, null)
 })

@@ -26,6 +26,7 @@
 import type { Logger, Notifier, PeerCaller, ReceivedFile, Timers } from '@factotum/core'
 import type { HandoffApi } from './handoff/index.ts'
 import type { AnsweredVia, SettledHow } from './questions/batches.ts'
+import type { McpTool, ToolResult } from './questions/mcp.ts'
 import type { Answer, Question } from './questions/shape.ts'
 import type { ServiceOutcome, ServiceView, StoppedBy } from './services/shape.ts'
 
@@ -227,6 +228,29 @@ export interface EngineSetup {
    * Without it this host has no peer: every preview and handoff answers that `to` is not one.
    */
   readonly peers?: PeerCaller
+  /**
+   * Families of MCP tools from other modules (spec 2026-10-14-tareas-kanban, D7): the task board's
+   * `create_task`. Read on every `tools/list`; the engine runs a call only for a LIVE session, with
+   * its `siteId`, and answers `NOT_RUNNING` otherwise. Optional: setups before it still compile.
+   */
+  readonly agentTools?: readonly AgentToolFamily[]
+}
+
+/**
+ * A family of MCP tools another module serves on the sessions' MCP server (D7; ADR-0013's second
+ * consumer). Members are function-typed properties, never methods: the composition root ties this
+ * shape to the task board's by assignment, and a method would let an argument drift.
+ */
+export interface AgentToolFamily {
+  /** Read on every `tools/list`: `[]` while its module is off or not started. */
+  readonly tools: () => readonly McpTool[]
+  readonly call: (input: {
+    readonly sessionId: string
+    readonly siteId: string
+    readonly toolUseId: string | undefined
+    readonly name: string
+    readonly raw: unknown
+  }) => Promise<ToolResult>
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -555,6 +579,12 @@ export interface EngineSetupView {
     readonly id: string
     readonly label: string
     readonly disabledReason: string | undefined
+    /**
+     * `invoke.kind` — `none` is the free-prompt entry (spec 2026-10-14-tareas-kanban, D9: «Run agent»
+     * launches with it). OPTIONAL: a disabled entry has no invoke, and a host of an earlier build does
+     * not send it — like `uploads?` and `files?`, which a daemon from before never sent either.
+     */
+    readonly kind?: string | undefined
   }[]
   /** Whether this host takes files, and up to how big (spec 2026-10-01, D8, D10). */
   readonly uploads: UploadsView

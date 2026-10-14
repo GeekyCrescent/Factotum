@@ -77,3 +77,8 @@ export type { IgnoreDigest } from './handoff/git.ts'
 export { HANDOFF_PEER_READ_TIMEOUT_MS } from './handoff/constants.ts'
 export { listHids, listJournals } from './handoff/journal.ts'
 export type { Journal } from './handoff/journal.ts'
+
+// The hole for MCP tools from other modules (spec 2026-10-14-tareas-kanban, D7): the task board's
+// `create_task` is built against these, as the inbox builds against `CLAUDE_BIN`.
+export type { AgentToolFamily } from './types.ts'
+export type { McpTool, ToolResult } from './questions/mcp.ts'

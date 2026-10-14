@@ -206,6 +206,33 @@ export interface EngineSetup {
   readonly uploadMaxBytes?: number
   /** `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4). REQUIRED here: `server.ts` cannot forget it. */
   readonly peers: PeerCaller
+  /** MCP tools from other modules (spec 2026-10-14-tareas-kanban, D7): the task board's `create_task`. */
+  readonly agentTools?: readonly AgentToolFamily[]
+}
+
+/** A tool as the sessions MCP's `tools/list` describes it: the mirror of `McpTool`. */
+export interface McpTool {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: unknown
+}
+
+/** The mirror of the MCP's `ToolResult`. */
+export interface ToolResult {
+  readonly content: readonly { readonly type: 'text'; readonly text: string }[]
+  readonly isError?: true
+}
+
+/** The mirror of `AgentToolFamily` (spec 2026-10-14-tareas-kanban, D7). Tied in `main.ts`. */
+export interface AgentToolFamily {
+  readonly tools: () => readonly McpTool[]
+  readonly call: (input: {
+    readonly sessionId: string
+    readonly siteId: string
+    readonly toolUseId: string | undefined
+    readonly name: string
+    readonly raw: unknown
+  }) => Promise<ToolResult>
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -534,6 +561,12 @@ export interface EngineSetupView {
     readonly id: string
     readonly label: string
     readonly disabledReason: string | undefined
+    /**
+     * `invoke.kind` — `none` is the free-prompt entry (spec 2026-10-14-tareas-kanban, D9: «Run agent»
+     * launches with it). OPTIONAL: a disabled entry has no invoke, and a host of an earlier build does
+     * not send it — like `uploads?` and `files?`, which a daemon from before never sent either.
+     */
+    readonly kind?: string | undefined
   }[]
   /**
    * OPTIONAL HERE, REQUIRED ON THE ENGINE'S SIDE (spec 2026-10-01, D12). A daemon from before uploads
