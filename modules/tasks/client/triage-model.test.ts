@@ -60,6 +60,8 @@ test('wroteOf: what the owner typed, once claude rewrote it; nothing while readi
   assert.equal(wroteOf(card()), 'comprar pan mañana')
   assert.equal(wroteOf(card({ source: capture('pending', 'comprar pan mañana') })), undefined)
   assert.equal(wroteOf(card({ title: 'same', source: capture('ok', 'same') })), undefined)
+  // A capital or a full stop is not a rewrite: nothing worth repeating.
+  assert.equal(wroteOf(card({ title: 'Prueba enter a triage', source: capture('ok', 'prueba enter a triage.') })), undefined)
   // A failed read keeps the text as the title: nothing to repeat.
   assert.equal(wroteOf(card({ title: 'comprar pan mañana', source: capture('failed', 'comprar pan mañana') })), undefined)
   assert.equal(wroteOf(card({ source: { kind: 'owner' } })), undefined)

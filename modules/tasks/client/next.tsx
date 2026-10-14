@@ -17,7 +17,7 @@ import { Icon } from './icon.tsx'
 import { messageOf, statusOf } from './model.ts'
 import { askedAt, nextRows, nextStage } from './next-model.ts'
 import { Sheet } from './sheet.tsx'
-import { POLL_MS } from './triage.tsx'
+import { POLL_MS } from './use-triage.ts'
 
 function useNext(api: Api) {
   const [status, setStatus] = useState<NextStatus | undefined>(undefined)

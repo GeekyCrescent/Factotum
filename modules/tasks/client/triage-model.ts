@@ -41,7 +41,9 @@ export function sourceOf(task: Task): Source {
 export function wroteOf(task: Task): string | undefined {
   if (task.source.kind !== 'capture' || task.source.parse === 'pending') return undefined
   const raw = task.source.raw.trim()
-  return raw === task.title.trim() ? undefined : raw
+  // A capital or a final full stop is not a rewrite: the owner would read their own words twice.
+  const same = (text: string): string => text.trim().replace(/[.!?…]+$/u, '').toLocaleLowerCase()
+  return same(raw) === same(task.title) ? undefined : raw
 }
 
 const MINUTE_MS = 60_000
