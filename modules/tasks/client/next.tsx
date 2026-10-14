@@ -22,20 +22,27 @@ import { POLL_MS } from './triage.tsx'
 function useNext(api: Api) {
   const [status, setStatus] = useState<NextStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  /** Between a tap (or the opening) and the answer that says it is running: no blank, no double POST. */
+  const [pending, setPending] = useState(false)
+  const reads = useRef({ started: 0, applied: 0 })
 
   const reload = useCallback(async (): Promise<NextStatus | undefined> => {
+    const mine = ++reads.current.started
     try {
       const next = await api.get<NextStatus>('next')
+      if (mine < reads.current.applied) return next
+      reads.current.applied = mine
       setStatus(next)
       setError(undefined)
       return next
     } catch (cause) {
-      setError(messageOf(cause))
+      if (mine >= reads.current.applied) setError(messageOf(cause))
       return undefined
     }
   }, [api])
 
   const ask = useCallback(async (): Promise<void> => {
+    setPending(true)
     try {
       await api.post('next')
     } catch (cause) {
@@ -43,18 +50,24 @@ function useNext(api: Api) {
       if (statusOf(cause) !== 409) setError(messageOf(cause))
     }
     await reload()
+    setPending(false)
   }, [api, reload])
 
   const running = status?.running === true
   useEffect(() => {
     if (!running) return
-    const handle = window.setInterval(() => {
+    const tick = (): void => {
       if (document.visibilityState === 'visible') void reload()
-    }, POLL_MS)
-    return () => window.clearInterval(handle)
+    }
+    const handle = window.setInterval(tick, POLL_MS)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      window.clearInterval(handle)
+      document.removeEventListener('visibilitychange', tick)
+    }
   }, [running, reload])
 
-  return { status, error, reload, ask }
+  return { status, error, pending, reload, ask }
 }
 
 export function NextSheet({
@@ -72,46 +85,65 @@ export function NextSheet({
   readonly onClose: () => void
 }) {
   const next = useNext(api)
-  const asked = useRef(false)
   const { reload, ask } = next
 
-  // Once, on opening: read where it stands, and ask when there is nothing of today to show.
-  useEffect(() => {
-    void (async () => {
+  /** Read where it stands, and ask when there is nothing of today to show. Also what «Try again» runs. */
+  const begin = useCallback(
+    async (alive: () => boolean): Promise<void> => {
       const first = await reload()
-      if (first === undefined || asked.current) return
-      asked.current = true
+      if (first === undefined || !alive()) return
       const fresh = first.last !== null && askedAt(first.last.at, view.timeZone, today).startsWith('Today')
       if (!first.running && !fresh) await ask()
-    })()
+    },
+    [reload, ask, view.timeZone, today],
+  )
+
+  // Once, on opening. Closing before the first read answers spends no run: `alive` is false by then.
+  useEffect(() => {
+    let alive = true
+    void begin(() => alive)
+    return () => {
+      alive = false
+    }
     // On mount only: the zone and the day do not change while the sheet is open.
   }, [])
 
   const status = next.status
   const stage = status === undefined ? undefined : nextStage(status)
-  const thinking = stage === 'thinking'
+  const thinking = stage === 'thinking' || next.pending
+  const unread = status === undefined && next.error !== undefined
   const foot = (
-    <button type="button" class="btn primary" disabled={status === undefined || thinking} onClick={() => void ask()}>
+    <button
+      type="button"
+      class="btn primary"
+      disabled={thinking || (status === undefined && !unread)}
+      onClick={() => void (unread ? begin(() => true) : ask())}
+    >
       <Icon name="lightbulb" size={18} />
-      {stage === 'never' || stage === 'failed' ? 'Ask' : 'Ask again'}
+      {unread ? 'Try again' : stage === 'answer' ? 'Ask again' : 'Ask'}
     </button>
   )
+  const rows = status?.last == null ? 0 : nextRows(status.last.items, view.tasks).length
+  const said = thinking ? 'Thinking about your day…' : stage === 'answer' ? `${rows === 1 ? '1 suggestion' : `${rows} suggestions`} ready.` : ''
 
   return (
     <Sheet id="t-next-title" title="What's next?" onClose={onClose} foot={foot}>
       <div class="t-next">
-        {next.error === undefined ? null : <p class="t-next-error">{next.error}</p>}
-        {status?.error == null ? null : <p class="t-next-error">Couldn't get suggestions: {status.error}</p>}
-        <p class="t-next-thinking" role="status">
-          {thinking ? (
-            <>
-              <Icon name="circle-notch" size={16} class="t-spin" />
-              Thinking about your day…
-            </>
-          ) : (
-            ''
-          )}
+        {next.error === undefined ? null : (
+          <p class="t-next-error" role="alert">
+            {next.error}
+          </p>
+        )}
+        {status?.error == null ? null : (
+          <p class="t-next-error" role="alert">
+            Couldn't get suggestions: {status.error}
+          </p>
+        )}
+        <p class={thinking ? 't-next-thinking' : 'sr-only'} role="status">
+          {thinking ? <Icon name="circle-notch" size={16} class="t-spin" /> : null}
+          {said}
         </p>
+        {status === undefined && next.error === undefined ? <p class="dim-3">Loading…</p> : null}
         {status?.last == null ? (
           stage === 'never' && !thinking ? <p class="dim-2">Nothing asked yet.</p> : null
         ) : (

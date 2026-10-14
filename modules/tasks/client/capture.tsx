@@ -90,6 +90,18 @@ export function QuickCapture({
     event.preventDefault()
     if (capture === undefined) byHand()
     else void send(capture, true)
+    // In the gesture: a tap on ✦ can move the focus on some phones, and the keyboard must stay up.
+    field.current?.focus()
+  }
+  /**
+   * The field was left: a column's «+» stops pointing at its column. Not when the focus went to a button
+   * of this same form (its own «+»), nor when the whole window lost it (alt-tab to copy a text).
+   */
+  const leave = (event: FocusEvent): void => {
+    if (onLeave === undefined || !document.hasFocus()) return
+    const to = event.relatedTarget
+    if (to instanceof Node && (event.currentTarget as HTMLInputElement).form?.contains(to)) return
+    onLeave()
   }
   const placeholder = sent
     ? 'In Triage, claude is reading it. Add another'
@@ -122,10 +134,17 @@ export function QuickCapture({
         onKeyDown={(event) => {
           if (event.key === 'Escape') (event.target as HTMLInputElement).blur()
         }}
-        {...(onLeave === undefined ? {} : { onBlur: onLeave })}
+        onBlur={leave}
       />
       {capture === undefined ? (
-        <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving}>
+        <button
+          type="submit"
+          class="icon-btn"
+          aria-label={`Add to ${label}`}
+          disabled={text.trim() === '' || saving}
+          onPointerDown={(event) => event.preventDefault()}
+          onMouseDown={(event) => event.preventDefault()}
+        >
           <Icon name="plus" size={18} />
         </button>
       ) : (
@@ -138,6 +157,7 @@ export function QuickCapture({
             title={`Add to ${label} by hand, without AI`}
             disabled={text.trim() === '' || saving || tooLong}
             onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               byHand()
               field.current?.focus()
@@ -152,6 +172,7 @@ export function QuickCapture({
             title="Send to Triage, read by AI (Enter)"
             disabled={text.trim() === '' || saving}
             onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
           >
             <Icon name="sparkle" size={18} />
           </button>
@@ -159,7 +180,9 @@ export function QuickCapture({
       )}
       {tooLong ? (
         <span id="t-capture-long" class="t-capture-long">
-          Over {MAX_TITLE_CHARS} characters to add by hand: Enter sends it to Triage
+          {capture === undefined
+            ? `Over ${MAX_TITLE_CHARS} characters for a title`
+            : `Over ${MAX_TITLE_CHARS} characters to add by hand: Enter sends it to Triage`}
         </span>
       ) : null}
       <span class="sr-only" role="status">

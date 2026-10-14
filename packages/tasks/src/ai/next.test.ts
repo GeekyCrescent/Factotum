@@ -123,7 +123,7 @@ test('crit. 38: start answers at once, a second start while it runs is a conflic
   await eventually(() => calls.length === 1, 'the run started')
 })
 
-test('crit. 39 and 40: an invented id and one moved to Done are dropped; the rest is kept with its time, on the board', async (t) => {
+test('crit. 39 and 40: an invented id and one moved to Done are dropped; a key with stray case or space still counts; the rest is kept with its time', async (t) => {
   const { nexter, calls, store } = await rig(t, CARDS)
   nexter.start()
   await eventually(() => calls.length === 1, 'the run started')
@@ -134,7 +134,7 @@ test('crit. 39 and 40: an invented id and one moved to Done are dropped; the res
     ok: true,
     value: {
       items: [
-        { id: keyOf(prompt, 'Beta'), why: 'It is half done.' },
+        { id: ` ${keyOf(prompt, 'Beta').toUpperCase()}`, why: 'It is half done.' },
         { id: 't99', why: 'Invented.' },
         { id: keyOf(prompt, 'Gone'), why: 'Done meanwhile.' },
         { id: keyOf(prompt, 'Alpha'), why: 'x'.repeat(500) },

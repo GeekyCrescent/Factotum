@@ -30,13 +30,14 @@ function card(id: string, over: Partial<Task> = {}): Task {
   }
 }
 
-test('nextRows: each suggestion with its card, in order; a card gone or finished since is left out', () => {
+test('nextRows: each suggestion with its card, in order, once; a card gone or finished since is left out', () => {
   const rows = nextRows(
     [
       { id: 'a', why: 'Due today.' },
       { id: 'gone', why: 'x' },
       { id: 'done', why: 'y' },
       { id: 'b', why: 'In progress.' },
+      { id: 'a', why: 'Twice.' },
     ],
     [card('a'), card('b', { status: 'in_progress' }), card('done', { status: 'done' })],
   )

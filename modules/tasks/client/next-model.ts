@@ -12,9 +12,11 @@ export interface NextRow {
 
 /** Each suggestion with its card. One finished or deleted since the answer is left out: it is not next. */
 export function nextRows(items: NextResult['items'], tasks: readonly Task[]): readonly NextRow[] {
+  const seen = new Set<string>()
   return items.flatMap((item) => {
     const task = tasks.find((t) => t.id === item.id)
-    if (task === undefined || task.status === 'done' || task.status === 'canceled' || task.status === 'triage') return []
+    if (task === undefined || seen.has(task.id) || task.status === 'done' || task.status === 'canceled' || task.status === 'triage') return []
+    seen.add(task.id)
     return [{ task, why: item.why }]
   })
 }

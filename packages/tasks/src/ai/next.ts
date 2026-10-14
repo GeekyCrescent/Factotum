@@ -125,7 +125,7 @@ export interface Nexter {
 function keptItems(output: NextOutput, keys: ReadonlyMap<string, string>, board: Board): NextResult['items'] {
   const kept: { id: string; why: string }[] = []
   for (const item of output.items) {
-    const id = keys.get(item.id)
+    const id = keys.get(item.id.trim().toLowerCase())
     const card = id === undefined ? undefined : board.tasks.find((t) => t.id === id)
     if (card === undefined || OUT.includes(card.status) || kept.some((k) => k.id === card.id)) continue
     kept.push({ id: card.id, why: item.why.trim().slice(0, MAX_WHY_CHARS) })
@@ -146,7 +146,11 @@ export function createNext(deps: NextDeps): Nexter {
       written = decide(board, deps.opContext().now.toISOString())
       return { ok: true, value: { board: { ...board, next: written } } }
     })
-    if (!result.ok && result.error.code !== 'conflict') deps.log.warn(`what's next could not be saved: ${result.error.code}`)
+    if (!result.ok && result.error.code !== 'conflict') {
+      // The screen must not read the old answer as the new one: it says the save failed.
+      error = 'the answer could not be saved'
+      deps.log.warn(`what's next could not be saved: ${result.error.code}`)
+    }
     return result.ok ? written : undefined
   }
 
@@ -168,8 +172,9 @@ export function createNext(deps: NextDeps): Nexter {
       return
     }
     const saved = await write((board, at) => ({ at, items: keptItems(result.value, keys, board), note: result.value.note.trim().slice(0, MAX_NOTE_CHARS) }))
+    if (saved === undefined) return
     const u = result.usage
-    const kept = saved?.items.length ?? 0
+    const kept = saved.items.length
     deps.log.info(`what's next: ${kept} of ${result.value.items.length} kept in ${u.ms} ms, ${u.inputTokens} in / ${u.outputTokens} out, $${u.costUsd.toFixed(4)}`)
   }
 
@@ -179,9 +184,10 @@ export function createNext(deps: NextDeps): Nexter {
       if (running !== undefined) return { ok: false, error: { code: 'conflict', reason: "«What's next?» is already thinking" } }
       error = null
       running = work()
-        .catch((cause: unknown) => {
+        .catch(() => {
+          // A fixed line: an unexpected message is text this file cannot vouch for (criterion 41).
           error = 'the run failed unexpectedly'
-          deps.log.error(`what's next failed: ${cause instanceof Error ? cause.message : 'unknown'}`)
+          deps.log.error("what's next failed unexpectedly")
         })
         .finally(() => {
           running = undefined
