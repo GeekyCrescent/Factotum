@@ -96,3 +96,9 @@ test('no registry, no projects: nothing to say, and no throw', async () => {
   await reportHandoff({ stateDir: s.stateDir, registry: join(s.home, 'none.json'), peers: [], out: (line) => lines.push(line), fetch: down, gitEnv: s.env })
   assert.deepEqual(lines, [])
 })
+
+test('a peer that answers 404 runs a factotum from before the handoff: said so, not "unreachable"', async () => {
+  const s = await setup()
+  const old = (async () => new Response('{}', { status: 404 })) as unknown as typeof globalThis.fetch
+  assert.match(await run(s, old), /omarchy runs a factotum from before the handoff/)
+})

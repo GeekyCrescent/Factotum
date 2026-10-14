@@ -49,7 +49,7 @@ interface PeerProject {
 export async function reportHandoff(deps: HandoffReportDeps): Promise<void> {
   const read = await readRegistry(deps.registry)
   const projects = read.kind === 'ok' ? read.registry.projects : []
-  const peerProjects = new Map<string, readonly PeerProject[] | undefined>()
+  const peerProjects = new Map<string, Asked>()
   for (const { origin } of deps.peers) peerProjects.set(machineName(origin), await askPeer(origin, deps))
 
   for (const project of projects) {
@@ -74,7 +74,10 @@ async function describeRemote(path: string, env: NodeJS.ProcessEnv | undefined):
   }
 }
 
-async function askPeer(origin: string, deps: HandoffReportDeps): Promise<readonly PeerProject[] | undefined> {
+/** The peer's projects; `old` when it answers but has no handoff routes (a factotum from before); `undefined` when it does not answer. */
+type Asked = readonly PeerProject[] | 'old' | undefined
+
+async function askPeer(origin: string, deps: HandoffReportDeps): Promise<Asked> {
   try {
     const response = await deps.fetch(new URL('/modules/sessions/handoff/projects', origin).href, {
       redirect: 'manual',
@@ -83,7 +86,7 @@ async function askPeer(origin: string, deps: HandoffReportDeps): Promise<readonl
     })
     if (response.status !== 200) {
       await response.body?.cancel()
-      return undefined
+      return response.status === 404 ? 'old' : undefined
     }
     const body = (await response.json().catch(() => undefined)) as unknown
     if (!Array.isArray(body)) return undefined
@@ -97,8 +100,9 @@ async function askPeer(origin: string, deps: HandoffReportDeps): Promise<readonl
   }
 }
 
-function describeIgnore(peer: string, key: string | undefined, here: IgnoreDigest | undefined, theirs: readonly PeerProject[] | undefined): string {
+function describeIgnore(peer: string, key: string | undefined, here: IgnoreDigest | undefined, theirs: Asked): string {
   if (theirs === undefined) return `ignore rules not compared: ${peer} unreachable`
+  if (theirs === 'old') return `ignore rules not compared: ${peer} runs a factotum from before the handoff`
   const pair = theirs.find((project) => project.key === key)
   if (pair === undefined || here === undefined) return `ignore rules not compared: ${peer} has no clone of it`
   const differ = [pair.ignoreDigest.global !== here.global ? 'global' : '', pair.ignoreDigest.info !== here.info ? 'info' : ''].filter(Boolean)
