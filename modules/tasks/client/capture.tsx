@@ -1,10 +1,13 @@
 /**
- * Two captures in one field:
- * - BY HAND (criterion 9): a title and Enter, straight to the column it was typed for — Backlog or
- *   Todo, the only two the owner creates in. No AI.
- * - WITH AI (criteria 21–24): the ✦ button sends the text to `POST /capture`; the card lands in Triage at
- *   once and claude fills it in afterwards. The field then says so, until the next keystroke. The
- *   microphone joins it with the shared dictation (G3).
+ * Two captures in one field (the owner's choice, 2026-10-15: Enter goes to the AI):
+ * - WITH AI (criteria 21–24), Enter or ✦: the text goes to `POST /capture`; the card lands in Triage at
+ *   once and claude fills it in afterwards. The field then says so, until the next keystroke. This is
+ *   the fast path the 10 s of criterion 24 is about.
+ * - BY HAND (criterion 9), the «+»: straight to the column it was typed for — Backlog or Todo, the only
+ *   two the owner creates in. No AI.
+ * Without a `capture` (no AI on this board, or a column's «+» pointed the field at its column), Enter
+ * adds by hand, as before.
+ * The microphone joins the field with the shared dictation (G3).
  *
  * TWO SHAPES (redesign A): on the desktop a field in the toolbar that `N` focuses from anywhere on the
  * board, and that a column's «+» points at its column; on the phone, fixed at the bottom of the screen.
@@ -46,6 +49,7 @@ export function QuickCapture({
   capture,
   sticky = false,
   input,
+  onLeave,
 }: {
   readonly target: Target
   readonly label: string
@@ -56,6 +60,8 @@ export function QuickCapture({
   /** The phone's: fixed at the bottom of the screen. */
   readonly sticky?: boolean
   readonly input?: RefObject<HTMLInputElement>
+  /** The field lost the focus: a column's «+» stops pointing at its column. */
+  readonly onLeave?: () => void
 }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
@@ -75,13 +81,25 @@ export function QuickCapture({
     }
     setSaving(false)
   }
-  const submit = (event: Event): void => {
-    event.preventDefault()
-    // Too long for a title: the note under the field says so, and the AI button is the way.
+  const byHand = (): void => {
+    // Too long for a title: the note by the field says so, and Enter is the way.
     if (tooLong) return
     void send((title) => add(title, target), false)
   }
-  const placeholder = sent ? 'In Triage, claude is reading it. Add another' : sticky ? `Add to ${label}` : `Add to ${label}, press N from anywhere`
+  const submit = (event: Event): void => {
+    event.preventDefault()
+    if (capture === undefined) byHand()
+    else void send(capture, true)
+  }
+  const placeholder = sent
+    ? 'In Triage, claude is reading it. Add another'
+    : capture === undefined
+      ? sticky
+        ? `Add to ${label}`
+        : `Add to ${label}, press N from anywhere`
+      : sticky
+        ? 'Capture a task'
+        : 'Capture a task, press N from anywhere'
 
   return (
     <form class={sticky ? 't-capture t-capture-sticky' : 't-capture t-capture-bar'} onSubmit={submit}>
@@ -95,7 +113,7 @@ export function QuickCapture({
         aria-invalid={tooLong}
         {...(tooLong ? { 'aria-describedby': 't-capture-long' } : {})}
         placeholder={placeholder}
-        aria-label={capture === undefined ? `New card in ${label}` : `New card: Enter adds it to ${label}, the AI button sends it to Triage`}
+        aria-label={capture === undefined ? `New card in ${label}` : 'Capture a task: Enter sends it to Triage'}
         enterKeyHint="done"
         onInput={(event) => {
           setSent(false)
@@ -104,30 +122,44 @@ export function QuickCapture({
         onKeyDown={(event) => {
           if (event.key === 'Escape') (event.target as HTMLInputElement).blur()
         }}
+        {...(onLeave === undefined ? {} : { onBlur: onLeave })}
       />
-      {capture === undefined ? null : (
-        <button
-          type="button"
-          class="icon-btn t-capture-ai"
-          aria-label="Capture with AI, to Triage"
-          title="Capture with AI, to Triage"
-          disabled={text.trim() === '' || saving}
-          // The field keeps the focus: on the phone the keyboard stays up for the next capture.
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => {
-            void send(capture, true)
-            field.current?.focus()
-          }}
-        >
-          <Icon name="sparkle" size={18} />
+      {capture === undefined ? (
+        <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving}>
+          <Icon name="plus" size={18} />
         </button>
+      ) : (
+        <>
+          {/* Both keep the field's focus: on the phone the keyboard stays up for the next capture. */}
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label={`Add to ${label} by hand, without AI`}
+            title={`Add to ${label} by hand, without AI`}
+            disabled={text.trim() === '' || saving || tooLong}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              byHand()
+              field.current?.focus()
+            }}
+          >
+            <Icon name="plus" size={18} />
+          </button>
+          <button
+            type="submit"
+            class="icon-btn t-capture-ai"
+            aria-label="Send to Triage, read by AI"
+            title="Send to Triage, read by AI (Enter)"
+            disabled={text.trim() === '' || saving}
+            onPointerDown={(event) => event.preventDefault()}
+          >
+            <Icon name="sparkle" size={18} />
+          </button>
+        </>
       )}
-      <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving || tooLong}>
-        <Icon name="plus" size={18} />
-      </button>
       {tooLong ? (
         <span id="t-capture-long" class="t-capture-long">
-          Over {MAX_TITLE_CHARS} characters for a title: ✦ sends it to Triage
+          Over {MAX_TITLE_CHARS} characters to add by hand: Enter sends it to Triage
         </span>
       ) : null}
       <span class="sr-only" role="status">

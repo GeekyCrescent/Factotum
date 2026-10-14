@@ -77,6 +77,8 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
   const [filtering, setFiltering] = useState(false)
   const [opened, setOpened] = useState<ReadonlySet<Pinned>>(new Set())
   const [target, setTarget] = useState<Target>('todo')
+  // A column's «+» points the capture at that column: until the field is left, Enter adds there by hand.
+  const [pointed, setPointed] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const captureInput = useRef<HTMLInputElement>(null)
   useCaptureKey(captureInput, wide && board.view !== undefined)
@@ -104,6 +106,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
     })
   const addTo = (status: Target): void => {
     setTarget(status)
+    setPointed(true)
     captureInput.current?.focus()
   }
 
@@ -256,7 +259,14 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
       {wide ? (
         <>
           <div class="t-toolbar">
-            <QuickCapture target={target} label={labelOf(target)} add={add} capture={capture} input={captureInput} />
+            <QuickCapture
+              target={target}
+              label={labelOf(target)}
+              add={add}
+              {...(pointed ? {} : { capture })}
+              input={captureInput}
+              onLeave={() => setPointed(false)}
+            />
             <FilterMenus view={view} filter={filter} setFilter={setFilter} />
           </div>
           <DesktopBoard
