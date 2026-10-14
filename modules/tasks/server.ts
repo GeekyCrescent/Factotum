@@ -93,6 +93,17 @@ function routeTable(holder: Holder): RouteTable {
     'POST /tasks/:id/remove': withTasks(async (tasks, req) => answer(await tasks.remove(id(req)))),
     'POST /tasks/:id/sessions': withTasks(async (tasks, req) => answer(await tasks.linkSession(id(req), req.body))),
 
+    // 202: the card is in triage now; claude reads it afterwards, outside this request (criterion 21).
+    'POST /capture': withTasks(async (tasks, req) => {
+      const result = await tasks.capture(req.body)
+      return result.ok ? ok(result.value, 202) : failure(result.error)
+    }),
+    'GET /triage': withTasks((tasks) => {
+      const cards = tasks.triage()
+      const pending = cards.filter((card) => card.source.kind === 'capture' && card.source.parse === 'pending').length
+      return ok({ tasks: cards, pending })
+    }),
+
     'POST /cycles/close': withTasks(async (tasks, req) => answer(await tasks.closeCycles(req.body), (closed) => ({ closed }))),
     'GET /cycles': withTasks((tasks) => ok({ cycles: tasks.cycles() })),
     'GET /cycles/:id': withTasks((tasks, req) => {

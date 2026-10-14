@@ -122,6 +122,30 @@ function shape<T>(schema: z.ZodType, raw: unknown): Shaped<T> {
   return { ok: false, field, reason }
 }
 
+/** A capture: free text, and the projects the client could read for the closed list (S12). */
+export const MAX_CAPTURE_CHARS = 1000
+export const MAX_CAPTURE_PROJECTS = 100
+export const MAX_PROJECT_NAME_CHARS = 100
+const captureSchema = z.strictObject({
+  text: z.string().trim().min(1).max(MAX_CAPTURE_CHARS),
+  projects: z
+    .array(
+      z.strictObject({
+        host: hostName.nullable(),
+        siteId: project.shape.siteId,
+        name: z.string().trim().min(1).max(MAX_PROJECT_NAME_CHARS),
+      }),
+    )
+    .max(MAX_CAPTURE_PROJECTS)
+    .optional(),
+})
+
+export interface CaptureRequest {
+  readonly text: string
+  readonly projects?: readonly { readonly host: string | null; readonly siteId: string; readonly name: string }[]
+}
+
+export const parseCapture = (raw: unknown): Shaped<CaptureRequest> => shape(captureSchema, raw)
 export const parseNewTask = (raw: unknown): Shaped<NewTask> => shape(newTaskSchema, raw)
 export const parsePatch = (raw: unknown): Shaped<TaskPatch> => shape(patchSchema, raw)
 export const parseMove = (raw: unknown): Shaped<MoveInput> => shape(moveSchema, raw)

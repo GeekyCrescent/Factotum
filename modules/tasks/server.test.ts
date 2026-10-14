@@ -70,7 +70,8 @@ function fakeTasks(calls: Calls, over: Partial<Tasks> = {}): Tasks {
     closeCycles: async () => ({ ok: true, value: [CLOSED] }),
     cycles: () => [{ id: CLOSED.id, range: { start: 'x', end: 'y' }, closedAt: 'b', done: 0, canceled: 0, carried: 0 }],
     cycle: (id) => (id === CLOSED.id ? CLOSED : undefined),
-    capture: async () => ({ ok: false, error: { code: 'not-yet', reason: 'later' } }),
+    triage: () => [{ ...CARD, status: 'triage', cycle: null, source: { kind: 'capture', raw: 'card', parse: 'pending' } }],
+    capture: answer('capture', { ok: true, value: { ...CARD, status: 'triage', cycle: null } }),
     runNext: () => ({ ok: false, error: { code: 'not-yet', reason: 'later' } }),
     agent: AGENT,
     stop: async () => {
@@ -270,4 +271,29 @@ test('the history: GET /cycles lists, GET /cycles/:id opens one, and an unknown 
   assert.deepEqual((await call(routes, 'GET /cycles/:id', { params: { id: '2026-W41' } })).body, CLOSED)
   assert.equal((await call(routes, 'GET /cycles/:id', { params: { id: '2026-W30' } })).status, 404)
   assert.equal((await call(routes, 'GET /cycles/:id', { params: { id: 'nope' } })).status, 400)
+})
+
+test('POST /capture is a 202 with the card in triage, and the body goes over as it came (criterion 21)', async () => {
+  const { routes, calls } = await started()
+  const response = await call(routes, 'POST /capture', { body: { text: 'comprar pan' } })
+  assert.equal(response.status, 202)
+  assert.equal(response.headers?.['cache-control'], 'no-store')
+  assert.equal((response.body as Task).status, 'triage')
+  assert.deepEqual(calls.log, ['capture [{"text":"comprar pan"}]'])
+})
+
+test('POST /capture with a bad body is a 400 with its field', async () => {
+  const { routes } = await started({ capture: async () => ({ ok: false, error: { code: 'invalid', field: 'text', reason: 'too long' } }) })
+  const response = await call(routes, 'POST /capture', { body: { text: '' } })
+  assert.equal(response.status, 400)
+  assert.equal((response.body as { error: { field: string } }).error.field, 'text')
+})
+
+test('GET /triage lists the cards in triage and how many are still being read (criterion 19)', async () => {
+  const { routes } = await started()
+  const response = await call(routes, 'GET /triage')
+  assert.equal(response.status, 200)
+  const body = response.body as { tasks: Task[]; pending: number }
+  assert.equal(body.tasks.length, 1)
+  assert.equal(body.pending, 1)
 })

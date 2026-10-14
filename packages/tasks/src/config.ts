@@ -34,8 +34,12 @@ export const tasksConfigSchema = z
   .strictObject({
     mode: z.enum(['board', 'relay'], { error: 'mode is "board" or "relay"' }).default('board'),
     timeZone: z.string().refine(isTimeZone, 'timeZone must be a zone Intl accepts, like "Australia/Sydney"').optional(),
-    model: z.string().regex(MODEL_NAME, 'model must match /^[a-z0-9][a-z0-9.-]{0,63}$/, like "haiku"').default('haiku'),
-    /** No default until A2 measures one (design D5). */
+    /**
+     * `sonnet` BY MEASUREMENT (tasks A2, §M): on 20 captures it was the cheapest that met the schema and
+     * the dates 20 of 20 — and the fastest. The inbox's rule: the cheapest that works.
+     */
+    model: z.string().regex(MODEL_NAME, 'model must match /^[a-z0-9][a-z0-9.-]{0,63}$/, like "sonnet"').default('sonnet'),
+    /** No default: A2 measured `haiku` with `low` dearer and slower than without (design D5). */
     effort: z.enum(['low', 'medium', 'high'], { error: 'effort is "low", "medium" or "high"' }).optional(),
     relayTo: z.string().regex(HOST_NAME_PATTERN, 'relayTo is a machine name, like omarchy').optional(),
   })

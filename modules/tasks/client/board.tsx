@@ -78,8 +78,8 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
   const [opened, setOpened] = useState<ReadonlySet<Pinned>>(new Set())
   const [target, setTarget] = useState<Target>('todo')
   const root = useRef<HTMLDivElement>(null)
-  const capture = useRef<HTMLInputElement>(null)
-  useCaptureKey(capture, wide && board.view !== undefined)
+  const captureInput = useRef<HTMLInputElement>(null)
+  useCaptureKey(captureInput, wide && board.view !== undefined)
 
   const setFilter = (next: Filter): void => {
     writeFilter(next)
@@ -93,6 +93,8 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
 
   const open = useCallback((id: string) => navigate(encodeURIComponent(id)), [navigate])
   const add = (title: string, status: Target): Promise<boolean> => board.act('tasks', { title, status })
+  // To Triage, read by claude (criterion 21). The projects for the closed list arrive with the edge to sessions (G1).
+  const capture = (text: string): Promise<boolean> => board.act('capture', { text })
   const toggle = (status: Pinned): void =>
     setOpened((was) => {
       const next = new Set(was)
@@ -102,7 +104,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
     })
   const addTo = (status: Target): void => {
     setTarget(status)
-    capture.current?.focus()
+    captureInput.current?.focus()
   }
 
   const { dragging, start } = useBoardDrag(root, (id, drop) => {
@@ -203,15 +205,14 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
           ) : null}
           <span class="t-bar-gap" />
           {view.triage > 0 ? (
-            // Read-only until the Triage screen arrives with the second cut (E4).
-            <span class="t-triage">
+            <button type="button" class="t-triage" onClick={() => navigate('triage')}>
               <Icon name="tray" size={wide ? 16 : 20} />
-              <span class="sr-only">{view.triage} waiting in Triage</span>
+              <span class="sr-only">Triage, {view.triage} waiting</span>
               {wide ? <span aria-hidden="true">Triage</span> : null}
               <span class="count-ask num" aria-hidden="true">
                 {view.triage}
               </span>
-            </span>
+            </button>
           ) : null}
           {wide ? null : (
             <button type="button" class="icon-btn" aria-label={filters > 0 ? `Filter, ${filters} on` : 'Filter'} onClick={() => setFiltering(true)}>
@@ -255,7 +256,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
       {wide ? (
         <>
           <div class="t-toolbar">
-            <QuickCapture target={target} label={labelOf(target)} add={add} input={capture} />
+            <QuickCapture target={target} label={labelOf(target)} add={add} capture={capture} input={captureInput} />
             <FilterMenus view={view} filter={filter} setFilter={setFilter} />
           </div>
           <DesktopBoard
@@ -272,7 +273,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
         <>
           <Tabs tab={tab} setTab={setTab} counts={counts} />
           <div class="t-phone-column">{list(tab, false)}</div>
-          <QuickCapture sticky target={phoneTarget} label={labelOf(phoneTarget)} add={add} />
+          <QuickCapture sticky target={phoneTarget} label={labelOf(phoneTarget)} add={add} capture={capture} />
         </>
       )}
 

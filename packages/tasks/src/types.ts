@@ -262,6 +262,8 @@ export interface Tasks {
   readonly closeCycles: (input: unknown) => Promise<Result<readonly ClosedCycle[]>>
   readonly cycles: () => readonly CycleSummary[]
   readonly cycle: (id: string) => ClosedCycle | undefined
+  /** The cards in triage, oldest first. Not a column: they never show on the board (criterion 19). */
+  readonly triage: () => readonly Task[]
   readonly capture: (input: unknown) => Promise<Result<Task>>
   readonly runNext: () => Result<{ readonly started: true }>
   readonly agent: AgentToolImpl
@@ -277,6 +279,8 @@ export interface TasksDeps {
   readonly now: () => Date
   readonly timers: Timers
   readonly notify: Notifier
+  /** The seam for the tests' fake CLI. Never from the configuration; `CLAUDE_BIN` without it. */
+  readonly claudeBin?: string
 }
 
 export type CreateTasksResult = { readonly ok: true; readonly tasks: Tasks } | { readonly ok: false; readonly reason: string }

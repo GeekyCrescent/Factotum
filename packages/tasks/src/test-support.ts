@@ -82,3 +82,55 @@ export function fakeTimers(): FakeTimers {
 }
 
 export const silentNotify: Notifier = { canReach: () => false, send: async () => undefined }
+
+/** Timers a test fires by hand, by delay. Intervals stay armed after firing; timeouts do not. */
+export interface ManualTimers {
+  readonly timers: Timers
+  /** Fires every pending timer whose delay is `ms` (or every one, without `ms`). Returns how many. */
+  readonly fire: (ms?: number) => number
+  readonly pending: () => readonly number[]
+}
+
+export function manualTimers(): ManualTimers {
+  const waiting = new Map<symbol, { readonly fn: () => void; readonly ms: number; readonly repeat: boolean }>()
+  const arm = (repeat: boolean) => (fn: () => void, ms: number) => {
+    const key = Symbol('timer')
+    waiting.set(key, { fn, ms, repeat })
+    return { [Symbol.dispose]: () => void waiting.delete(key) }
+  }
+  return {
+    timers: { setTimeout: arm(false), setInterval: arm(true) },
+    fire: (ms) => {
+      const due = [...waiting.entries()].filter(([, timer]) => ms === undefined || timer.ms === ms)
+      for (const [key, timer] of due) {
+        if (!timer.repeat) waiting.delete(key)
+        timer.fn()
+      }
+      return due.length
+    },
+    pending: () => [...waiting.values()].map((timer) => timer.ms),
+  }
+}
+
+/** Real timers, unref'd, the way the kernel hands them out. */
+export const realTimers: Timers = {
+  setInterval: (fn, ms) => {
+    const handle = setInterval(fn, ms)
+    handle.unref()
+    return { [Symbol.dispose]: () => clearInterval(handle) }
+  },
+  setTimeout: (fn, ms) => {
+    const handle = setTimeout(fn, ms)
+    handle.unref()
+    return { [Symbol.dispose]: () => clearTimeout(handle) }
+  },
+}
+
+/** Poll, do not guess a delay (CLAUDE.md §7). */
+export async function eventually(check: () => boolean | Promise<boolean>, what: string, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`never happened: ${what}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}

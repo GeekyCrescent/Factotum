@@ -2,12 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseTasksConfig } from './config.ts'
 
-test('an empty block is a board in the zone of the process, with haiku', () => {
+test('an empty block is a board in the zone of the process, with sonnet and no effort (A2)', () => {
   const parsed = parseTasksConfig({})
   assert.ok(parsed.ok)
   if (!parsed.ok) return
   assert.equal(parsed.config.mode, 'board')
-  assert.equal(parsed.config.model, 'haiku')
+  assert.equal(parsed.config.model, 'sonnet')
+  assert.equal(parsed.config.effort, undefined)
   assert.equal(parsed.config.effort, undefined)
   assert.equal(parsed.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone)
 })

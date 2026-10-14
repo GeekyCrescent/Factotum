@@ -140,6 +140,38 @@ export function createTask(board: Board, input: NewTask, ctx: OpContext): Result
   return { ok: true, value: withTask(board, place(board.tasks, card, endOf(board.tasks, card.status, card.id)), card.id) }
 }
 
+/**
+ * A capture lands in TRIAGE, never in a column (criterion 19): the AI proposes, the owner accepts.
+ * Its title is the raw text on one line, cut to fit; the whole text stays in `source.raw`.
+ */
+export function createCaptured(board: Board, raw: string, maxTitle: number, ctx: OpContext): Result<Changed> {
+  const at = ctx.now.toISOString()
+  const card: Task = {
+    id: ctx.newId(),
+    title: raw.replace(/\s+/g, ' ').trim().slice(0, maxTitle).trim(),
+    notes: '',
+    status: 'triage',
+    order: '',
+    cycle: null,
+    area: null,
+    project: null,
+    priority: 0,
+    labels: [],
+    estimate: null,
+    due: null,
+    remindAt: null,
+    remindedAt: null,
+    reminderMissed: false,
+    subtasks: [],
+    source: { kind: 'capture', raw, parse: 'pending' },
+    sessions: [],
+    createdAt: at,
+    updatedAt: at,
+    completedAt: null,
+  }
+  return { ok: true, value: withTask(board, place(board.tasks, card, endOf(board.tasks, 'triage', card.id)), card.id) }
+}
+
 export function patchTask(board: Board, id: string, patch: TaskPatch, ctx: OpContext): Result<Changed> {
   const card = board.tasks.find((t) => t.id === id)
   if (card === undefined) return notFound(id)

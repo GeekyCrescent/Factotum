@@ -4,20 +4,28 @@
  * EVERY INPUT FROM OUTSIDE ARRIVES AS `unknown` and is shaped here (`shape.ts`) before an op sees it,
  * so the `400` with its field comes from one place. Every change goes through the store's queue.
  *
- * THE FIRST CUT (tasks B8): the AI, the reminders and the agent answer «not yet», and the agent lists
- * no tool. Relay mode does not start: it needs block R.
+ * WHAT IS STILL TO COME answers «not yet»: «What's next?» and the agent (blocks F and H). Relay mode
+ * does not start: it needs block R.
  *
  * NOTHING HERE LOGS A TITLE, notes or subtasks (criterion 41): the store logs codes and the facade
  * logs nothing about a card.
  */
 
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { uuidv7 } from '@factotum/sessions'
+import { createCapturer } from './ai/capture.ts'
+import { runClaude } from './ai/run.ts'
+import { captureOutputSchema, CAPTURE_JSON_SCHEMA } from './ai/schema.ts'
 import { acceptTask, closeCycles, createTask, linkSession, moveTask, patchTask, removeTask, type Changed, type OpContext } from './board/ops.ts'
 import { openBoardStore } from './board/store.ts'
 import { boardView, cycleSummaries } from './board/view.ts'
 import { parseTasksConfig } from './config.ts'
-import { parseAccept, parseClose, parseLink, parseMove, parseNewTask, parsePatch, type Shaped } from './shape.ts'
+import { parseAccept, parseCapture, parseClose, parseLink, parseMove, parseNewTask, parsePatch, type Shaped } from './shape.ts'
 import type { AgentToolImpl, Board, CreateTasksResult, Result, Task, Tasks, TasksDeps } from './types.ts'
+
+/** A capture is read within this, or it is `failed` and keeps its text (criterion 22). */
+export const PARSE_TIMEOUT_MS = 30_000
 
 const NOT_YET = (what: string): Result<never> => ({ ok: false, error: { code: 'not-yet', reason: `${what} arrives with the second cut` } })
 
@@ -50,6 +58,33 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
     const now = deps.now()
     return { now, timeZone, newId: () => uuidv7(now.getTime()) }
   }
+
+  // `claude` runs in an empty folder of its own: nobody's project, nothing for it to read.
+  const runDir = join(deps.stateDir, 'run')
+  try {
+    await mkdir(runDir, { recursive: true, mode: 0o700 })
+  } catch (error) {
+    return { ok: false, reason: `the folder claude runs in could not be prepared (${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'})` }
+  }
+  const { model, effort } = parsed.config
+  const capturer = createCapturer({
+    store,
+    opContext,
+    log: deps.log,
+    run: (prompt, signal) =>
+      runClaude({
+        prompt,
+        jsonSchema: CAPTURE_JSON_SCHEMA,
+        output: captureOutputSchema,
+        model,
+        effort,
+        cwd: runDir,
+        timers: deps.timers,
+        signal,
+        timeoutMs: PARSE_TIMEOUT_MS,
+        ...(deps.claudeBin === undefined ? {} : { bin: deps.claudeBin }),
+      }),
+  })
 
   /** Shape the input, then run the op on the board of that moment. */
   const shaped =
@@ -94,12 +129,21 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
 
     cycles: () => cycleSummaries(store.current()),
     cycle: (id) => store.current().cycles.find((c) => c.id === id),
+    // UUIDv7: by id is by creation, oldest first.
+    triage: () => store.current().tasks.filter((t) => t.status === 'triage').sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
 
-    capture: async () => NOT_YET('capture with AI'),
+    capture: async (raw) => {
+      const input = parseCapture(raw)
+      return input.ok ? capturer.capture(input.value) : invalid(input)
+    },
     runNext: () => NOT_YET("«What's next?»"),
     agent: SECOND_CUT_AGENT,
 
-    stop: () => store.idle(),
+    stop: async () => {
+      // The runs first: what they would have written is decided by the next start (criterion 23c).
+      await capturer.stop()
+      await store.idle()
+    },
   }
   return { ok: true, tasks }
 }
