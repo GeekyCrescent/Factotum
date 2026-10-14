@@ -16,6 +16,7 @@ import {
   launchPath,
   launchRest,
   rememberedLaunchHost,
+  moveTargetOf,
   runOnChoices,
 } from './hosts.ts'
 
@@ -169,4 +170,17 @@ test('the drawer ticks for "last seen" only while a peer it has seen is down', (
   assert.equal(lastSeenTicks([LINUX, { ...MAC_DOWN, lastSeenAt: null }]), false, '"never seen" does not age')
   assert.equal(lastSeenTicks([]), false)
   assert.equal(LAST_SEEN_TICK_MS, 5_000)
+})
+
+test('moveTargetOf: the other host when both are up; none when either is down, or alone (K3)', () => {
+  const hosts = [
+    { name: 'omarchy', self: true, reachable: true, lastSeenAt: null },
+    { name: 'mac', self: false, reachable: true, lastSeenAt: null },
+  ]
+  assert.equal(moveTargetOf({ name: 'mac', reachable: true }, hosts), 'omarchy')
+  assert.equal(moveTargetOf({ name: 'omarchy', reachable: true }, hosts), 'mac')
+  assert.equal(moveTargetOf({ name: 'mac', reachable: false }, hosts), undefined)
+  assert.equal(moveTargetOf({ name: 'omarchy', reachable: true }, [hosts[0]!, { ...hosts[1]!, reachable: false }]), undefined)
+  assert.equal(moveTargetOf({ name: 'omarchy', reachable: true }, [hosts[0]!]), undefined)
+  assert.equal(moveTargetOf({ name: undefined, reachable: true }, hosts), undefined)
 })

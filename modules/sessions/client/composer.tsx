@@ -26,7 +26,7 @@ import { AttachButton, Chips, dropsFolder, useAttachments, type AttachControls }
 import { canSend, uploadsOf, withRefs } from './attachments.ts'
 import type { Api } from './contract.ts'
 import { DictateButton, DictationNotice, useComposerDictation, type DictationControls } from './dictate.tsx'
-import { conflictOf, describe, freshnessOf, launchUnanswered, messageOf, type Conflict, type Freshness } from './errors.ts'
+import { conflictOf, describe, freshnessOf, launchUnanswered, messageOf, movedOf, type Conflict, type Freshness } from './errors.ts'
 import { Icon } from './icon.tsx'
 import { FilePicker, usePicker, type PickerControls } from './picker.tsx'
 import { SlashPicker, useSlash, type SlashControls } from './slash-picker.tsx'
@@ -264,9 +264,12 @@ export function ReplyComposer({
   sessionId,
   project,
   onSent,
+  onMoved,
   goTo,
 }: {
   readonly api: Api
+  /** A reply refused because the conversation went to another host: the screen shows where. */
+  readonly onMoved?: (to: string) => void
   /** Only for whether this host takes files, and up to how big (spec 2026-10-01, D10). */
   readonly setup: EngineSetupView
   readonly sessionId: string
@@ -278,7 +281,14 @@ export function ReplyComposer({
   const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text) => {
     const sent = attach.items.filter((item) => item.state === 'ready')
-    await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent) })
+    try {
+      await api.post(`sessions/${sessionId}/reply`, { text: withRefs(text, sent) })
+    } catch (cause: unknown) {
+      // Moved to the other host (criterion 29): the banner takes over; the text stays where it was.
+      const to = movedOf(cause)
+      if (to !== undefined) onMoved?.(to)
+      throw cause
+    }
     attach.clear(sent.map((item) => item.key))
     dictation.clear()
     onSent()

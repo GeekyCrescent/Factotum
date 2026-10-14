@@ -288,3 +288,11 @@ test('the settled says where the answer came from', () => {
   assert.ok(row?.kind === 'questions' && row.end?.kind === 'settled')
   assert.equal(row.end.via, 'screen')
 })
+
+test('a crossing to the other host is a row of its own, with where it came from and where it went (spec 2026-10-07-dos-hosts)', () => {
+  const rows = fold([
+    { seq: 0, at, kind: 'message', role: 'user', text: 'hi' },
+    { seq: 1, at, kind: 'handoff', from: 'juans-macbook-pro', to: 'omarchy', hid: 'h' },
+  ])
+  assert.deepEqual(rows.at(-1), { kind: 'handoff', seq: 1, at, from: 'juans-macbook-pro', to: 'omarchy' })
+})

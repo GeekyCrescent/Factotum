@@ -3256,3 +3256,55 @@
   color: var(--text);
   font-weight: 600;
 }
+
+/* The host heading with its menu beside the fold (spec 2026-10-07-dos-hosts, K3). */
+.s-host-bar {
+  display: flex;
+  align-items: center;
+}
+.s-host-bar > .s-host-head {
+  flex: 1;
+  min-width: 0;
+}
+.s-host-more {
+  flex: none;
+}
+
+/* The handoff sheet (K1). */
+.s-handoff {
+  display: grid;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.s-handoff-project h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.s-handoff-project p {
+  margin: 2px 0;
+}
+.s-handoff-files {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  word-break: break-all;
+}
+.s-handoff-stayed > p:first-of-type,
+.s-handoff-waiting > p:first-of-type {
+  color: var(--warn, #b26b00);
+}
+.s-handoff-moved > p:first-of-type {
+  color: var(--ok, #2f7d32);
+}
+
+/* «Moved to …» where the reply box was (K2). */
+.s-moved {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.s-handoff-row p {
+  margin: 4px 0;
+  font-style: italic;
+}
