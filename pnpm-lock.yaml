@@ -63,6 +63,9 @@ importers:
       '@factotum/sessions':
         specifier: workspace:*
         version: link:../sessions
+      '@factotum/tasks':
+        specifier: workspace:*
+        version: link:../tasks
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -113,6 +116,18 @@ importers:
       '@factotum/core':
         specifier: workspace:*
         version: link:../core
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.3
+
+  packages/tasks:
+    dependencies:
+      '@factotum/core':
+        specifier: workspace:*
+        version: link:../core
+      '@factotum/sessions':
+        specifier: workspace:*
+        version: link:../sessions
       zod:
         specifier: ^4.1.12
         version: 4.6.3

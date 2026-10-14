@@ -7,6 +7,7 @@
     { "path": "../kernel" },
     { "path": "../sessions" },
     { "path": "../inbox" },
+    { "path": "../tasks" },
     { "path": "../../modules" }
   ]
 }
