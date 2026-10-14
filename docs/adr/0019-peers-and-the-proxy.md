@@ -175,6 +175,38 @@ Linux: POST /push/relay
   It stays synchronous, so the permission gate still decides at once (ADR-0009). That is what
   `devices` on `/health` is for.
 
+### `ctx.peers`: a module talks to its twin (corte 2)
+
+The second part of the spec gave `ModuleContext` its **eighth field**, `peers: PeerCaller`, with one
+consumer: moving sessions between hosts (ADR-0020). It is the same move as `notify` (ADR-0008) — one
+narrow field, the module's id bound by the registry — and the precedent it follows is that one:
+
+- **A module names a peer and a path relative to itself.** The kernel builds
+  `/modules/<this module's id>/<path>` through `peers.url()`, so the proxy's rules hold: only
+  `/modules/<id>/…`, no dot segments or escapes, and the URL compared to the peer's origin by exact
+  equality. A path that would leave answers `refused` **before anything leaves the host**. A module is
+  never given a URL, a socket, or another module's routes.
+- **`json` and `upload` both go through `send()`** (`net/peer-http.ts`), the proxy's streamed request on
+  `node:http`: an upload takes a **path**, never a stream (ADR-0012), and the kernel opens the file and
+  closes it whatever happens. A 100 MB file goes up with the live memory under 64 MB (measured in the
+  tests). The design had `json` on `fetch`; one path means one reader of the answer and one way to fail.
+- **The timeout is the kernel's**: 10 s by default, at most `PEER_CALL_MAX_MS` (300 s, Node's
+  `requestTimeout`, which the peer's server does not change). A `timeout` **does not say** whether the
+  peer did the work; the caller decides (ADR-0020 does, by asking).
+- **It never throws.** Every way a call goes wrong is a `reason`: `unreachable` (not declared, down by
+  the probe, or the connection failed), `refused`, `timeout`, `bad-json` (a 2xx that is not JSON or is
+  over `MAX_BODY_BYTES`), `http` — with the peer's JSON body, so a module can read its own refusals.
+  The kernel never interprets that body.
+- **`BootHandle.stop` aborts the calls in flight** before the kernel's timers are disposed. That order
+  is load-bearing, measured in red: without the abort, disposing the timers cancels the call's own
+  deadline, and a call to a sleeping peer never ends.
+- **The log carries the shape of the route only**: `peers <method> <peer> /modules/<id>/… → <status>`,
+  like the proxy. A refused path is logged without peer or path: it is the module's, and may carry a token.
+
+The calls are built by `boot` as a service (`createPeerCalls`, on the peer table and the kernel's
+timers) and handed to the registry, which binds each module's id onto it — the shape `push` already
+has, rather than the `RelayPeers` the design first proposed for the registry.
+
 ## Consequences
 
 - **Anyone on the tailnet can post a notice to the phone** by naming the peer in the body. The relay
@@ -208,7 +240,5 @@ Linux: POST /push/relay
 ## What this does not do
 
 - Discover peers, or take more than one.
-- Move a session from one host to the other. Each host launches with its own projects and its own
-  catalog; a session stays on the host that launched it.
-- Give the modules a way to call their twin on the peer. **Corte 2** — the second part of the two-hosts
-  spec — adds `ctx.peers` to this ADR, together with its consumer, moving sessions between hosts.
+- Move a session from one host to the other: that is ADR-0020, built on `ctx.peers`.
+- Let a module call **another** module on the peer, or anything that is not `/modules/<its own id>/`.
