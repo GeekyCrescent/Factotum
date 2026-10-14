@@ -24,6 +24,7 @@ export type { Wire }
 import { sh, world, type World } from './test-repos.ts'
 import { KeyedQueue } from './keyed-queue.ts'
 import { createTarget, type Target } from './handoff/target.ts'
+import { createHandoff, type HandoffApi, type HandoffOptions } from './handoff/index.ts'
 import { remoteKey } from './handoff/git.ts'
 import { wipCommit } from './handoff/wip.ts'
 import { handoffBase, makeBundle } from './handoff/git-bundle.ts'
@@ -272,4 +273,61 @@ export async function deliver(sc: TargetScenario, built: Built): Promise<Wire> {
     if (last.kind !== 'ok') return last
   }
   return last
+}
+
+// ---------------------------------------------------------------------------
+// Two whole handoffs, linked: each side's `PeerCaller` lands on the other's `HandoffApi`
+// ---------------------------------------------------------------------------
+
+/** The peer's routes as `handoff-routes.ts` mounts them, onto an API. An upload is copied first: the kernel's `.incoming`. */
+export function apiRoute(api: HandoffApi, home: string): Route {
+  return async (method, path, body, file) => {
+    if (method === 'GET' && path === 'handoff/projects') return await api.projects()
+    if (method === 'POST' && path === 'handoff/sessions-check') return await api.sessionsCheck(body)
+    const step = /^handoff\/([^/]+)\/([^/]+)\/(prepare|manifest|commit|abort|done|status)$/.exec(path)
+    if (step !== null) {
+      const [, hid = '', siteId = '', name] = step
+      if (method === 'GET' && name === 'status') return await api.status(hid, siteId)
+      if (method !== 'POST') return undefined
+      if (name === 'prepare') return await api.prepare(hid, siteId, body)
+      if (name === 'manifest') return await api.manifest(hid, siteId, body)
+      if (name === 'commit') return await api.commit(hid, siteId)
+      if (name === 'abort') return await api.abort(hid, siteId)
+      if (name === 'done') return await api.done(hid, siteId)
+    }
+    const upload = /^handoff\/([^/]+)\/([^/]+)\/file\/([^/]+)$/.exec(path)
+    if (upload !== null && method === 'POST' && file !== undefined) {
+      const dir = join(home, '.incoming')
+      await mkdir(dir, { recursive: true })
+      const copy = join(dir, uuidv7(Date.now()))
+      await copyFile(file, copy)
+      return await api.file(upload[1] ?? '', upload[2] ?? '', upload[3] ?? '', { path: copy, bytes: (await stat(copy)).size })
+    }
+    return undefined
+  }
+}
+
+export interface Linked {
+  readonly w: World
+  readonly mac: TestHost & { readonly api: HandoffApi }
+  readonly omarchy: TestHost & { readonly api: HandoffApi }
+  /** What each side's peer link does: down, slow, or a route that intercepts. */
+  readonly toOmarchy: { route: Route | undefined; reachable: boolean; delay?: () => Promise<void> }
+  readonly toMac: { route: Route | undefined; reachable: boolean; delay?: () => Promise<void> }
+}
+
+/** The Mac (`vault`, the source clone) and omarchy (`obsidian`, the target clone), each with its handoff. */
+export async function linked(options: { readonly setup?: (w: World) => Promise<void>; readonly handoff?: HandoffOptions } = {}): Promise<Linked> {
+  const w = await world()
+  await options.setup?.(w)
+  const projects = worldProjects(w)
+  const toOmarchy: Linked['toOmarchy'] = { route: undefined, reachable: true }
+  const toMac: Linked['toMac'] = { route: undefined, reachable: true }
+  const mac = await makeHost({ name: 'juans-macbook-pro', projects: projects.source, env: w.env, peers: fakePeer('omarchy', toOmarchy) })
+  const omarchy = await makeHost({ name: 'omarchy', projects: projects.target, env: w.env, peers: fakePeer('juans-macbook-pro', toMac) })
+  const macApi = createHandoff(mac.host, options.handoff)
+  const omarchyApi = createHandoff(omarchy.host, options.handoff)
+  toOmarchy.route = apiRoute(omarchyApi, omarchy.home)
+  toMac.route = apiRoute(macApi, mac.home)
+  return { w, mac: { ...mac, api: macApi }, omarchy: { ...omarchy, api: omarchyApi }, toOmarchy, toMac }
 }

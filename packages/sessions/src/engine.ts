@@ -1005,6 +1005,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     // The titler first: the cheapest thing to stop, and nothing depends on it. After this nothing
     // it had in flight writes a title (criterion 12).
     titler.stop()
+    // The handoff's timers (its TTLs): what a `prepared` left is decided by the journal at the next start.
+    handoff.stop()
     // Every held reply resolves as a deny now, before anything is killed. An ask must not
     // outlive the engine as a promise nobody will ever settle (criterion 22).
     asks.closeAll(SHUTDOWN_REASON)

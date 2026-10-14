@@ -170,8 +170,23 @@ export async function listHids(paths: SessionPaths): Promise<readonly string[]> 
   return names.filter(isHandoffId)
 }
 
-const runSchema = z.object({ hid: z.string(), peer: z.string().min(1), startedAt: z.string(), siteIds: z.array(z.string()) })
-export type Run = z.infer<typeof runSchema>
+const runSchema = z.object({
+  hid: z.string(),
+  peer: z.string().min(1),
+  startedAt: z.string(),
+  siteIds: z.array(z.string()),
+  /**
+   * Where the whole handoff is (not in the design: D11 has `run.json` written once). `POST /handoff`
+   * answers 202 at once and plans apart, so the report needs `planning` before any project has a
+   * journal, and `failed` with why when the plan itself could not be made (the peer down).
+   */
+  state: z.enum(['planning', 'running', 'finished', 'failed']).optional(),
+  failure: z.string().optional(),
+  /** What the plan left here, with why: the report's «not moved» that never got a journal. */
+  skipped: z.array(z.object({ siteId: z.string(), sessionId: z.string().optional(), reason: z.string() })).optional(),
+  totals: z.object({ archived: z.number(), tooOld: z.number() }).optional(),
+})
+export type Run = Loosen<z.infer<typeof runSchema>>
 
 const runFile = (paths: SessionPaths, hid: string) => `${paths.handoffDir(hid)}/run.json`
 
