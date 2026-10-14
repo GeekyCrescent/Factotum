@@ -39,7 +39,10 @@ export async function wipTree(repo: string, options: TreeOptions): Promise<strin
 export interface WipOptions {
   readonly indexFile: string
   readonly hid: string
-  /** This host's name, for the commit's message and identity. */
+  /**
+   * The PEER's name — where the WIP goes. A module never learns its own host's name (the kernel keeps
+   * `publicOrigin`), so the commit says where it is going, not where it comes from.
+   */
   readonly host: string
   readonly base?: NodeJS.ProcessEnv
 }
@@ -65,7 +68,7 @@ export async function wipCommit(repo: string, options: WipOptions): Promise<Wip>
   if (tree === headTree) return { head, tree, wip: undefined }
   const email = `factotum@${options.host}.invalid`
   const identity = { GIT_AUTHOR_NAME: 'factotum', GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: 'factotum', GIT_COMMITTER_EMAIL: email }
-  const message = `factotum handoff ${options.hid} from ${options.host}`
+  const message = `factotum handoff ${options.hid} to ${options.host}`
   const wip = (await handoffGit(repo, ['commit-tree', tree, '-p', head, '-m', message], { env: identity, ...base })).trim()
   return { head, tree, wip }
 }

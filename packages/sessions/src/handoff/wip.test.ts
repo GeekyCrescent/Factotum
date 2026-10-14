@@ -62,7 +62,7 @@ test('with commit.gpgSign=true and no user.email anywhere, the WIP is made all t
   // No identity in the environment: `sh` adds one, `wipCommit` must not need it.
   const made = await wipCommit(w.source, { indexFile: await indexPath(w), hid: HID, host: 'mac', base: w.env })
   assert.notEqual(made.wip, undefined)
-  assert.equal(await sh(w.env, w.source, 'log', '-1', '--format=%an <%ae>|%s', made.wip ?? ''), `factotum <factotum@mac.invalid>|factotum handoff ${HID} from mac`)
+  assert.equal(await sh(w.env, w.source, 'log', '-1', '--format=%an <%ae>|%s', made.wip ?? ''), `factotum <factotum@mac.invalid>|factotum handoff ${HID} to mac`)
 })
 
 test('the seed: on a host that ignores a file of the WIP, seed = HEAD gives another tree and seed = <wip> gives the WIP’s', async () => {
