@@ -20,8 +20,18 @@ export type HandoffWire =
   | { readonly kind: 'expired'; readonly handoff: TargetHandoff }
 
 export interface HandoffApi {
-  readonly projects: () => Promise<HandoffWire>
-  readonly sessionsCheck: (body: unknown) => Promise<HandoffWire>
   readonly startPreview: (body: unknown) => HandoffWire
   readonly preview: (previewId: string) => HandoffWire
+  readonly start: (body: unknown) => Promise<HandoffWire>
+  readonly report: (hid: string) => Promise<HandoffWire>
+  readonly keep: (hid: string, siteId: string) => Promise<HandoffWire>
+  readonly projects: () => Promise<HandoffWire>
+  readonly sessionsCheck: (body: unknown) => Promise<HandoffWire>
+  readonly prepare: (hid: string, siteId: string, body: unknown) => Promise<HandoffWire>
+  readonly manifest: (hid: string, siteId: string, body: unknown) => Promise<HandoffWire>
+  readonly file: (hid: string, siteId: string, n: string, file: { readonly path: string; readonly bytes: number } | undefined) => Promise<HandoffWire>
+  readonly commit: (hid: string, siteId: string) => Promise<HandoffWire>
+  readonly abort: (hid: string, siteId: string) => Promise<HandoffWire>
+  readonly done: (hid: string, siteId: string) => Promise<HandoffWire>
+  readonly status: (hid: string, siteId: string) => Promise<HandoffWire>
 }
