@@ -137,7 +137,7 @@ export function asResponse(wire: Wire): PeerResponse<unknown> {
 export type Route = (method: 'GET' | 'POST', path: string, body: unknown, file: string | undefined) => Promise<Wire | undefined>
 
 /** A `PeerCaller` whose one peer is answered by `route`, or is down. `delay` holds every answer. */
-export function fakePeer(name: string, state: { route: Route | undefined; reachable: boolean; delay?: () => Promise<void> }): PeerCaller & { readonly calls: string[] } {
+export function fakePeer(name: string, state: { route: Route | undefined; reachable: boolean; delay?: (() => Promise<void>) | undefined }): PeerCaller & { readonly calls: string[] } {
   const calls: string[] = []
   const answer = async (method: 'GET' | 'POST', path: string, body: unknown, file: string | undefined): Promise<PeerResponse<never>> => {
     calls.push(`${method} ${path}`)
@@ -312,8 +312,8 @@ export interface Linked {
   readonly mac: TestHost & { readonly api: HandoffApi }
   readonly omarchy: TestHost & { readonly api: HandoffApi }
   /** What each side's peer link does: down, slow, or a route that intercepts. */
-  readonly toOmarchy: { route: Route | undefined; reachable: boolean; delay?: () => Promise<void> }
-  readonly toMac: { route: Route | undefined; reachable: boolean; delay?: () => Promise<void> }
+  readonly toOmarchy: { route: Route | undefined; reachable: boolean; delay?: (() => Promise<void>) | undefined }
+  readonly toMac: { route: Route | undefined; reachable: boolean; delay?: (() => Promise<void>) | undefined }
 }
 
 /** The Mac (`vault`, the source clone) and omarchy (`obsidian`, the target clone), each with its handoff. */
