@@ -16,8 +16,8 @@
  * switches off `tasks` alone.
  */
 
-import { chmod, copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { Logger } from '@factotum/core'
 import type { Board, Result, Task } from '../types.ts'
 import { emptyBoard } from './ops.ts'
@@ -46,10 +46,26 @@ function codeOf(error: unknown): string {
   return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown'
 }
 
+/**
+ * Temp, fsync, rename, fsync the folder. Without the two syncs a power cut just after the rename can
+ * leave `board.json` empty on ext4 — and an empty file is "damaged", and this is the only copy.
+ */
 async function writeAtomically(file: string, board: Board): Promise<void> {
   const temp = `${file}.tmp`
-  await writeFile(temp, `${JSON.stringify(board)}\n`, { encoding: 'utf8', mode: 0o600 })
+  const handle = await open(temp, 'w', 0o600)
+  try {
+    await handle.writeFile(`${JSON.stringify(board)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
   await rename(temp, file)
+  const folder = await open(dirname(file), 'r')
+  try {
+    await folder.sync()
+  } finally {
+    await folder.close()
+  }
 }
 
 /** A run of the daemon that died mid-parse left its cards `pending`; they are `failed` now (criterion 23c). */
@@ -139,7 +155,8 @@ export async function openBoardStore(input: OpenInput): Promise<Opened> {
       return result
     }
     const next = tail.then(run)
-    tail = next
+    // `run` answers every failure it can see; this keeps one it cannot (a throwing log) from jamming the queue.
+    tail = next.catch(() => undefined)
     return next
   }
 

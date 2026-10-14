@@ -141,6 +141,13 @@ test('subtasks: an id is kept, a missing or repeated one is made new', () => {
   ])
 })
 
+test('a reminder set on a done or canceled card is dropped: it would remind of finished work (criterion 37)', () => {
+  for (const status of ['done', 'canceled'] as const) {
+    const start = board([task({ id: 'a', status, cycle: '2026-W42' })])
+    assert.equal(ok(patchTask(start, 'a', { remindAt: '2026-10-20T09:00:00+11:00' }, ctx())).task.remindAt, null, status)
+  }
+})
+
 test('patch of a card that is not on the board is not-found', () => {
   assert.equal(code(patchTask(board(), 'nope', { title: 'x' }, ctx())), 'not-found')
 })
@@ -222,7 +229,18 @@ test('a neighbour that is not in that column is refused by name', () => {
   const result = moveTask(start, 'a', { status: 'todo', before: 'zzz' }, ctx())
   assert.equal(code(result), 'invalid')
   if (!result.ok && result.error.code === 'invalid') assert.equal(result.error.field, 'before')
-  assert.equal(code(moveTask(start, 'b', { status: 'todo', after: 'b' }, ctx())), 'invalid')
+})
+
+test('a card dropped next to itself stays where it is', () => {
+  const start = board([
+    task({ id: 'a', status: 'todo', cycle: '2026-W42', order: 'F' }),
+    task({ id: 'b', status: 'todo', cycle: '2026-W42', order: 'V' }),
+  ])
+  for (const to of [{ before: 'b' }, { after: 'b' }] as const) {
+    const after = ok(moveTask(start, 'b', { status: 'todo', ...to }, ctx())).board
+    assert.deepEqual(column(after, 'todo'), ['a', 'b'])
+    assert.equal(find(after, 'b').order, 'V')
+  }
 })
 
 test('a card in triage does not move: it is accepted', () => {

@@ -99,6 +99,18 @@ test('a write that fails leaves memory and disk the same, and answers module-err
   assert.ok((await store.change((b) => createTask(b, { title: 'y', status: 'backlog' }, ctx()))).ok)
 })
 
+test('a log that throws does not jam the queue', async (t) => {
+  const dir = await tempDir()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const log = { ...captureLog(), error: () => { throw new Error('log down') } }
+  const opened = await openBoardStore({ dir, timeZone: ZONE, now: NOW, log })
+  assert.ok(opened.ok)
+  if (!opened.ok) return
+  await assert.rejects(opened.store.change(() => { throw new Error('boom') }))
+  assert.ok((await opened.store.change((b) => createTask(b, { title: 'y', status: 'backlog' }, ctx()))).ok)
+  await opened.store.idle()
+})
+
 test('an op that throws is a module-error, and the queue goes on', async (t) => {
   const dir = await tempDir()
   t.after(() => rm(dir, { recursive: true, force: true }))

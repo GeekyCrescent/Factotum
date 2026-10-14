@@ -145,11 +145,14 @@ export function patchTask(board: Board, id: string, patch: TaskPatch, ctx: OpCon
   if (card === undefined) return notFound(id)
   const { subtasks, ...fields } = patch
   const reminderMoved = patch.remindAt !== undefined && patch.remindAt !== card.remindAt
+  // A finished card does not take a new reminder: it would remind of finished work (criterion 37).
+  const finished = card.status === 'done' || card.status === 'canceled'
   const next: Task = {
     ...card,
     ...fields,
     ...(subtasks === undefined ? {} : { subtasks: subtasksFrom(subtasks, ctx.newId) }),
     ...(reminderMoved ? { remindedAt: null, reminderMissed: false } : {}),
+    ...(reminderMoved && finished ? { remindAt: null } : {}),
     updatedAt: ctx.now.toISOString(),
   }
   return { ok: true, value: withTask(board, board.tasks.map((t) => (t.id === id ? next : t)), id) }
@@ -186,6 +189,8 @@ export function moveTask(board: Board, id: string, to: MoveInput, ctx: OpContext
   const card = board.tasks.find((t) => t.id === id)
   if (card === undefined) return notFound(id)
   if (card.status === 'triage') return fail({ code: 'conflict', reason: 'a card in triage is accepted, not moved' })
+  // Dropped next to itself (a double-fired drop): it stays where it is.
+  if (to.status === card.status && (to.before === id || to.after === id)) return { ok: true, value: { board, task: card } }
   const index = neighbourIndex(columnOf(board.tasks, to.status, id), to)
   if (typeof index !== 'number') return fail(index)
   return { ok: true, value: withTask(board, place(board.tasks, moved(card, to.status, board, ctx), index), id) }
