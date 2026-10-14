@@ -13,7 +13,8 @@ import { SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
 import { SessionStore } from './store.ts'
 import { memoryRegistry } from './test-registry.ts'
-import type { CatalogEntry, EngineSetup, EventPage, SessionEngine, SiteConfig, TitlesConfig } from './types.ts'
+import type { AgentToolFamily, CatalogEntry, EngineSetup, EventPage, SessionEngine, SiteConfig, TitlesConfig } from './types.ts'
+import { NOT_RUNNING } from './questions/mcp.ts'
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'fake-claude.mjs')
 const BASE = 'http://100.64.0.1:7778'
@@ -89,6 +90,7 @@ async function world(
     askTimeoutMs?: number
     registry?: EngineSetup['registry']
     titles?: TitlesConfig
+    agentTools?: EngineSetup['agentTools']
   } = {},
 ): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
@@ -104,6 +106,7 @@ async function world(
     stateDir,
     ...registryOf(options.sites ?? [{ id: 'work', path: siteDir }]),
     ...(options.registry === undefined ? {} : { registry: options.registry }),
+    ...(options.agentTools === undefined ? {} : { agentTools: options.agentTools }),
     catalog: CATALOG,
     log: { info: () => undefined, warn: (m: string) => void warnings.push(m), error: () => undefined },
     now: () => new Date(),
@@ -2173,4 +2176,43 @@ test('a launch without an agent has no --agent and an undefined meta.agent (crit
   assert.equal(first?.includes('--agent'), false)
   assert.equal((await store.readMeta(id))?.agent, undefined)
   await engine.stop()
+})
+
+// ---------------------------------------------------------------------------
+// Tool families from outside (spec 2026-10-14-tareas-kanban, D7; criterion 28)
+// ---------------------------------------------------------------------------
+
+function taskFamily(calls: unknown[]): AgentToolFamily {
+  return {
+    tools: () => [{ name: 'create_task', description: 'Add a task.', inputSchema: { type: 'object' } }],
+    call: async (input) => {
+      calls.push(input)
+      return { content: [{ type: 'text', text: 'added' }] }
+    },
+  }
+}
+
+const callTask = (args: unknown) => ({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'create_task', arguments: args, _meta: { 'claudecode/toolUseId': 'tu5' } } })
+
+test('a family’s tool is listed on the session’s server, and a LIVE session reaches it with its siteId', async () => {
+  const calls: unknown[] = []
+  const { engine } = await world({ agentTools: [taskFamily(calls)] })
+  const id = await liveSession(engine)
+  const listed = await engine.mcp(id, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  const names = ((listed as { body: { result: { tools: { name: string }[] } } }).body.result.tools).map((t) => t.name)
+  assert.ok(names.includes('create_task'))
+  const reply = await engine.mcp(id, callTask({ title: 'x' }))
+  assert.deepEqual((reply as { body: { result: unknown } }).body.result, { content: [{ type: 'text', text: 'added' }] })
+  assert.deepEqual(calls, [{ sessionId: id, siteId: 'work', toolUseId: 'tu5', name: 'create_task', raw: { title: 'x' } }])
+  await engine.cancel(id)
+})
+
+test('crit. 28: a session that is not running gets NOT_RUNNING, and the family is never called', async () => {
+  const calls: unknown[] = []
+  const { engine } = await world({ agentTools: [taskFamily(calls)] })
+  const reply = await engine.mcp('01920000-0000-7000-8000-000000000000', callTask({ title: 'x' }))
+  const result = (reply as { body: { result: { isError?: boolean; content: { text: string }[] } } }).body.result
+  assert.equal(result.isError, true)
+  assert.equal(result.content[0]?.text, NOT_RUNNING)
+  assert.equal(calls.length, 0)
 })

@@ -38,7 +38,7 @@ import { ASK_TIMEOUT_SECONDS, hookSettings, serializeSettings } from './permissi
 import { PAGE_SIZE } from './history.ts'
 import { createCallers } from './callers.ts'
 import { mcpConfig, serializeMcpConfig } from './questions/config.ts'
-import { handleMcp } from './questions/mcp.ts'
+import { handleMcp, NOT_RUNNING, toolText, type McpExtraFamily } from './questions/mcp.ts'
 import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
 import { createHandoff } from './handoff/index.ts'
@@ -1061,6 +1061,20 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     }
 
   /**
+   * The families from outside (spec 2026-10-14-tareas-kanban, D7), each behind THE GUARD THAT STAYS
+   * HERE: only a live session reaches a family, with the site it runs in. This module is the one that
+   * knows what is alive (criterion 28).
+   */
+  const agentTools: readonly McpExtraFamily[] = (setup.agentTools ?? []).map((family) => ({
+    tools: family.tools,
+    call: async (input) => {
+      const siteId = live.get(input.sessionId)?.siteId
+      if (siteId === undefined) return toolText(NOT_RUNNING, true)
+      return await family.call({ ...input, siteId })
+    },
+  }))
+
+  /**
    * The handoff (spec 2026-10-07-dos-hosts): handed reads and writes of this engine, never the engine.
    * The projects are the registered ones that are THERE, with the path a launch writes as `sitePath`.
    */
@@ -1140,8 +1154,10 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     removeProject: unlessStopped(folders.removeProject),
     removeHistory: unlessStopped(folders.removeHistory),
     removeShared: unlessStopped(folders.removeShared),
-    // Mounted HERE: the questions' tool and the services' on one server (spec 2026-10-02, D7).
-    mcp: async (sessionId, message) => await handleMcp({ askOwner: questions.askOwner, services: services.mcp }, sessionId, message),
+    // Mounted HERE: the questions' tool, the services' and the families from outside on one server
+    // (spec 2026-10-02, D7; spec 2026-10-14-tareas-kanban, D7).
+    mcp: async (sessionId, message) =>
+      await handleMcp({ askOwner: questions.askOwner, services: services.mcp, extra: agentTools, warn: (m) => log.warn(m) }, sessionId, message),
     inspectQuestions: questions.inspect,
     answerQuestions: unlessStopped(questions.answer),
     sessionQuestions: async (sessionId) => (isSessionId(sessionId) ? await questions.inSession(sessionId) : []),

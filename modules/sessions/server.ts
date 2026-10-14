@@ -43,7 +43,7 @@ import {
   parseSharedRequest,
   parseTitle,
 } from './requests.ts'
-import type { CreateEngine, LaunchResult, ProjectChange, RequestResult, QuestionsAnswer, SessionEdit, SessionEngine, SettledHow } from './types.ts'
+import type { AgentToolFamily, CreateEngine, LaunchResult, ProjectChange, RequestResult, QuestionsAnswer, SessionEdit, SessionEngine, SettledHow } from './types.ts'
 
 /**
  * The hole.
@@ -748,6 +748,11 @@ export interface SessionsModuleOptions {
   readonly installRoot?: string
   /** `os.homedir()` unless a test says otherwise. */
   readonly home?: string
+  /**
+   * MCP tools other modules serve on this module's server (spec 2026-10-14-tareas-kanban, D7), handed
+   * to the engine as they come. The composition root builds them; this module never names one.
+   */
+  readonly agentTools?: readonly AgentToolFamily[]
 }
 
 export function sessionsModule(
@@ -806,6 +811,7 @@ export function sessionsModule(
         titles: ctx.config.titles,
         uploadMaxBytes: UPLOAD_MAX_BYTES,
         peers: ctx.peers,
+        ...(options.agentTools === undefined ? {} : { agentTools: options.agentTools }),
       })
       await engine.reconcile()
       holder.engine = engine

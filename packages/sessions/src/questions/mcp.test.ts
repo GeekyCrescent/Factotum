@@ -11,6 +11,7 @@ import {
   toolText,
   UNREACHABLE,
   type McpDeps,
+  type McpExtraFamily,
   type McpTool,
   type ToolResult,
 } from './mcp.ts'
@@ -283,4 +284,92 @@ test('the texts for no push and a session not running are exported constants', (
   assert.equal(NOT_RUNNING, 'This session is not running in factotum.')
   assert.deepEqual(toolText(UNREACHABLE, true), { content: [{ type: 'text', text: UNREACHABLE }], isError: true })
   assert.equal('isError' in toolText('x', false), false)
+})
+
+// ---------------------------------------------------------------------------
+// Families of tools from outside (spec 2026-10-14-tareas-kanban, D7; ADR-0013's second consumer)
+// ---------------------------------------------------------------------------
+
+const TASK_TOOL: McpTool = { name: 'create_task', description: 'Add a task.', inputSchema: { type: 'object' } }
+
+function withFamily(family: { tools: () => readonly McpTool[]; call?: McpExtraFamily['call'] }, services: McpDeps['services'] = NO_SERVICES) {
+  const calls: unknown[] = []
+  const warnings: string[] = []
+  const d: McpDeps = {
+    askOwner: async () => ok,
+    services,
+    extra: [
+      {
+        tools: family.tools,
+        call:
+          family.call ??
+          (async (input) => {
+            calls.push(input)
+            return ok
+          }),
+      },
+    ],
+    warn: (message) => void warnings.push(message),
+  }
+  return { d, calls, warnings }
+}
+
+const list = async (d: McpDeps) => ((bodyOf(await handleMcp(d, 's', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).result as { tools: McpTool[] }).tools).map((t) => t.name)
+
+test('a family that lists nothing leaves tools/list as it was', async () => {
+  assert.deepEqual(await list(withFamily({ tools: () => [] }).d), ['ask_owner'])
+  assert.deepEqual(await list(deps().d), ['ask_owner'])
+})
+
+test('a family’s tools come after ask_owner and the services, read on EVERY tools/list', async () => {
+  let filled = false
+  const { d } = withFamily({ tools: () => (filled ? [TASK_TOOL] : []) })
+  assert.deepEqual(await list(d), ['ask_owner'])
+  filled = true
+  assert.deepEqual(await list(d), ['ask_owner', 'create_task'])
+})
+
+test('tools/call of a family’s tool goes to that family, with the session, the name, the args and the toolUseId', async () => {
+  const { d, calls } = withFamily({ tools: () => [TASK_TOOL] })
+  const body = bodyOf(
+    await handleMcp(d, 'sess-2', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'create_task', arguments: { title: 'x' }, _meta: { 'claudecode/toolUseId': 'tu3' } } }),
+  )
+  assert.deepEqual(calls, [{ sessionId: 'sess-2', toolUseId: 'tu3', name: 'create_task', raw: { title: 'x' } }])
+  assert.deepEqual(body.result, ok)
+})
+
+test('a name that clashes with ask_owner or a service is ignored, with one warning', async () => {
+  const clash = { name: 'ask_owner', description: 'evil', inputSchema: {} }
+  const svc = { name: 'start_service', description: 'evil too', inputSchema: {} }
+  const { d, calls, warnings } = withFamily({ tools: () => [clash, svc, TASK_TOOL] }, { tools: [SERVICE_TOOL], call: async () => ok })
+  assert.deepEqual(await list(d), ['ask_owner', 'start_service', 'create_task'])
+  assert.deepEqual(await list(d), ['ask_owner', 'start_service', 'create_task'])
+  // ask_owner still goes to the questions, never to the family.
+  await handleMcp(d, 's', call({ questions: [] }))
+  assert.equal(calls.length, 0)
+  assert.equal(warnings.length, 2, warnings.join('\n'))
+  assert.match(warnings.join('\n'), /ask_owner/)
+})
+
+test('a family that throws is an isError result, never an RPC failure', async () => {
+  const { d } = withFamily({
+    tools: () => [TASK_TOOL],
+    call: async () => {
+      throw new Error('board gone')
+    },
+  })
+  const body = bodyOf(await handleMcp(d, 's', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_task', arguments: {} } }))
+  assert.equal(body.error, undefined)
+  const result = body.result as ToolResult
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /could not run create_task \(board gone\)/)
+})
+
+test('a family whose tools() throws lists nothing of its own, and the rest still lists', async () => {
+  const { d } = withFamily({
+    tools: () => {
+      throw new Error('boom')
+    },
+  })
+  assert.deepEqual(await list(d), ['ask_owner'])
 })

@@ -16,6 +16,11 @@
  * NEVER THROWS FOR THE AGENT'S SAKE. A malformed batch comes back as a tool result with `isError`, the
  * one channel the agent reads and can correct; a transport error tells it nothing to fix.
  *
+ * FAMILIES FROM OUTSIDE (spec 2026-10-14-tareas-kanban, D7) are the «second consumer» ADR-0013 waited
+ * for: another module's tools — the task board's `create_task` — mounted on this same server as DATA,
+ * like the services'. Each family is read on EVERY `tools/list`, so one filled late lists late; a name
+ * that would shadow `ask_owner`, a service or an earlier family is ignored, with one warning.
+ *
  * Nothing in `modules/` imports this (CLAUDE.md §1): the engine calls it from its `mcp` member.
  */
 
@@ -61,6 +66,12 @@ export interface McpTool {
   readonly inputSchema: unknown
 }
 
+/** A family of tools from outside, as this server sees it: the engine has already added the guard. */
+export interface McpExtraFamily {
+  readonly tools: () => readonly McpTool[]
+  readonly call: (input: { sessionId: string; toolUseId: string | undefined; name: string; raw: unknown }) => Promise<ToolResult>
+}
+
 export interface McpDeps {
   /** Opens the batch, tells the owner and HOLDS until it settles. The engine's; never on the facade. */
   readonly askOwner: (input: { sessionId: string; toolUseId: string | undefined; raw: unknown }) => Promise<ToolResult>
@@ -69,6 +80,10 @@ export interface McpDeps {
     readonly tools: readonly McpTool[]
     readonly call: (input: { sessionId: string; toolUseId: string | undefined; name: string; raw: unknown }) => Promise<ToolResult>
   }
+  /** Families of tools from outside (D7), listed after the services. */
+  readonly extra?: readonly McpExtraFamily[]
+  /** Where a clashing name is reported, once per name. */
+  readonly warn?: (message: string) => void
 }
 
 /**
@@ -166,6 +181,38 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 }
 
+/** Names already reported as clashing: one warning per name for the life of the process. */
+const warned = new Set<string>()
+
+/**
+ * The families' tools as listed now, each with the family that runs it. A family whose `tools()` throws
+ * lists nothing; a name already taken — by `ask_owner`, a service or an earlier family — is skipped.
+ */
+function extraTools(deps: McpDeps): readonly { readonly tool: McpTool; readonly family: McpExtraFamily }[] {
+  const taken = new Set<string>([TOOL_NAME, ...deps.services.tools.map((tool) => tool.name)])
+  const listed: { tool: McpTool; family: McpExtraFamily }[] = []
+  for (const family of deps.extra ?? []) {
+    let tools: readonly McpTool[]
+    try {
+      tools = family.tools()
+    } catch {
+      continue
+    }
+    for (const tool of tools) {
+      if (taken.has(tool.name)) {
+        if (!warned.has(tool.name)) {
+          warned.add(tool.name)
+          deps.warn?.(`a tool family tried to list "${tool.name}", which is already taken; it is ignored`)
+        }
+        continue
+      }
+      taken.add(tool.name)
+      listed.push({ tool, family })
+    }
+  }
+  return listed
+}
+
 /** One JSON-RPC message from the CLI, for the session named in the URL. */
 export async function handleMcp(deps: McpDeps, sessionId: string, message: unknown): Promise<McpReply> {
   const rpc = record(message)
@@ -188,11 +235,13 @@ export async function handleMcp(deps: McpDeps, sessionId: string, message: unkno
     case 'ping':
       return result(id, {})
     case 'tools/list':
-      return result(id, { tools: [TOOL, ...deps.services.tools] })
+      return result(id, { tools: [TOOL, ...deps.services.tools, ...extraTools(deps).map((entry) => entry.tool)] })
     case 'tools/call': {
       const name = params?.name
       const isAsk = name === TOOL_NAME
-      if (!isAsk && !deps.services.tools.some((tool) => tool.name === name)) {
+      const isService = deps.services.tools.some((tool) => tool.name === name)
+      const family = isAsk || isService ? undefined : extraTools(deps).find((entry) => entry.tool.name === name)?.family
+      if (!isAsk && !isService && family === undefined) {
         return failure(id, -32602, `this session has no tool called ${String(name)}`)
       }
       const rawId = record(params?._meta)?.['claudecode/toolUseId']
@@ -202,7 +251,9 @@ export async function handleMcp(deps: McpDeps, sessionId: string, message: unkno
           id,
           isAsk
             ? await deps.askOwner({ sessionId, toolUseId, raw: params?.arguments })
-            : await deps.services.call({ sessionId, toolUseId, name: String(name), raw: params?.arguments }),
+            : family !== undefined
+              ? await family.call({ sessionId, toolUseId, name: String(name), raw: params?.arguments })
+              : await deps.services.call({ sessionId, toolUseId, name: String(name), raw: params?.arguments }),
         )
       } catch (error) {
         const why = error instanceof Error ? error.message : 'unknown error'
