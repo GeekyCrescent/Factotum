@@ -135,9 +135,9 @@ export function tasksModule(createTasks: CreateTasks, link: TasksLink, options: 
         throw new Error(created.reason)
       }
       const tasks = created.tasks
-      holder.tasks = tasks
       // LAST: nothing above can leave a filled link behind a `start` that threw (design D12).
       link.fill(tasks.agent)
+      holder.tasks = tasks
       return {
         stop: async () => {
           link.clear()
