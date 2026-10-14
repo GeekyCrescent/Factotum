@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { carry, commitAll, indexPath, put, sh, world } from './test-repos.ts'
+import { carry, commitAll, indexPath, put, sh, world } from '../test-repos.ts'
 import { wipCommit, wipTree } from './wip.ts'
 
 const HID = '0199e0c0-0000-7000-8000-000000000001'

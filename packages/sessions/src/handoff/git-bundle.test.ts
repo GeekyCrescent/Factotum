@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { access, mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
-import { carry, commitAll, indexPath, put, sh, world, type World } from './test-repos.ts'
+import { carry, commitAll, indexPath, put, sh, world, type World } from '../test-repos.ts'
 import { wipCommit } from './wip.ts'
 import { ensureBase, handoffBase, importBundle, makeBundle } from './git-bundle.ts'
 
