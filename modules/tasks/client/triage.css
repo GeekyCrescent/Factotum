@@ -30,6 +30,34 @@ button.t-triage:hover {
   color: var(--text-3);
 }
 
+/* Over the title's limit: a note by the field. The phone's bar is already `fixed`, a containing block. */
+.t-capture-bar {
+  position: relative;
+}
+
+.t-capture-long {
+  position: absolute;
+  left: var(--space-3);
+  top: calc(100% + var(--space-1));
+  z-index: 21;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+}
+
+.t-capture-sticky .t-capture-long {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.t-triage-acts [aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 /* --- The list -------------------------------------------------------------- */
 
 .t-triage-lead {

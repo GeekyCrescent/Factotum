@@ -4,7 +4,8 @@
  *
  * WHAT `rest` MEANS: `''` the board; `cycles` the history; `cycles/<id>` one closed cycle; anything
  * else a card id, opened as a sheet over the board — the path a reminder's push will open (D6).
- * `triage` is the AI's inbox (E4). A card id is a UUIDv7, so it can never be one of these words.
+ * `triage` is the AI's inbox (E4), and `triage/<id>` a card of it open to edit. A card id is a UUIDv7,
+ * so it can never be one of these words.
  */
 
 import './client.css'
@@ -22,7 +23,8 @@ const TRIAGE = 'triage'
 
 function TasksView(props: ViewProps) {
   const { rest } = props
-  if (rest === TRIAGE) return <Triage props={props} />
+  if (rest === TRIAGE) return <Triage props={props} editing={undefined} />
+  if (rest.startsWith(`${TRIAGE}/`)) return <Triage props={props} editing={safeDecode(rest.slice(TRIAGE.length + 1))} />
   if (rest === CYCLES) return <Cycles props={props} />
   if (rest.startsWith(`${CYCLES}/`)) return <CycleDetail key={rest} props={props} id={rest.slice(CYCLES.length + 1)} />
   // A malformed segment (`%E0%A4%A`) opens no card rather than blanking the screen.

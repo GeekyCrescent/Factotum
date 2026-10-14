@@ -76,6 +76,18 @@ test('output that is not JSON is a failure', async () => {
   assert.deepEqual(await runClaude(input), { ok: false, reason: 'claude answered something that is not JSON' })
 })
 
+test('JSON that is not a result (null, a number) is a failure, never a TypeError in the close handler', async () => {
+  const { input } = await rig(['null'])
+  assert.deepEqual(await runClaude(input), { ok: false, reason: 'claude answered something that is not a result' })
+})
+
+test('usage fields that are not numbers count as zero: the answer still lands', async () => {
+  const { input } = await rig(['odd-usage'])
+  const result = await runClaude(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.ok && result.usage, { inputTokens: 0, outputTokens: 0, costUsd: 0, ms: 0, model: 'claude-haiku-4-5-20251001' })
+})
+
 test('EXITS WITHOUT READING STDIN: a failure with its reason, and this process lives on (EPIPE)', async () => {
   const { input } = await rig(['no-stdin'])
   const result = await runClaude({ ...input, prompt: 'x'.repeat(512 * 1024) })
@@ -120,12 +132,13 @@ test('a binary that is not there, or a spawn that throws, is a failure and never
   assert.match(nul.ok ? '' : nul.reason, /claude could not start/)
 })
 
-test('a non-zero exit is a failure with its code, and the first line of a refusal', async () => {
+test('a non-zero exit, or a refusal of its arguments, is a failure with its code and nothing of stderr', async () => {
   const { input } = await rig(['refuse'])
   assert.deepEqual(await runClaude({ ...input, bin: '/usr/bin/false' }), { ok: false, reason: 'claude exited with code 1' })
   assert.deepEqual(await runClaude(input), {
     ok: false,
-    reason: 'claude exited with code 1: Error: --json-schema is not a valid JSON Schema: no schema with key or ref',
+    // Its stderr is NOT in the reason: reasons reach the log, and stderr is not ours to vouch for (criterion 41).
+    reason: 'claude exited with code 1',
   })
 })
 

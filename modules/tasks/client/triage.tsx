@@ -4,7 +4,13 @@
  * first, in the same sheet as any card, or discarded without a question (S10).
  *
  * A CARD CLAUDE IS STILL READING says «Reading it…», and the list is read again every `POLL_MS` while
- * one is — and only while the screen is visible. When none is left, the polling stops (crit. 23c).
+ * one is — and only while the screen is visible, for at most `POLL_TICKS` reads. When none is left, the
+ * polling stops (crit. 23c). Coming back to the tab reads it again, as the board does.
+ *
+ * EDITING IS A ROUTE, `triage/<id>`: the phone's Back closes the sheet instead of leaving Triage.
+ *
+ * AFTER ACCEPTING OR DISCARDING, the focus goes to the card that took its place (or the lead, when the
+ * list is empty), and one status line says what happened: the button that had it is gone.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
@@ -22,6 +28,11 @@ import { useBoard } from './use-board.ts'
 
 /** As the inbox: often enough to see a card land, rare enough to cost nothing. */
 export const POLL_MS = 2_000
+/**
+ * Two minutes of polling: a read times out at 30 s and waits at most behind a few others. A card still
+ * `pending` after that is one a dead daemon left, which the next start settles.
+ */
+const POLL_TICKS = 60
 
 interface TriageList {
   readonly tasks: readonly Task[]
@@ -46,49 +57,87 @@ function useTriage(api: ViewProps['api']) {
     }
   }, [api])
 
+  const [visits, setVisits] = useState(0)
   useEffect(() => {
     void reload()
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      void reload()
+      setVisits((n) => n + 1)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [reload])
 
   const reading = list !== undefined && anyReading(list.tasks)
+  // `visits` re-arms a polling that ran out, when the owner comes back to the tab.
   useEffect(() => {
     if (!reading) return
-    const tick = (): void => {
+    let ticks = 0
+    const handle = window.setInterval(() => {
+      if (++ticks >= POLL_TICKS) window.clearInterval(handle)
       if (document.visibilityState === 'visible') void reload()
-    }
-    const handle = window.setInterval(tick, POLL_MS)
+    }, POLL_MS)
     return () => window.clearInterval(handle)
-  }, [reading, reload])
+  }, [reading, reload, visits])
 
-  return { list, error, reload }
+  const clearError = useCallback(() => setError(undefined), [])
+  return { list, error, reload, clearError }
 }
 
-export function Triage({ props }: { readonly props: ViewProps }) {
+const DONE_LINE: Readonly<Record<'todo' | 'backlog' | 'discard', string>> = {
+  todo: 'Moved to Todo.',
+  backlog: 'Moved to Backlog.',
+  discard: 'Discarded.',
+}
+
+export function Triage({ props, editing }: { readonly props: ViewProps; readonly editing: string | undefined }) {
   const { api, navigate, openDrawer, pendingTotal } = props
   const board = useBoard(api)
   const triage = useTriage(api)
-  const [editing, setEditing] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
+  const [said, setSaid] = useState('')
+  const [focusAt, setFocusAt] = useState<number | undefined>(undefined)
+  const listRef = useRef<HTMLUListElement>(null)
+  const leadRef = useRef<HTMLParagraphElement>(null)
+  const { act: boardAct } = board
+  const { reload: triageReload } = triage
 
   /** A change, then the list read again: what was accepted leaves it. */
   const act = useCallback(
     async (path: string, body?: unknown): Promise<boolean> => {
-      const sent = await board.act(path, body)
-      await triage.reload()
+      const sent = await boardAct(path, body)
+      await triageReload()
       return sent
     },
-    [board, triage],
+    [boardAct, triageReload],
   )
 
-  const decide = async (id: string, path: string, body?: unknown): Promise<void> => {
+  const decide = async (id: string, index: number, what: 'todo' | 'backlog' | 'discard'): Promise<void> => {
+    if (busy.has(id)) return
     setBusy((was) => new Set(was).add(id))
-    await act(`tasks/${encodeURIComponent(id)}/${path}`, body)
+    const path = `tasks/${encodeURIComponent(id)}/${what === 'discard' ? 'remove' : 'accept'}`
+    const sent = await act(path, what === 'discard' ? undefined : { to: what })
     setBusy((was) => {
       const next = new Set(was)
       next.delete(id)
       return next
     })
+    if (!sent) return
+    setSaid(DONE_LINE[what])
+    setFocusAt(index)
   }
+
+  // After the list changed: the card that took the decided one's place, the one before it, or the lead.
+  const tasks = triage.list?.tasks
+  useEffect(() => {
+    if (focusAt === undefined || tasks === undefined) return
+    setFocusAt(undefined)
+    const items = listRef.current?.querySelectorAll<HTMLElement>('[data-triage-first]') ?? []
+    const target = items[Math.min(focusAt, items.length - 1)]
+    if (target === undefined) leadRef.current?.focus()
+    else target.focus()
+  }, [focusAt, tasks])
 
   const back = { label: 'Board', go: () => navigate('') }
   const bar = <PageBar title="Triage" back={back} pendingTotal={pendingTotal} onMenu={openDrawer} />
@@ -97,6 +146,10 @@ export function Triage({ props }: { readonly props: ViewProps }) {
   const now = new Date()
   const today = view === undefined ? '' : todayIn(view.timeZone)
   const error = board.error ?? triage.error
+  const dismiss = (): void => {
+    board.clearError()
+    triage.clearError()
+  }
 
   if (list === undefined) {
     return (
@@ -118,27 +171,32 @@ export function Triage({ props }: { readonly props: ViewProps }) {
   return (
     <div class="t-screen">
       {bar}
-      <p class="t-triage-lead dim-2">
+      <p class="t-triage-lead dim-2" ref={leadRef} tabIndex={-1}>
         {list.tasks.length === 0
           ? 'Nothing to sort. What the AI captures lands here first.'
           : `${list.tasks.length} to sort. Nothing reaches the board until you accept it.`}
       </p>
+      {/* One persistent region, so a screen reader hears what each decision did. */}
+      <p class="sr-only" role="status">
+        {said === '' ? '' : `${said} ${list.tasks.length === 0 ? 'Nothing left to sort.' : `${list.tasks.length} left.`}`}
+      </p>
       {error === undefined ? null : (
         <div class="t-pad-x">
-          <ErrorNotice message={error} action={{ label: 'Dismiss', run: board.clearError }} />
+          <ErrorNotice message={error} action={{ label: 'Dismiss', run: dismiss }} />
         </div>
       )}
-      <ul class="t-triage-list" aria-label="Cards in Triage">
-        {list.tasks.map((task) => (
+      <ul class="t-triage-list" aria-label="Cards in Triage" ref={listRef}>
+        {list.tasks.map((task, index) => (
           <TriageItem
             key={task.id}
             task={task}
             now={now}
             today={today}
             busy={busy.has(task.id)}
-            accept={(to) => void decide(task.id, 'accept', { to })}
-            discard={() => void decide(task.id, 'remove')}
-            edit={() => setEditing(task.id)}
+            canEdit={view !== undefined}
+            accept={(to) => void decide(task.id, index, to)}
+            discard={() => void decide(task.id, index, 'discard')}
+            edit={() => navigate(`triage/${encodeURIComponent(task.id)}`)}
           />
         ))}
       </ul>
@@ -152,7 +210,7 @@ export function Triage({ props }: { readonly props: ViewProps }) {
           today={today}
           act={act}
           error={board.error}
-          onClose={() => setEditing(undefined)}
+          onClose={() => navigate('triage')}
         />
       )}
     </div>
@@ -164,6 +222,7 @@ function TriageItem({
   now,
   today,
   busy,
+  canEdit,
   accept,
   discard,
   edit,
@@ -172,6 +231,8 @@ function TriageItem({
   readonly now: Date
   readonly today: string
   readonly busy: boolean
+  /** The sheet needs the board (its areas, its zone): Edit waits for it. */
+  readonly canEdit: boolean
   readonly accept: (to: 'todo' | 'backlog') => void
   readonly discard: () => void
   readonly edit: () => void
@@ -181,14 +242,14 @@ function TriageItem({
   const wrote = wroteOf(task)
   const late = task.due !== null && today !== '' && task.due < today
   return (
-    <li class="t-triage-item" aria-busy={reading === 'reading'}>
+    <li class="t-triage-item">
       <p class="t-triage-src">
         <Icon name={source.kind === 'agent' ? 'terminal-window' : 'sparkle'} size={14} />
         {source.label} · {agoOf(task.createdAt, now)}
       </p>
       <h2 class="t-triage-title">{task.title}</h2>
       {reading === 'reading' ? (
-        <p class="t-triage-reading" role="status">
+        <p class="t-triage-reading">
           <Icon name="circle-notch" size={14} class="t-spin" />
           Reading it…
         </p>
@@ -197,16 +258,17 @@ function TriageItem({
       <Fields task={task} late={late} />
       {wrote === undefined ? null : <p class="t-triage-raw dim-2">You wrote: «{wrote}»</p>}
       <div class="t-triage-acts">
-        <button type="button" class="btn" disabled={busy} onClick={() => accept('todo')}>
+        {/* aria-disabled, not disabled: a disabled button drops the focus it holds (decide() guards a double tap). */}
+        <button type="button" class="btn" data-triage-first aria-disabled={busy} onClick={() => accept('todo')}>
           To Todo
         </button>
-        <button type="button" class="btn" disabled={busy} onClick={() => accept('backlog')}>
+        <button type="button" class="btn" aria-disabled={busy} onClick={() => accept('backlog')}>
           To Backlog
         </button>
-        <button type="button" class="icon-btn" aria-label={`Edit ${task.title} before accepting`} disabled={busy} onClick={edit}>
+        <button type="button" class="icon-btn" aria-label={`Edit ${task.title} before accepting`} disabled={!canEdit} onClick={edit}>
           <Icon name="pencil-simple" size={20} />
         </button>
-        <button type="button" class="icon-btn t-triage-discard" aria-label={`Discard ${task.title}`} disabled={busy} onClick={discard}>
+        <button type="button" class="icon-btn t-triage-discard" aria-label={`Discard ${task.title}`} aria-disabled={busy} onClick={discard}>
           <Icon name="trash" size={20} />
         </button>
       </div>

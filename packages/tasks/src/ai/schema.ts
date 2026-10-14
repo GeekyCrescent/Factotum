@@ -19,7 +19,8 @@ export const captureOutputSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .refine(isCalendarDate)
     .nullable(),
-  priority: z.number().int().min(0).max(4),
+  // Literals, so the type IS `Priority` and nothing downstream needs a cast.
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
 })
 
 export type CaptureOutput = z.infer<typeof captureOutputSchema>

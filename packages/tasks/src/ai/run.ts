@@ -6,8 +6,12 @@
  * ONE decision per process, and the listener on `child.stdin` BEFORE the first byte is written — a
  * `claude` that exits without reading would otherwise end the daemon with an EPIPE.
  *
- * NOTHING THROWS OUT OF HERE: every path is `{ ok: false, reason }`. And no reason carries a word of
- * the prompt or of the answer — reasons end up in the log (criterion 41).
+ * NOTHING THROWS OUT OF HERE: every path is `{ ok: false, reason }`. `conclude` runs inside the
+ * child's `close` handler, where a throw would end the daemon, so the CLI's JSON is SHAPED before a
+ * field is read: valid JSON that is not an object is a failure, a number that is not one counts as 0.
+ *
+ * NO REASON CARRIES A WORD OF THE PROMPT, OF THE ANSWER OR OF STDERR — reasons end up in the log
+ * (criterion 41), and what the CLI prints on stderr is not ours to vouch for.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -20,8 +24,7 @@ import { buildClaudeArgs } from './args.ts'
 export const KILL_GRACE_MS = 5_000
 /** A card or seven suggestions are a few KB; past this it is not an answer (design D5). */
 const STDOUT_MAX = 256 * 1024
-/** Enough of stderr to say why the CLI refused, never a second log. */
-const STDERR_MAX = 200
+/** Stderr is drained, never kept: a full pipe would block the child, and its text never reaches a reason. */
 
 export interface RunUsage {
   readonly inputTokens: number
@@ -54,7 +57,6 @@ export interface RunInput<T> {
 interface Outcome {
   readonly code: number | null
   readonly stdout: string
-  readonly stderr: string
   readonly spawnError: Error | undefined
   readonly stdinError: Error | undefined
   readonly timedOut: boolean
@@ -79,7 +81,6 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
 
   return new Promise<RunResult<T>>((resolve) => {
     let stdout = ''
-    let stderr = ''
     let spawnError: Error | undefined
     let stdinError: Error | undefined
     let timedOut = false
@@ -114,7 +115,7 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
       timer[Symbol.dispose]()
       grace?.[Symbol.dispose]()
       input.signal.removeEventListener('abort', onAbort)
-      resolve(conclude({ code, stdout, stderr, spawnError, stdinError, timedOut, aborted }, input))
+      resolve(conclude({ code, stdout, spawnError, stdinError, timedOut, aborted }, input))
     }
 
     // Decoded by the stream, not per chunk: a character split across two chunks would become U+FFFD.
@@ -123,10 +124,7 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
       if (stdout.length < STDOUT_MAX) stdout += chunk
     })
     // Read always: a full stderr pipe would block the child.
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => {
-      if (stderr.length < STDERR_MAX) stderr += chunk
-    })
+    child.stderr?.resume()
     child.on('error', (error: Error) => {
       spawnError = error
       if (child.pid === undefined) settle(null)
@@ -146,51 +144,58 @@ function conclude<T>(outcome: Outcome, input: RunInput<T>): RunResult<T> {
   if (outcome.timedOut) return { ok: false, reason: `claude gave no answer within ${Math.round(input.timeoutMs / 1000)} s` }
   if (outcome.spawnError !== undefined) return { ok: false, reason: `claude could not start: ${outcome.spawnError.message}` }
   if (outcome.stdinError !== undefined) return { ok: false, reason: `claude did not read the prompt (${codeOf(outcome.stdinError)})` }
-  if (outcome.code !== 0) {
-    // The CLI's own complaint about its arguments. It does not quote the prompt, which it has not
-    // read by then; and it is cut to one line.
-    const said = outcome.stderr.trim().split('\n')[0]?.slice(0, STDERR_MAX) ?? ''
-    return { ok: false, reason: `claude exited with code ${outcome.code}${said === '' ? '' : `: ${said}`}` }
-  }
+  if (outcome.code !== 0) return { ok: false, reason: `claude exited with code ${outcome.code}` }
 
-  let parsed: CliResult
+  let json: unknown
   try {
-    parsed = JSON.parse(outcome.stdout) as CliResult
+    json = JSON.parse(outcome.stdout)
   } catch {
     return { ok: false, reason: 'claude answered something that is not JSON' }
   }
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+    return { ok: false, reason: 'claude answered something that is not a result' }
+  }
+  const parsed = json as CliResult
   if (parsed.is_error === true || parsed.subtype !== 'success') {
-    return { ok: false, reason: `claude failed: ${String(parsed.api_error_status ?? parsed.subtype ?? 'unknown')}` }
+    return { ok: false, reason: `claude failed: ${statusOf(parsed.api_error_status ?? parsed.subtype)}` }
   }
   const checked = input.output.safeParse(parsed.structured_output)
   if (!checked.success) return { ok: false, reason: 'claude answered outside the schema' }
   return { ok: true, value: checked.data, usage: usageOf(parsed) }
 }
 
+/** What the CLI writes, as far as it is read — every field `unknown`, read only through the helpers below. */
 interface CliResult {
-  readonly subtype?: string
-  readonly is_error?: boolean
+  readonly subtype?: unknown
+  readonly is_error?: unknown
   readonly api_error_status?: unknown
   readonly structured_output?: unknown
-  readonly total_cost_usd?: number
-  readonly duration_ms?: number
-  readonly usage?: {
-    readonly input_tokens?: number
-    readonly cache_creation_input_tokens?: number
-    readonly cache_read_input_tokens?: number
-    readonly output_tokens?: number
-  }
-  readonly modelUsage?: Readonly<Record<string, unknown>>
+  readonly total_cost_usd?: unknown
+  readonly duration_ms?: unknown
+  readonly usage?: unknown
+  readonly modelUsage?: unknown
+}
+
+/** A finite number, or 0: the usage is for the log, and a log line must never throw. */
+function numberOf(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/** A status for a reason: a number or a short word, never free text of the CLI's. */
+function statusOf(value: unknown): string {
+  if (typeof value === 'number') return String(value)
+  return typeof value === 'string' && /^[a-z_]{1,40}$/.test(value) ? value : 'unknown'
 }
 
 function usageOf(parsed: CliResult): RunUsage {
-  const usage = parsed.usage ?? {}
+  const usage = (typeof parsed.usage === 'object' && parsed.usage !== null ? parsed.usage : {}) as Readonly<Record<string, unknown>>
+  const models = typeof parsed.modelUsage === 'object' && parsed.modelUsage !== null ? Object.keys(parsed.modelUsage) : []
   return {
-    inputTokens: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
-    outputTokens: usage.output_tokens ?? 0,
-    costUsd: parsed.total_cost_usd ?? 0,
-    ms: parsed.duration_ms ?? 0,
-    model: Object.keys(parsed.modelUsage ?? {})[0],
+    inputTokens: numberOf(usage.input_tokens) + numberOf(usage.cache_creation_input_tokens) + numberOf(usage.cache_read_input_tokens),
+    outputTokens: numberOf(usage.output_tokens),
+    costUsd: numberOf(parsed.total_cost_usd),
+    ms: numberOf(parsed.duration_ms),
+    model: models[0],
   }
 }
 

@@ -11,8 +11,12 @@
  */
 
 import type { RefObject } from 'preact'
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import { Icon } from './icon.tsx'
+
+/** A title typed by hand is at most this (`shape.ts`); a capture for claude can be longer. */
+const MAX_TITLE_CHARS = 200
+const MAX_CAPTURE_CHARS = 1000
 
 export type Target = 'backlog' | 'todo'
 
@@ -56,6 +60,9 @@ export function QuickCapture({
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [sent, setSent] = useState(false)
+  const own = useRef<HTMLInputElement>(null)
+  const field = input ?? own
+  const tooLong = text.trim().length > MAX_TITLE_CHARS
 
   /** The text stays until the card is saved: a failure keeps what was typed. */
   const send = async (save: (text: string) => Promise<boolean>, toTriage: boolean): Promise<void> => {
@@ -70,6 +77,8 @@ export function QuickCapture({
   }
   const submit = (event: Event): void => {
     event.preventDefault()
+    // Too long for a title: the note under the field says so, and the AI button is the way.
+    if (tooLong) return
     void send((title) => add(title, target), false)
   }
   const placeholder = sent ? 'In Triage, claude is reading it. Add another' : sticky ? `Add to ${label}` : `Add to ${label}, press N from anywhere`
@@ -78,11 +87,13 @@ export function QuickCapture({
     <form class={sticky ? 't-capture t-capture-sticky' : 't-capture t-capture-bar'} onSubmit={submit}>
       {sticky ? null : <Icon name="plus" size={16} class="t-capture-mark" />}
       <input
-        {...(input === undefined ? {} : { ref: input })}
+        ref={field}
         class="t-capture-input"
         type="text"
         value={text}
-        maxLength={capture === undefined ? 200 : 1000}
+        maxLength={capture === undefined ? MAX_TITLE_CHARS : MAX_CAPTURE_CHARS}
+        aria-invalid={tooLong}
+        {...(tooLong ? { 'aria-describedby': 't-capture-long' } : {})}
         placeholder={placeholder}
         aria-label={capture === undefined ? `New card in ${label}` : `New card: Enter adds it to ${label}, the AI button sends it to Triage`}
         enterKeyHint="done"
@@ -101,14 +112,24 @@ export function QuickCapture({
           aria-label="Capture with AI, to Triage"
           title="Capture with AI, to Triage"
           disabled={text.trim() === '' || saving}
-          onClick={() => void send(capture, true)}
+          // The field keeps the focus: on the phone the keyboard stays up for the next capture.
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            void send(capture, true)
+            field.current?.focus()
+          }}
         >
           <Icon name="sparkle" size={18} />
         </button>
       )}
-      <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving}>
+      <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving || tooLong}>
         <Icon name="plus" size={18} />
       </button>
+      {tooLong ? (
+        <span id="t-capture-long" class="t-capture-long">
+          Over {MAX_TITLE_CHARS} characters for a title: ✦ sends it to Triage
+        </span>
+      ) : null}
       <span class="sr-only" role="status">
         {sent ? 'Saved to Triage. Claude is reading it.' : ''}
       </span>

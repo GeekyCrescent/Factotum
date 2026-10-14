@@ -16,6 +16,8 @@
  *   wait       reads stdin, then waits for the file `fake-claude.release` in its cwd, then answers
  *   is_error   a result with is_error and api_error_status 429
  *   garbage    a line that is not JSON
+ *   null       the JSON `null`: valid JSON, not a result
+ *   odd-usage  a good answer whose usage fields are strings, not numbers
  *   hang       never answers (a minute), stdin unread
  *   no-stdin   exits 0 at once WITHOUT reading stdin — the EPIPE case
  *   stubborn   like "hang", but ignores SIGTERM: only SIGKILL ends it
@@ -58,6 +60,10 @@ function answer() {
     process.stdout.write('this is not json\n')
     return
   }
+  if (mode === 'null') {
+    process.stdout.write('null\n')
+    return
+  }
   const output = existsSync('fake-claude.answer')
     ? JSON.parse(readFileSync('fake-claude.answer', 'utf8'))
     : { title: 'parsed', area: null, project: null, due: null, priority: 0 }
@@ -72,6 +78,7 @@ function answer() {
     usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 500, output_tokens: 60 },
     modelUsage: { 'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 60, costUSD: 0.0021 } },
     ...(mode === 'is_error' ? {} : { structured_output: output }),
+    ...(mode === 'odd-usage' ? { total_cost_usd: '0.01', duration_ms: 'soon', usage: 'many' } : {}),
   }
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }

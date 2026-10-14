@@ -146,7 +146,7 @@ export interface CaptureRequest {
 }
 
 export const parseCapture = (raw: unknown): Shaped<CaptureRequest> => shape(captureSchema, raw)
-export const parseNewTask =(raw: unknown): Shaped<NewTask> => shape(newTaskSchema, raw)
+export const parseNewTask = (raw: unknown): Shaped<NewTask> => shape(newTaskSchema, raw)
 export const parsePatch = (raw: unknown): Shaped<TaskPatch> => shape(patchSchema, raw)
 export const parseMove = (raw: unknown): Shaped<MoveInput> => shape(moveSchema, raw)
 export const parseClose = (raw: unknown): Shaped<CloseInput> => shape(closeSchema, raw)

@@ -13,7 +13,9 @@
  * sent with this capture (S12, held in memory for this run only). An answer outside them is `null`.
  *
  * AT MOST `MAX_PARALLEL_PARSES` runs at a time; the rest wait their turn, and one the owner touched
- * while it waited is skipped without spending a run.
+ * while it waited is skipped without spending a run. Past `MAX_WAITING_PARSES` waiting, a capture is
+ * refused before its card is written: every one is a paid run, and a client stuck in a retry loop must
+ * not queue them without end.
  *
  * THE LOG CARRIES IDS, TIMES, TOKENS AND COST, never a word of the capture (criterion 41).
  */
@@ -28,6 +30,7 @@ import type { RunResult } from './run.ts'
 import type { CaptureOutput } from './schema.ts'
 
 export const MAX_PARALLEL_PARSES = 2
+export const MAX_WAITING_PARSES = 20
 
 export type CaptureInput = CaptureRequest
 
@@ -68,9 +71,10 @@ function stillPending(card: Task | undefined): card is Task & { readonly source:
 }
 
 type Parse = 'ok' | 'failed' | 'skipped'
+type Deduced = Pick<Task, 'title' | 'area' | 'project' | 'due' | 'priority'>
 
 /** The card with its `parse` set, and the deduced fields when there are some. Pure. */
-function settled(card: Task, parse: Parse, at: string, fields: Partial<Task> = {}): Task {
+function settled(card: Task, parse: Parse, at: string, fields: Partial<Deduced> = {}): Task {
   if (card.source.kind !== 'capture') return card
   // `skipped` is bookkeeping, not an edit: the card keeps the `updatedAt` the owner gave it.
   return { ...card, ...fields, source: { ...card.source, parse }, updatedAt: parse === 'skipped' ? card.updatedAt : at }
@@ -112,19 +116,19 @@ export function createCapturer(deps: CaptureDeps): Capturer {
         area: out.area !== null && areas.includes(out.area) ? out.area : null,
         project: index >= 0 ? (job.projects[index] ?? null) : null,
         due: out.due,
-        priority: out.priority as Task['priority'],
+        priority: out.priority,
       })
     })
 
   const work = async (job: Job): Promise<void> => {
     const board = deps.store.current()
-    if (!intact(board.tasks.find((t) => t.id === job.id), job.stamp)) {
+    const card = board.tasks.find((t) => t.id === job.id)
+    if (!intact(card, job.stamp)) {
       await skipIfTouched(job)
       return
     }
     const areas = areasOf(board)
     const ctx = deps.opContext()
-    const card = board.tasks.find((t) => t.id === job.id) as Task
     const raw = card.source.kind === 'capture' ? card.source.raw : card.title
     const prompt = buildCapturePrompt({ raw, today: todayOf(ctx.now, ctx.timeZone), areas, projects: job.prompt })
     const result = await deps.run(prompt, abort.signal)
@@ -135,12 +139,16 @@ export function createCapturer(deps: CaptureDeps): Capturer {
     } else {
       deps.log.warn(`capture ${job.id} could not be parsed: ${result.reason}`)
     }
-    await apply(job, result, areas)
+    const written = await apply(job, result, areas)
+    // `conflict` is the guard's «nothing to write»; anything else is a write that failed, and the card
+    // stays `pending` until the next start settles it (criterion 23c).
+    if (!written.ok && written.error.code !== 'conflict') deps.log.warn(`capture ${job.id} could not be saved: ${written.error.code}`)
   }
 
   const pump = (): void => {
-    while (active < MAX_PARALLEL_PARSES && waiting.length > 0 && !abort.signal.aborted) {
-      const job = waiting.shift() as Job
+    while (active < MAX_PARALLEL_PARSES && !abort.signal.aborted) {
+      const job = waiting.shift()
+      if (job === undefined) return
       active++
       const running: Promise<void> = work(job)
         .catch((error: unknown) => deps.log.error(`capture ${job.id} failed: ${error instanceof Error ? error.message : 'unknown'}`))
@@ -156,6 +164,9 @@ export function createCapturer(deps: CaptureDeps): Capturer {
   return {
     capture: async (input) => {
       if (abort.signal.aborted) return { ok: false, error: { code: 'module-error', reason: 'the board is stopping' } }
+      if (waiting.length >= MAX_WAITING_PARSES) {
+        return { ok: false, error: { code: 'conflict', reason: `${MAX_WAITING_PARSES} captures are already waiting to be read; try again in a minute` } }
+      }
       const created = await deps.store.change((board) => createCaptured(board, input.text, MAX_TITLE_CHARS, deps.opContext()))
       if (!created.ok) return created
       const task = created.value.task

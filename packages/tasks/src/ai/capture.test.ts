@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { acceptTask, patchTask } from '../board/ops.ts'
 import { openBoardStore, type BoardStore } from '../board/store.ts'
 import { captureLog, counter, eventually, NOW, ZONE } from '../test-support.ts'
 import type { Board, Result, Task } from '../types.ts'
-import { createCapturer, MAX_PARALLEL_PARSES, type CaptureInput, type Capturer } from './capture.ts'
+import { createCapturer, MAX_PARALLEL_PARSES, MAX_WAITING_PARSES, type CaptureInput, type Capturer } from './capture.ts'
 import type { RunResult } from './run.ts'
 import type { CaptureOutput } from './schema.ts'
 
@@ -51,7 +51,7 @@ async function rig(t: { after: (fn: () => Promise<void>) => void }) {
   t.after(() => capturer.stop())
   const card = (id: string): Task | undefined => store.current().tasks.find((x) => x.id === id)
   const change = (op: (board: Board) => Result<{ readonly board: Board }>) => store.change(op)
-  return { store, capturer, calls, log, card, change, opContext }
+  return { store, capturer, calls, log, card, change, opContext, dir }
 }
 
 function ok<T>(result: Result<T>): T {
@@ -225,4 +225,29 @@ test('stop aborts the runs in flight and writes nothing after', async (t) => {
   assert.equal((card(created.id)?.source as { parse: string }).parse, 'pending')
   const late = await capturer.capture(INPUT)
   assert.equal(late.ok, false)
+})
+
+test(`past ${MAX_WAITING_PARSES} waiting, a capture is refused before a card is written: every one is a paid run`, async (t) => {
+  const { capturer, calls, store } = await rig(t)
+  for (let i = 0; i < MAX_PARALLEL_PARSES + MAX_WAITING_PARSES; i++) ok(await capturer.capture({ text: `c${i}` }))
+  await eventually(() => calls.length === MAX_PARALLEL_PARSES, 'the first runs')
+  const before = store.current().tasks.length
+  const refused = await capturer.capture({ text: 'one too many' })
+  assert.equal(refused.ok, false)
+  assert.equal(!refused.ok && refused.error.code, 'conflict')
+  assert.equal(store.current().tasks.length, before)
+})
+
+test('an answer whose write fails is logged with the card’s id; the card stays as it was', async (t) => {
+  const { capturer, calls, card, log, dir } = await rig(t)
+  const created = ok(await capturer.capture(INPUT))
+  await eventually(() => calls.length === 1, 'the run started')
+  await chmod(dir, 0o500)
+  try {
+    calls[0]!.answer(parsed({ title: 'never saved' }))
+    await eventually(() => log.lines.some((line) => line.includes(`capture ${created.id} could not be saved`)), 'the warning')
+    assert.equal(card(created.id)?.title, INPUT.text)
+  } finally {
+    await chmod(dir, 0o700)
+  }
 })
