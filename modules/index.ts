@@ -60,3 +60,11 @@ export { INVOKABLE_NAME, sessionsConfigSchema } from './sessions/config.ts'
 export { inboxModule } from './inbox/server.ts'
 export type { CreateInbox, Digest, DigestSummary, Inbox, InboxSetup, InboxStatus } from './inbox/types.ts'
 export type { SessionsConfig } from './sessions/config.ts'
+
+/**
+ * The task board (spec 2026-10-14-tareas-kanban): a factory as well, and it also takes the LINK the
+ * composition root creates, which `sessions` will read for `create_task` (design D1).
+ */
+export { tasksModule } from './tasks/server.ts'
+export type { TasksModuleOptions } from './tasks/server.ts'
+export type { BoardView, CreateTasks, Task, Tasks, TasksLink, TasksSetup } from './tasks/types.ts'

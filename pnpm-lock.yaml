@@ -63,6 +63,9 @@ importers:
       '@factotum/sessions':
         specifier: workspace:*
         version: link:../sessions
+      '@factotum/tasks':
+        specifier: workspace:*
+        version: link:../tasks
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4

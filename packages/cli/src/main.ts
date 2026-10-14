@@ -13,9 +13,10 @@
 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_MODULES, inboxModule, sessionsModule, type CreateEngine, type CreateInbox } from '@factotum/modules'
+import { ALL_MODULES, inboxModule, sessionsModule, tasksModule, type CreateEngine, type CreateInbox, type CreateTasks, type TasksLink } from '@factotum/modules'
 import { createEngine } from '@factotum/sessions'
 import { createInbox } from '@factotum/inbox'
+import { createTasks, createTasksLink } from '@factotum/tasks'
 import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum/kernel'
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
@@ -25,6 +26,7 @@ import { qrCommand } from './qr-command.ts'
 import { siteCommand, stripEnvFlag } from './site-command.ts'
 import { pushCommand } from './push-command.ts'
 import { askTimeoutFrom } from './ask-timeout.ts'
+import { tasksNowOffset } from './tasks-now.ts'
 
 const USAGE = `factotum ${VERSION}
 
@@ -138,6 +140,13 @@ const engineFactory: CreateEngine = createEngine
  */
 const inboxFactory: CreateInbox = createInbox
 
+/**
+ * And for the task board (spec 2026-10-14, D1): the factory, and the link both sides of which are
+ * declared twice — the package's `TasksLink` must fit the one `modules/tasks/types.ts` declares.
+ */
+const tasksFactory: CreateTasks = createTasks
+const newTasksLink: () => TasksLink = createTasksLink
+
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
   // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
@@ -165,11 +174,19 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
     return verifiedUrl
   }
 
+  // Empty until `tasks` starts; `sessions` reads it on every `tools/list` from the second cut on (D1).
+  const tasksLink = newTasksLink()
+
   let handle
   try {
     handle = await boot({
       env,
-      modules: [...ALL_MODULES, sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() }), inboxModule(inboxFactory)],
+      modules: [
+        ...ALL_MODULES,
+        sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() }),
+        inboxModule(inboxFactory),
+        tasksModule(tasksFactory, tasksLink, { nowOffsetMs: tasksNowOffset(env, process.env, (message) => console.warn(message)) }),
+      ],
       version: VERSION,
       site: createStaticSite(siteRoot()),
     })
