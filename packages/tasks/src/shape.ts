@@ -17,7 +17,7 @@
 
 import { z } from 'zod'
 import { CYCLE_ID_PATTERN } from './cycle.ts'
-import type { CloseInput, LinkInput, MoveInput, NewTask, TaskPatch } from './types.ts'
+import type { CloseInput, LinkInput, MoveInput, NewTask, Priority, TaskPatch } from './types.ts'
 
 export const MAX_TITLE_CHARS = 200
 export const MAX_NOTES_CHARS = 4000
@@ -146,6 +146,25 @@ export interface CaptureRequest {
 }
 
 export const parseCapture = (raw: unknown): Shaped<CaptureRequest> => shape(captureSchema, raw)
+
+/** What an agent may say about a task (design D8): fewer fields than the owner, and the same limits. */
+const agentTaskSchema = z.strictObject({
+  title,
+  notes: notes.optional(),
+  area: area.optional(),
+  due: due.optional(),
+  priority: priority.optional(),
+})
+
+export interface AgentTaskInput {
+  readonly title: string
+  readonly notes?: string
+  readonly area?: string
+  readonly due?: string
+  readonly priority?: Priority
+}
+
+export const parseAgentTask = (raw: unknown): Shaped<AgentTaskInput> => shape(agentTaskSchema, raw)
 export const parseNewTask = (raw: unknown): Shaped<NewTask> => shape(newTaskSchema, raw)
 export const parsePatch = (raw: unknown): Shaped<TaskPatch> => shape(patchSchema, raw)
 export const parseMove = (raw: unknown): Shaped<MoveInput> => shape(moveSchema, raw)

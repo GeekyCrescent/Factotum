@@ -164,11 +164,12 @@ test("«What's next?» through the facade: started at once, a conflict while it 
   assert.equal(tasks.nextStatus().error, null)
 })
 
-test('the members still to come answer not-yet, and the agent lists no tool', async (t) => {
+test('the agent lists create_task and puts its card in triage through the facade (criterion 26)', async (t) => {
   const { tasks } = await harness(t)
-  assert.deepEqual(tasks.agent.tools(), [])
-  const result = await tasks.agent.call({ sessionId: 's', siteId: 'x', toolUseId: undefined, name: 'create_task', raw: {} })
-  assert.equal(result.isError, true)
+  assert.deepEqual(tasks.agent.tools().map((tool) => tool.name), ['create_task'])
+  const result = await tasks.agent.call({ sessionId: '01920000-0000-7000-8000-00000000000a', siteId: 'web', toolUseId: undefined, name: 'create_task', raw: { title: 'From an agent' } })
+  assert.equal(result.isError, undefined)
+  assert.equal(tasks.triage()[0]?.source.kind, 'agent')
 })
 
 test('stop waits for the writes in flight', async (t) => {

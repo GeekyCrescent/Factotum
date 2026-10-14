@@ -172,6 +172,46 @@ export function createCaptured(board: Board, raw: string, maxTitle: number, ctx:
   return { ok: true, value: withTask(board, place(board.tasks, card, endOf(board.tasks, 'triage', card.id)), card.id) }
 }
 
+/**
+ * A card an agent created (design D8; criterion 26): in TRIAGE, with its session and its project, and
+ * the session's count raised in THE SAME CHANGE — so the cap of criterion 27 holds across a restart.
+ * The cap itself is checked by the caller, on this same board, inside the same queue.
+ */
+export function createFromAgent(
+  board: Board,
+  input: { readonly title: string; readonly notes?: string; readonly area?: string; readonly due?: string; readonly priority?: Task['priority'] },
+  source: { readonly host: string | null; readonly sessionId: string; readonly siteId: string },
+  ctx: OpContext,
+): Result<Changed> {
+  const at = ctx.now.toISOString()
+  const card: Task = {
+    id: ctx.newId(),
+    title: input.title,
+    notes: input.notes ?? '',
+    status: 'triage',
+    order: '',
+    cycle: null,
+    area: input.area ?? null,
+    // The session ran in this project, on the host it came from: the card is about it.
+    project: { host: source.host, siteId: source.siteId },
+    priority: input.priority ?? 0,
+    labels: [],
+    estimate: null,
+    due: input.due ?? null,
+    remindAt: null,
+    remindedAt: null,
+    reminderMissed: false,
+    subtasks: [],
+    source: { kind: 'agent', host: source.host, sessionId: source.sessionId, siteId: source.siteId },
+    sessions: [],
+    createdAt: at,
+    updatedAt: at,
+    completedAt: null,
+  }
+  const counted: Board = { ...board, agentCounts: { ...board.agentCounts, [source.sessionId]: (board.agentCounts[source.sessionId] ?? 0) + 1 } }
+  return { ok: true, value: withTask(counted, place(board.tasks, card, endOf(board.tasks, 'triage', card.id)), card.id) }
+}
+
 export function patchTask(board: Board, id: string, patch: TaskPatch, ctx: OpContext): Result<Changed> {
   const card = board.tasks.find((t) => t.id === id)
   if (card === undefined) return notFound(id)

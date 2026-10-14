@@ -174,7 +174,8 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
     return verifiedUrl
   }
 
-  // Empty until `tasks` starts; `sessions` reads it on every `tools/list` from the second cut on (D1).
+  // Empty until `tasks` starts; `sessions` reads its family on every `tools/list` (design D1, D7): while
+  // `tasks` is off, starting or failed, `create_task` is simply not on the list (criterion 2).
   const tasksLink = newTasksLink()
 
   let handle
@@ -183,7 +184,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
       env,
       modules: [
         ...ALL_MODULES,
-        sessionsModule(launchEngine, hookUrl, { installRoot: installRoot() }),
+        sessionsModule(launchEngine, hookUrl, { installRoot: installRoot(), agentTools: [tasksLink.family] }),
         inboxModule(inboxFactory),
         tasksModule(tasksFactory, tasksLink, { nowOffsetMs: tasksNowOffset(env, process.env, (message) => console.warn(message)) }),
       ],

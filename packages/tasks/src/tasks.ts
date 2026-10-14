@@ -4,8 +4,7 @@
  * EVERY INPUT FROM OUTSIDE ARRIVES AS `unknown` and is shaped here (`shape.ts`) before an op sees it,
  * so the `400` with its field comes from one place. Every change goes through the store's queue.
  *
- * WHAT IS STILL TO COME answers «not yet»: the agent (block H). Relay mode
- * does not start: it needs block R.
+ * Relay mode does not start yet: it needs block R.
  *
  * NOTHING HERE LOGS A TITLE, notes or subtasks (criterion 41): the store logs codes and the facade
  * logs nothing about a card.
@@ -17,6 +16,7 @@ import type { z } from 'zod'
 import { uuidv7 } from '@factotum/sessions'
 import { createCapturer } from './ai/capture.ts'
 import { runClaude, type RunResult } from './ai/run.ts'
+import { createAgentTools } from './agent.ts'
 import { createNext } from './ai/next.ts'
 import { captureOutputSchema, CAPTURE_JSON_SCHEMA, NEXT_JSON_SCHEMA, nextOutputSchema } from './ai/schema.ts'
 import { acceptTask, closeCycles, createTask, linkSession, moveTask, patchTask, removeTask, type Changed, type OpContext } from './board/ops.ts'
@@ -24,18 +24,13 @@ import { openBoardStore } from './board/store.ts'
 import { boardView, cycleSummaries } from './board/view.ts'
 import { parseTasksConfig } from './config.ts'
 import { parseAccept, parseCapture, parseClose, parseLink, parseMove, parseNewTask, parsePatch, type Shaped } from './shape.ts'
-import type { AgentToolImpl, Board, CreateTasksResult, Result, Task, Tasks, TasksDeps } from './types.ts'
+import type { Board, CreateTasksResult, Result, Task, Tasks, TasksDeps } from './types.ts'
 
 /** A capture is read within this, or it is `failed` and keeps its text (criterion 22). */
 export const PARSE_TIMEOUT_MS = 30_000
 /** «What's next?» answers within this (criterion 38). */
 export const NEXT_TIMEOUT_MS = 60_000
 
-
-const SECOND_CUT_AGENT: AgentToolImpl = {
-  tools: () => [],
-  call: async () => ({ content: [{ type: 'text', text: 'Creating tasks is not available on this board yet.' }], isError: true }),
-}
 
 function invalid<T>(shaped: Shaped<unknown> & { readonly ok: false }): Result<T> {
   return { ok: false, error: { code: 'invalid', field: shaped.field, reason: shaped.reason } }
@@ -141,7 +136,7 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
     },
     runNext: () => nexter.start(),
     nextStatus: () => nexter.status(),
-    agent: SECOND_CUT_AGENT,
+    agent: createAgentTools({ store, opContext, log: deps.log }),
 
     stop: async () => {
       // The runs first: what they would have written is decided by the next start (criterion 23c).

@@ -85,11 +85,13 @@ test('a bad block switches off tasks alone; the other module serves, and the rea
 })
 
 test('a good block serves the board, and the link is filled after start', async (t) => {
-  const { handle, list } = await bootWith(t, { tasks: { enabled: true, timeZone: 'Australia/Sydney' } })
+  const { handle, list, link } = await bootWith(t, { tasks: { enabled: true, timeZone: 'Australia/Sydney' } })
   assert.equal((await list()).find((m) => m.id === 'tasks')?.status.kind, 'enabled')
   const response = await fetch(`${handle.localUrl}/modules/tasks/board`)
   assert.equal(response.status, 200)
   const view = (await response.json()) as { timeZone: string; tasks: unknown[] }
   assert.equal(view.timeZone, 'Australia/Sydney')
   assert.deepEqual(view.tasks, [])
+  // H4: filled LAST in start, the link lists create_task — what the sessions MCP reads on tools/list.
+  assert.deepEqual(link.family.tools().map((tool) => tool.name), ['create_task'])
 })
