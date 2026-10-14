@@ -7,6 +7,10 @@ export type {
   ModuleStatus,
   NotificationMessage,
   Notifier,
+  PeerCallOptions,
+  PeerCaller,
+  PeerResponse,
+  PeerView,
   PushEnvelope,
   Timers,
 } from './module.ts'

@@ -20,3 +20,13 @@ export const REFUSED_RESTS = [
   '/peers/x/health',
   '/',
 ] as const
+
+/**
+ * `ctx.peers` for a daemon with no peers (spec 2026-10-07, D4): an empty list, and every call
+ * `unreachable` without leaving the process — what `createPeerCalls` answers with an empty table.
+ */
+export const NO_PEER_CALLS = {
+  list: () => [],
+  json: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+  upload: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }) as const,
+}

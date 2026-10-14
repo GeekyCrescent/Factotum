@@ -17,6 +17,7 @@ import type { Interfaces } from '../net/resolve.ts'
 import type { ComposedModule } from '../config/load.ts'
 import type { PeerTable } from '../net/peers.ts'
 import type { Proxy } from './proxy.ts'
+import { NO_PEER_CALLS } from '../test-support.ts'
 import { RELAY_MAX_BODY_BYTES, tokenBucket, type TokenBucket } from '../push/relay.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
@@ -62,6 +63,7 @@ async function start(opts: { push?: FakePush; ready?: boolean; interfaces?: Inte
     paths: statePaths('prod', home),
     env: 'prod',
     push: { canReach: () => false, send: async () => undefined },
+    peers: NO_PEER_CALLS,
   })
 
   const server = createServer({

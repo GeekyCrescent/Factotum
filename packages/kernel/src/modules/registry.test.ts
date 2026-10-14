@@ -25,9 +25,27 @@ function fakePush(reachable = false) {
   }
 }
 
-async function deps(startTimeoutMs = 50, push = fakePush()) {
+/** What the registry was asked to call on the twin, and as whom. */
+interface PeerCall {
+  readonly moduleId: string
+  readonly peer: string
+  readonly path: string
+}
+
+function fakePeers() {
+  const calls: PeerCall[] = []
+  const answer = { ok: false, status: undefined, reason: 'unreachable', body: undefined } as const
+  return {
+    calls,
+    list: () => [{ name: 'mac', reachable: true }],
+    json: async (moduleId: string, peer: string, _method: 'GET' | 'POST', path: string) => (calls.push({ moduleId, peer, path }), answer),
+    upload: async (moduleId: string, peer: string, path: string) => (calls.push({ moduleId, peer, path }), answer),
+  }
+}
+
+async function deps(startTimeoutMs = 50, push = fakePush(), peers = fakePeers()) {
   const home = await mkdtemp(join(tmpdir(), 'factotum-'))
-  return { paths: statePaths('prod', home), env: 'prod' as const, startTimeoutMs, push }
+  return { paths: statePaths('prod', home), env: 'prod' as const, startTimeoutMs, push, peers }
 }
 
 const enabled = (module: AnyModule, config: unknown = undefined): ComposedModule => ({
@@ -216,11 +234,11 @@ test('a module with no start is left alone', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// notify — the seventh field
+// notify — the seventh field; peers — the eighth (spec 2026-10-07, D4)
 // ---------------------------------------------------------------------------
 
-test('ModuleContext has EXACTLY seven keys, spelled out by hand (criterion 36)', async () => {
-  // A diff saying "only that block changed" discriminates nothing. A count does: an eighth
+test('ModuleContext has EXACTLY eight keys, spelled out by hand (criterion 36)', async () => {
+  // A diff saying "only that block changed" discriminates nothing. A count does: a ninth
   // field turns this red, and so does one quietly dropped. Same mechanism, and the same
   // reason, as the EngineSetup key list in the session module's own server test.
   let seen: ModuleContext | undefined
@@ -229,7 +247,31 @@ test('ModuleContext has EXACTLY seven keys, spelled out by hand (criterion 36)',
     await deps(),
   )
 
-  assert.deepEqual(Object.keys(seen ?? {}).sort(), ['config', 'env', 'log', 'notify', 'now', 'stateDir', 'timers'])
+  assert.deepEqual(Object.keys(seen ?? {}).sort(), ['config', 'env', 'log', 'notify', 'now', 'peers', 'stateDir', 'timers'])
+})
+
+test('a module calls its twin AS ITSELF: the registry binds the id, the module cannot pass one (criterion 38)', async () => {
+  const peers = fakePeers()
+  const seen = new Map<string, ModuleContext>()
+  await Registry.create(
+    [
+      enabled({ id: 'one', routes: (ctx) => (seen.set('one', ctx), {}) }),
+      enabled({ id: 'two', routes: (ctx) => (seen.set('two', ctx), {}) }),
+    ],
+    await deps(50, fakePush(), peers),
+  )
+
+  await seen.get('two')?.peers.json('mac', 'GET', 'handoff/projects')
+  await seen.get('one')?.peers.upload('mac', 'f/0', '/tmp/x')
+  // Even a module that tries to smuggle an id in has no parameter to put it in.
+  await (seen.get('one')?.peers.json as unknown as (...args: unknown[]) => Promise<unknown>)('other', 'mac', 'GET', 'x')
+
+  assert.deepEqual(peers.calls, [
+    { moduleId: 'two', peer: 'mac', path: 'handoff/projects' },
+    { moduleId: 'one', peer: 'mac', path: 'f/0' },
+    { moduleId: 'one', peer: 'other', path: 'GET' },
+  ])
+  assert.deepEqual(seen.get('one')?.peers.list(), [{ name: 'mac', reachable: true }])
 })
 
 test('a module notifies AS ITSELF: the registry binds the id, the module cannot pass one', async () => {

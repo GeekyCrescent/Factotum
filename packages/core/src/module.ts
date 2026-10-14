@@ -117,6 +117,65 @@ export interface ModuleContext<C = unknown> {
    * notice that looks like another module's, or like the daemon's own.
    */
   readonly notify: Notifier
+
+  /**
+   * Talking to THIS MODULE'S TWIN on the other host (spec 2026-10-07, D4). THE EIGHTH FIELD, and its
+   * one consumer is the session handoff, which moves conversations between two daemons (ADR-0020).
+   *
+   * Narrow on purpose, like `notify` (ADR-0008): a module names a peer and a path RELATIVE TO ITSELF,
+   * and the kernel builds the URL — `/modules/<this module's id>/<path>`, through the same rules as
+   * the proxy — decides the timeout under a ceiling, and logs only the shape of the route. A module
+   * is never given a URL, a socket or another module's routes.
+   */
+  readonly peers: PeerCaller
+}
+
+/** A peer as a module sees it: its name, and whether the last probe found it. */
+export interface PeerView {
+  readonly name: string
+  readonly reachable: boolean
+}
+
+export interface PeerCallOptions {
+  /** How long the WHOLE call may take. 10 s by default, at most `PEER_CALL_MAX_MS` (the kernel's). */
+  readonly timeoutMs?: number
+}
+
+/**
+ * What came back. NEVER A THROW: every way a call can go wrong is a `reason`.
+ *
+ * - `unreachable`: the peer is not declared, the probe has it down, or the connection failed;
+ * - `refused`: the kernel would not send that path (a `..`, an escape), or the file to upload could not
+ *   be opened — nothing left this host;
+ * - `timeout`: no answer in time, which DOES NOT SAY whether the peer did the work;
+ * - `bad-json`: a 2xx whose body is not JSON, or is over `MAX_BODY_BYTES`;
+ * - `http`: the peer answered with a status that is not 2xx. `body` is its JSON, when it is JSON and
+ *   fits — the module reads its own refusals from it; the kernel never interprets it.
+ */
+export type PeerResponse<T> =
+  | { readonly ok: true; readonly status: number; readonly body: T }
+  | {
+      readonly ok: false
+      readonly status: number | undefined
+      readonly reason: 'unreachable' | 'refused' | 'timeout' | 'bad-json' | 'http'
+      readonly body: unknown
+    }
+
+export interface PeerCaller {
+  /** Synchronous, from the probe's last reading. */
+  readonly list: () => readonly PeerView[]
+  readonly json: <T = unknown>(
+    peer: string,
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown,
+    options?: PeerCallOptions,
+  ) => Promise<PeerResponse<T>>
+  /**
+   * A FILE, by its path, streamed to an upload route of the twin (ADR-0012: a module hands over a
+   * path, never a stream). The kernel opens it and closes it whatever happens.
+   */
+  readonly upload: <T = unknown>(peer: string, path: string, file: string, options?: PeerCallOptions) => Promise<PeerResponse<T>>
 }
 
 /**

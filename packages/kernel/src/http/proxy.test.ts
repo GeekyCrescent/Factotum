@@ -15,7 +15,7 @@ import { policyFor } from '../net/policy.ts'
 import { createPeerTable, type PeerTable } from '../net/peers.ts'
 import { Registry, timerSet } from '../modules/registry.ts'
 import { statePaths } from '../config/paths.ts'
-import { REFUSED_RESTS } from '../test-support.ts'
+import { NO_PEER_CALLS, REFUSED_RESTS } from '../test-support.ts'
 
 const PUBLIC = 'https://mimac.tail1234.ts.net'
 const FOREIGN = 'https://evil.example'
@@ -105,6 +105,7 @@ async function daemon(peerPort: number, opts: { reachable?: boolean; ready?: boo
     paths: statePaths('prod', home),
     env: 'prod',
     push: { canReach: () => false, send: async () => undefined },
+    peers: NO_PEER_CALLS,
   })
   const port = takePort()
   const server = createServer({

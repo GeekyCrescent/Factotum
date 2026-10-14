@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createHttpServer } from 'node:http'
-import type { AnyModule, BootHandle } from '@factotum/core'
+import type { AnyModule, BootHandle, PeerCaller } from '@factotum/core'
 import { boot } from './boot.ts'
 import type { BootError } from './errors.ts'
 import { statePaths } from './config/paths.ts'
@@ -623,5 +623,53 @@ test('with no devices here and the peer at 1, a module can reach the owner, and 
   } finally {
     await handle.stop()
     await closePeer()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// ctx.peers, wired (spec 2026-10-07, D4, criterion 38): a module calls its twin, and stop cuts it
+// ---------------------------------------------------------------------------
+
+test('a module calls its twin through ctx.peers, and a call in flight at stop ends without waiting for the peer', async () => {
+  const peerPort = takePort()
+  const seen: string[] = []
+  const peer = createHttpServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: 'p', ready: true, devices: 0 }))
+      return
+    }
+    seen.push(req.url ?? '')
+    // `/hang` never answers: only the daemon's stop can end it.
+    if (req.url?.endsWith('/hang') === true) return
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ twin: true }))
+  })
+  await new Promise<void>((resolve) => peer.listen(peerPort, 'localhost', resolve))
+
+  let peers: PeerCaller | undefined
+  const caller: AnyModule = { id: 'caller', routes: (ctx) => ((peers = ctx.peers), {}) }
+  const port = takePort()
+  const paths = await withConfig(
+    { publicOrigin: `http://127.0.0.1:${port}`, peers: [{ origin: `http://localhost:${peerPort}` }], modules: { caller: { enabled: true } } },
+    port,
+  )
+  const handle = await bootWith(paths, [caller], { peerProbeMs: 30 })
+  let stopped = false
+  try {
+    const deadline = Date.now() + 3_000
+    while (peers?.list()[0]?.reachable !== true && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+    assert.deepEqual(await peers?.json('localhost', 'GET', 'ping'), { ok: true, status: 200, body: { twin: true } })
+    assert.deepEqual(seen, ['/modules/caller/ping'])
+
+    const hanging = peers?.json('localhost', 'GET', 'hang', undefined, { timeoutMs: 60_000 })
+    while (seen.length < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+    const started = performance.now()
+    stopped = true
+    await handle.stop()
+    assert.equal((await hanging)?.ok, false)
+    assert.ok(performance.now() - started < 2_000, 'stop did not wait for the peer')
+  } finally {
+    if (!stopped) await handle.stop()
+    peer.closeAllConnections()
+    await new Promise<void>((resolve) => peer.close(() => resolve()))
   }
 })

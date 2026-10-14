@@ -8,9 +8,10 @@
  */
 
 import { mkdir, rm } from 'node:fs/promises'
-import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type NotificationMessage, type ReceivedFile, type RouteHandler, type Timers } from '@factotum/core'
+import { prefixed, type Environment, type ModuleResponse, type ModuleStatus, type NavEntry, type NotificationMessage, type PeerCaller, type ReceivedFile, type RouteHandler, type Timers } from '@factotum/core'
 import type { ComposedModule } from '../config/load.ts'
 import { incomingDir, moduleStateDir, type StatePaths } from '../config/paths.ts'
+import type { PeerCalls } from '../net/peer-calls.ts'
 import type { PushService } from '../push/service.ts'
 import { compileRoutes, buildRequest, matchRoute, type CompiledRoute } from './mount.ts'
 
@@ -38,6 +39,12 @@ export interface RegistryDeps {
    * service whose `canReach` says so.
    */
   readonly push: Pick<PushService, 'canReach' | 'send'>
+  /**
+   * The calls to the other daemon (spec 2026-10-07, D4), ALREADY BUILT by `boot` on the peer table
+   * and the kernel's timers — a service, like `push`, and the id is bound here the same way. REQUIRED
+   * for the same reason as `push`: with no peers, what arrives is a service whose `list` is empty.
+   */
+  readonly peers: Pick<PeerCalls, 'list' | 'json' | 'upload'>
 }
 
 /**
@@ -198,6 +205,12 @@ export class Registry {
           canReach: () => deps.push.canReach(),
           send: (message: NotificationMessage) => deps.push.send(message, moduleId),
         },
+        // Bound the same way: a module calls ITS TWIN on the other host, never another module.
+        peers: {
+          list: () => deps.peers.list(),
+          json: (peer, method, path, body, options) => deps.peers.json(moduleId, peer, method, path, body, options),
+          upload: (peer, path, file, options) => deps.peers.upload(moduleId, peer, path, file, options),
+        } satisfies PeerCaller,
       }
 
       entries.push({
