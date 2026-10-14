@@ -75,5 +75,8 @@ export async function ensureBase(repo: string, what: { readonly bundle: string }
 /** The bundle into `refs/factotum/handoff/<hid>/*` of the target. Refs only: the tree is not touched. */
 export async function importBundle(repo: string, options: { readonly bundle: string; readonly hid: string; readonly env?: NodeJS.ProcessEnv }): Promise<void> {
   const prefix = handoffRefPrefix(options.hid)
-  await handoffGit(repo, ['fetch', '--quiet', options.bundle, `${prefix}/*:${prefix}/*`], options.env !== undefined ? { base: options.env } : {})
+  // The peer's objects are checked as they come in (security review); `fetch origin` is not, so an old
+  // repo's historic warnings never stop the pull of its own remote.
+  const fsck = [['fetch.fsckObjects', 'true'], ['transfer.fsckObjects', 'true']] as const
+  await handoffGit(repo, ['fetch', '--quiet', options.bundle, `${prefix}/*:${prefix}/*`], { config: fsck, ...(options.env !== undefined ? { base: options.env } : {}) })
 }

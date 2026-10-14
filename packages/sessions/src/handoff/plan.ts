@@ -209,7 +209,8 @@ function projectReasonOf(project: PlanProject, pair: TargetProject, facts: PlanF
   if (pair.busy) return 'target-busy'
   // A branch the target lacks is never ahead. One it has must be this HEAD or behind it; a tip this
   // host cannot even name is not an ancestor either (D7).
-  if (pair.heads[project.branch] !== undefined && facts.targetTipIsAncestor.get(project.siteId) !== true) return 'target-ahead'
+  // `Object.hasOwn`: a branch called `constructor` is a branch, not the prototype's.
+  if (Object.hasOwn(pair.heads, project.branch) && facts.targetTipIsAncestor.get(project.siteId) !== true) return 'target-ahead'
   return undefined
 }
 

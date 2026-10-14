@@ -113,8 +113,11 @@ test('the refs: backups and rescues after 14 days; handoff/<hid>/* once no live 
     live: (await handoff(h, 1, 'prepared')).hid,
     failed: (await handoff(h, 30, 'abort-failed')).hid,
   }
-  await sh(w.env, w.source, 'update-ref', `refs/factotum/handoff-backup/${hids.oldBackup}`, head)
-  await sh(w.env, w.source, 'update-ref', `refs/factotum/handoff-rescue/${hids.youngRescue}`, head)
+  // Aged by its COMMIT's date, this host's clock: a backup made fifteen days ago.
+  const old = await sh({ ...w.env, GIT_COMMITTER_DATE: new Date(NOW - 15 * DAY).toISOString() }, w.source, 'commit-tree', `${head}^{tree}`, '-p', head, '-m', 'wip')
+  await sh(w.env, w.source, 'update-ref', `refs/factotum/handoff-backup/${hids.oldBackup}`, old)
+  const young = await sh({ ...w.env, GIT_COMMITTER_DATE: new Date(NOW - 3 * DAY).toISOString() }, w.source, 'commit-tree', `${head}^{tree}`, '-p', head, '-m', 'rescue')
+  await sh(w.env, w.source, 'update-ref', `refs/factotum/handoff-rescue/${hids.youngRescue}`, young)
   for (const hid of [hids.orphan, hids.live, hids.failed]) await sh(w.env, w.source, 'update-ref', `refs/factotum/handoff/${hid}/head`, head)
   await run(h)
   const left = (await sh(w.env, w.source, 'for-each-ref', '--format=%(refname)', 'refs/factotum/')).split('\n').sort()

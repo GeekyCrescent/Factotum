@@ -141,7 +141,8 @@ export const targetProjectsSchema = z.array(
     busy: z.boolean(),
     branch: z.string().optional(),
     head: z.string().optional(),
-    heads: z.record(z.string(), z.string()),
+    // Tips that reach a git command line: hashes, and nothing that could read as an option.
+    heads: z.record(z.string(), z.string().regex(/^[0-9a-f]{40,64}$/)),
     entries: z.array(z.string()),
     ignoreDigest: z.object({ global: z.string(), info: z.string() }),
   }),
@@ -181,7 +182,7 @@ export async function ancestryOf(host: Pick<HandoffHost, 'projects' | 'gitEnv'>,
   const out = new Map<string, boolean>()
   for (const project of projects) {
     const pair = pairOf(project, projects, targets)
-    const tip = typeof pair === 'string' || project.branch === undefined ? undefined : pair.heads[project.branch]
+    const tip = typeof pair === 'string' || project.branch === undefined || !Object.hasOwn(pair.heads, project.branch) ? undefined : pair.heads[project.branch]
     const path = paths.get(project.siteId)
     if (tip === undefined || path === undefined || !/^[0-9a-f]{40,64}$/.test(tip)) continue
     // A tip this host does not have is not an ancestor: exit 128 reads as `false`.

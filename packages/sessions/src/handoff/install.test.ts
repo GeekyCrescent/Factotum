@@ -25,7 +25,8 @@ async function staged(h: TestHost, project: string) {
   await mkdir(join(dir, 'session'), { recursive: true })
   const meta = { id, siteId: 'personal', entryId: 'free', state: 'finished', startedAt: 'x', turns: 1, sitePath: '/Users/ferro/vault', touchedAt: 't', movedTo: 'nowhere' }
   await writeFile(join(dir, 'session', 'meta.json'), JSON.stringify(meta))
-  await writeFile(join(dir, 'session', 'events.jsonl'), `${JSON.stringify({ seq: 0, at: 'x', kind: 'message', role: 'user', text: 'hi' })}\n`)
+  // The log names the upload: only a named one is installed.
+  await writeFile(join(dir, 'session', 'events.jsonl'), `${JSON.stringify({ seq: 0, at: 'x', kind: 'message', role: 'user', text: `@/on/the/source/uploads/${upload}/f.txt` })}\n`)
   return { id, upload, work, input: { sessionId: id, siteId: 'obsidian', projectPath: project, event: { from: 'mac', to: 'omarchy', hid: uuidv7(1) } } }
 }
 

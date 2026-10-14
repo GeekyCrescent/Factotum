@@ -95,6 +95,7 @@ test('the handoff config travels in GIT_CONFIG_COUNT/KEY/VALUE, never as -c, and
     'gc.auto': '0',
     'commit.gpgSign': 'false',
     'core.fsmonitor': 'false',
+    'submodule.recurse': 'false',
   })
   assert.equal(env['PATH'], '/bin')
 

@@ -161,7 +161,8 @@ export function worldProjects(w: World, sourceId = 'vault', targetId = 'obsidian
 }
 
 /** Timers a test moves by hand: `advance(ms)` fires what is due, in order. */
-export function manualTimers(): Timers & { readonly advance: (ms: number) => Promise<void>; readonly pending: () => number } {
+export function manualTimers(): Timers & { readonly advance: (ms: number) => Promise<void>; readonly pending: () => number; readonly clock: () => Date } {
+  const started = Date.now()
   let now = 0
   let seq = 0
   const due = new Map<number, { at: number; fn: () => void; every?: number }>()
@@ -174,6 +175,8 @@ export function manualTimers(): Timers & { readonly advance: (ms: number) => Pro
     setTimeout: (fn, ms) => add(fn, ms),
     setInterval: (fn, ms) => add(fn, ms, ms),
     pending: () => due.size,
+    /** The time these timers are at: what a host's `now` reads when the test moves time. */
+    clock: () => new Date(started + now),
     advance: async (ms) => {
       const end = now + ms
       for (;;) {
@@ -210,6 +213,7 @@ export interface TargetScenario {
 
 export interface ScenarioOptions {
   readonly timers?: Timers
+  readonly now?: () => Date
   readonly ttlMs?: number
   /** Before the sessions exist: commits, ignore rules, files on either side. */
   readonly setup?: (w: World) => Promise<void>
@@ -222,7 +226,7 @@ export async function targetScenario(options: ScenarioOptions = {}): Promise<Tar
   const projects = worldProjects(w)
   const source = await makeHost({ name: 'mac', projects: projects.source, env: w.env, peers: fakePeer('omarchy', { route: undefined, reachable: true }) })
   const target = await makeHost({ name: 'omarchy', projects: projects.target, env: w.env, peers: fakePeer('mac', { route: undefined, reachable: true }) })
-  const timed = options.timers === undefined ? target : { ...target, host: { ...target.host, timers: options.timers } }
+  const timed = options.timers === undefined ? target : { ...target, host: { ...target.host, timers: options.timers, ...(options.now !== undefined ? { now: options.now } : {}) } }
   const queue = new KeyedQueue()
   const t = createTarget({ host: timed.host, queue, ...(options.ttlMs !== undefined ? { ttlMs: options.ttlMs } : {}) })
   const sessions: SessionMeta[] = []

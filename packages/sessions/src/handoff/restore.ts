@@ -69,14 +69,16 @@ export async function restoreTarget(repo: string, options: RestoreOptions): Prom
 
   // 3 and 4. Back where prepare found it.
   if (options.prevBranch === undefined) await git('checkout', '-q', '--no-overwrite-ignore', '--detach', options.prevHead)
-  else await git('checkout', '-q', '--no-overwrite-ignore', options.prevBranch)
+  else await git('checkout', '-q', '--no-overwrite-ignore', options.prevBranch, '--')
   await git('reset', '-q', '--hard', options.prevHead)
 
   // 5. The handoff's branch, when it is another one.
   if (options.branch !== options.prevBranch) {
     const ref = `refs/heads/${options.branch}`
     if (options.branchCreated) {
-      if (await handoffGitSucceeds(repo, ['rev-parse', '--verify', '-q', ref], base)) await git('branch', '-D', options.branch)
+      // Only the branch the handoff made: at `head`. One the owner made meanwhile is theirs (security review).
+      const tip = await handoffGit(repo, ['rev-parse', '--verify', '-q', ref], base).then((out) => out.trim(), () => undefined)
+      if (tip !== undefined && tip === options.head) await git('branch', '-D', options.branch)
     } else if (options.branchHead !== undefined) {
       await git('update-ref', ref, options.branchHead)
     }

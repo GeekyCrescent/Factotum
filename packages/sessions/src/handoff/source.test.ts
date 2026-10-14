@@ -109,11 +109,13 @@ test('a history that went another way on the target, found at prepare: history-d
       // Between the plan and prepare, omarchy gets its own copy of the session, which went elsewhere.
       await s.l.omarchy.host.store.create({ id: s.session.id, siteId: 'obsidian', entryId: 'free', startedAt: s.session.startedAt, sitePath: s.l.w.target, agent: undefined, prompt: 'p' })
       await s.l.omarchy.host.store.append(s.session.id, { kind: 'message', role: 'user', text: 'elsewhere' })
+      await s.l.omarchy.host.store.patchMeta(s.session.id, (m) => ({ ...m, state: 'finished' }))
     }
     return await next(method, path, body, file)
   })
   const { source } = await go(s.l)
-  assert.deepEqual([source?.phase, source?.reason], ['aborted', 'history-diverged'])
+  // The target refuses it at prepare now: a copy it still owns is not replaced (security review).
+  assert.deepEqual([source?.phase, source?.reason ?? source?.targetReason], ['aborted', 'history-diverged'])
 })
 
 test('the services are stopped after prepare and before the WIP, and named in the report — also when the project is then aborted (criterion 34)', async () => {

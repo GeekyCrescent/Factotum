@@ -58,6 +58,11 @@ const journalSchema = z.object({
   peerSiteId: z.string().optional(),
   phase: z.enum([...new Set<Phase>([...SOURCE_PHASES, ...TARGET_PHASES])] as [Phase, ...Phase[]]),
   at: z.string(),
+  /**
+   * When THIS host first wrote it, by its own clock (security review): what the prune ages it by. Never
+   * the `hid`'s time, which on the target the peer chose. Absent in a journal from before the field.
+   */
+  createdAt: z.string().optional(),
   branch: z.string().optional(),
   head: sha.optional(),
   wip: sha.optional(),
@@ -115,7 +120,7 @@ export interface NewJournal {
 }
 
 export function newJournal(fields: NewJournal): Journal {
-  return { ...fields, installed: [], replaced: [], stoppedServices: [], warnings: [], targetWarnings: [] }
+  return { ...fields, createdAt: fields.at, installed: [], replaced: [], stoppedServices: [], warnings: [], targetWarnings: [] }
 }
 
 function guard(paths: SessionPaths, hid: string, siteId: string): string {

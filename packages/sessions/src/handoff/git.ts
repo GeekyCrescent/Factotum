@@ -35,6 +35,8 @@ export const HANDOFF_GIT_CONFIG: readonly (readonly [string, string])[] = [
   ['gc.auto', '0'],
   ['commit.gpgSign', 'false'],
   ['core.fsmonitor', 'false'],
+  // A checkout or a merge never walks into submodules the peer's commits may name (security review).
+  ['submodule.recurse', 'false'],
 ]
 
 /** Only what reads or writes a ref. Everything else gets GIT_HANDOFF_TIMEOUT_MS. */
@@ -64,13 +66,24 @@ export function handoffEnv(base: NodeJS.ProcessEnv = process.env, extra: Record<
 export interface HandoffGitOptions {
   /** Extra variables: `GIT_INDEX_FILE` for a temporary index, an identity for `commit-tree`. */
   readonly env?: Record<string, string>
+  /** Config for THIS command only, by the environment like the rest: the bundle's fsck. */
+  readonly config?: readonly (readonly [string, string])[]
   /** Tests point it at a fake home; production uses the process's. */
   readonly base?: NodeJS.ProcessEnv
 }
 
 /** THE door: one handoff git command, its stdout, or a `GitError`. */
 export async function handoffGit(repo: string, args: readonly string[], options: HandoffGitOptions = {}): Promise<string> {
-  return await runGit(args, handoffTimeoutMs(args), repo, handoffEnv(options.base, options.env))
+  const base = handoffEnv(options.base)
+  const start = Number.parseInt(base['GIT_CONFIG_COUNT'] ?? '0', 10)
+  const extra = Object.fromEntries(
+    (options.config ?? []).flatMap(([key, value], i) => [
+      [`GIT_CONFIG_KEY_${start + i}`, key],
+      [`GIT_CONFIG_VALUE_${start + i}`, value],
+    ]),
+  )
+  const count = options.config === undefined ? {} : { GIT_CONFIG_COUNT: String(start + options.config.length) }
+  return await runGit(args, handoffTimeoutMs(args), repo, { ...base, ...extra, ...count, ...options.env })
 }
 
 /**

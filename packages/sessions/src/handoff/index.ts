@@ -82,7 +82,6 @@ export function createHandoff(host: HandoffHost, options: HandoffOptions = {}): 
   let busy = false
 
   const alive = async (): Promise<boolean> => {
-    if (busy) return true
     for (const hid of await listHids(host.paths)) {
       if ((await listJournals(host.paths, hid)).some((journal) => journal.role === 'source' && !RESTING.includes(journal.phase))) return true
     }
@@ -138,8 +137,13 @@ export function createHandoff(host: HandoffHost, options: HandoffOptions = {}): 
     start: async (body) => {
       const to = peerOf(host, body)
       if (to === undefined) return invalid('a handoff needs { to } naming a peer of this host')
-      if (await alive()) return refuse('handoff-alive', 'a handoff from this host is still going on')
+      // Taken BEFORE the await (code review): two POSTs at once cannot both pass.
+      if (busy) return refuse('handoff-alive', 'a handoff from this host is still going on')
       busy = true
+      if (await alive()) {
+        busy = false
+        return refuse('handoff-alive', 'a handoff from this host is still going on')
+      }
       const hid = uuidv7(host.now().getTime())
       running = run(hid, to, host.now().toISOString()).finally(() => {
         busy = false

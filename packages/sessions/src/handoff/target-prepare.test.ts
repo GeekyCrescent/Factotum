@@ -38,6 +38,8 @@ test('prepare digests the copies this host already has (the way back): the targe
   const [session] = sc.sessions
   await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, prompt: 'p' })
   await sc.target.host.store.append(session!.id, { kind: 'message', role: 'user', text: 'here' })
+  // It left from here: the way back (a copy this host still owned would be refused).
+  await sc.target.host.store.patchMeta(session!.id, (m) => ({ ...m, state: 'finished', movedTo: 'juans-macbook-pro', movedAt: new Date().toISOString() }))
   const answer = await sc.t.prepare(sc.hid, sc.siteId, await prepareBody(sc))
   const text = await readFile(sc.target.host.paths.eventsFile(session!.id), 'utf8')
   assert.deepEqual(answer.kind === 'ok' ? (answer.body as { sessions: unknown }).sessions : undefined, [{ id: session!.id, ...logDigest(text) }])

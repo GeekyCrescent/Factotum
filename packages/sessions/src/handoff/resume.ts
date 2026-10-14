@@ -50,6 +50,18 @@ export function createResume(deps: ResumeDeps) {
     return next
   }
   const release = (journal: Journal) => host.locks.release(journal.siteId, holder(journal.hid))
+  /**
+   * NOTHING OF THE BACKGROUND MAY THROW OUT OF IT (code review): a rejection nobody catches ends the
+   * process, and the journal that caused it would do it again at every start. One project's failure is
+   * logged — the step, never the error's message, which can carry a path — and the rest go on.
+   */
+  const guarded = async (what: string, journal: Pick<Journal, 'hid' | 'siteId'> | undefined, work: () => Promise<unknown>): Promise<void> => {
+    try {
+      await work()
+    } catch {
+      host.log.warn(`handoff${journal === undefined ? '' : ` ${journal.hid}`}: ${what}${journal === undefined ? '' : ` of ${journal.siteId}`} failed; it is tried again at the next start`)
+    }
+  }
 
   /** Moment 1: the journals and the holders, nothing else. */
   async function atStart(): Promise<void> {
@@ -87,16 +99,18 @@ export function createResume(deps: ResumeDeps) {
   /** Moment 2: git and the disk, by each project's queue; then the prune. */
   async function afterStart(): Promise<void> {
     for (const journal of local.splice(0)) {
-      await queue.run(journal.siteId, async () => {
-        if (journal.role === 'target') await target.undo(journal, 'restarted')
-        else if (journal.phase === 'acked') await source.cleanAndRelease(journal, false)
-        else {
-          await source.resumeOf(journal).abortAfterRestart()
-          tellAbort.push(journal)
-        }
-      })
+      await guarded('the restart step', journal, () =>
+        queue.run(journal.siteId, async () => {
+          if (journal.role === 'target') await target.undo(journal, 'restarted')
+          else if (journal.phase === 'acked') await source.cleanAndRelease(journal, false)
+          else {
+            await source.resumeOf(journal).abortAfterRestart()
+            tellAbort.push(journal)
+          }
+        }),
+      )
     }
-    await prune(host, queue)
+    await guarded('the prune', undefined, () => prune(host, queue))
     if (tellAbort.length > 0 || (await pendingPeers()).length > 0) wake()
   }
 
@@ -116,15 +130,17 @@ export function createResume(deps: ResumeDeps) {
         tellAbort.push(journal)
         continue
       }
-      await host.peers.json(journal.peer, 'POST', `handoff/${journal.hid}/${journal.peerSiteId}/abort`, {}, { timeoutMs: NOTICE_TIMEOUT_MS })
+      await guarded('the abort to the peer', journal, () => host.peers.json(journal.peer, 'POST', `handoff/${journal.hid}/${journal.peerSiteId}/abort`, {}, { timeoutMs: NOTICE_TIMEOUT_MS }))
     }
     const pending = await pendingPeers()
     for (const journal of pending) {
       if (!reachable.has(journal.peer)) continue
-      await queue.run(journal.siteId, async () => {
-        const current = await readJournal(host.paths, journal.hid, journal.siteId)
-        if (current?.phase === 'pending-peer') await source.resumeOf(current).settlePending()
-      })
+      await guarded('asking the peer', journal, () =>
+        queue.run(journal.siteId, async () => {
+          const current = await readJournal(host.paths, journal.hid, journal.siteId)
+          if (current?.phase === 'pending-peer') await source.resumeOf(current).settlePending()
+        }),
+      )
     }
     if (tellAbort.length === 0 && (await pendingPeers()).length === 0) {
       polling?.[Symbol.dispose]()
@@ -134,13 +150,13 @@ export function createResume(deps: ResumeDeps) {
 
   /** Starts the interval if it is not running: after a restart, or when a live run leaves a `pending-peer`. */
   function wake(): void {
-    polling ??= host.timers.setInterval(() => void poll(), HANDOFF_PEER_POLL_MS)
+    polling ??= host.timers.setInterval(() => void guarded('the poll', undefined, poll), HANDOFF_PEER_POLL_MS)
   }
 
   /** Moments 2 and 3 armed, and the daily prune. Called right after `atStart`, still inside `start()`. */
   function schedule(): void {
-    host.timers.setTimeout(() => void afterStart(), 0)
-    pruning ??= host.timers.setInterval(() => void prune(host, queue), HANDOFF_PRUNE_MS)
+    host.timers.setTimeout(() => void guarded('the restart', undefined, afterStart), 0)
+    pruning ??= host.timers.setInterval(() => void guarded('the prune', undefined, () => prune(host, queue)), HANDOFF_PRUNE_MS)
   }
 
   function stop(): void {

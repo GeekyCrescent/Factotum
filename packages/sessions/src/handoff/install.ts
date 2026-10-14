@@ -61,7 +61,10 @@ export async function installSession(host: InstallHost, work: Work, journal: Ins
 /** Same id and same bytes: skipped, it went from here. Same id and other bytes: the one here stays. */
 async function installUploads(host: InstallHost, staged: string, journal: InstallJournal): Promise<void> {
   const root = join(staged, 'uploads')
+  // Only an upload the session's own log names (security review): never a folder the peer slips in.
+  const log = await readFile(join(staged, 'session', 'events.jsonl'), 'utf8').catch(() => '')
   for (const uploadId of await readdir(root).catch(() => [] as string[])) {
+    if (!log.includes(`/${uploadId}/`)) continue
     const from = join(root, uploadId)
     const to = join(host.uploadsRoot, uploadId)
     if (await exists(to)) {

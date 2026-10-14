@@ -167,6 +167,7 @@ function useProgress(api: Api, hid: string | undefined, setState: (state: SheetS
       api.get<ReportView>(`handoff/${hid}`).then(
         (report) => {
           if (!live) return
+          setError(undefined)
           setState({ step: 'moving', report })
           if (isSettled(report)) onMoved()
           else timer = setTimeout(read, POLL_MS)

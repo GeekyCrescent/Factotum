@@ -26,6 +26,7 @@ import { logDigest } from './log-digest.ts'
 import { sha256Of, validateManifest, type ManifestEntry } from './manifest.ts'
 import { restoreTarget } from './restore.ts'
 import { applyWip, ignoredCollisions } from './wip.ts'
+import { anotherLive, hasRoom, hidIsFresh, HANDOFF_MAX_SESSIONS, HANDOFF_META_MAX_BYTES, HANDOFF_PREPARED_MAX_MS, HANDOFF_PROJECT_MAX_BYTES, localConflict, stagedExtends } from './target-checks.ts'
 import { expired, invalid, notFound, ok, refuse, type TargetHandoff, type Wire } from './wire.ts'
 
 export interface TargetDeps {
@@ -86,17 +87,24 @@ export function createTarget(deps: TargetDeps): Target {
     ttls.get(`${hid}/${siteId}`)?.[Symbol.dispose]()
     ttls.delete(`${hid}/${siteId}`)
   }
-  const arm = (hid: string, siteId: string, ms: number) => {
+  /** Never past HANDOFF_PREPARED_MAX_MS from `prepare`, whatever keeps arriving (security review). */
+  const deadlines = new Map<string, number>()
+  const arm = (hid: string, siteId: string, wanted: number) => {
     disarm(hid, siteId)
+    const deadline = deadlines.get(`${hid}/${siteId}`)
+    const ms = deadline === undefined ? wanted : Math.min(wanted, deadline - host.now().getTime())
     ttls.set(
       `${hid}/${siteId}`,
       host.timers.setTimeout(() => {
-        void queue.run(siteId, async () => {
-          const journal = await readJournal(host.paths, hid, siteId)
-          if (journal?.phase !== 'prepared' && journal?.phase !== 'preparing') return
-          host.log.warn(`handoff ${hid}: no word from the other host for ${Math.round(ttlMs / 60_000)} min; this project is let go`)
-          await abortPrepared(journal)
-        })
+        void queue
+          .run(siteId, async () => {
+            const journal = await readJournal(host.paths, hid, siteId)
+            if (journal?.phase !== 'prepared' && journal?.phase !== 'preparing') return
+            host.log.warn(`handoff ${hid}: no word from the other host for ${Math.round(ttlMs / 60_000)} min; this project is let go`)
+            await abortPrepared(journal)
+          })
+          // A timer's rejection nobody catches ends the process (code review, H1).
+          .catch(() => host.log.warn(`handoff ${hid}: letting ${siteId} go after the TTL failed; the next start does it`))
       }, Math.max(0, ms)),
     )
   }
@@ -174,17 +182,27 @@ export function createTarget(deps: TargetDeps): Target {
     if (typeof input?.key !== 'string' || typeof input.branch !== 'string' || !BRANCH.test(input.branch) || typeof input.head !== 'string' || !SHA.test(input.head)) {
       return invalid('prepare takes { key, branch, head, sessionIds, to }')
     }
-    if (!Array.isArray(sessionIds) || sessionIds.length === 0 || !sessionIds.every((id) => typeof id === 'string' && isSessionId(id))) return invalid('prepare takes the ids of the sessions that go')
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0 || sessionIds.length > HANDOFF_MAX_SESSIONS || !sessionIds.every((id) => typeof id === 'string' && isSessionId(id))) {
+      return invalid('prepare takes the ids of the sessions that go')
+    }
+    // Its age is what the prune reads: a hid far from this clock is not one this host takes.
+    if (!hidIsFresh(hid, host.now())) return invalid('that handoff id is not from now')
     const { key, branch, head } = input
     const to = typeof input.to === 'string' && /^[a-z0-9-]+$/.test(input.to) ? input.to : 'this host'
 
     return await queue.run(siteId, async () => {
       if ((await readJournal(host.paths, hid, siteId)) !== undefined) return refuse('target-busy', 'this handoff already reached this project')
+      if (await anotherLive(host, hid)) return refuse('target-busy', 'another handoff is being received here')
       const url = await git(path, 'config', '--get', 'remote.origin.url').then((out) => out.trim(), () => '')
       if (remoteKey(url) !== key) return notFound('this project here has another remote')
+      if (!(await handoffGitSucceeds(path, ['check-ref-format', '--branch', branch], gitOptions))) return invalid('that is not a branch name')
+      const conflict = await localConflict(host, siteId, sessionIds as string[])
+      if (conflict !== undefined) return refuse(conflict, 'a session of this handoff is this host’s own here')
 
       // THE JOURNAL BEFORE THE LOCK (D9): a holder `handoff-<hid>` always has a journal that explains it.
       let journal: Journal = {
+        // The source's name: this host's ONE peer (design D1 allows one). The source cannot say it — a
+        // module does not know its own host's name — so it says ours (`to`) instead.
         ...newJournal({ hid, siteId, role: 'target', peer: host.peers.list()[0]?.name ?? 'the other host', phase: 'preparing', at: host.now().toISOString() }),
         branch,
         head,
@@ -214,6 +232,7 @@ export function createTarget(deps: TargetDeps): Target {
         if (text !== undefined) sessions.push({ id, ...logDigest(text) })
       }
       journal = await save(journal, { phase: 'prepared', prevBranch, prevHead, branchHead })
+      deadlines.set(`${hid}/${siteId}`, Date.parse(journal.createdAt ?? journal.at) + HANDOFF_PREPARED_MAX_MS)
       arm(hid, siteId, ttlMs)
       return ok({ branchHead: branchHead ?? null, sessions })
     })
@@ -233,8 +252,13 @@ export function createTarget(deps: TargetDeps): Target {
       if (found.phase !== 'prepared') return refuse('wrong-phase', `this project is ${found.phase} here`)
       const checked = validateManifest(body, found.sessionIds ?? [], HANDOFF_FILE_MAX_BYTES)
       if (!checked.ok) return invalid(checked.message)
+      // What one project may bring, and what this disk has room for (security review).
+      if (checked.entries.some((entry) => entry.kind === 'meta' && entry.bytes > HANDOFF_META_MAX_BYTES)) return invalid('a meta that size is not a session')
+      const total = checked.entries.reduce((sum, entry) => sum + entry.bytes, 0)
+      if (total > HANDOFF_PROJECT_MAX_BYTES) return invalid('that is more than one project may bring')
       const work = workOf(hid, siteId)
       await mkdir(work.staging, { recursive: true })
+      if (!(await hasRoom(work.staging, total))) return refuse('target-full', 'this host does not have the room for it')
       await writeFile(work.manifest, JSON.stringify(checked.entries))
       const journal = await signal(found)
       // Without a bundle the target must already have the source's HEAD, or get it now (D8, step 1b).
@@ -270,7 +294,7 @@ export function createTarget(deps: TargetDeps): Target {
       if ((await lstat(destination).catch(() => undefined)) !== undefined) return invalid('that file already arrived')
       if (received.bytes !== entry.bytes || (await sha256Of(received.path)) !== entry.sha256) return invalid('the file is not the one the manifest names')
       if (entry.kind === 'meta') {
-        const meta = parseMeta(entry.sessionId ?? '', JSON.parse(await readFile(received.path, 'utf8').catch(() => 'null')))
+        const meta = parseMeta(entry.sessionId ?? '', await readFile(received.path, 'utf8').then((text) => JSON.parse(text) as unknown, () => undefined))
         if (meta === undefined || meta.state === 'running') return invalid('that meta is not a session at rest')
       }
       await mkdir(dirname(destination), { recursive: true })
@@ -313,11 +337,18 @@ export function createTarget(deps: TargetDeps): Target {
     const clean = (await git(path, 'status', '--porcelain').catch(() => 'x')).trim() === ''
     const headNow = (await git(path, 'rev-parse', 'HEAD').catch(() => '')).trim()
     const branchNow = await git(path, 'symbolic-ref', '-q', '--short', 'HEAD').then((out) => out.trim() || undefined, () => undefined)
-    if (!clean || headNow !== prepared.prevHead || branchNow !== prepared.prevBranch) {
+    // And the handoff's branch where prepare saw it: the undo deletes or rewinds it from what it knew then.
+    const tipNow = await git(path, 'rev-parse', '--verify', '-q', `refs/heads/${prepared.branch ?? ''}`).then((out) => out.trim() || undefined, () => undefined)
+    if (!clean || headNow !== prepared.prevHead || branchNow !== prepared.prevBranch || tipNow !== prepared.branchHead) {
       await save(prepared, { reason: 'target-dirty' })
       return refuse('target-dirty', 'this project changed here since prepare')
     }
 
+    // The logs that arrived extend this host's copies, checked on the bytes (security review).
+    if (!(await stagedExtends(host, work.staging, prepared.sessionIds ?? []))) {
+      await save(prepared, { reason: 'history-diverged' })
+      return refuse('history-diverged', 'a conversation that arrived does not continue this host’s copy')
+    }
     const bundled = entries.some((entry) => entry.kind === 'git-bundle')
     if (bundled) await importBundle(path, { bundle: work.bundle, hid, ...(host.gitEnv !== undefined ? { env: host.gitEnv } : {}) })
     const wip = await git(path, 'rev-parse', '--verify', '-q', `${handoffRefPrefix(hid)}/wip`).then((out) => out.trim() || undefined, () => undefined)
@@ -373,10 +404,10 @@ export function createTarget(deps: TargetDeps): Target {
     const branch = journal.branch ?? ''
     const head = journal.head ?? ''
     if (journal.prevBranch !== branch) {
-      if (journal.branchHead !== undefined) await git(path, 'checkout', '-q', '--no-overwrite-ignore', branch)
+      if (journal.branchHead !== undefined) await git(path, 'checkout', '-q', '--no-overwrite-ignore', branch, '--')
       else {
         await step({ branchCreated: true })
-        await git(path, 'checkout', '-q', '--no-overwrite-ignore', '-b', branch, head)
+        await git(path, 'checkout', '-q', '--no-overwrite-ignore', '-b', branch, head, '--')
         if (await handoffGitSucceeds(path, ['rev-parse', '--verify', '-q', `refs/remotes/origin/${branch}`], gitOptions)) {
           await git(path, 'branch', `--set-upstream-to=origin/${branch}`, branch).catch(() => undefined)
         }
@@ -401,8 +432,12 @@ export function createTarget(deps: TargetDeps): Target {
         case 'abort-failed':
           // The same reason the commit gave, and nothing touched: the undo is the owner's now (v4.3).
           return refuse('abort-failed', 'this host could not undo everything; run factotum doctor here', handoffOf(found))
-        case 'installing':
-          return ok({ phase: (await undo(found, 'aborted-by-source')).phase, handoff: handoffOf(found) })
+        case 'installing': {
+          // The journal the undo LEFT: an undo that did not finish is said so, like the commit does.
+          const undone = await undo(found, 'aborted-by-source')
+          if (undone.phase === 'abort-failed') return refuse('abort-failed', 'this host could not undo everything; run factotum doctor here', handoffOf(undone))
+          return ok({ phase: undone.phase, handoff: handoffOf(undone) })
+        }
         default:
           return ok({ phase: (await abortPrepared(found)).phase, handoff: handoffOf(found) })
       }

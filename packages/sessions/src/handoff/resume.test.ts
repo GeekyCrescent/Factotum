@@ -188,7 +188,7 @@ test('prepared at a restart: the TTL is armed for what is LEFT of it, from lastS
   await timers.advance(4 * 60_000)
   assert.equal((await readJournal(l.omarchy.host.paths, hid, 'obsidian'))?.phase, 'prepared')
   await timers.advance(2 * 60_000)
-  await new Promise((resolve) => setTimeout(resolve, 50))
+  for (let i = 0; i < 200 && (await readJournal(l.omarchy.host.paths, hid, 'obsidian'))?.phase !== 'aborted'; i += 1) await new Promise((resolve) => setTimeout(resolve, 25))
   assert.equal((await readJournal(l.omarchy.host.paths, hid, 'obsidian'))?.phase, 'aborted')
   assert.deepEqual(await holders(l.omarchy, 'obsidian'), [])
 })

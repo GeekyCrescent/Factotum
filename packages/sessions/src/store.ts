@@ -160,7 +160,8 @@ export function parseMeta(id: string, value: unknown): SessionMeta | undefined {
     id: json.id,
     siteId: json.siteId,
     entryId: typeof json.entryId === 'string' ? json.entryId : '',
-    state: json.state ?? 'failed',
+    // A state this code does not know reads as `failed`: a meta from the other host is outside input.
+    state: json.state === 'running' || json.state === 'finished' || json.state === 'cancelled' ? json.state : 'failed',
     startedAt: typeof json.startedAt === 'string' ? json.startedAt : new Date(0).toISOString(),
     endedAt: json.endedAt ?? undefined,
     reason: json.reason ?? undefined,
