@@ -141,6 +141,23 @@ function spawnGit(args: readonly string[], timeoutMs: number, cwd: string, env: 
   })
 }
 
+/**
+ * What `runGit` rejects with. The message is the one line `freshness.ts` keeps; `exitCode` and
+ * `timedOut` are for a caller that reads an exit code as an answer — `cat-file -e`, `diff-files
+ * --quiet`, `merge-base --is-ancestor` — and must not read a timeout as a "no".
+ */
+export class GitError extends Error {
+  readonly exitCode: number | undefined
+  readonly timedOut: boolean
+
+  constructor(message: string, exitCode: number | undefined, timedOut: boolean) {
+    super(message)
+    this.name = 'GitError'
+    this.exitCode = exitCode
+    this.timedOut = timedOut
+  }
+}
+
 /** Does this repo set `core.sshCommand`? Unset is exit 1 with no output, which is the common case. */
 async function sshCommandConfigured(cwd: string, base: NodeJS.ProcessEnv): Promise<boolean> {
   const env = gitEnv(base, { sshCommandConfigured: undefined })
@@ -164,11 +181,11 @@ export async function runGit(
   const configured = NETWORK_COMMANDS.has(command) ? await sshCommandConfigured(cwd, base) : undefined
   const outcome = await spawnGit(args, timeoutMs, cwd, gitEnv(base, { sshCommandConfigured: configured }))
 
-  if (outcome.timedOut) throw new Error(`git ${command} did not finish within ${timeoutMs}ms`)
+  if (outcome.timedOut) throw new GitError(`git ${command} did not finish within ${timeoutMs}ms`, undefined, true)
   if (outcome.spawnError !== undefined) throw outcome.spawnError
   if (outcome.code !== 0) {
     const reason = gitFailureReason(outcome.stderr) ?? 'no message'
-    throw new Error(`git ${command} failed (exit ${outcome.code ?? 'signal'}): ${reason}`)
+    throw new GitError(`git ${command} failed (exit ${outcome.code ?? 'signal'}): ${reason}`, outcome.code ?? undefined, false)
   }
   return outcome.stdout
 }
