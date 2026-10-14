@@ -39,4 +39,6 @@ test('whereOf: the board host from the screen, the app’s own name from hosts; 
   assert.deepEqual(whereOf('omarchy', hosts), MAC_APP)
   assert.deepEqual(whereOf(undefined, [{ name: 'omarchy', self: true }]), OMARCHY_APP)
   assert.equal(whereOf(undefined, []), undefined)
+  // The board's screen reached as /h/<self>/… is the serving host: never through /peers/<self>/.
+  assert.deepEqual(whereOf('mac', hosts), { boardHost: undefined, selfName: 'mac' })
 })

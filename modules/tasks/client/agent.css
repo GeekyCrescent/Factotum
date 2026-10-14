@@ -144,3 +144,14 @@
   font: inherit;
   font-size: var(--text-input);
 }
+
+/* A dead link: information, not a control. */
+.t-session-dead {
+  cursor: default;
+  color: var(--text-2);
+}
+
+.t-session-dead .btn {
+  flex: none;
+  min-height: 36px;
+}

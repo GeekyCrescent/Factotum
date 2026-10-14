@@ -19,7 +19,9 @@ export interface Where {
 /** Nothing until `GET /hosts` has answered: who needs a host waits for it. */
 export function whereOf(boardHost: string | undefined, hosts: readonly { readonly name: string; readonly self: boolean }[]): Where | undefined {
   const self = hosts.find((host) => host.self)
-  return self === undefined ? undefined : { boardHost, selfName: self.name }
+  if (self === undefined) return undefined
+  // `/h/<self>/m/tasks` is the serving host by another name: it is `undefined` in the client's language.
+  return { boardHost: boardHost === self.name ? undefined : boardHost, selfName: self.name }
 }
 
 /** From what is stored to what the client understands. */

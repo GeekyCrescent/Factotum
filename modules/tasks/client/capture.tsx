@@ -75,7 +75,11 @@ function CaptureMic({
         box.setSelectionRange(box.value.length, box.value.length)
       }),
   })
-  useEffect(() => onBusy(dictation.busy), [dictation.busy, onBusy])
+  useEffect(() => {
+    onBusy(dictation.busy)
+    // Unmounted while it recorded (the module went away): the capture must not stay blocked.
+    return () => onBusy(false)
+  }, [dictation.busy, onBusy])
   return (
     <>
       <DictateButton dictation={dictation} />
@@ -216,7 +220,7 @@ export function QuickCapture({
             class="icon-btn"
             aria-label={`Add to ${label} by hand, without AI`}
             title={`Add to ${label} by hand, without AI`}
-            disabled={text.trim() === '' || saving || tooLong}
+            disabled={text.trim() === '' || saving || tooLong || listening}
             onPointerDown={(event) => event.preventDefault()}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
@@ -231,7 +235,7 @@ export function QuickCapture({
             class="icon-btn t-capture-ai"
             aria-label="Send to Triage, read by AI"
             title="Send to Triage, read by AI (Enter)"
-            disabled={text.trim() === '' || saving}
+            disabled={text.trim() === '' || saving || listening}
             onPointerDown={(event) => event.preventDefault()}
             onMouseDown={(event) => event.preventDefault()}
           >

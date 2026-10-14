@@ -201,7 +201,7 @@ function Editor({
         edit={edit}
         act={act}
         path={path}
-        hostProjects={hostProjects ?? []}
+        hostProjects={hostProjects ?? (edge === undefined ? [] : 'loading')}
       />
       <Subtasks task={task} readOnly={readOnly} act={act} path={path} />
       <label class="t-notes">
@@ -249,7 +249,8 @@ function Properties({
   readonly edit: (key: keyof Draft, value: string) => void
   readonly act: Act
   readonly path: string
-  readonly hostProjects: readonly CaptureProject[]
+  /** `loading` while the hosts are read: the field waits, rather than turning into a select under a finger. */
+  readonly hostProjects: readonly CaptureProject[] | 'loading'
 }) {
   const project = projectOf(draft.project)
   const value = (event: Event): string => (event.target as HTMLInputElement | HTMLSelectElement).value
@@ -307,7 +308,13 @@ function Properties({
       <Prop label="Labels">
         <input type="text" value={draft.labels} placeholder="uni, writing" disabled={readOnly} onInput={(event) => edit('labels', value(event))} />
       </Prop>
-      {hostProjects.length > 0 ? (
+      {hostProjects === 'loading' ? (
+        <Prop label="Project">
+          <select disabled>
+            <option>{project === null ? 'Loading projects…' : project.siteId}</option>
+          </select>
+        </Prop>
+      ) : hostProjects.length > 0 ? (
         // The projects the hosts have, by name: the value is the stored key, `<host>/<siteId>`.
         <Prop label="Project">
           <select value={draft.project} disabled={readOnly} onChange={(event) => edit('project', value(event))}>

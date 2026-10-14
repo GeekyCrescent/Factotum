@@ -127,8 +127,13 @@ function Screens({
   readonly bar: (title: string) => ComponentChildren
   readonly openDrawer: () => void
 }) {
-  // Before any return: a hook is called on every render, in the same order.
-  const peerModule = useMemo(() => peerModuleFor(modules), [modules])
+  // Before any return: a hook is called on every render, in the same order. Keyed by the ENABLED IDS,
+  // not the array: `modules` is rebuilt on every render of the shell, and a module keys effects on this.
+  const enabledKey = modules
+    .filter((module) => module.status.kind === 'enabled')
+    .map((module) => module.id)
+    .join('|')
+  const peerModule = useMemo(() => peerModuleFor(modules), [enabledKey])
   if (screen.kind === 'root') {
     // With a module to land on, the shell's effect replaces this entry right after this render.
     if (landing(modules) !== undefined) return null

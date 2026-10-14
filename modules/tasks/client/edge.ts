@@ -67,8 +67,16 @@ export function useSetups(edge: Edge): readonly HostSetup[] | undefined {
         return undefined
       }
     })
-    void Promise.all(reads).then((all) => {
-      if (alive) setSetups(all.filter((one): one is HostSetup => one !== undefined))
+    // Each host as it lands: the serving one answers in milliseconds, and must not wait for a slow peer.
+    const landed = new Map<number, HostSetup>()
+    const publish = (): void => {
+      if (alive) setSetups([...landed.entries()].sort(([a], [b]) => a - b).map(([, one]) => one))
+    }
+    reads.forEach((read, index) => {
+      void read.then((one) => {
+        if (one !== undefined) landed.set(index, one)
+        publish()
+      })
     })
     return () => {
       alive = false
@@ -84,7 +92,9 @@ export function useSetups(edge: Edge): readonly HostSetup[] | undefined {
  */
 export function useBoardEdge(props: ViewProps): { readonly edge: Edge; readonly hostProjects: readonly CaptureProject[] | undefined } {
   const { host, hosts, peerModule, openModule } = props
-  const where = useMemo(() => whereOf(host, hosts), [host, hosts])
+  // Keyed by what `where` is made of: `hosts` is refreshed every few seconds as a new array.
+  const selfName = hosts.find((h) => h.self)?.name
+  const where = useMemo(() => whereOf(host, hosts), [host, selfName])
   const edge = useMemo<Edge>(() => ({ where, hosts, peerModule, openModule }), [where, hosts, peerModule, openModule])
   const setups = useSetups(edge)
   const hostProjects = useMemo(() => (setups === undefined || where === undefined ? undefined : captureProjects(setups, where)), [setups, where])

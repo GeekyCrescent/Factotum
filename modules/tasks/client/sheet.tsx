@@ -40,7 +40,11 @@ export function Sheet({
     const field = heading.current?.closest('.sheet')?.querySelector<HTMLElement>('[autofocus]')
     ;(field ?? heading.current)?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close.current()
+      if (event.key !== 'Escape') return
+      // Only the sheet on top: with «Run agent» over a card, one Escape closes «Run agent», not both.
+      const sheets = document.querySelectorAll('.sheet')
+      if (sheets[sheets.length - 1] !== heading.current?.closest('.sheet')) return
+      close.current()
     }
     window.addEventListener('keydown', onKey)
     return () => {

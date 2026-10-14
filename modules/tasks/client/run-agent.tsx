@@ -13,7 +13,7 @@
  * suggests «Link a session»; nothing is retried by itself (criterion 31b).
  */
 
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Task } from '../types.ts'
 import { agentPrompt, freePromptEntry, launchProblem, projectState, type LaunchProblem, type SetupView } from './agent-model.ts'
 import type { Edge } from './edge.ts'
@@ -44,6 +44,15 @@ export function RunAgentSheet({
   const [prompt, setPrompt] = useState(() => agentPrompt(task))
   const [launching, setLaunching] = useState(false)
   const [problem, setProblem] = useState<LaunchProblem | undefined>(undefined)
+  /** Launched, but the card could not be linked to it: the session runs anyway, and the owner must know. */
+  const [unlinked, setUnlinked] = useState<string | undefined>(undefined)
+  const alive = useRef(true)
+  useEffect(
+    () => () => {
+      alive.current = false
+    },
+    [],
+  )
 
   useEffect(() => {
     if (sessions === undefined || !known) return
@@ -78,38 +87,64 @@ export function RunAgentSheet({
     if (entryId === undefined || prompt.trim() === '') return
     setLaunching(true)
     setProblem(undefined)
+    let sessionId: string
     try {
-      const { sessionId } = await sessions.post<{ sessionId: string }>('sessions', { siteId: project.siteId, entryId, text: prompt.trim(), force })
-      // Linked and In progress in ONE write, then the session (criterion 31).
-      await act(`tasks/${encodeURIComponent(task.id)}/sessions`, { host: toStoredHost(host, where), sessionId })
-      edge.openModule('sessions', encodeURIComponent(sessionId), { host: host ?? null })
+      sessionId = (await sessions.post<{ sessionId: string }>('sessions', { siteId: project.siteId, entryId, text: prompt.trim(), force })).sessionId
     } catch (cause) {
-      setProblem(launchProblem(cause, host))
+      if (alive.current) {
+        setProblem(launchProblem(cause, host))
+        setLaunching(false)
+      }
+      return
     }
+    // Linked and In progress in ONE write, then the session (criterion 31). The launch went through
+    // either way: a failed link is said here, with the session to open, never swallowed by a jump.
+    const linked = await act(`tasks/${encodeURIComponent(task.id)}/sessions`, { host: toStoredHost(host, where), sessionId })
+    if (!alive.current) return
     setLaunching(false)
+    if (!linked) {
+      setUnlinked(sessionId)
+      return
+    }
+    edge.openModule('sessions', encodeURIComponent(sessionId), { host: host ?? null })
   }
 
   const foot = (
-    <button type="button" class="btn primary" disabled={blocked !== undefined || launching || prompt.trim() === ''} onClick={() => void launch(false)}>
+    <button type="button" class="btn primary" disabled={blocked !== undefined || launching || unlinked !== undefined || prompt.trim() === ''} onClick={() => void launch(false)}>
       <Icon name="terminal-window" size={18} />
       {launching ? 'Launching…' : 'Run agent'}
     </button>
   )
 
   return (
-    <Sheet id="t-run-title" title="Run agent" onClose={onClose} foot={foot}>
+    // While it launches the sheet stays: closing it would hide an unanswered launch (criterion 31b).
+    <Sheet id="t-run-title" title="Run agent" onClose={() => (launching ? undefined : onClose())} foot={foot}>
       <div class="t-run">
         {project === null ? null : (
           <p class="t-run-where dim-2">
             {project.siteId} on {hostLabel}
           </p>
         )}
-        {blocked === undefined ? null : <p class="t-run-blocked">{blocked}</p>}
+        <p class={blocked === undefined ? 'sr-only' : 't-run-blocked'} role="status">
+          {blocked ?? ''}
+        </p>
+        {/* Above the prompt: on a phone with the keyboard up, below it would be out of sight. */}
+        {problem === undefined ? null : <Problem problem={problem} hostLabel={hostLabel} edge={edge} host={host} relaunch={() => void launch(true)} />}
+        {unlinked === undefined ? null : (
+          <div class="notice err" role="alert">
+            <div class="head">It started, but the card could not be linked</div>
+            <p>The session is running. Link it from the card with «Link a session», id {unlinked}.</p>
+            <div class="acts">
+              <button type="button" class="btn sm" onClick={() => edge.openModule('sessions', encodeURIComponent(unlinked), { host: host ?? null })}>
+                Open it
+              </button>
+            </div>
+          </div>
+        )}
         <label class="t-run-prompt">
           <span>Prompt</span>
           <textarea rows={7} value={prompt} maxLength={20_000} onInput={(event) => setPrompt((event.target as HTMLTextAreaElement).value)} />
         </label>
-        {problem === undefined ? null : <Problem problem={problem} hostLabel={hostLabel} edge={edge} host={host} relaunch={() => void launch(true)} />}
       </div>
     </Sheet>
   )
