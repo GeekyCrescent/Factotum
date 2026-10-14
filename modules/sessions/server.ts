@@ -24,6 +24,7 @@ import { uploadRoute, type FactotumModule, type ModuleContext, type ModuleReques
 import { sessionsConfigSchema, UPLOAD_MAX_BYTES, type SessionsConfig } from './config.ts'
 import { createRegistryStore, factotumRootOf, registryFile } from './registry.ts'
 import { dictationRoutes } from './dictation/routes.ts'
+import { handoffRoutes } from './handoff-routes.ts'
 import { createDictation, type DictationState } from './dictation/service.ts'
 import { interpretSkillsConfig } from './skills/config.ts'
 import { createNotes } from './skills/notes.ts'
@@ -724,6 +725,9 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       }
     },
 
+    // The handoff (spec 2026-10-07-dos-hosts, D13): its own file, the engine's answers mapped to HTTP.
+    ...handoffRoutes(() => holder.engine?.handoff),
+
     // Dictation (spec 2026-10-03): its own folder, which imports nothing from here (D1).
     ...dictationRoutes(() => holder.dictation),
 
@@ -801,6 +805,7 @@ export function sessionsModule(
         notify: ctx.notify,
         titles: ctx.config.titles,
         uploadMaxBytes: UPLOAD_MAX_BYTES,
+        peers: ctx.peers,
       })
       await engine.reconcile()
       holder.engine = engine

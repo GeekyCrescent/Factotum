@@ -23,7 +23,8 @@
  * catching an argument that changes shape — half of what it exists to catch.
  */
 
-import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
+import type { Logger, Notifier, PeerCaller, ReceivedFile, Timers } from '@factotum/core'
+import type { HandoffApi } from './handoff/index.ts'
 import type { AnsweredVia, SettledHow } from './questions/batches.ts'
 import type { Answer, Question } from './questions/shape.ts'
 import type { ServiceOutcome, ServiceView, StoppedBy } from './services/shape.ts'
@@ -219,6 +220,13 @@ export interface EngineSetup {
    * setups that predate uploads still compile; without it the engine reports the kernel's ceiling.
    */
   readonly uploadMaxBytes?: number
+  /**
+   * `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4): the handoff talks to this module's
+   * twin on the other host through it, and nothing else does. OPTIONAL HERE so the setups that predate
+   * it still compile; the module's copy of this type REQUIRES it, so `server.ts` cannot forget it.
+   * Without it this host has no peer: every preview and handoff answers that `to` is not one.
+   */
+  readonly peers?: PeerCaller
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -834,6 +842,8 @@ export interface UsageCount {
 }
 
 export interface SessionEngine {
+  /** «Me voy» / «Volví», and the peer's side of it (spec 2026-10-07-dos-hosts, D13). */
+  readonly handoff: HandoffApi
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
   readonly reply: (id: string, text: string) => Promise<LaunchResult>

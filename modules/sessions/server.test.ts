@@ -142,6 +142,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     // silence, and tsc would not say so: this list is what does.
     'notify',
     'now',
+    // The handoff's line to this module's twin on the other host (spec 2026-10-07-dos-hosts, D4).
+    'peers',
     // The permission boundary is the REGISTRY now, with the three things the folder rules need
     // around it (spec 2026-09-29, D1). Half of it arriving is half a boundary, and this list is
     // what catches that, which is why it is spelled out.

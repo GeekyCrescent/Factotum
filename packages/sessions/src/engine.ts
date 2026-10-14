@@ -11,8 +11,8 @@
  */
 
 import { lstat, mkdir, writeFile } from 'node:fs/promises'
-import { basename } from 'node:path'
-import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage } from '@factotum/core'
+import { basename, join } from 'node:path'
+import { MAX_UPLOAD_BYTES, type Logger, type NotificationMessage, type PeerCaller } from '@factotum/core'
 import { createAnnounced } from './announced.ts'
 import { findInvokable, isInvokableName, resolveCatalog, type Invoke, type ResolvedEntry } from './catalog.ts'
 import {
@@ -41,6 +41,7 @@ import { mcpConfig, serializeMcpConfig } from './questions/config.ts'
 import { handleMcp } from './questions/mcp.ts'
 import { createQuestions } from './questions/owner.ts'
 import { createParts } from './parts.ts'
+import { createHandoff } from './handoff/index.ts'
 import { runAgent, type AgentExit, type AgentRun } from './run.ts'
 import { searchHistory } from './search.ts'
 import { usageOver } from './usage.ts'
@@ -73,6 +74,13 @@ export { PAGE_SIZE }
 export const PROMPT_CHARS = 140
 
 const STOPPED = 'engine stopped'
+
+/** A host with no peer: every call answers `unreachable` without leaving the process. */
+const NO_PEERS: PeerCaller = {
+  list: () => [],
+  json: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }),
+  upload: async () => ({ ok: false, status: undefined, reason: 'unreachable', body: undefined }),
+}
 const BEING_REMOVED = 'this project is being removed'
 /** A `handoff-*` holder (spec 2026-10-07-dos-hosts, D9): `rejected`, never `busy` — there is no session to cancel. */
 export const HANDING_OFF = 'this project is being moved to another host'
@@ -1044,7 +1052,36 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       return await work(...args)
     }
 
+  /**
+   * The handoff (spec 2026-10-07-dos-hosts): handed reads and writes of this engine, never the engine.
+   * The projects are the registered ones that are THERE, with the path a launch writes as `sitePath`.
+   */
+  const handoff = createHandoff({
+    paths,
+    store,
+    locks,
+    projects: () =>
+      table.entries().flatMap((entry) => {
+        const site = table.status(entry.id) === 'ok' ? table.lastSite(entry.id) : undefined
+        return site === undefined ? [] : [{ id: entry.id, path: site.path }]
+      }),
+    sessionsOf: (siteId) => index.bySite(siteId),
+    entries: () => catalog.map((entry) => entry.id),
+    uploadsRoot: uploads.root,
+    claudeProjects: join(setup.home, '.claude', 'projects'),
+    stopServices: async (sessionId) => {
+      const live = (await services.table.list(sessionId)).filter((view) => view.state === 'running').map((view) => view.id)
+      await services.table.stopSession(sessionId, 'stopped')
+      return live
+    },
+    peers: setup.peers ?? NO_PEERS,
+    log,
+    now: setup.now,
+    timers: setup.timers,
+  })
+
   return {
+    handoff,
     launch,
     reply,
     cancel,

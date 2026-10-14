@@ -18,6 +18,9 @@ import { sessionPaths } from './paths.ts'
 import { SessionStore, type SessionMeta } from './store.ts'
 import type { EventInput } from './types.ts'
 import type { HandoffHost, HandoffProject } from './handoff/host.ts'
+import type { Wire } from './handoff/wire.ts'
+
+export type { Wire }
 import type { World } from './test-repos.ts'
 
 export const testTimers: Timers = {
@@ -106,13 +109,6 @@ export async function addSession(test: TestHost, options: SessionOptions): Promi
   }
   return meta!
 }
-
-/** The answers of one side, before they become HTTP: what `handoff-routes.ts` maps to a status. */
-export type Wire =
-  | { readonly kind: 'ok'; readonly body: unknown; readonly status?: number }
-  | { readonly kind: 'invalid' | 'not-found'; readonly message: string }
-  | { readonly kind: 'conflict'; readonly message: string; readonly handoff: unknown }
-  | { readonly kind: 'expired'; readonly handoff: unknown }
 
 export const statusOf: Record<Wire['kind'], number> = { ok: 200, invalid: 400, 'not-found': 404, conflict: 409, expired: 410 }
 

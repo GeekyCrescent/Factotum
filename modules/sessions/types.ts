@@ -34,7 +34,8 @@
  * typecheck fail both times.
  */
 
-import type { Logger, Notifier, ReceivedFile, Timers } from '@factotum/core'
+import type { Logger, Notifier, PeerCaller, ReceivedFile, Timers } from '@factotum/core'
+import type { HandoffApi } from './handoff-types.ts'
 
 // --- configuration, already parsed by config.ts ----------------------------
 
@@ -203,6 +204,8 @@ export interface EngineSetup {
   readonly titles: TitlesConfig
   /** The ceiling of one upload: `UPLOAD_MAX_BYTES` from `config.ts`, the one literal (spec 2026-10-01, D4). */
   readonly uploadMaxBytes?: number
+  /** `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4). REQUIRED here: `server.ts` cannot forget it. */
+  readonly peers: PeerCaller
 }
 
 /** How much the titler thinks. The CLI's `--effort` levels. */
@@ -775,6 +778,8 @@ export interface UsageCount {
 }
 
 export interface SessionEngine {
+  /** The handoff (spec 2026-10-07-dos-hosts, D13). Optional in this copy, like `upload`: the real engine always has it. */
+  readonly handoff?: HandoffApi
   readonly launch: (input: LaunchInput) => Promise<LaunchResult>
   /** No `force`: freshness is checked once, at launch — never on a later turn. */
   readonly reply: (id: string, text: string) => Promise<LaunchResult>
