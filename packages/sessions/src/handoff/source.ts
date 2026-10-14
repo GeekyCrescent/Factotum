@@ -46,6 +46,8 @@ export interface SourceDeps {
   readonly sleep?: (ms: number) => Promise<void>
   readonly statusWaitMs?: number
   readonly statusPollMs?: number
+  /** Tests lower it to reach `code-too-large` without a 256 MiB repo. */
+  readonly maxBundleBytes?: number
 }
 
 /** A file's own deadline (D8, step 2): twice the time at the assumed speed, never under 30 s. */
@@ -62,13 +64,25 @@ export function createSource(deps: SourceDeps) {
   const gitOptions = host.gitEnv !== undefined ? { base: host.gitEnv } : {}
   const holderOf = (hid: string) => `${HANDOFF_HOLDER_PREFIX}${hid}`
 
-  /** One project, steps 1–15. Runs inside the project's handoff queue; answers its final journal. */
+  /**
+   * One project, steps 1–15, inside its handoff queue; answers its final journal. NOTHING ESCAPES WITH
+   * THE LOCK HELD: an error before `committing` aborts here like any refusal, one at `committing` leaves
+   * the project `pending-peer` (the commit may have gone), and one later is the startup's (D11).
+   */
   async function moveProject(hid: string, to: string, project: PlannedProject): Promise<Journal> {
+    const steps = stepsOf(hid, to, project)
+    try {
+      return await steps.run()
+    } catch {
+      return await steps.recover()
+    }
+  }
+
+  function stepsOf(hid: string, to: string, project: PlannedProject) {
     const path = host.projects().find((p) => p.id === project.siteId)?.path
     const route = (step: string) => `handoff/${hid}/${project.targetSiteId}/${step}`
     const work = host.paths.handoffWork(hid, project.siteId)
     const bundlePath = join(work, 'code.bundle')
-    await mkdir(work, { recursive: true })
 
     let journal: Journal = {
       ...newJournal({ hid, siteId: project.siteId, role: 'source', peer: to, phase: 'locking', at: host.now().toISOString() }),
@@ -103,70 +117,99 @@ export function createSource(deps: SourceDeps) {
       return journal
     }
 
-    // 1–2. The journal before the lock; the lock loses at once to anyone.
-    await writeJournal(host.paths, journal)
-    if (path === undefined) return await save({ phase: 'aborted', reason: 'project-not-portable' })
-    const lock = await host.locks.acquire(project.siteId, holderOf(hid), host.now().toISOString())
-    if (!lock.ok) return await save({ phase: 'aborted', reason: 'project-busy' })
-    await save({ phase: 'locked' })
-
-    // 3. prepare
-    const url = await handoffGit(path, ['config', '--get', 'remote.origin.url'], gitOptions).then((out) => out.trim(), () => '')
-    const prepared = await host.peers.json(to, 'POST', route('prepare'), { key: remoteKey(url), branch: project.branch, head: project.head, sessionIds: project.sessions, to }, { timeoutMs: PREPARE_TIMEOUT_MS })
-    await heard(prepared)
-    if (!prepared.ok) return await abortLocal(undefined, true)
-    const body = prepared.body as { branchHead?: unknown; sessions?: unknown }
-    const branchHead = typeof body.branchHead === 'string' ? body.branchHead : undefined
-    const sessions = sessionsCheckSchema.safeParse(body.sessions)
-    if (!sessions.success) return await abortLocal('peer-error', true)
-
-    // 4. AGAIN, here (D7): the target ahead, and a history that went another way.
-    if (branchHead !== undefined && !(await handoffGitSucceeds(path, ['merge-base', '--is-ancestor', branchHead, project.head], gitOptions))) {
-      return await abortLocal('target-ahead', true)
-    }
-    if ((await divergedOf(host, sessions.data)).size > 0) return await abortLocal('history-diverged', true)
-
-    // 5. The services stop AFTER prepare and BEFORE the WIP, and are named whatever happens next.
-    const stopped: string[] = []
-    for (const sessionId of project.sessions) stopped.push(...(await host.stopServices(sessionId)))
-    if (stopped.length > 0) host.log.info(`handoff ${hid}: stopped ${stopped.length} service(s) in ${project.siteId}`)
-    await save({ stoppedServices: stopped })
-
-    // 6. The code: the WIP, a fetch that only reads, the bundle.
-    const made = await wipCommit(path, { indexFile: join(work, 'index'), hid, host: to, ...(host.gitEnv !== undefined ? { base: host.gitEnv } : {}) })
-    if (made.head !== project.head) return await abortLocal('source-changed-during-handoff', true)
-    await handoffGit(path, ['fetch', '--quiet', 'origin'], gitOptions).catch(() => host.log.warn(`handoff ${hid}: fetch origin failed in ${project.siteId}; using what refs/remotes already has`))
-    const bundle = await makeBundle(path, { hid, head: made.head, wip: made.wip, base: handoffBase(branchHead), out: bundlePath, ...(host.gitEnv !== undefined ? { env: host.gitEnv } : {}) })
-    const bundleBytes = bundle === undefined ? 0 : (await lstat(bundle)).size
-    if (bundleBytes > HANDOFF_FILE_MAX_BYTES || bundleBytes / (HANDOFF_ASSUMED_MBPS * 1_000_000) > HANDOFF_FILE_MAX_SECONDS) return await abortLocal('code-too-large', true)
-    await save({ phase: 'sending', head: made.head, wip: made.wip, tree: made.tree })
-
-    // 7. The manifest, then every file — the bundle first.
-    const files = (await Promise.all(project.sessions.map(async (id) => (await sessionFiles(host, id)).files))).flat()
-    const manifest = await buildManifest(files, bundle === undefined ? undefined : { abs: bundle, bytes: bundleBytes })
-    if (manifest.entries.length > HANDOFF_MANIFEST_MAX_ENTRIES || Buffer.byteLength(JSON.stringify(manifest.entries)) > MAX_BODY_BYTES) {
-      return await abortLocal('too-many-files', true)
-    }
-    const sent = await host.peers.json(to, 'POST', route('manifest'), manifest.entries, { timeoutMs: HANDOFF_MANIFEST_TIMEOUT_MS })
-    await heard(sent)
-    if (!sent.ok) return await abortLocal(undefined, true)
-    for (const entry of manifest.entries) {
-      const uploaded = await host.peers.upload(to, route(`file/${entry.n}`), manifest.sources.get(entry.n) ?? '', { timeoutMs: fileTimeoutMs(entry.bytes, entry.kind === 'git-bundle') })
-      await heard(uploaded)
-      if (!uploaded.ok) return await abortLocal(undefined, true)
+    async function run(): Promise<Journal> {
+      await mkdir(work, { recursive: true })
+      // 1–2. The journal before the lock; the lock loses at once to anyone.
+      await writeJournal(host.paths, journal)
+      if (path === undefined) return await save({ phase: 'aborted', reason: 'project-not-portable' })
+      const lock = await host.locks.acquire(project.siteId, holderOf(hid), host.now().toISOString())
+      if (!lock.ok) return await save({ phase: 'aborted', reason: 'project-busy' })
+      await save({ phase: 'locked' })
+      const prepared = await prepare(path)
+      if ('phase' in prepared) return prepared
+      const sending = await send(path, prepared.branchHead)
+      if (sending !== undefined) return sending
+      return await commit()
     }
 
-    // 8–10. `committing` BEFORE the commit leaves: from here on the commit may have gone.
-    await save({ phase: 'committing' })
-    const committed = await host.peers.json(to, 'POST', route('commit'), {}, { timeoutMs: COMMIT_TIMEOUT_MS })
-    await heard(committed)
-    const outcome = await afterCommit(committed)
-    if (outcome === 'pending-peer') {
-      host.log.warn(`handoff ${hid}: ${project.siteId} is waiting for ${to} to say whether it was installed`)
-      return await save({ phase: 'pending-peer' })
+    /** Step 3, and step 4 with its answer: `{ branchHead }` to go on, or the aborted journal. */
+    async function prepare(path: string): Promise<{ readonly branchHead: string | undefined } | Journal> {
+      const url = await handoffGit(path, ['config', '--get', 'remote.origin.url'], gitOptions).then((out) => out.trim(), () => '')
+      const answer = await host.peers.json(to, 'POST', route('prepare'), { key: remoteKey(url), branch: project.branch, head: project.head, sessionIds: project.sessions, to }, { timeoutMs: PREPARE_TIMEOUT_MS })
+      await heard(answer)
+      if (!answer.ok) return await abortLocal(undefined, true)
+      const body = answer.body as { branchHead?: unknown; sessions?: unknown }
+      const branchHead = typeof body.branchHead === 'string' ? body.branchHead : undefined
+      const sessions = sessionsCheckSchema.safeParse(body.sessions)
+      if (!sessions.success) return await abortLocal('peer-error', true)
+      // 4. AGAIN, here (D7): the target ahead, and a history that went another way.
+      if (branchHead !== undefined && !(await handoffGitSucceeds(path, ['merge-base', '--is-ancestor', branchHead, project.head], gitOptions))) {
+        return await abortLocal('target-ahead', true)
+      }
+      if ((await divergedOf(host, sessions.data)).size > 0) return await abortLocal('history-diverged', true)
+      return { branchHead }
     }
-    if (outcome === 'aborted') return await abortLocal(undefined, false)
-    return await finish()
+
+    /** Steps 5–7: the services, the code, the files. `undefined` when all of it arrived. */
+    async function send(path: string, branchHead: string | undefined): Promise<Journal | undefined> {
+      // 5. The services stop AFTER prepare and BEFORE the WIP, and are named whatever happens next.
+      const stopped: string[] = []
+      for (const sessionId of project.sessions) stopped.push(...(await host.stopServices(sessionId)))
+      if (stopped.length > 0) host.log.info(`handoff ${hid}: stopped ${stopped.length} service(s) in ${project.siteId}`)
+      await save({ stoppedServices: stopped })
+
+      // 6. The code: the WIP, a fetch that only reads, the bundle.
+      const env = host.gitEnv !== undefined ? { env: host.gitEnv } : {}
+      const made = await wipCommit(path, { indexFile: join(work, 'index'), hid, host: to, ...(host.gitEnv !== undefined ? { base: host.gitEnv } : {}) })
+      if (made.head !== project.head) return await abortLocal('source-changed-during-handoff', true)
+      await handoffGit(path, ['fetch', '--quiet', 'origin'], gitOptions).catch(() => host.log.warn(`handoff ${hid}: fetch origin failed in ${project.siteId}; using what refs/remotes already has`))
+      const bundle = await makeBundle(path, { hid, head: made.head, wip: made.wip, base: handoffBase(branchHead), out: bundlePath, ...env })
+      const bundleBytes = bundle === undefined ? 0 : (await lstat(bundle)).size
+      const tooSlow = bundleBytes / (HANDOFF_ASSUMED_MBPS * 1_000_000) > HANDOFF_FILE_MAX_SECONDS
+      if (bundleBytes > (deps.maxBundleBytes ?? HANDOFF_FILE_MAX_BYTES) || tooSlow) return await abortLocal('code-too-large', true)
+      await save({ phase: 'sending', head: made.head, wip: made.wip, tree: made.tree })
+
+      // 7. The manifest, then every file — the bundle first.
+      const files = (await Promise.all(project.sessions.map(async (id) => (await sessionFiles(host, id)).files))).flat()
+      const manifest = await buildManifest(files, bundle === undefined ? undefined : { abs: bundle, bytes: bundleBytes })
+      if (manifest.entries.length > HANDOFF_MANIFEST_MAX_ENTRIES || Buffer.byteLength(JSON.stringify(manifest.entries)) > MAX_BODY_BYTES) {
+        return await abortLocal('too-many-files', true)
+      }
+      const sent = await host.peers.json(to, 'POST', route('manifest'), manifest.entries, { timeoutMs: HANDOFF_MANIFEST_TIMEOUT_MS })
+      await heard(sent)
+      if (!sent.ok) return await abortLocal(undefined, true)
+      for (const entry of manifest.entries) {
+        const uploaded = await host.peers.upload(to, route(`file/${entry.n}`), manifest.sources.get(entry.n) ?? '', { timeoutMs: fileTimeoutMs(entry.bytes, entry.kind === 'git-bundle') })
+        await heard(uploaded)
+        if (!uploaded.ok) return await abortLocal(undefined, true)
+      }
+      return undefined
+    }
+
+    /** Steps 8–15: `committing` BEFORE the commit leaves, then what its answer means. */
+    async function commit(): Promise<Journal> {
+      await save({ phase: 'committing' })
+      const answer = await host.peers.json(to, 'POST', route('commit'), {}, { timeoutMs: COMMIT_TIMEOUT_MS })
+      await heard(answer)
+      const outcome = await afterCommit(answer)
+      if (outcome === 'pending-peer') {
+        host.log.warn(`handoff ${hid}: ${project.siteId} is waiting for ${to} to say whether it was installed`)
+        return await save({ phase: 'pending-peer' })
+      }
+      if (outcome === 'aborted') return await abortLocal(undefined, false)
+      return await finish()
+    }
+
+    /** An error escaped a step: what the phase says it may have left (see `moveProject`). */
+    async function recover(): Promise<Journal> {
+      host.log.warn(`handoff ${hid}: a step failed in ${project.siteId} (${journal.phase})`)
+      if (journal.phase === 'locking') return await save({ phase: 'aborted', reason: 'source-error' })
+      if (journal.phase === 'locked' || journal.phase === 'sending') {
+        return await abortLocal('source-error', true).catch(async () => await save({ phase: 'aborted', reason: 'source-error' }))
+      }
+      if (journal.phase === 'committing') return await save({ phase: 'pending-peer' })
+      return journal
+    }
 
     /** Step 10: what the commit's answer means, by `handoff.reason` (D9). */
     async function afterCommit(answer: PeerResponse<unknown>): Promise<Outcome> {
@@ -219,6 +262,8 @@ export function createSource(deps: SourceDeps) {
       await save({ phase: 'acked' })
       return await cleanAndRelease(journal)
     }
+
+    return { run, recover }
   }
 
   /**
