@@ -348,3 +348,61 @@ test('the source changed during the handoff: not cleaned, the WIP backed up, and
   assert.notEqual(await sh(s.l.w.env, s.l.w.source, 'rev-parse', `refs/factotum/handoff-backup/${hid}`), '')
   assert.equal((await listJournals(s.l.mac.host.paths, hid)).length, 1)
 })
+
+// ---------------------------------------------------------------------------
+// The status loop, answer by answer (D9, step 10)
+// ---------------------------------------------------------------------------
+
+/** The commit's answer lost; `status` answers from `answers`, one per poll, then the last for ever. */
+function lostCommit(s: Awaited<ReturnType<typeof scene>>, answers: readonly PeerResponse<unknown>[], abort?: PeerResponse<unknown>) {
+  let n = 0
+  overrideJson(s.l, (json) => async (peer, method, path, body, options) => {
+    if (path.endsWith('/commit')) {
+      void json(peer, method, path, body, options)
+      return { ok: false, status: undefined, reason: 'timeout', body: undefined }
+    }
+    if (path.endsWith('/status')) return answers[Math.min(n++, answers.length - 1)]!
+    if (path.endsWith('/abort') && abort !== undefined) return abort
+    return await json(peer, method, path, body, options)
+  })
+}
+
+const phase = (name: string): PeerResponse<unknown> => ({ ok: true, status: 200, body: { phase: name, handoff: { warnings: [] } } })
+const gone: PeerResponse<unknown> = { ok: false, status: undefined, reason: 'unreachable', body: undefined }
+
+test('status says installing, then committed: the source waits, then goes on', async () => {
+  const s = await scene()
+  lostCommit(s, [phase('installing'), phase('installing'), phase('committed')])
+  const { source } = await go(s.l)
+  assert.equal(source?.phase, 'done')
+})
+
+test('status says abort-failed: aborted here, without sending abort', async () => {
+  const s = await scene()
+  lostCommit(s, [{ ok: true, status: 200, body: { phase: 'abort-failed', handoff: { reason: 'abort-failed', warnings: [] } } }])
+  const { source } = await go(s.l)
+  assert.deepEqual([source?.phase, source?.targetReason], ['aborted', 'abort-failed'])
+})
+
+test('status never knows: pending-peer when the wait runs out, with the lock', async () => {
+  const s = await scene()
+  lostCommit(s, [gone])
+  const { hid, source } = await go(s.l)
+  assert.equal(source?.phase, 'pending-peer')
+  assert.deepEqual((await s.l.mac.host.locks.holders('vault')).map((h) => h?.sessionId), [`handoff-${hid}`])
+})
+
+test('status says prepared, and the abort that follows gets no answer: pending-peer, never a guess', async () => {
+  const s = await scene()
+  lostCommit(s, [phase('prepared')], gone)
+  const { source } = await go(s.l)
+  assert.equal(source?.phase, 'pending-peer')
+})
+
+test('a pending-peer whose peer is still silent stays as it is when polled', async () => {
+  const s = await scene()
+  lostCommit(s, [gone])
+  const { hid } = await go(s.l)
+  await s.l.mac.api.poll()
+  assert.equal((await readJournal(s.l.mac.host.paths, hid, 'vault'))?.phase, 'pending-peer')
+})

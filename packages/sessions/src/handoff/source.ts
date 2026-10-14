@@ -260,6 +260,7 @@ export function createSource(deps: SourceDeps) {
       const at = host.now().toISOString()
       for (const sessionId of project.sessions) await host.store.patchMeta(sessionId, (meta) => ({ ...meta, movedTo: to, movedAt: at }))
       await save({ phase: 'acked' })
+      host.log.info(`handoff ${hid}: ${project.sessions.length} session(s) of ${project.siteId} moved to ${to}`)
       return await cleanAndRelease(journal)
     }
 

@@ -343,3 +343,15 @@ test('done empties replaced/ and staging/, deletes the refs, and says done; befo
   assert.equal(await there(join(sc.target.host.paths.handoffWork(sc.hid, sc.siteId), 'staging')), false)
   assert.deepEqual(await sc.t.done(sc.hid, sc.siteId), { kind: 'ok', body: { phase: 'done' } })
 })
+
+test('an abort that finds installing (after a restart that left it): the undo runs, and the answer says aborted', async () => {
+  const sc = await targetScenario()
+  await work(sc)
+  await sent(sc)
+  const journal = await journalOf(sc)
+  const { writeJournal } = await import('./journal.ts')
+  await writeJournal(sc.target.host.paths, { ...journal!, phase: 'installing' })
+  const answer = await sc.t.abort(sc.hid, sc.siteId)
+  assert.equal(answer.kind === 'ok' ? (answer.body as { phase: string }).phase : answer.kind, 'aborted')
+  assert.deepEqual(await holders(sc), [])
+})
