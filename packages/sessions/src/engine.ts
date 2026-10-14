@@ -987,6 +987,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         id: entry.id,
         label: entry.label,
         disabledReason: entry.disabledReason,
+        // A disabled entry's `invoke` is undefined (`ResolvedEntry`, catalog.ts): so is its kind.
+        kind: entry.invoke?.kind,
       })),
       uploads: uploads.view,
       files: { maxEntries: MAX_ENTRIES },

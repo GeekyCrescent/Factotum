@@ -129,6 +129,18 @@ async function initRepo(path: string): Promise<void> {
   await promisify(execFile)('git', ['init', '--quiet'], { cwd: path })
 }
 
+test('view() says each catalog entry\'s kind, and none for a disabled one (spec 2026-10-14-tareas-kanban, D9, G4a)', async () => {
+  const { engine } = await world()
+  assert.deepEqual(
+    engine.view().catalog.map((entry) => [entry.id, entry.kind]),
+    [
+      ['free', 'none'],
+      ['review', 'command'],
+      ['broken', undefined],
+    ],
+  )
+})
+
 // ---------------------------------------------------------------------------
 // createEngine — criterion 15's second route
 // ---------------------------------------------------------------------------

@@ -534,6 +534,12 @@ export interface EngineSetupView {
     readonly id: string
     readonly label: string
     readonly disabledReason: string | undefined
+    /**
+     * `invoke.kind` — `none` is the free-prompt entry (spec 2026-10-14-tareas-kanban, D9: «Run agent»
+     * launches with it). OPTIONAL: a disabled entry has no invoke, and a host of an earlier build does
+     * not send it — like `uploads?` and `files?`, which a daemon from before never sent either.
+     */
+    readonly kind?: string | undefined
   }[]
   /**
    * OPTIONAL HERE, REQUIRED ON THE ENGINE'S SIDE (spec 2026-10-01, D12). A daemon from before uploads
