@@ -15,4 +15,8 @@ export interface ViewProps {
   /** What follows `/m/tasks/`: `''`, `cycles`, `cycles/<id>`, or a card id. */
   readonly rest: string
   readonly navigate: (rest: string, options?: { readonly replace?: boolean }) => void
+  /** The module draws its own bar (`ownsTopBar`), so its ☰ opens the shell's drawer through this. */
+  readonly openDrawer: () => void
+  /** Everything pending across the app: the count on the ☰. */
+  readonly pendingTotal: number
 }

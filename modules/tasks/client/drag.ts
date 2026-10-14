@@ -30,10 +30,15 @@ export interface Dragging {
   readonly drop: Drop | undefined
 }
 
-function measure(root: HTMLElement): { readonly columns: readonly ColumnBox[]; readonly cards: readonly CardBox[] } {
+/** A column's box, and whether it scrolls with the board: the pinned rails stay put (redesign A). */
+interface MeasuredColumn extends ColumnBox {
+  readonly fixed: boolean
+}
+
+function measure(root: HTMLElement, strip: HTMLElement): { readonly columns: readonly MeasuredColumn[]; readonly cards: readonly CardBox[] } {
   const columns = Array.from(root.querySelectorAll<HTMLElement>('[data-column]')).map((element) => {
     const { left, right } = element.getBoundingClientRect()
-    return { status: element.dataset['column'] as Column, left, right }
+    return { status: element.dataset['column'] as Column, left, right, fixed: !strip.contains(element) }
   })
   const cards = Array.from(root.querySelectorAll<HTMLElement>('[data-card]')).map((element) => {
     const { top, bottom } = element.getBoundingClientRect()
@@ -70,17 +75,19 @@ export function useBoardDrag(root: RefObject<HTMLElement>, onDrop: (id: string, 
     const handle = event.currentTarget as HTMLElement
     handle.setPointerCapture(event.pointerId)
     const page = pageScroller(board)
-    const boxes = measure(board)
-    const origin = { left: board.scrollLeft, top: page.scrollTop }
+    // What scrolls sideways: the columns' strip when the board has one, else the board itself.
+    const strip = board.querySelector<HTMLElement>('[data-scroll]') ?? board
+    const boxes = measure(board, strip)
+    const origin = { left: strip.scrollLeft, top: page.scrollTop }
     const from = { x: event.clientX, y: event.clientY }
     let at = { ...from }
     let current: Dragging | undefined
     let frame = 0
 
     const locate = () => {
-      const dx = board.scrollLeft - origin.left
+      const dx = strip.scrollLeft - origin.left
       const dy = page.scrollTop - origin.top
-      const columns = boxes.columns.map((c) => ({ ...c, left: c.left - dx, right: c.right - dx }))
+      const columns = boxes.columns.map((c) => (c.fixed ? c : { ...c, left: c.left - dx, right: c.right - dx }))
       const cards = boxes.cards.map((c) => ({ ...c, top: c.top - dy, bottom: c.bottom - dy }))
       const drop = dropAt(columns, cards, at.x, at.y, id)
       if (current !== undefined && sameDrop(current.drop, drop)) return
@@ -91,14 +98,16 @@ export function useBoardDrag(root: RefObject<HTMLElement>, onDrop: (id: string, 
     const scroll = () => {
       frame = requestAnimationFrame(scroll)
       if (current === undefined) return
-      const box = board.getBoundingClientRect()
-      const sideways = at.x < box.left + EDGE_PX ? -SCROLL_PX : at.x > box.right - EDGE_PX ? SCROLL_PX : 0
+      const box = strip.getBoundingClientRect()
+      // Only over the strip itself: over the pinned rails, past its right edge, nothing scrolls.
+      const over = at.x >= box.left && at.x <= box.right
+      const sideways = !over ? 0 : at.x < box.left + EDGE_PX ? -SCROLL_PX : at.x > box.right - EDGE_PX ? SCROLL_PX : 0
       const down = at.y < EDGE_PX ? -SCROLL_PX : at.y > window.innerHeight - EDGE_PX ? SCROLL_PX : 0
-      const before = { left: board.scrollLeft, top: page.scrollTop }
-      board.scrollLeft += sideways
+      const before = { left: strip.scrollLeft, top: page.scrollTop }
+      strip.scrollLeft += sideways
       page.scrollTop += down
       // Only when something actually scrolled: at an edge with nowhere to go, nothing is recomputed.
-      if (board.scrollLeft !== before.left || page.scrollTop !== before.top) locate()
+      if (strip.scrollLeft !== before.left || page.scrollTop !== before.top) locate()
     }
 
     const move = (moved: PointerEvent) => {

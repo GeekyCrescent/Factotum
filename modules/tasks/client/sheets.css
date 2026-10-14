@@ -1,0 +1,450 @@
+/*
+ * The task board's sheets: the card, the filters on the phone, closing a cycle, and the history, prefixed `t-` like the rest of the module (redesign A). Grafito tokens by
+ * name only: no colour values here, and every transition names its properties.
+ */
+
+/* --- Sheets: head, foot, and the card --------------------------------------- */
+
+.t-sheet {
+  --pad: var(--space-4);
+}
+
+.t-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.t-sheet-head h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  font-size: var(--text-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.t-sheet-crumb h2 {
+  font-size: var(--text-small);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+/* Stays at the bottom while the body scrolls: the sheet's own padding is undone around it. */
+.t-sheet-foot {
+  position: sticky;
+  bottom: calc(-1 * (var(--pad) + env(safe-area-inset-bottom)));
+  margin: 0 calc(-1 * var(--pad)) calc(-1 * (var(--pad) + env(safe-area-inset-bottom)));
+  padding: var(--space-2h) var(--pad) calc(var(--space-2h) + env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.t-changes {
+  flex: 1;
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.t-grow {
+  flex: 1;
+}
+
+@media (min-width: 720px) {
+  .t-sheet {
+    --pad: var(--space-5);
+  }
+
+  .sheet.t-sheet-wide {
+    width: min(640px, calc(100vw - 2 * var(--space-4)));
+  }
+}
+
+.t-title-field {
+  width: 100%;
+  padding: var(--space-1) var(--space-1h);
+  margin: 0 calc(-1 * var(--space-1h));
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  resize: none;
+  field-sizing: content;
+  outline: none;
+}
+
+/* Without `field-sizing` (Firefox, older Safari) a one-row textarea would scroll a long title sideways. */
+@supports not (field-sizing: content) {
+  .t-title-field {
+    min-height: calc(2 * 1.3em + 2 * var(--space-1));
+  }
+}
+
+.t-title-field:focus-visible,
+.t-prop-v :is(input, select):focus-visible,
+.t-notes textarea:focus-visible,
+.t-subtask-add input:focus-visible {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.t-props {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-1) 0;
+}
+
+.t-prop {
+  min-height: var(--hit);
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+}
+
+.t-prop-k {
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.t-prop-v {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.t-prop-v > .t-st,
+.t-prop-v > .t-prio {
+  flex: none;
+}
+
+.t-prop-v input,
+.t-prop-v select {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: 0 var(--space-1h);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-body);
+  outline: none;
+}
+
+/* The suggestions of Area and Project open as you type; the browser's arrow would be the one odd row. */
+.t-prop-v input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
+.t-prop-v input::placeholder {
+  color: var(--text-3);
+}
+
+.t-prop-v :is(input, select):disabled {
+  color: var(--text-2);
+  opacity: 1;
+}
+
+.t-prop-late input {
+  color: var(--err);
+  font-weight: 500;
+}
+
+.t-late-by {
+  flex: none;
+  color: var(--err);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.t-subtasks h3,
+.t-notes > span {
+  display: flex;
+  gap: var(--space-1h);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.t-subtasks ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.t-subtask {
+  display: flex;
+  align-items: center;
+  margin-left: -10px;
+  font-size: var(--text-body);
+}
+
+.t-subtask > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-subtask-done {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.t-subtask-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-left: var(--space-1);
+  color: var(--text-3);
+}
+
+.t-subtask-add input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: 0 var(--space-1h);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-body);
+  outline: none;
+}
+
+.t-subtask-add input::placeholder {
+  color: var(--text-3);
+}
+
+.t-notes {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.t-notes textarea {
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-2) var(--space-2h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-body);
+  resize: vertical;
+  field-sizing: content;
+  outline: none;
+}
+
+.t-provenance {
+  font-size: var(--text-caption);
+}
+
+.t-delete {
+  justify-self: start;
+  margin-left: calc(-1 * var(--space-4));
+  color: var(--err);
+}
+
+/* --- Filters, as a sheet on the phone -------------------------------------- */
+
+.t-chooser h3 {
+  margin-bottom: var(--space-1h);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.t-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.t-chooser-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+/* --- Closing a cycle ------------------------------------------------------- */
+
+.t-close-sub {
+  margin-top: calc(-1 * var(--space-2));
+  font-size: var(--text-small);
+}
+
+.t-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.t-tally span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.t-tally b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.t-close-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2h);
+  border-top: 1px solid var(--line);
+}
+
+.t-close-lead p {
+  flex: 1;
+  font-size: var(--text-small);
+  text-wrap: pretty;
+}
+
+.t-close-lead .btn {
+  flex: none;
+  margin-right: calc(-1 * var(--space-2));
+}
+
+.t-close-list {
+  list-style: none;
+  margin: calc(-1 * var(--space-2)) 0 0;
+  padding: 0;
+}
+
+.t-close-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2h);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.t-close-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  font-size: var(--text-caption);
+}
+
+.t-close-title {
+  font-size: var(--text-small);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.t-segment {
+  flex: none;
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  overflow: hidden;
+}
+
+.t-segment button {
+  min-height: var(--hit);
+  padding: 0 var(--space-2h);
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.t-segment button + button {
+  border-left: 1px solid var(--line);
+}
+
+.t-segment button[aria-pressed='true'] {
+  background: var(--chip-on);
+  color: var(--text);
+}
+
+/* 36 px only where the board is the desktop one: below 900 px a touch tablet gets the phone's 44. */
+@media (min-width: 900px) {
+  .t-segment button {
+    min-height: 36px;
+    padding: 0 var(--space-3);
+  }
+}
+
+/* On the phone the close's foot is the decision: two big buttons, the note above them. */
+@media (max-width: 719px) {
+  .t-sheet-wide .t-sheet-foot .t-changes {
+    flex-basis: 100%;
+    font-size: var(--text-caption);
+  }
+
+  .t-sheet-wide .t-sheet-foot .btn {
+    flex: 1;
+    min-height: var(--hit-decide);
+    font-size: var(--text-input);
+  }
+}
+
+/* --- History ---------------------------------------------------------------- */
+
+.t-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--space-1) 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.t-cycles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.t-cycles li + li {
+  border-top: 1px solid var(--line);
+}
+
+.t-cycle-row {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.t-narrow .t-list {
+  margin-bottom: var(--space-3);
+}

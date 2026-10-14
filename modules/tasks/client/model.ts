@@ -112,12 +112,105 @@ function dayMonth(date: string): { readonly day: number; readonly month: string 
   return { day: Number(date.slice(8, 10)), month: MONTHS[Number(date.slice(5, 7)) - 1] ?? '' }
 }
 
-/** «W42 · 12–18 Oct», or «W44 · 26 Oct – 1 Nov» across two months. */
-export function cycleTitle(id: CycleId, range: CycleRange): string {
+/** «12–18 Oct», or «26 Oct – 1 Nov» across two months. */
+export function rangeLabel(range: CycleRange): string {
   const start = dayMonth(range.start)
   const end = dayMonth(range.end)
-  const days = start.month === end.month ? `${start.day}–${end.day} ${end.month}` : `${start.day} ${start.month} – ${end.day} ${end.month}`
-  return `${id.slice(5)} · ${days}`
+  return start.month === end.month ? `${start.day}–${end.day} ${end.month}` : `${start.day} ${start.month} – ${end.day} ${end.month}`
+}
+
+/** «W42 · 12–18 Oct», or «W44 · 26 Oct – 1 Nov» across two months. */
+export function cycleTitle(id: CycleId, range: CycleRange): string {
+  return `${id.slice(5)} · ${rangeLabel(range)}`
+}
+
+// --- The week at a glance: the header of the board (redesign A) -----------------------------
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const DAY_MS = 86_400_000
+
+/** Days since the epoch of a `YYYY-MM-DD`, read as a calendar date (no zone involved). */
+function dayNumber(date: string): number {
+  return Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))) / DAY_MS
+}
+
+/** «Wed 14». */
+export function dayOf(date: string): string {
+  const weekday = WEEKDAYS[new Date(dayNumber(date) * DAY_MS).getUTCDay()] ?? ''
+  return `${weekday} ${Number(date.slice(8, 10))}`
+}
+
+export interface Week {
+  readonly today: string
+  /** Counting today; 0 once the cycle's last day has passed. */
+  readonly daysLeft: number
+  readonly done: number
+  /** The cycle's cards that are meant to be done: canceled ones do not count. */
+  readonly total: number
+}
+
+const IN_WEEK: ReadonlySet<Status> = new Set(['todo', 'in_progress', 'blocked', 'done'])
+
+export function weekOf(tasks: readonly Task[], cycle: CycleId, range: CycleRange, today: string): Week {
+  const mine = tasks.filter((t) => t.cycle === cycle && IN_WEEK.has(t.status))
+  return {
+    today: dayOf(today),
+    // Counted from today, or from the first day for a cycle that has not started yet.
+    daysLeft: Math.max(0, dayNumber(range.end) - Math.max(dayNumber(today), dayNumber(range.start)) + 1),
+    done: mine.filter((t) => t.status === 'done').length,
+    total: mine.length,
+  }
+}
+
+/** «Wed 14 · 5 days left · 2 of 9 done». */
+export function weekLine(week: Week): string {
+  const left = week.daysLeft === 0 ? 'the week is over' : week.daysLeft === 1 ? 'last day' : `${week.daysLeft} days left`
+  const done = week.total === 0 ? [] : [`${week.done} of ${week.total} done`]
+  return [week.today, left, ...done].join(' · ')
+}
+
+/** What is late, the oldest first: the one the overdue strip opens. */
+export function overdueOf(tasks: readonly Task[], today: string): readonly Task[] {
+  return tasks
+    .filter((t) => isOverdue(t, today))
+    .sort((a, b) => {
+      // `isOverdue` already kept only cards with a date.
+      const [x, y] = [a.due ?? '', b.due ?? '']
+      return x === y ? byOrder(a, b) : x < y ? -1 : 1
+    })
+}
+
+/** «1 day late», or nothing for a date that is today or ahead. */
+export function lateBy(due: string, today: string): string | undefined {
+  const days = dayNumber(today) - dayNumber(due)
+  if (days <= 0) return undefined
+  return days === 1 ? '1 day late' : `${days} days late`
+}
+
+// --- The board's shape on a wide screen (redesign A) ------------------------------------------
+
+export type Pinned = 'done' | 'canceled'
+export const PINNED: readonly Pinned[] = ['done', 'canceled']
+const WORKING: readonly Column[] = ['backlog', 'todo', 'in_progress', 'blocked']
+
+export interface Slot {
+  readonly status: Column
+  /** A rail is an empty column folded to its name: still a place to drop a card. */
+  readonly shape: 'column' | 'rail'
+}
+
+/**
+ * What the scrolling part of the board shows: the four working columns, an empty one folded to a
+ * rail, then Done and Canceled only when opened. Those two are always pinned at the right edge.
+ */
+export function boardLayout(counts: Readonly<Record<Column, number>>, opened: ReadonlySet<Pinned>): readonly Slot[] {
+  const working = WORKING.map((status): Slot => ({ status, shape: counts[status] === 0 ? 'rail' : 'column' }))
+  const pinned = PINNED.filter((status) => opened.has(status)).map((status): Slot => ({ status, shape: 'column' }))
+  return [...working, ...pinned]
+}
+
+export function filterCount(filter: Filter): number {
+  return [filter.area, filter.label, filter.project].filter((value) => value !== undefined).length
 }
 
 /** Short day for a due date on a card: «16 Oct». */

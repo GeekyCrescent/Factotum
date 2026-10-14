@@ -8,6 +8,8 @@
  */
 
 import './client.css'
+import './cards.css'
+import './sheets.css'
 import { Board } from './board.tsx'
 import type { ViewProps } from './contract.ts'
 import { CycleDetail, Cycles } from './cycles.tsx'
@@ -23,4 +25,5 @@ function TasksView(props: ViewProps) {
   return <Board props={props} openTask={rest === '' ? undefined : safeDecode(rest)} />
 }
 
-export const tasksClient = { id: 'tasks', View: TasksView }
+// Its own bar (redesign A): the cycle and the week are the first line of the screen.
+export const tasksClient = { id: 'tasks', View: TasksView, ownsTopBar: true }

@@ -3,7 +3,14 @@ import assert from 'node:assert/strict'
 import type { Task } from '../types.ts'
 import {
   addedSubtasks,
+  boardLayout,
   closeMoves,
+  dayOf,
+  filterCount,
+  lateBy,
+  overdueOf,
+  weekLine,
+  weekOf,
   droppedSubtasks,
   isSamePlace,
   safeDecode,
@@ -234,4 +241,85 @@ test('a drop where the card already is moves nothing', () => {
 test('a card id from the address that cannot be decoded is no card, not a crash', () => {
   assert.equal(safeDecode('abc%20d'), 'abc d')
   assert.equal(safeDecode('%E0%A4%A'), undefined)
+})
+
+// --- The week at a glance (redesign A) --------------------------------------------------------
+
+const W42 = { start: '2026-10-12', end: '2026-10-18' }
+
+test('a date reads as its weekday and day: «Wed 14»', () => {
+  assert.equal(dayOf('2026-10-14'), 'Wed 14')
+  assert.equal(dayOf('2026-10-18'), 'Sun 18')
+  assert.equal(dayOf('2027-01-01'), 'Fri 1')
+})
+
+test('the week counts the days left with today, and what is done of the cycle, canceled apart', () => {
+  const tasks = [
+    card('a', { status: 'done' }),
+    card('b', { status: 'done' }),
+    card('c', { status: 'todo' }),
+    card('d', { status: 'in_progress' }),
+    card('e', { status: 'blocked' }),
+    card('f', { status: 'canceled' }),
+    card('g', { status: 'backlog', cycle: null }),
+    card('h', { status: 'todo', cycle: '2026-W41' }),
+    card('i', { status: 'triage', cycle: '2026-W42' }),
+  ]
+  assert.deepEqual(weekOf(tasks, '2026-W42', W42, '2026-10-14'), { today: 'Wed 14', daysLeft: 5, done: 2, total: 5 })
+})
+
+test('the week: over once its last day has passed, empty without cards, whole before it starts', () => {
+  assert.equal(weekOf([], '2026-W42', W42, '2026-10-19').daysLeft, 0)
+  assert.equal(weekOf([], '2026-W42', W42, '2026-10-18').daysLeft, 1)
+  assert.equal(weekOf([], '2026-W42', W42, '2026-10-19').total, 0)
+  assert.equal(weekOf([], '2026-W42', W42, '2026-10-05').daysLeft, 7)
+})
+
+test('the week line says what is left in plain words', () => {
+  assert.equal(weekLine({ today: 'Wed 14', daysLeft: 5, done: 2, total: 9 }), 'Wed 14 · 5 days left · 2 of 9 done')
+  assert.equal(weekLine({ today: 'Sun 18', daysLeft: 1, done: 0, total: 1 }), 'Sun 18 · last day · 0 of 1 done')
+  assert.equal(weekLine({ today: 'Mon 19', daysLeft: 0, done: 3, total: 3 }), 'Mon 19 · the week is over · 3 of 3 done')
+  assert.equal(weekLine({ today: 'Mon 12', daysLeft: 7, done: 0, total: 0 }), 'Mon 12 · 7 days left')
+})
+
+test('overdue cards come oldest first, and finished ones are never late', () => {
+  const tasks = [
+    card('late-2', { due: '2026-10-13', order: 'b' }),
+    card('late-1', { due: '2026-10-10' }),
+    card('late-3', { due: '2026-10-13', order: 'a' }),
+    card('today', { due: '2026-10-14' }),
+    card('done', { due: '2026-10-01', status: 'done' }),
+    card('canceled', { due: '2026-10-01', status: 'canceled' }),
+  ]
+  assert.deepEqual(overdueOf(tasks, '2026-10-14').map((t) => t.id), ['late-1', 'late-3', 'late-2'])
+})
+
+test('how late a due date is, in days', () => {
+  assert.equal(lateBy('2026-10-13', '2026-10-14'), '1 day late')
+  assert.equal(lateBy('2026-09-30', '2026-10-14'), '14 days late')
+  assert.equal(lateBy('2026-10-14', '2026-10-14'), undefined)
+  assert.equal(lateBy('2026-10-20', '2026-10-14'), undefined)
+  // Across a year and across a leap day.
+  assert.equal(lateBy('2026-12-31', '2027-01-02'), '2 days late')
+  assert.equal(lateBy('2028-02-28', '2028-03-01'), '2 days late')
+})
+
+test('the board: an empty working column is a rail, Done and Canceled show only when opened', () => {
+  const counts = { backlog: 3, todo: 2, in_progress: 0, blocked: 1, done: 4, canceled: 0 }
+  assert.deepEqual(boardLayout(counts, new Set()), [
+    { status: 'backlog', shape: 'column' },
+    { status: 'todo', shape: 'column' },
+    { status: 'in_progress', shape: 'rail' },
+    { status: 'blocked', shape: 'column' },
+  ])
+  assert.deepEqual(boardLayout(counts, new Set(['done'])).at(-1), { status: 'done', shape: 'column' })
+  // Opening an empty one shows it as a column all the same: it was asked for.
+  assert.deepEqual(boardLayout(counts, new Set(['canceled'])).at(-1), { status: 'canceled', shape: 'column' })
+  // Both open: always Done then Canceled, whichever was opened first.
+  assert.deepEqual(boardLayout(counts, new Set(['canceled', 'done'])).slice(-2).map((slot) => slot.status), ['done', 'canceled'])
+})
+
+test('how many filters are on', () => {
+  assert.equal(filterCount({}), 0)
+  assert.equal(filterCount({ area: '8780', project: '/factotum' }), 2)
 })
