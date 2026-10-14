@@ -2,7 +2,7 @@
  * The board's glyphs — its own, because a module imports nothing from the shell or another module.
  *
  * Phosphor Icons, MIT (c) 2023 Phosphor Icons — paths copied from @phosphor-icons/core 2.1.1, the same
- * ones `modules/sessions/client/icons.ts` carries, weights noted per glyph, coordinates rounded to one
+ * ones the sessions module's glyph table carries, weights noted per glyph, coordinates rounded to one
  * decimal (spec 2026-09-18, criterion 30). Repeating them is the price of the dependency rule.
  *
  * Decorative: a control that shows an icon alone carries its own label.

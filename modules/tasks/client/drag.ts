@@ -9,7 +9,10 @@
  *  - Near an edge of the board it scrolls, sideways and down, so a long column can be crossed.
  *  - Escape, or the browser taking the pointer back, cancels it.
  *
- * Where it lands is decided by `dropAt` in `model.ts`; this only measures the screen.
+ * Where it lands is decided by `dropAt` in `model.ts`; this only measures the screen — ONCE, when the
+ * drag starts, and then shifts those boxes by what the board and the page scrolled. Measuring every
+ * card on every pointer move, and re-rendering the board each time, is what a 2 000-card board cannot
+ * afford (review of block K). The board re-renders only when the place under the pointer changes.
  */
 
 import type { RefObject } from 'preact'
@@ -45,29 +48,43 @@ function pageScroller(element: HTMLElement): HTMLElement {
     const overflow = getComputedStyle(node).overflowY
     if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) return node
   }
-  return document.scrollingElement as HTMLElement
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement
 }
+
+const sameDrop = (a: Drop | undefined, b: Drop | undefined): boolean => a?.status === b?.status && a?.index === b?.index
 
 export function useBoardDrag(root: RefObject<HTMLElement>, onDrop: (id: string, drop: Drop) => void) {
   const [dragging, setDragging] = useState<Dragging | undefined>(undefined)
   const stop = useRef<(() => void) | undefined>(undefined)
+  // The callback of the LATEST render: a read that lands mid-drag must not leave the drop computing
+  // its neighbours from the columns of the render where the drag began.
+  const dropped = useRef(onDrop)
+  dropped.current = onDrop
   useEffect(() => () => stop.current?.(), [])
 
   const start = (id: string, event: PointerEvent): void => {
     const board = root.current
-    if (board === null || event.button !== 0) return
+    // One drag at a time: a second finger on another grip is ignored.
+    if (board === null || event.button !== 0 || stop.current !== undefined) return
     event.preventDefault()
     const handle = event.currentTarget as HTMLElement
     handle.setPointerCapture(event.pointerId)
     const page = pageScroller(board)
+    const boxes = measure(board)
+    const origin = { left: board.scrollLeft, top: page.scrollTop }
     const from = { x: event.clientX, y: event.clientY }
     let at = { ...from }
     let current: Dragging | undefined
     let frame = 0
 
     const locate = () => {
-      const { columns, cards } = measure(board)
-      current = { id, drop: dropAt(columns, cards, at.x, at.y, id) }
+      const dx = board.scrollLeft - origin.left
+      const dy = page.scrollTop - origin.top
+      const columns = boxes.columns.map((c) => ({ ...c, left: c.left - dx, right: c.right - dx }))
+      const cards = boxes.cards.map((c) => ({ ...c, top: c.top - dy, bottom: c.bottom - dy }))
+      const drop = dropAt(columns, cards, at.x, at.y, id)
+      if (current !== undefined && sameDrop(current.drop, drop)) return
+      current = { id, drop }
       setDragging(current)
     }
 
@@ -77,10 +94,11 @@ export function useBoardDrag(root: RefObject<HTMLElement>, onDrop: (id: string, 
       const box = board.getBoundingClientRect()
       const sideways = at.x < box.left + EDGE_PX ? -SCROLL_PX : at.x > box.right - EDGE_PX ? SCROLL_PX : 0
       const down = at.y < EDGE_PX ? -SCROLL_PX : at.y > window.innerHeight - EDGE_PX ? SCROLL_PX : 0
-      if (sideways === 0 && down === 0) return
+      const before = { left: board.scrollLeft, top: page.scrollTop }
       board.scrollLeft += sideways
       page.scrollTop += down
-      locate()
+      // Only when something actually scrolled: at an edge with nowhere to go, nothing is recomputed.
+      if (board.scrollLeft !== before.left || page.scrollTop !== before.top) locate()
     }
 
     const move = (moved: PointerEvent) => {
@@ -98,7 +116,7 @@ export function useBoardDrag(root: RefObject<HTMLElement>, onDrop: (id: string, 
       handle.removeEventListener('lostpointercapture', cancel)
       window.removeEventListener('keydown', key)
       setDragging(undefined)
-      if (commit && current?.drop !== undefined) onDrop(current.id, current.drop)
+      if (commit && current?.drop !== undefined) dropped.current(current.id, current.drop)
     }
     const up = () => end(true)
     const cancel = () => end(false)

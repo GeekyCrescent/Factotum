@@ -6,7 +6,12 @@
  * shows the daemon's state cannot drift from it.
  *
  * IN ORDER, ONE AT A TIME: two drops in a row are posted in a queue, so they cannot land the wrong way
- * round. The board is read again when the tab comes back into view.
+ * round. A body can be a FUNCTION of the board, run when its turn comes: two quick ticks of subtasks
+ * then each build on the card as the one before left it, instead of both on the card as it was at the
+ * first tap (review of block K).
+ *
+ * THE NEWEST READ WINS: every read takes a number, and an answer older than the last one applied is
+ * dropped — a slow read started when the tab came back must not paint over the read after a move.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
@@ -14,25 +19,34 @@ import type { BoardView } from '../types.ts'
 import type { Api } from './contract.ts'
 import { messageOf } from './model.ts'
 
+export type Body = unknown | ((view: BoardView | undefined) => unknown)
+
 export interface BoardState {
   readonly view: BoardView | undefined
   readonly error: string | undefined
   readonly clearError: () => void
   readonly reload: () => Promise<void>
-  /** Posts, reads the board again, and resolves with whether the post went through. */
-  readonly act: (path: string, body?: unknown) => Promise<boolean>
+  /** Posts, reads the board again, and resolves with whether the post went through. Never rejects. */
+  readonly act: (path: string, body?: Body) => Promise<boolean>
 }
 
 export function useBoard(api: Api): BoardState {
   const [view, setView] = useState<BoardView | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const latest = useRef<BoardView | undefined>(undefined)
   const queue = useRef<Promise<unknown>>(Promise.resolve())
+  const reads = useRef({ started: 0, applied: 0 })
 
   const reload = useCallback(async (): Promise<void> => {
+    const mine = ++reads.current.started
     try {
-      setView(await api.get<BoardView>('board'))
+      const next = await api.get<BoardView>('board')
+      if (mine < reads.current.applied) return
+      reads.current.applied = mine
+      latest.current = next
+      setView(next)
     } catch (cause) {
-      setError(messageOf(cause))
+      if (mine >= reads.current.applied) setError(messageOf(cause))
     }
   }, [api])
 
@@ -46,11 +60,11 @@ export function useBoard(api: Api): BoardState {
   }, [reload])
 
   const act = useCallback(
-    (path: string, body?: unknown): Promise<boolean> => {
+    (path: string, body?: Body): Promise<boolean> => {
       const run = async (): Promise<boolean> => {
         let sent = false
         try {
-          await api.post(path, body)
+          await api.post(path, typeof body === 'function' ? body(latest.current) : body)
           setError(undefined)
           sent = true
         } catch (cause) {

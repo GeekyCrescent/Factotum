@@ -1,6 +1,6 @@
 /**
  * The shape of the capability this module consumes, DECLARED HERE AND NOWHERE ELSE IN THIS MODULE
- * (spec 2026-10-14-tareas-kanban, D1). The same arrangement as `modules/sessions/types.ts`, whose
+ * (spec 2026-10-14-tareas-kanban, D1). The same arrangement as the sessions module's `types.ts`, whose
  * header explains it; this is the fourth place that uses it (ADR-0005, ADR-0018).
  *
  * Imports nothing but `@factotum/core` (CLAUDE.md §1; criterion 43). The two declarations meet at one

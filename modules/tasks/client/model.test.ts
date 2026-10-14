@@ -2,7 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Task } from '../types.ts'
 import {
+  addedSubtasks,
   closeMoves,
+  droppedSubtasks,
+  isSamePlace,
+  safeDecode,
+  toggledSubtasks,
   columnsOf,
   draftOf,
   messageOf,
@@ -205,4 +210,28 @@ test('a failed request reads as its status and message, whatever was thrown', ()
   assert.equal(messageOf(error), 'title: Too big')
   assert.equal(statusOf('nope'), undefined)
   assert.equal(messageOf('nope'), 'nope')
+})
+
+test('a filter of an empty string is no filter: it would hide every card', () => {
+  assert.deepEqual(parseFilter('{"area": "", "label": "x"}'), { label: 'x' })
+})
+
+test('subtask changes are built from the card as it is NOW, so two quick taps both land', () => {
+  const before = card('a', { subtasks: [{ id: 's1', text: 'one', done: false }, { id: 's2', text: 'two', done: false }] })
+  // The second tap is computed against the card after the first one landed.
+  const afterFirst = card('a', { subtasks: toggledSubtasks(before, 's1') as Task['subtasks'] })
+  assert.deepEqual(toggledSubtasks(afterFirst, 's2').map((s) => s.done), [true, true])
+  assert.deepEqual(droppedSubtasks(afterFirst, 's1').map((s) => s.id), ['s2'])
+  assert.deepEqual(addedSubtasks(afterFirst, 'three').map((s) => s.text), ['one', 'two', 'three'])
+})
+
+test('a drop where the card already is moves nothing', () => {
+  assert.equal(isSamePlace(['a', 'b', 'c'], 'b', 'todo', { status: 'todo', index: 1 }), true)
+  assert.equal(isSamePlace(['a', 'b', 'c'], 'b', 'todo', { status: 'todo', index: 0 }), false)
+  assert.equal(isSamePlace(['a', 'b', 'c'], 'b', 'todo', { status: 'done', index: 1 }), false)
+})
+
+test('a card id from the address that cannot be decoded is no card, not a crash', () => {
+  assert.equal(safeDecode('abc%20d'), 'abc d')
+  assert.equal(safeDecode('%E0%A4%A'), undefined)
 })

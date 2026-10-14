@@ -22,6 +22,7 @@ import { useBoardDrag } from './drag.ts'
 import {
   COLUMNS,
   columnsOf,
+  isSamePlace,
   cycleTitle,
   labelOf,
   matches,
@@ -78,12 +79,33 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
   const add = (title: string, status: 'backlog' | 'todo'): Promise<boolean> => board.act('tasks', { title, status })
 
   const { dragging, start } = useBoardDrag(root, (id, drop) => {
+    const card = shown.find((task) => task.id === id)
+    if (card === undefined || card.status === 'triage') return
+    if (isSamePlace(columns[card.status].map((task) => task.id), id, card.status, drop)) return
     const ids = columns[drop.status].filter((task) => task.id !== id).map((task) => task.id)
     void board.act(`tasks/${encodeURIComponent(id)}/move`, { status: drop.status, ...neighbours(ids, drop.index) })
   })
 
   if (view === undefined) {
-    return board.error === undefined ? <div class="t-loading dim-3">Loading the board…</div> : <ErrorNotice message={board.error} />
+    if (board.error === undefined) {
+      return (
+        <div class="t-loading dim-3" role="status">
+          Loading the board…
+        </div>
+      )
+    }
+    return (
+      <ErrorNotice
+        message={board.error}
+        action={{
+          label: 'Try again',
+          run: () => {
+            board.clearError()
+            void board.reload()
+          },
+        }}
+      />
+    )
   }
 
   const list = (status: Column, withGrip: boolean) => {
@@ -144,7 +166,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
         </div>
       ) : null}
 
-      {board.error === undefined ? null : <ErrorNotice message={board.error} onDismiss={board.clearError} />}
+      {board.error === undefined ? null : <ErrorNotice message={board.error} action={{ label: 'Dismiss', run: board.clearError }} />}
 
       <Filters view={view} filter={filter} setFilter={setFilter} />
 
@@ -165,13 +187,12 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
         </div>
       ) : (
         <>
-          <div class="t-tabs" role="tablist" aria-label="Columns">
+          <div class="t-tabs" role="group" aria-label="Columns">
             {COLUMNS.map((column) => (
               <button
                 key={column.status}
                 type="button"
-                role="tab"
-                aria-selected={tab === column.status}
+                aria-pressed={tab === column.status}
                 class={tab === column.status ? 't-tab t-tab-on' : 't-tab'}
                 onClick={() => setTab(column.status)}
               >
@@ -179,7 +200,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
               </button>
             ))}
           </div>
-          <div class="t-phone-column" role="tabpanel">
+          <div class="t-phone-column">
             {list(tab, false)}
           </div>
           <QuickCapture
@@ -194,7 +215,7 @@ export function Board({ props, openTask }: { readonly props: ViewProps; readonly
       {openTask === undefined ? null : (
         <TaskSheet key={openTask} api={api} id={openTask} view={view} act={board.act} error={board.error} onClose={() => navigate('')} />
       )}
-      {closing ? <CloseCycle view={view} act={board.act} onLater={() => setCloseLater(true)} /> : null}
+      {closing ? <CloseCycle view={view} act={board.act} error={board.error} onLater={() => setCloseLater(true)} /> : null}
     </div>
   )
 }
@@ -243,15 +264,21 @@ function Filters({ view, filter, setFilter }: { readonly view: BoardView; readon
   )
 }
 
-export function ErrorNotice({ message, onDismiss }: { readonly message: string; readonly onDismiss?: () => void }) {
+export function ErrorNotice({
+  message,
+  action,
+}: {
+  readonly message: string
+  readonly action?: { readonly label: string; readonly run: () => void }
+}) {
   return (
     <div class="notice err" role="alert">
       <div class="head">Something went wrong</div>
       <p>{message}</p>
-      {onDismiss === undefined ? null : (
+      {action === undefined ? null : (
         <div class="acts">
-          <button type="button" class="btn sm" onClick={onDismiss}>
-            Dismiss
+          <button type="button" class="btn sm" onClick={action.run}>
+            {action.label}
           </button>
         </div>
       )}

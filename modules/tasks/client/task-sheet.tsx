@@ -8,11 +8,26 @@
  * DELETING asks first (S10); there is no undo, and no backup (requirements §2).
  */
 
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { BoardView, Task } from '../types.ts'
 import type { Api } from './contract.ts'
 import { Icon } from './icon.tsx'
-import { COLUMNS, draftOf, ESTIMATES, labelOf, messageOf, patchOf, PRIORITIES, progressOf, projectOf, statusOf, type Draft } from './model.ts'
+import {
+  addedSubtasks,
+  COLUMNS,
+  draftOf,
+  droppedSubtasks,
+  ESTIMATES,
+  labelOf,
+  messageOf,
+  patchOf,
+  PRIORITIES,
+  progressOf,
+  projectOf,
+  statusOf,
+  toggledSubtasks,
+  type Draft,
+} from './model.ts'
 import { Sheet } from './sheet.tsx'
 
 interface Props {
@@ -28,10 +43,15 @@ export function TaskSheet({ api, id, view, act, error, onClose }: Props) {
   const live = view.tasks.find((task) => task.id === id)
   const [fetched, setFetched] = useState<Task | null | undefined>(undefined)
   const [fetchError, setFetchError] = useState<string | undefined>(undefined)
+  // The card as it was last seen on the board. When it leaves — deleted from here, or its cycle
+  // closed on another device — the sheet keeps showing it, read-only, instead of flashing «not found».
+  const lastSeen = useRef<Task | undefined>(undefined)
+  if (live !== undefined) lastSeen.current = live
+  const neverOnBoard = lastSeen.current === undefined
 
-  // Not on the board: a card of a closed cycle (or of triage), read by id.
+  // Never on the board: a card of a closed cycle (or of triage), read by id.
   useEffect(() => {
-    if (live !== undefined) return
+    if (!neverOnBoard) return
     let current = true
     api
       .get<Task>(`tasks/${encodeURIComponent(id)}`)
@@ -44,9 +64,9 @@ export function TaskSheet({ api, id, view, act, error, onClose }: Props) {
     return () => {
       current = false
     }
-  }, [api, id, live === undefined])
+  }, [api, id, neverOnBoard])
 
-  const task = live ?? fetched ?? undefined
+  const task = live ?? lastSeen.current ?? fetched ?? undefined
   if (task === undefined) {
     return (
       <Sheet id="t-card-title" title={fetched === null ? 'Card not found' : 'Card'} onClose={onClose}>
@@ -94,15 +114,17 @@ function Editor({
     setSaving(false)
   }
 
-  const subtasks = (next: readonly { id?: string; text: string; done: boolean }[]): Promise<boolean> => act(path, { subtasks: next })
-  const toggle = (id: string): void =>
-    void subtasks(task.subtasks.map((s) => (s.id === id ? { ...s, done: !s.done } : s)))
-  const dropSubtask = (id: string): void => void subtasks(task.subtasks.filter((s) => s.id !== id))
+  // Built WHEN ITS TURN COMES in the queue, from the card as the previous change left it: two quick
+  // ticks both land (review of block K).
+  const subtasks = (change: (current: Task) => unknown): Promise<boolean> =>
+    act(path, (latest: BoardView | undefined) => ({ subtasks: change(latest?.tasks.find((t) => t.id === task.id) ?? task) }))
+  const toggle = (id: string): void => void subtasks((current) => toggledSubtasks(current, id))
+  const dropSubtask = (id: string): void => void subtasks((current) => droppedSubtasks(current, id))
   const addSubtask = async (event: Event): Promise<void> => {
     event.preventDefault()
     const text = newSubtask.trim()
     if (text === '') return
-    if (await subtasks([...task.subtasks, { text, done: false }])) setNewSubtask('')
+    if (await subtasks((current) => addedSubtasks(current, text))) setNewSubtask('')
   }
 
   const remove = async (): Promise<void> => {

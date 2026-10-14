@@ -14,10 +14,13 @@ import { Sheet } from './sheet.tsx'
 export function CloseCycle({
   view,
   act,
+  error,
   onLater,
 }: {
   readonly view: BoardView
   readonly act: (path: string, body?: unknown) => Promise<boolean>
+  /** Shown here: the board's notice is behind the scrim. */
+  readonly error: string | undefined
   readonly onLater: () => void
 }) {
   const [back, setBack] = useState<ReadonlySet<string>>(new Set())
@@ -46,6 +49,11 @@ export function CloseCycle({
 
   return (
     <Sheet id="t-close-title" title={`Close ${from}`} onClose={onLater}>
+      {error === undefined ? null : (
+        <div class="notice err" role="alert">
+          <p>{error}</p>
+        </div>
+      )}
       <p class="dim-2">
         {view.currentCycle === view.openCycle ? null : `A new week has started: ${to}. `}
         Unfinished cards move on to {to} as they are, unless you send them back.
@@ -60,11 +68,11 @@ export function CloseCycle({
             return (
               <li key={task.id} class="t-close-row">
                 <span class="t-close-title">{task.title}</span>
-                <div class="t-segment" role="radiogroup" aria-label={`Where ${task.title} goes`}>
-                  <button type="button" role="radio" aria-checked={!toBacklog} class={toBacklog ? '' : 't-seg-on'} onClick={() => choose(task.id, false)}>
+                <div class="t-segment" role="group" aria-label={`Where ${task.title} goes`}>
+                  <button type="button" aria-pressed={!toBacklog} class={toBacklog ? '' : 't-seg-on'} onClick={() => choose(task.id, false)}>
                     Next cycle
                   </button>
-                  <button type="button" role="radio" aria-checked={toBacklog} class={toBacklog ? 't-seg-on' : ''} onClick={() => choose(task.id, true)}>
+                  <button type="button" aria-pressed={toBacklog} class={toBacklog ? 't-seg-on' : ''} onClick={() => choose(task.id, true)}>
                     Back to Backlog
                   </button>
                 </div>

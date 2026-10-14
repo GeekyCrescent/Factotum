@@ -53,7 +53,14 @@ export function Card({
         </span>
       </button>
       {grip === undefined ? null : (
-        <button type="button" class="icon-btn t-grip" aria-label="Drag to move" onPointerDown={(event) => grip(task.id, event)}>
+        // Out of the tab order: a keyboard moves a card with «Move to…» in its sheet (WCAG 2.5.7).
+        <button
+          type="button"
+          class="icon-btn t-grip"
+          aria-label={`Drag ${task.title}`}
+          tabIndex={-1}
+          onPointerDown={(event) => grip(task.id, event)}
+        >
           <Icon name="dots-six-vertical" size={16} />
         </button>
       )}

@@ -80,7 +80,8 @@ export function parseFilter(raw: string | null): Filter {
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
   const record = value as Record<string, unknown>
-  const pick = (key: keyof Filter): Filter => (typeof record[key] === 'string' ? { [key]: record[key] } : {})
+  // An empty string would be a filter that hides every card while the select shows «All».
+  const pick = (key: keyof Filter): Filter => (typeof record[key] === 'string' && record[key] !== '' ? { [key]: record[key] } : {})
   return { ...pick('area'), ...pick('label'), ...pick('project') }
 }
 
@@ -273,4 +274,34 @@ export function statusOf(cause: unknown): number | undefined {
 
 export function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+// --- Subtasks, built from the card AS IT IS when the change is sent ----------------------------
+
+type SubtaskBody = readonly { readonly id?: string; readonly text: string; readonly done: boolean }[]
+
+export function toggledSubtasks(task: Task, id: string): SubtaskBody {
+  return task.subtasks.map((s) => (s.id === id ? { ...s, done: !s.done } : s))
+}
+
+export function droppedSubtasks(task: Task, id: string): SubtaskBody {
+  return task.subtasks.filter((s) => s.id !== id)
+}
+
+export function addedSubtasks(task: Task, text: string): SubtaskBody {
+  return [...task.subtasks, { text, done: false }]
+}
+
+/** A drop at the place the card already holds: nothing to send. */
+export function isSamePlace(ids: readonly string[], id: string, status: Column, drop: Drop): boolean {
+  return drop.status === status && ids.indexOf(id) === drop.index
+}
+
+/** A path segment decoded, or `undefined` for a malformed one (`%E0%A4%A`) instead of a throw. */
+export function safeDecode(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return undefined
+  }
 }

@@ -11,6 +11,7 @@ import './client.css'
 import { Board } from './board.tsx'
 import type { ViewProps } from './contract.ts'
 import { CycleDetail, Cycles } from './cycles.tsx'
+import { safeDecode } from './model.ts'
 
 const CYCLES = 'cycles'
 
@@ -18,7 +19,8 @@ function TasksView(props: ViewProps) {
   const { rest } = props
   if (rest === CYCLES) return <Cycles props={props} />
   if (rest.startsWith(`${CYCLES}/`)) return <CycleDetail key={rest} props={props} id={rest.slice(CYCLES.length + 1)} />
-  return <Board props={props} openTask={rest === '' ? undefined : decodeURIComponent(rest)} />
+  // A malformed segment (`%E0%A4%A`) opens no card rather than blanking the screen.
+  return <Board props={props} openTask={rest === '' ? undefined : safeDecode(rest)} />
 }
 
 export const tasksClient = { id: 'tasks', View: TasksView }
