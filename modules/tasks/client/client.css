@@ -1,0 +1,488 @@
+/*
+ * The task board's own classes, all prefixed `t-` (spec 2026-10-14, design D11). Colours, sizes and
+ * motion are the shell's Grafito tokens, by name: nothing here declares a colour value, and every
+ * transition names its properties — the rules the inbox and sessions stylesheets follow.
+ */
+
+.t-screen {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.t-narrow {
+  max-width: var(--column, 50rem);
+  width: 100%;
+  margin-inline: auto;
+}
+
+.t-loading {
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+
+/* --- The head: the cycle, triage, the history ------------------------------- */
+
+.t-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.t-head-text {
+  min-width: 0;
+}
+
+.t-cycle {
+  white-space: nowrap;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.t-zone {
+  font-size: var(--text-caption);
+}
+
+.t-head-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.t-head .btn.sm {
+  min-height: var(--hit);
+}
+
+/* --- Filters ---------------------------------------------------------------- */
+
+.t-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.t-filters select,
+.t-move select,
+.t-field input,
+.t-field select,
+.t-field textarea {
+  min-height: var(--hit);
+  padding: 0 var(--space-2h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-small);
+}
+
+.t-filters select {
+  flex: 1 1 8rem;
+  max-width: 14rem;
+}
+
+/* On the phone the filters are one row that scrolls sideways, not three rows above the cards. */
+@media (max-width: 899px) {
+  .t-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .t-filters select {
+    flex: none;
+    max-width: 11rem;
+  }
+}
+
+.t-field input,
+.t-field select,
+.t-field textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.t-field textarea {
+  padding-block: var(--space-2);
+  resize: vertical;
+}
+
+/* --- Desktop: six columns --------------------------------------------------- */
+
+.t-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(9.5rem, 1fr);
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-bottom: var(--space-3);
+  align-items: start;
+}
+
+.t-column {
+  display: grid;
+  /* One track that may shrink: otherwise it takes the min-content of a card and spills over. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  min-height: 8rem;
+}
+
+.t-col-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--space-1) var(--space-1h);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* --- Phone: tabs, one column ------------------------------------------------ */
+
+.t-tabs {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.t-tab {
+  flex: none;
+  min-height: var(--hit);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-small);
+  white-space: nowrap;
+}
+
+.t-tab .num {
+  color: var(--text-3);
+}
+
+.t-tab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* Room for the capture fixed at the bottom. */
+.t-phone-column {
+  padding-bottom: calc(var(--hit) + var(--space-6));
+}
+
+/* --- The cards -------------------------------------------------------------- */
+
+.t-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.t-empty {
+  padding: var(--space-2) var(--space-1h);
+  font-size: var(--text-small);
+}
+
+.t-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  overflow: hidden;
+  transition-property: opacity;
+  transition-duration: var(--dur-fade);
+}
+
+.t-dragged {
+  opacity: 0.4;
+}
+
+.t-hue {
+  flex: none;
+  width: 4px;
+}
+
+.t-hue-1 { background: var(--p1); }
+.t-hue-2 { background: var(--p2); }
+.t-hue-3 { background: var(--p3); }
+.t-hue-4 { background: var(--p4); }
+.t-hue-5 { background: var(--p5); }
+.t-hue-6 { background: var(--p6); }
+
+.t-card-open {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2h) var(--space-2h);
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.t-card-title {
+  font-size: var(--text-body);
+  overflow-wrap: anywhere;
+}
+
+.t-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+.t-area {
+  padding: 0 var(--space-1h);
+  border-radius: var(--radius-6);
+  background: var(--surface-2);
+}
+
+.t-prio-1 { color: var(--err); font-weight: 600; }
+.t-prio-2 { color: var(--ask); font-weight: 600; }
+
+.t-overdue {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.t-estimate {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+}
+
+.t-grip {
+  flex: none;
+  /* Desktop only (the phone has no grip): a mouse does not need the 44 px of a finger. */
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  align-self: center;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.t-drop-line {
+  height: 2px;
+  margin-block: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* --- Quick capture ---------------------------------------------------------- */
+
+.t-capture {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.t-capture-input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-10);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+}
+
+.t-capture-input:focus-visible {
+  outline: none;
+  border-style: solid;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.t-capture-sticky {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+/* --- The card sheet --------------------------------------------------------- */
+
+.t-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.t-sheet-head h2 {
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.t-field {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+.t-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2) var(--space-3);
+}
+
+.t-row,
+.t-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.t-subtasks h3 {
+  font-size: var(--text-small);
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.t-subtasks ul {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+}
+
+.t-subtask {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+}
+
+.t-subtask > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-subtask-done {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.t-provenance {
+  font-size: var(--text-caption);
+}
+
+.t-delete {
+  justify-self: start;
+  color: var(--err);
+}
+
+/* --- Closing a cycle -------------------------------------------------------- */
+
+.t-close-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.t-close-row {
+  display: grid;
+  gap: var(--space-1h);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.t-close-title {
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.t-segment {
+  display: inline-flex;
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  overflow: hidden;
+}
+
+.t-segment button {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-caption);
+}
+
+.t-segment .t-seg-on {
+  background: var(--chip-on);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.t-close-summary {
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+/* --- History ---------------------------------------------------------------- */
+
+.t-cycles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.t-cycles li + li {
+  border-top: 1px solid var(--line);
+}
+
+.t-cycle-row {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
