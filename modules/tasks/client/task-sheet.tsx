@@ -38,6 +38,9 @@ import {
   type Column,
   type Draft,
 } from './model.ts'
+import type { CaptureProject } from './agent-model.ts'
+import type { Edge } from './edge.ts'
+import { SessionsPanel } from './sessions-panel.tsx'
 import { Sheet } from './sheet.tsx'
 
 interface Props {
@@ -49,9 +52,13 @@ interface Props {
   readonly act: (path: string, body?: unknown) => Promise<boolean>
   readonly error: string | undefined
   readonly onClose: () => void
+  /** The edge to the sessions module: «Run agent» and the linked sessions. Without it, neither shows. */
+  readonly edge?: Edge
+  /** The projects of every reachable host, for the project field; the hosts as the board stores them. */
+  readonly hostProjects?: readonly CaptureProject[]
 }
 
-export function TaskSheet({ api, id, view, today, act, error, onClose }: Props) {
+export function TaskSheet({ api, id, view, today, act, error, onClose, edge, hostProjects }: Props) {
   const live = view.tasks.find((task) => task.id === id)
   const [fetched, setFetched] = useState<Task | null | undefined>(undefined)
   const [fetchError, setFetchError] = useState<string | undefined>(undefined)
@@ -86,7 +93,19 @@ export function TaskSheet({ api, id, view, today, act, error, onClose }: Props) 
       </Sheet>
     )
   }
-  return <Editor task={task} readOnly={live === undefined} view={view} today={today} act={act} error={error} onClose={onClose} />
+  return (
+    <Editor
+      task={task}
+      readOnly={live === undefined}
+      view={view}
+      today={today}
+      act={act}
+      error={error}
+      onClose={onClose}
+      {...(edge === undefined ? {} : { edge })}
+      {...(hostProjects === undefined ? {} : { hostProjects })}
+    />
+  )
 }
 
 type Act = Props['act']
@@ -109,6 +128,8 @@ function Editor({
   act,
   error,
   onClose,
+  edge,
+  hostProjects,
 }: {
   readonly task: Task
   readonly readOnly: boolean
@@ -117,6 +138,8 @@ function Editor({
   readonly act: Act
   readonly error: string | undefined
   readonly onClose: () => void
+  readonly edge?: Edge
+  readonly hostProjects?: readonly CaptureProject[]
 }) {
   const [edits, setEdits] = useState<Partial<Draft>>({})
   const [saving, setSaving] = useState(false)
@@ -169,12 +192,23 @@ function Editor({
           }
         }}
       />
-      <Properties task={task} draft={draft} readOnly={readOnly} view={view} today={today} edit={edit} act={act} path={path} />
+      <Properties
+        task={task}
+        draft={draft}
+        readOnly={readOnly}
+        view={view}
+        today={today}
+        edit={edit}
+        act={act}
+        path={path}
+        hostProjects={hostProjects ?? []}
+      />
       <Subtasks task={task} readOnly={readOnly} act={act} path={path} />
       <label class="t-notes">
         <span>Notes</span>
         <textarea rows={3} value={draft.notes} maxLength={4000} placeholder="Add notes" disabled={readOnly} onInput={(event) => edit('notes', (event.target as HTMLTextAreaElement).value)} />
       </label>
+      {edge === undefined ? null : <SessionsPanel task={task} edge={edge} readOnly={readOnly} act={act} />}
       {task.remindedAt !== null ? <p class="dim-2">Reminder sent.</p> : task.reminderMissed ? <p class="t-overdue">Reminder missed.</p> : null}
       <p class="dim-2 t-provenance">
         {task.source.kind === 'owner' ? 'Added by you' : task.source.kind === 'capture' ? 'Captured' : 'Agent'} · {new Date(task.createdAt).toLocaleDateString()}
@@ -205,6 +239,7 @@ function Properties({
   edit,
   act,
   path,
+  hostProjects,
 }: {
   readonly task: Task
   readonly draft: Draft
@@ -214,6 +249,7 @@ function Properties({
   readonly edit: (key: keyof Draft, value: string) => void
   readonly act: Act
   readonly path: string
+  readonly hostProjects: readonly CaptureProject[]
 }) {
   const project = projectOf(draft.project)
   const value = (event: Event): string => (event.target as HTMLInputElement | HTMLSelectElement).value
@@ -271,18 +307,41 @@ function Properties({
       <Prop label="Labels">
         <input type="text" value={draft.labels} placeholder="uni, writing" disabled={readOnly} onInput={(event) => edit('labels', value(event))} />
       </Prop>
-      <Prop label="Project">
-        <input type="text" list="t-projects" value={project?.siteId ?? ''} placeholder="None" disabled={readOnly} onInput={(event) => setProject(project?.host ?? '', value(event))} />
-        <datalist id="t-projects">
-          {[...new Set(view.projects.map((p) => p.siteId))].map((siteId) => (
-            <option key={siteId} value={siteId} />
-          ))}
-        </datalist>
-      </Prop>
-      {project === null ? null : (
-        <Prop label="Project host">
-          <input type="text" value={project.host ?? ''} placeholder="This board's host" disabled={readOnly} onInput={(event) => setProject(value(event), project.siteId)} />
+      {hostProjects.length > 0 ? (
+        // The projects the hosts have, by name: the value is the stored key, `<host>/<siteId>`.
+        <Prop label="Project">
+          <select value={draft.project} disabled={readOnly} onChange={(event) => edit('project', value(event))}>
+            <option value="">None</option>
+            {project !== null && !hostProjects.some((p) => p.siteId === project.siteId && p.host === project.host) ? (
+              <option value={draft.project}>
+                {project.siteId}
+                {project.host === null ? '' : ` · ${project.host}`}
+              </option>
+            ) : null}
+            {hostProjects.map((p) => (
+              <option key={`${p.host ?? ''}/${p.siteId}`} value={`${p.host ?? ''}/${p.siteId}`}>
+                {p.name}
+                {p.host === null ? '' : ` · ${p.host}`}
+              </option>
+            ))}
+          </select>
         </Prop>
+      ) : (
+        <>
+          <Prop label="Project">
+            <input type="text" list="t-projects" value={project?.siteId ?? ''} placeholder="None" disabled={readOnly} onInput={(event) => setProject(project?.host ?? '', value(event))} />
+            <datalist id="t-projects">
+              {[...new Set(view.projects.map((p) => p.siteId))].map((siteId) => (
+                <option key={siteId} value={siteId} />
+              ))}
+            </datalist>
+          </Prop>
+          {project === null ? null : (
+            <Prop label="Project host">
+              <input type="text" value={project.host ?? ''} placeholder="This board's host" disabled={readOnly} onInput={(event) => setProject(value(event), project.siteId)} />
+            </Prop>
+          )}
+        </>
       )}
     </div>
   )

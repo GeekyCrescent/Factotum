@@ -23,6 +23,7 @@ import { QuickCapture, useCaptureKey, type Target } from './capture.tsx'
 import { CloseCycle } from './close-cycle.tsx'
 import type { ViewProps } from './contract.ts'
 import { DesktopBoard } from './desktop.tsx'
+import { useBoardEdge } from './edge.ts'
 import { NextSheet } from './next.tsx'
 import { useBoardDrag } from './drag.ts'
 import { FilterMenus, FilterSheet } from './filters.tsx'
@@ -82,6 +83,7 @@ export function Board({
   // The microphone: the sessions module's dictation on the host serving the app (criterion 25).
   const dictation = peerModule('sessions', undefined)
   const board = useBoard(api)
+  const { edge, hostProjects } = useBoardEdge(props)
   const wide = useWide()
   const [filter, setFilterState] = useState<Filter>(readFilter)
   const [tab, setTab] = useState<Column>('todo')
@@ -107,8 +109,9 @@ export function Board({
 
   const open = useCallback((id: string) => navigate(encodeURIComponent(id)), [navigate])
   const add = (title: string, status: Target): Promise<boolean> => board.act('tasks', { title, status })
-  // To Triage, read by claude (criterion 21). The projects for the closed list arrive with the edge to sessions (G1).
-  const capture = (text: string): Promise<boolean> => board.act('capture', { text })
+  // To Triage, read by claude (criterion 21), with the projects of every host that answered (S12).
+  const capture = (text: string): Promise<boolean> =>
+    board.act('capture', hostProjects === undefined || hostProjects.length === 0 ? { text } : { text, projects: hostProjects })
   const toggle = (status: Pinned): void =>
     setOpened((was) => {
       const next = new Set(was)
@@ -321,7 +324,18 @@ export function Board({
         <FilterSheet view={view} filter={filter} setFilter={setFilter} shown={shown.length} onClose={() => setFiltering(false)} />
       ) : null}
       {openTask === undefined ? null : (
-        <TaskSheet key={openTask} api={api} id={openTask} view={view} today={today} act={board.act} error={board.error} onClose={() => navigate('')} />
+        <TaskSheet
+          key={openTask}
+          api={api}
+          id={openTask}
+          view={view}
+          today={today}
+          act={board.act}
+          error={board.error}
+          onClose={() => navigate('')}
+          edge={edge}
+          {...(hostProjects === undefined ? {} : { hostProjects })}
+        />
       )}
       {asking ? <NextSheet api={api} view={view} today={today} open={open} onClose={() => navigate('')} /> : null}
       {closing ? <CloseCycle view={view} today={today} act={board.act} error={board.error} onLater={() => setCloseLater(true)} /> : null}

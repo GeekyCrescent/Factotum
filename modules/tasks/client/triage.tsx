@@ -19,6 +19,7 @@ import { PageBar } from './bar.tsx'
 import { ErrorNotice } from './board.tsx'
 import { ProjectTag } from './card.tsx'
 import type { ViewProps } from './contract.ts'
+import { useBoardEdge } from './edge.ts'
 import { PriorityGlyph } from './glyphs.tsx'
 import { Icon } from './icon.tsx'
 import { messageOf, shortDay, todayIn } from './model.ts'
@@ -95,6 +96,7 @@ export function Triage({ props, editing }: { readonly props: ViewProps; readonly
   const { api, navigate, openDrawer, pendingTotal } = props
   const board = useBoard(api)
   const triage = useTriage(api)
+  const { edge, hostProjects } = useBoardEdge(props)
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
   const [said, setSaid] = useState('')
   const [focusAt, setFocusAt] = useState<number | undefined>(undefined)
@@ -211,6 +213,8 @@ export function Triage({ props, editing }: { readonly props: ViewProps; readonly
           act={act}
           error={board.error}
           onClose={() => navigate('triage')}
+          edge={edge}
+          {...(hostProjects === undefined ? {} : { hostProjects })}
         />
       )}
     </div>

@@ -1,0 +1,146 @@
+/*
+ * «Run agent» and the card's sessions (G4, G5), prefixed `t-` like the rest of the module. Grafito tokens by name
+ * only: no colour values here, and every transition names its properties.
+ */
+
+.t-run {
+  display: grid;
+  gap: var(--space-2h);
+  padding: 0 var(--space-4) var(--space-4);
+  overflow-y: auto;
+}
+
+.t-run-where {
+  margin: 0;
+  font-size: var(--text-small);
+}
+
+.t-run-blocked {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.t-run-prompt {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.t-run-prompt textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+  resize: vertical;
+}
+
+.t-sessions {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-2) 0;
+}
+
+.t-sessions h3 {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.t-sessions p {
+  margin: 0;
+  font-size: var(--text-small);
+}
+
+.t-sessions ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.t-session-row {
+  width: 100%;
+  min-height: var(--hit);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.t-session-row:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+.t-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.t-session-state {
+  flex: none;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.t-session-running {
+  color: var(--accent-text);
+}
+
+.t-session-failed,
+.t-session-deleted,
+.t-session-unreachable {
+  color: var(--err);
+}
+
+.t-sessions-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.t-sessions-acts .btn {
+  min-height: var(--hit);
+}
+
+.t-link-form {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.t-link-form input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+}
