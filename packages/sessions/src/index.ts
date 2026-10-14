@@ -69,3 +69,11 @@ export { sessionPaths } from './paths.ts'
 export type { SessionPaths } from './paths.ts'
 export { SessionStore } from './store.ts'
 export type { NewSession, SessionMeta } from './store.ts'
+
+// What `factotum doctor` reads of the handoff (spec 2026-10-07-dos-hosts, D13, «doctor en el corte 2»).
+export { GIT_NET_TIMEOUT_MS, runGit } from './git.ts'
+export { ignoreDigest, remoteKey } from './handoff/git.ts'
+export type { IgnoreDigest } from './handoff/git.ts'
+export { HANDOFF_PEER_READ_TIMEOUT_MS } from './handoff/constants.ts'
+export { listHids, listJournals } from './handoff/journal.ts'
+export type { Journal } from './handoff/journal.ts'

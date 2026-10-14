@@ -31,6 +31,7 @@ import {
 } from '@factotum/kernel'
 import { ENVIRONMENTS, rootConfigSchema, type Environment } from '@factotum/core'
 import { readRegistry, registryFile } from '@factotum/modules'
+import { reportHandoff } from './doctor-handoff.ts'
 import {
   execRunner,
   httpsPort,
@@ -48,6 +49,8 @@ export interface DoctorDeps {
   readonly run?: Runner
   /** Injected so the `listen.interface` case does not depend on the test machine. */
   readonly interfaces?: Interfaces
+  /** The environment git runs with: tests give an empty global config. */
+  readonly gitEnv?: NodeJS.ProcessEnv
 }
 
 export async function doctor(deps: DoctorDeps = {}): Promise<number> {
@@ -60,7 +63,7 @@ export async function doctor(deps: DoctorDeps = {}): Promise<number> {
   out('')
 
   for (const env of ENVIRONMENTS) {
-    await reportEnvironment(env, statePaths(env, deps.home), out, doFetch, run, deps.interfaces)
+    await reportEnvironment(env, statePaths(env, deps.home), out, doFetch, run, deps.interfaces, deps.gitEnv)
   }
 
   return 0
@@ -86,6 +89,7 @@ async function reportEnvironment(
   doFetch: typeof globalThis.fetch,
   run: Runner,
   interfaces: Interfaces | undefined,
+  gitEnv?: NodeJS.ProcessEnv,
 ): Promise<void> {
   out(`[${env}]`)
 
@@ -166,6 +170,9 @@ async function reportEnvironment(
   await reportLive(localUrl(resolved.address, resolved.port), out, doFetch)
   await reportPush(publicOrigin, paths, out)
   await reportPeers(peers, out, doFetch)
+  // The handoff (spec 2026-10-07-dos-hosts, criterion 35): remotes, ignore rules, abort-failed.
+  const sessionsDir = moduleStateDir(paths, 'sessions')
+  await reportHandoff({ stateDir: sessionsDir, registry: registryFile(sessionsDir), peers, out, fetch: doFetch, ...(gitEnv !== undefined ? { gitEnv } : {}) })
 
   out('')
 }
