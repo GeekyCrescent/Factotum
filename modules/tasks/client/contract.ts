@@ -9,6 +9,11 @@
  * serving the app — and `where.ts` translates it to and from what the board stores.
  */
 
+import type { Api as DictationApi } from '../../shared/dictation/contract.ts'
+
+/** Another module's api: this module's two members, and `upload`, which the shared dictation needs. */
+export type PeerApi = Api & DictationApi
+
 export interface Api {
   readonly get: <T>(path: string) => Promise<T>
   readonly post: <T>(path: string, body?: unknown) => Promise<T>
@@ -36,7 +41,7 @@ export interface ViewProps {
   readonly rest: string
   readonly navigate: (rest: string, options?: NavigateOptions) => void
   /** Another module's api on a host; `undefined` when the serving server does not run that module. */
-  readonly peerModule: (id: string, host: string | undefined) => Api | undefined
+  readonly peerModule: (id: string, host: string | undefined) => PeerApi | undefined
   /** Another module's screen: `/m/<id>/<rest>`, or on another host. */
   readonly openModule: (id: string, rest: string, options?: NavigateOptions) => void
   /** The module draws its own bar (`ownsTopBar`), so its ☰ opens the shell's drawer through this. */

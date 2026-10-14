@@ -78,7 +78,9 @@ export function Board({
   /** `/m/tasks/next`: «What's next?» open over the board. */
   readonly asking?: boolean
 }) {
-  const { api, navigate, openDrawer, pendingTotal } = props
+  const { api, navigate, openDrawer, pendingTotal, peerModule } = props
+  // The microphone: the sessions module's dictation on the host serving the app (criterion 25).
+  const dictation = peerModule('sessions', undefined)
   const board = useBoard(api)
   const wide = useWide()
   const [filter, setFilterState] = useState<Filter>(readFilter)
@@ -286,6 +288,7 @@ export function Board({
               {...(pointed ? {} : { capture })}
               input={captureInput}
               onLeave={() => setPointed(false)}
+              {...(dictation === undefined ? {} : { dictation })}
             />
             <FilterMenus view={view} filter={filter} setFilter={setFilter} />
           </div>
@@ -303,7 +306,14 @@ export function Board({
         <>
           <Tabs tab={tab} setTab={setTab} counts={counts} />
           <div class="t-phone-column">{list(tab, false)}</div>
-          <QuickCapture sticky target={phoneTarget} label={labelOf(phoneTarget)} add={add} capture={capture} />
+          <QuickCapture
+            sticky
+            target={phoneTarget}
+            label={labelOf(phoneTarget)}
+            add={add}
+            capture={capture}
+            {...(dictation === undefined ? {} : { dictation })}
+          />
         </>
       )}
 

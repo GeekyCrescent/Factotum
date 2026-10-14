@@ -7,7 +7,9 @@
  *   two the owner creates in. No AI.
  * Without a `capture` (no AI on this board, or a column's «+» pointed the field at its column), Enter
  * adds by hand, as before.
- * The microphone joins the field with the shared dictation (G3).
+ * THE MICROPHONE (G3, criterion 25) is the shared dictation of the sessions module on the host serving
+ * the app. `<CaptureMic>` exists only when that module runs there, so its hook is never called
+ * conditionally; while it records or transcribes, nothing is sent.
  *
  * TWO SHAPES (redesign A): on the desktop a field in the toolbar that `N` focuses from anywhere on the
  * board, and that a column's «+» points at its column; on the phone, fixed at the bottom of the screen.
@@ -15,6 +17,9 @@
 
 import type { RefObject } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
+import type { Api as DictationApi } from '../../shared/dictation/contract.ts'
+import { DictateButton, DictationNotice, useDictation } from '../../shared/dictation/dictate.tsx'
+import { appendDictation } from '../../shared/dictation/dictation.ts'
 import { Icon } from './icon.tsx'
 
 /** A title typed by hand is at most this (`shape.ts`); a capture for claude can be longer. */
@@ -42,6 +47,45 @@ export function useCaptureKey(input: RefObject<HTMLInputElement>, enabled: boole
   }, [input, enabled])
 }
 
+/** The microphone of the capture: its own component, so `useDictation` runs on every render of it. */
+function CaptureMic({
+  api,
+  text,
+  setText,
+  field,
+  onBusy,
+}: {
+  readonly api: DictationApi
+  readonly text: string
+  readonly setText: (text: string) => void
+  readonly field: RefObject<HTMLInputElement>
+  readonly onBusy: (busy: boolean) => void
+}) {
+  // The text AS IT IS when the transcript lands, not as it was when the recording started.
+  const current = useRef(text)
+  current.current = text
+  const dictation = useDictation({
+    api,
+    append: (transcript) => setText(appendDictation(current.current, transcript)),
+    focus: () =>
+      queueMicrotask(() => {
+        const box = field.current
+        if (box === null) return
+        box.focus()
+        box.setSelectionRange(box.value.length, box.value.length)
+      }),
+  })
+  useEffect(() => onBusy(dictation.busy), [dictation.busy, onBusy])
+  return (
+    <>
+      <DictateButton dictation={dictation} />
+      <div class="t-capture-mic-note">
+        <DictationNotice dictation={dictation} />
+      </div>
+    </>
+  )
+}
+
 export function QuickCapture({
   target,
   label,
@@ -50,6 +94,7 @@ export function QuickCapture({
   sticky = false,
   input,
   onLeave,
+  dictation,
 }: {
   readonly target: Target
   readonly label: string
@@ -62,10 +107,13 @@ export function QuickCapture({
   readonly input?: RefObject<HTMLInputElement>
   /** The field lost the focus: a column's «+» stops pointing at its column. */
   readonly onLeave?: () => void
+  /** The sessions module's api on the serving host, when it runs there: the microphone. */
+  readonly dictation?: DictationApi
 }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [sent, setSent] = useState(false)
+  const [listening, setListening] = useState(false)
   const own = useRef<HTMLInputElement>(null)
   const field = input ?? own
   const tooLong = text.trim().length > MAX_TITLE_CHARS
@@ -73,7 +121,8 @@ export function QuickCapture({
   /** The text stays until the card is saved: a failure keeps what was typed. */
   const send = async (save: (text: string) => Promise<boolean>, toTriage: boolean): Promise<void> => {
     const typed = text.trim()
-    if (typed === '' || saving) return
+    // Recording or transcribing: the text is not all there yet.
+    if (typed === '' || saving || listening) return
     setSaving(true)
     if (await save(typed)) {
       setText('')
@@ -136,6 +185,18 @@ export function QuickCapture({
         }}
         onBlur={leave}
       />
+      {dictation === undefined ? null : (
+        <CaptureMic
+          api={dictation}
+          text={text}
+          setText={(next) => {
+            setSent(false)
+            setText(next)
+          }}
+          field={field}
+          onBusy={setListening}
+        />
+      )}
       {capture === undefined ? (
         <button
           type="submit"
