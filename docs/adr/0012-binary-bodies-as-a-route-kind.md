@@ -36,7 +36,7 @@ existing test compiled without a change.
 
 - **The module never sees a stream.** The kernel reads the body into
   `<stateDir>/.incoming/<uuid>.part` — a name it chose, capped at the route's `maxBytes`, itself
-  capped at `MAX_UPLOAD_BYTES` (32 MiB) when the daemon starts — and hands the handler a path.
+  capped at `MAX_UPLOAD_BYTES` (256 MiB since the amendment below; 32 MiB before) when the daemon starts — and hands the handler a path.
   What the handler does not move away is deleted, even when it throws. A module keeps a file with
   a `rename` on the same disk, which is atomic: an upload only ever has a name once it is whole.
 - **The kernel decides how a file is served, not the module.** It opens the file once, with
@@ -82,3 +82,23 @@ existing test compiled without a change.
 - No multipart, and one file per request.
 - No `Range`, no partial responses, no upload progress.
 - No quota: the module that keeps files decides what to delete, and when.
+
+## Amendment (2026-10-14): the ceiling is 256 MiB
+
+`MAX_UPLOAD_BYTES` goes from 32 MiB to **256 MiB** (spec `2026-10-07-dos-hosts`, D7). The first
+consumer that needs more than 32 MiB is the session handoff between two hosts (ADR-0020): a
+conversation travels with its CLI transcript, and the three largest on the owner's Mac weigh 64, 96
+and 98 MB. Chunking them was weighed and refused by the owner: one file per request stays the rule,
+and a chunk protocol would be a second upload path for one consumer.
+
+What does **not** move:
+
+- **The ceiling is still per route.** Each module declares its own cap below this one, and the
+  attachments of `sessions` (20 MiB) and its dictation keep theirs. The handoff route is the only one
+  that declares 256 MiB.
+- **Memory does not change.** The body is written in a stream through the kernel's limit
+  `Transform`, and cut past the route's cap; what grows is what `.incoming` can hold for a moment.
+- **`DRAIN_MAX_BYTES` does not change**: a refused body is still drained at most 4 MiB.
+
+Lowering the constant again makes the daemon refuse to start while the handoff route exists
+(`route-upload-invalid`). That is intended: the route would otherwise accept less than it promises.

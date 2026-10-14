@@ -165,8 +165,14 @@ export function errorBody(code: ErrorCode, message: string): ErrorBody {
 /** JSON bodies above this are refused with 413, draining the socket first. */
 export const MAX_BODY_BYTES = 1_048_576
 
-/** The most an upload route may declare: 32 MiB. A module chooses its own ceiling below it. */
-export const MAX_UPLOAD_BYTES = 33_554_432
+/**
+ * The most an upload route may declare: 256 MiB. A module chooses its own ceiling below it.
+ *
+ * It was 32 MiB until a conversation had to travel between two hosts (spec 2026-10-07, D7): a CLI
+ * transcript weighs up to ~100 MB. The body is still written in a stream and cut past its route's
+ * cap, so raising this costs disk in `.incoming`, never memory. The amendment to ADR-0012 says why.
+ */
+export const MAX_UPLOAD_BYTES = 268_435_456
 
 /**
  * The most the kernel reads from a body it has ALREADY REFUSED, before closing the connection.
