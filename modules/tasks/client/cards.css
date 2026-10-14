@@ -1,0 +1,202 @@
+/*
+ * The task board's cards and their glyphs, prefixed `t-` like the rest of the module (redesign A). Grafito tokens by
+ * name only: no colour values here, and every transition names its properties.
+ */
+
+/* --- The cards ------------------------------------------------------------ */
+
+.t-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1h);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.t-empty {
+  padding: var(--space-2) var(--space-1h);
+  font-size: var(--text-small);
+}
+
+.t-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+  transition-property: opacity;
+  transition-duration: var(--dur-fade);
+}
+
+.t-dragged {
+  opacity: 0.4;
+}
+
+.t-card-open {
+  width: 100%;
+  min-height: 56px;
+  display: grid;
+  align-content: center;
+  gap: var(--space-1h);
+  padding: 11px var(--space-4) 11px 14px;
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.t-has-grip .t-card-open {
+  min-height: var(--hit);
+  padding: 9px 30px 9px var(--space-3);
+}
+
+.t-card-title {
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.t-has-grip .t-card-title {
+  font-size: var(--text-small);
+}
+
+.t-finished .t-card-title {
+  color: var(--text-2);
+}
+
+.t-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2h);
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+.t-card-meta:empty {
+  display: none;
+}
+
+.t-card-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.t-overdue {
+  color: var(--err);
+  font-weight: 500;
+}
+
+.t-proj {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.t-proj::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.t-hue-1 { --hue: var(--p1); }
+.t-hue-2 { --hue: var(--p2); }
+.t-hue-3 { --hue: var(--p3); }
+.t-hue-4 { --hue: var(--p4); }
+.t-hue-5 { --hue: var(--p5); }
+.t-hue-6 { --hue: var(--p6); }
+
+.t-ring {
+  transform: rotate(-90deg);
+}
+
+.t-ring circle {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.t-ring .t-ring-done {
+  stroke: var(--text-2);
+}
+
+/* Desktop only (the phone has no grip): a mouse does not need the 44 px of a finger. */
+.t-grip {
+  position: absolute;
+  top: 6px;
+  right: var(--space-1);
+  width: 24px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.t-drop-line {
+  height: 2px;
+  margin-block: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* --- Glyphs: status circles and priority bars ------------------------------ */
+
+.t-st {
+  flex: none;
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+.t-st-backlog { stroke: var(--text-3); stroke-dasharray: 2.4 2.4; }
+.t-st-todo,
+.t-st-blocked { stroke: var(--text-2); }
+.t-st-in_progress { stroke: var(--accent-text); }
+.t-st-in_progress .t-st-fill { fill: var(--accent-text); stroke: none; }
+.t-st-done .t-st-fill { fill: var(--ok); stroke: none; }
+.t-st-done .t-st-tick { stroke: var(--bg); stroke-width: 2; }
+.t-st-canceled { stroke: var(--text-3); }
+
+.t-prio {
+  flex: none;
+}
+
+.t-prio rect {
+  fill: var(--line-strong);
+}
+
+.t-prio .t-prio-on {
+  fill: var(--text-2);
+}
+
+.t-prio-urgent rect {
+  fill: var(--err);
+}
+
+.t-prio-urgent path {
+  fill: none;
+  stroke: var(--bg);
+  stroke-width: 2;
+  stroke-linecap: round;
+}

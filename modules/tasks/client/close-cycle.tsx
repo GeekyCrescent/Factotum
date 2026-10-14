@@ -1,23 +1,29 @@
 /**
- * «Close W42» (criteria 15–17): every card in Todo, In progress or Blocked, «Next cycle» by default and
- * «Back to Backlog» on request; Done and Canceled as a summary. Nothing changes until Confirm.
+ * «Close W42» (criteria 15–17, redesign A): opens by itself once a new week has started. It says how the
+ * week ended, then lists every unfinished card with where it goes — on to the new cycle as it is, or
+ * back to Backlog. By default nothing is lost: every card goes on. «All to Backlog» flips every row at
+ * once, and flips them back.
  *
- * Confirming closes EVERY cycle from the open one up to the current one in one step (criterion 16):
- * the sheet names both when weeks were skipped.
+ * Done and canceled cards are not listed: they stay in the history of the closed cycle.
  */
 
 import { useState } from 'preact/hooks'
-import type { BoardView } from '../types.ts'
-import { closeMoves } from './model.ts'
+import type { BoardView, Task } from '../types.ts'
+import { StatusGlyph } from './glyphs.tsx'
+import { closeMoves, isOverdue, rangeLabel, shortDay } from './model.ts'
 import { Sheet } from './sheet.tsx'
+
+const UNFINISHED: readonly Task['status'][] = ['in_progress', 'todo', 'blocked']
 
 export function CloseCycle({
   view,
+  today,
   act,
   error,
   onLater,
 }: {
   readonly view: BoardView
+  readonly today: string
   readonly act: (path: string, body?: unknown) => Promise<boolean>
   /** Shown here: the board's notice is behind the scrim. */
   readonly error: string | undefined
@@ -26,11 +32,13 @@ export function CloseCycle({
   const [back, setBack] = useState<ReadonlySet<string>>(new Set())
   const [sending, setSending] = useState(false)
   const inCycle = view.tasks.filter((task) => task.cycle === view.openCycle)
-  const unfinished = inCycle.filter((task) => task.status === 'todo' || task.status === 'in_progress' || task.status === 'blocked')
-  const done = inCycle.filter((task) => task.status === 'done')
-  const canceled = inCycle.filter((task) => task.status === 'canceled')
+  // In progress first: what was being worked on is the first thing to decide about.
+  const unfinished = UNFINISHED.flatMap((status) => inCycle.filter((task) => task.status === status))
+  const done = inCycle.filter((task) => task.status === 'done').length
+  const canceled = inCycle.filter((task) => task.status === 'canceled').length
   const from = view.openCycle.slice(5)
   const to = view.currentCycle.slice(5)
+  const allBack = unfinished.length > 0 && unfinished.every((task) => back.has(task.id))
 
   const choose = (id: string, toBacklog: boolean): void =>
     setBack((was) => {
@@ -47,53 +55,78 @@ export function CloseCycle({
     setSending(false)
   }
 
+  const foot = (
+    <>
+      <span class="t-changes">Done and canceled cards stay in the history of {from}.</span>
+      <button type="button" class="btn quiet" onClick={onLater}>
+        Later
+      </button>
+      <button type="button" class="btn primary" disabled={sending} onClick={() => void confirm()}>
+        {sending ? 'Closing…' : `Close ${from}`}
+      </button>
+    </>
+  )
+
   return (
-    <Sheet id="t-close-title" title={`Close ${from}`} onClose={onLater}>
+    <Sheet id="t-close-title" title={`Close ${from}`} onClose={onLater} foot={foot} wide>
+      <p class="dim-2 t-close-sub">
+        {rangeLabel(view.openRange)} {view.currentCycle === view.openCycle ? 'ends this week.' : `is over; ${to} has started.`}
+      </p>
       {error === undefined ? null : (
         <div class="notice err" role="alert">
           <p>{error}</p>
         </div>
       )}
-      <p class="dim-2">
-        {view.currentCycle === view.openCycle ? null : `A new week has started: ${to}. `}
-        Unfinished cards move on to {to} as they are, unless you send them back.
+      <p class="t-tally num">
+        <span>
+          <StatusGlyph status="done" />
+          <b>{done}</b> done
+        </span>
+        <span>
+          <StatusGlyph status="canceled" />
+          <b>{canceled}</b> canceled
+        </span>
+        <span>
+          <StatusGlyph status="todo" />
+          <b>{unfinished.length}</b> unfinished
+        </span>
       </p>
 
       {unfinished.length === 0 ? (
-        <p class="dim-3">Nothing unfinished.</p>
+        <p class="dim-2">Nothing unfinished: the week closes clean.</p>
       ) : (
-        <ul class="t-close-list">
-          {unfinished.map((task) => {
-            const toBacklog = back.has(task.id)
-            return (
-              <li key={task.id} class="t-close-row">
-                <span class="t-close-title">{task.title}</span>
-                <div class="t-segment" role="group" aria-label={`Where ${task.title} goes`}>
-                  <button type="button" aria-pressed={!toBacklog} class={toBacklog ? '' : 't-seg-on'} onClick={() => choose(task.id, false)}>
-                    Next cycle
-                  </button>
-                  <button type="button" aria-pressed={toBacklog} class={toBacklog ? 't-seg-on' : ''} onClick={() => choose(task.id, true)}>
-                    Back to Backlog
-                  </button>
-                </div>
-              </li>
-            )
-          })}
-        </ul>
+        <>
+          <div class="t-close-lead">
+            <p class="dim-2">Unfinished cards go on to {to} as they are, unless you send them back.</p>
+            <button type="button" class="btn quiet" onClick={() => setBack(allBack ? new Set() : new Set(unfinished.map((t) => t.id)))}>
+              {allBack ? `All to ${to}` : 'All to Backlog'}
+            </button>
+          </div>
+          <ul class="t-close-list">
+            {unfinished.map((task) => {
+              const toBacklog = back.has(task.id)
+              const late = isOverdue(task, today)
+              return (
+                <li key={task.id} class="t-close-row">
+                  <StatusGlyph status={task.status === 'triage' ? 'todo' : task.status} />
+                  <span class="t-close-text">
+                    <span class="t-close-title">{task.title}</span>
+                    {task.due === null ? null : <span class={late ? 't-overdue' : 'dim-2'}>Due {shortDay(task.due)}</span>}
+                  </span>
+                  <span class="t-segment" role="group" aria-label={`Where ${task.title} goes`}>
+                    <button type="button" aria-pressed={!toBacklog} onClick={() => choose(task.id, false)}>
+                      {to}
+                    </button>
+                    <button type="button" aria-pressed={toBacklog} onClick={() => choose(task.id, true)}>
+                      Backlog
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       )}
-
-      <p class="t-close-summary num">
-        {done.length} done · {canceled.length} canceled — kept in the history of {from}.
-      </p>
-
-      <div class="t-acts">
-        <button type="button" class="btn primary" disabled={sending} onClick={() => void confirm()}>
-          {sending ? 'Closing…' : `Close ${from}`}
-        </button>
-        <button type="button" class="btn quiet" onClick={onLater}>
-          Later
-        </button>
-      </div>
     </Sheet>
   )
 }

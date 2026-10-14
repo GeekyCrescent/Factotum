@@ -1,13 +1,23 @@
 /*
- * The task board's own classes, all prefixed `t-` (spec 2026-10-14, design D11). Colours, sizes and
- * motion are the shell's Grafito tokens, by name: nothing here declares a colour value, and every
- * transition names its properties — the rules the inbox and sessions stylesheets follow.
+ * The task board's own classes, all prefixed `t-` (spec 2026-10-14, design D11; redesign A, mockup
+ * `maquetas/opcion-a-v2.html`). Colours, sizes and motion are the shell's Grafito tokens, by name:
+ * nothing here declares a colour value, and every transition names its properties — the rules the
+ * inbox and sessions stylesheets follow.
  */
 
 .t-screen {
-  display: grid;
-  gap: var(--space-3);
+  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.t-pad {
+  padding: var(--space-4);
+}
+
+.t-pad-x {
+  margin: var(--space-3) var(--space-4) 0;
 }
 
 .t-narrow {
@@ -21,218 +31,21 @@
   text-align: center;
 }
 
-/* --- The head: the cycle, triage, the history ------------------------------- */
+/* --- The bar: the cycle and how the week goes ---------------------------- */
 
-.t-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.t-head-text {
-  min-width: 0;
+.t-bar {
+  gap: var(--space-1);
 }
 
 .t-cycle {
-  white-space: nowrap;
-  font-size: var(--text-heading);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.t-zone {
-  font-size: var(--text-caption);
-}
-
-.t-head-acts {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.t-head .btn.sm {
-  min-height: var(--hit);
-}
-
-/* --- Filters ---------------------------------------------------------------- */
-
-.t-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.t-filters select,
-.t-move select,
-.t-field input,
-.t-field select,
-.t-field textarea {
-  min-height: var(--hit);
-  padding: 0 var(--space-2h);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--text-small);
-}
-
-.t-filters select {
-  flex: 1 1 8rem;
-  max-width: 14rem;
-}
-
-/* On the phone the filters are one row that scrolls sideways, not three rows above the cards. */
-@media (max-width: 899px) {
-  .t-filters {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .t-filters select {
-    flex: none;
-    max-width: 11rem;
-  }
-}
-
-.t-field input,
-.t-field select,
-.t-field textarea {
-  width: 100%;
+  flex: 0 1 auto;
   min-width: 0;
-}
-
-.t-field textarea {
-  padding-block: var(--space-2);
-  resize: vertical;
-}
-
-/* --- Desktop: six columns --------------------------------------------------- */
-
-.t-columns {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(9.5rem, 1fr);
-  gap: var(--space-3);
-  overflow-x: auto;
-  padding-bottom: var(--space-3);
-  align-items: start;
-}
-
-.t-column {
-  display: grid;
-  /* One track that may shrink: otherwise it takes the min-content of a card and spills over. */
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  min-width: 0;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-10);
-  background: var(--surface);
-  min-height: 8rem;
-}
-
-.t-col-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: var(--space-1) var(--space-1h);
-  font-size: var(--text-small);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-/* --- Phone: tabs, one column ------------------------------------------------ */
-
-.t-tabs {
-  display: flex;
-  gap: var(--space-1);
-  overflow-x: auto;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--line);
-}
-
-.t-tab {
-  flex: none;
   min-height: var(--hit);
-  padding: 0 var(--space-3);
+  display: grid;
+  align-content: center;
+  padding: 0 var(--space-1h);
   border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--text-small);
-  white-space: nowrap;
-}
-
-.t-tab .num {
-  color: var(--text-3);
-}
-
-.t-tab-on {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-/* Room for the capture fixed at the bottom. */
-.t-phone-column {
-  padding-bottom: calc(var(--hit) + var(--space-6));
-}
-
-/* --- The cards -------------------------------------------------------------- */
-
-.t-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.t-empty {
-  padding: var(--space-2) var(--space-1h);
-  font-size: var(--text-small);
-}
-
-.t-card {
-  position: relative;
-  display: flex;
-  align-items: stretch;
-  border: 1px solid var(--line);
   border-radius: var(--radius-10);
-  background: var(--bg);
-  overflow: hidden;
-  transition-property: opacity;
-  transition-duration: var(--dur-fade);
-}
-
-.t-dragged {
-  opacity: 0.4;
-}
-
-.t-hue {
-  flex: none;
-  width: 4px;
-}
-
-.t-hue-1 { background: var(--p1); }
-.t-hue-2 { background: var(--p2); }
-.t-hue-3 { background: var(--p3); }
-.t-hue-4 { background: var(--p4); }
-.t-hue-5 { background: var(--p5); }
-.t-hue-6 { background: var(--p6); }
-
-.t-card-open {
-  flex: 1;
-  min-width: 0;
-  min-height: var(--hit);
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-2h) var(--space-2h);
-  border: 0;
   background: none;
   color: var(--text);
   font: inherit;
@@ -240,59 +53,102 @@
   cursor: pointer;
 }
 
-.t-card-title {
-  font-size: var(--text-body);
-  overflow-wrap: anywhere;
+.t-cycle-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.t-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
+.t-cycle-name .icon {
+  color: var(--text-2);
+}
+
+.t-week {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-caption);
   color: var(--text-2);
 }
 
-.t-area {
-  padding: 0 var(--space-1h);
-  border-radius: var(--radius-6);
-  background: var(--surface-2);
+.t-bar-gap {
+  flex: 1;
 }
 
-.t-prio-1 { color: var(--err); font-weight: 600; }
-.t-prio-2 { color: var(--ask); font-weight: 600; }
-
-.t-overdue {
+.t-late {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-10);
+  background: var(--err-bg);
   color: var(--err);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.t-triage {
+  flex: none;
+  min-height: var(--hit);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  padding: 0 var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.count-ask {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1h);
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--ask-border);
+  background: var(--ask-bg);
+  color: var(--ask);
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 
-.t-estimate {
-  padding: 0 var(--space-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-6);
-}
-
-.t-grip {
+.t-bar-back {
   flex: none;
-  /* Desktop only (the phone has no grip): a mouse does not need the 44 px of a finger. */
-  width: 24px;
-  min-width: 24px;
-  padding: 0;
-  align-self: center;
-  color: var(--text-3);
-  cursor: grab;
-  touch-action: none;
 }
 
-.t-drop-line {
-  height: 2px;
-  margin-block: -1px;
-  border-radius: 1px;
-  background: var(--accent);
+@media (min-width: 900px) {
+  .t-cycle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2h);
+  }
+
+  .t-week {
+    font-size: var(--text-small);
+  }
 }
 
-/* --- Quick capture ---------------------------------------------------------- */
+/* --- Desktop toolbar: capture and filters -------------------------------- */
+
+.t-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2h) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
 
 .t-capture {
   display: flex;
@@ -300,22 +156,60 @@
   gap: var(--space-1);
 }
 
+.t-capture-bar {
+  flex: 0 1 440px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  gap: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.t-capture-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.t-capture-mark {
+  flex: none;
+  color: var(--text-3);
+}
+
+.t-capture-bar .t-capture-input {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--text-small);
+  box-shadow: none;
+}
+
+.t-capture-bar .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
 .t-capture-input {
   flex: 1;
   min-width: 0;
   min-height: var(--hit);
   padding: 0 var(--space-3);
-  border: 1px dashed var(--line-strong);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-10);
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   font-size: var(--text-input);
+  outline: none;
 }
 
-.t-capture-input:focus-visible {
-  outline: none;
-  border-style: solid;
+.t-capture-input::placeholder {
+  color: var(--text-3);
+}
+
+.t-capture-sticky .t-capture-input:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
@@ -326,163 +220,287 @@
   right: 0;
   bottom: 0;
   z-index: 20;
-  padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom));
+  padding: var(--space-2) var(--space-1h) calc(var(--space-2) + env(safe-area-inset-bottom)) var(--space-3);
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
 
-/* --- The card sheet --------------------------------------------------------- */
-
-.t-sheet-head {
+.t-filters {
+  margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
-.t-sheet-head h2 {
+/* A quiet button over a native <select>: the platform's menu, the toolbar's look. */
+.t-filter {
+  position: relative;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-2h);
+  border: 1px solid transparent;
+  border-radius: var(--radius-10);
+  color: var(--text-2);
+  font-size: var(--text-small);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.t-filter .icon {
+  color: var(--text-3);
+}
+
+.t-filter select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
   font-size: var(--text-title);
+}
+
+.t-filter:focus-within {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.t-filter-dot {
+  position: absolute;
+  top: 10px;
+  right: 9px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-text);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.t-filter-on {
+  border-color: var(--accent);
+  background: var(--chip-on);
+  color: var(--text);
+}
+
+/* --- Desktop board: four columns, rails, and Done / Canceled pinned ------- */
+
+.t-board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.t-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.t-column {
+  flex: 1 1 0;
+  min-width: 208px;
+  display: grid;
+  /* One track that may shrink: otherwise it takes the min-content of a card and spills over. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-1h);
+}
+
+.t-col-head {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  font-size: var(--text-small);
+}
+
+.t-col-head h2 {
+  font-size: var(--text-small);
   font-weight: 600;
 }
 
-.t-field {
-  min-width: 0;
+/* Desktop only: a mouse does not need the 44 px of a finger (WCAG 2.5.8 asks 24). */
+.t-col-add {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
   display: grid;
-  gap: var(--space-1);
-  font-size: var(--text-caption);
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-6);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.t-rail,
+.t-pin {
+  flex: none;
+  width: 40px;
+  align-self: stretch;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2h) 0;
+  border-radius: var(--radius-10);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.t-rail {
+  border: 1px dashed var(--line-strong);
   color: var(--text-2);
 }
 
-.t-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
-  gap: var(--space-2) var(--space-3);
+.t-rail-label {
+  writing-mode: vertical-rl;
 }
 
-.t-row,
-.t-acts {
+.t-pins {
   display: flex;
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
+}
+
+.t-pin {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.t-pin .num {
+  color: var(--text-2);
+}
+
+.t-pin-empty {
+  border: 1px dashed var(--line-strong);
+  background: none;
+  color: var(--text-2);
+}
+
+.t-pin[aria-expanded='true'],
+.t-rail-target {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--chip-on);
+}
+
+/* --- Phone: overdue strip and tabs ---------------------------------------- */
+
+.t-strip {
+  width: 100%;
+  min-height: var(--hit);
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.t-subtasks h3 {
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--err-border);
+  background: var(--err-bg);
+  color: var(--text);
+  font: inherit;
   font-size: var(--text-small);
-  font-weight: 600;
-  margin-bottom: var(--space-1);
+  text-align: left;
+  cursor: pointer;
 }
 
-.t-subtasks ul {
-  list-style: none;
-  margin: 0 0 var(--space-2);
-  padding: 0;
-}
-
-.t-subtask {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-small);
-}
-
-.t-subtask > span {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.t-subtask-done {
-  color: var(--text-3);
-  text-decoration: line-through;
-}
-
-.t-provenance {
-  font-size: var(--text-caption);
-}
-
-.t-delete {
-  justify-self: start;
+.t-strip > .icon,
+.t-strip b,
+.t-strip-go {
   color: var(--err);
 }
 
-/* --- Closing a cycle -------------------------------------------------------- */
-
-.t-close-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
+.t-strip b {
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.t-close-row {
-  display: grid;
-  gap: var(--space-1h);
-  padding-bottom: var(--space-2);
+.t-strip-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.t-strip-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 500;
+}
+
+.t-tabs-wrap {
+  position: sticky;
+  top: 56px;
+  z-index: 9;
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
 
-.t-close-title {
-  font-size: var(--text-small);
-  overflow-wrap: anywhere;
-}
-
-.t-segment {
-  display: inline-flex;
-  justify-self: start;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-10);
-  overflow: hidden;
-}
-
-.t-segment button {
-  min-height: 36px;
-  padding: 0 var(--space-3);
-  border: 0;
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--text-caption);
-}
-
-.t-segment .t-seg-on {
-  background: var(--chip-on);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-.t-close-summary {
-  font-size: var(--text-small);
-  color: var(--text-2);
-}
-
-/* --- History ---------------------------------------------------------------- */
-
-.t-cycles {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-}
-
-.t-cycles li + li {
-  border-top: 1px solid var(--line);
-}
-
-.t-cycle-row {
-  width: 100%;
-  min-height: 52px;
+.t-tabs {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 var(--space-2);
+}
+
+.t-tabs-more {
+  padding-right: var(--hit);
+  /* A mask reads only alpha: any opaque token does. */
+  mask-image: linear-gradient(to right, var(--text) calc(100% - 72px), transparent calc(100% - 44px));
+}
+
+.t-tab {
+  flex: none;
+  min-height: var(--hit);
+  padding: 0 var(--space-2h);
   border: 0;
   background: none;
-  color: var(--text);
+  box-shadow: inset 0 -2px 0 transparent;
+  color: var(--text-2);
   font: inherit;
-  text-align: left;
+  font-size: var(--text-small);
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.t-tab .num {
+  color: var(--text-3);
+}
+
+.t-tab-on {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.t-tab-on .num {
+  color: var(--text-2);
+}
+
+.t-tab-empty {
+  color: var(--text-3);
+}
+
+.t-tabs-wrap .t-tabs-next {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* Room for the capture fixed at the bottom. */
+.t-phone-column {
+  padding: var(--space-3) var(--space-3) calc(var(--hit) + var(--space-6) + env(safe-area-inset-bottom));
 }
