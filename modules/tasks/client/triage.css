@@ -210,16 +210,21 @@ button.t-triage:hover {
   font-size: var(--text-small);
 }
 
-/* Smaller than the phone's thumb targets, still 36 px: from 900 px a tablet is a finger too. */
+/* Smaller only for a precise pointer: from 900 px a tablet is a finger too, and keeps 44 px. */
 .t-tcol .t-tseg button {
-  min-height: 36px;
   padding: 0 var(--space-3);
   font-size: var(--text-caption);
 }
 
-.t-tcol .t-tdiscard {
-  width: 36px;
-  height: 36px;
+@media (pointer: fine) {
+  .t-tcol .t-tseg button {
+    min-height: 32px;
+  }
+
+  .t-tcol .t-tdiscard {
+    width: 32px;
+    height: 32px;
+  }
 }
 
 .t-spin {

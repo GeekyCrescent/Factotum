@@ -6,7 +6,8 @@
  * is visible, for at most `POLL_TICKS` reads (crit. 23c), and again when the tab comes back.
  *
  * A DECISION — accept to Todo or Backlog, or discard — posts, reads the list again, puts the focus on
- * the card that took the decided one's place (the button that had it is gone), and says what it did.
+ * the card that took the decided one's place (its own button, never straight onto a decision: a second
+ * Enter must not accept a card nobody looked at), and says what it did.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
@@ -28,8 +29,12 @@ export interface TriageList {
   readonly pending: number
 }
 
-/** `enabled` false reads nothing: the board on a phone shows only the count, not the column. */
-export function useTriage(api: Api, enabled = true) {
+/**
+ * `enabled` false reads nothing, and forgets the list: the board on a phone shows only the count.
+ * `version` is anything that changes when Triage may have changed (the board's count of it): a new
+ * card from an agent or a capture is read when the count moves, not at the next tab switch.
+ */
+export function useTriage(api: Api, enabled = true, version?: number) {
   const [list, setList] = useState<TriageList | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const reads = useRef({ started: 0, applied: 0 })
@@ -49,7 +54,10 @@ export function useTriage(api: Api, enabled = true) {
 
   const [visits, setVisits] = useState(0)
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      setList(undefined)
+      return
+    }
     void reload()
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
@@ -58,7 +66,7 @@ export function useTriage(api: Api, enabled = true) {
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [reload, enabled])
+  }, [reload, enabled, version])
 
   const reading = enabled && list !== undefined && anyReading(list.tasks)
   // `visits` re-arms a polling that ran out, when the owner comes back to the tab.
@@ -84,22 +92,37 @@ const DONE_LINE: Readonly<Record<Decision, string>> = {
   discard: 'Discarded.',
 }
 
+/** What the status line says after a decision: what happened, and how many are left. */
+export function decidedLine(said: string, left: number): string {
+  if (said === '') return ''
+  return `${said} ${left === 0 ? 'Nothing left to sort.' : `${left} left.`}`
+}
+
 /**
  * Decide on one card. `act` posts and reads again (the board and the list); `tasks` is the list as it
- * is now, so the focus lands once the decided card has left it.
+ * is now, so the focus lands once the decided card has left it. `fallback` takes the focus when the
+ * last card is gone and there is no lead line to give it to (the board's column).
  */
-export function useDecide(act: (path: string, body?: unknown) => Promise<boolean>, tasks: readonly Task[] | undefined) {
+export function useDecide(
+  act: (path: string, body?: unknown) => Promise<boolean>,
+  tasks: readonly Task[] | undefined,
+  fallback?: { readonly current: HTMLElement | null },
+) {
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
+  // The guard reads THIS, not the render's `busy`: two taps before the next render must not post twice.
+  const inFlight = useRef(new Set<string>())
   const [said, setSaid] = useState('')
   const [focusAt, setFocusAt] = useState<number | undefined>(undefined)
   const listRef = useRef<HTMLUListElement>(null)
   const leadRef = useRef<HTMLParagraphElement>(null)
 
   const decide = async (id: string, index: number, what: Decision): Promise<void> => {
-    if (busy.has(id)) return
+    if (inFlight.current.has(id)) return
+    inFlight.current.add(id)
     setBusy((was) => new Set(was).add(id))
     const path = `tasks/${encodeURIComponent(id)}/${what === 'discard' ? 'remove' : 'accept'}`
     const sent = await act(path, what === 'discard' ? undefined : { to: what })
+    inFlight.current.delete(id)
     setBusy((was) => {
       const next = new Set(was)
       next.delete(id)
@@ -111,14 +134,15 @@ export function useDecide(act: (path: string, body?: unknown) => Promise<boolean
   }
 
   // After the list changed: the card that took the decided one's place, the one before it, or the lead.
+  // A list that went away (the board's column closes with its last card) counts as an empty one.
   useEffect(() => {
-    if (focusAt === undefined || tasks === undefined) return
+    if (focusAt === undefined) return
     setFocusAt(undefined)
     const items = listRef.current?.querySelectorAll<HTMLElement>('[data-triage-first]') ?? []
     const target = items[Math.min(focusAt, items.length - 1)]
-    if (target === undefined) leadRef.current?.focus()
-    else target.focus()
-  }, [focusAt, tasks])
+    if (target !== undefined) target.focus()
+    else (leadRef.current ?? fallback?.current)?.focus()
+  }, [focusAt, tasks, fallback])
 
   return { decide, busy, said, listRef, leadRef }
 }

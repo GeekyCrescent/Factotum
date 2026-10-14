@@ -19,7 +19,7 @@ import { todayIn } from './model.ts'
 import { TaskSheet } from './task-sheet.tsx'
 import { TriageCards } from './triage-card.tsx'
 import { useBoard } from './use-board.ts'
-import { useDecide, useTriage } from './use-triage.ts'
+import { decidedLine, useDecide, useTriage } from './use-triage.ts'
 
 export function Triage({ props, editing }: { readonly props: ViewProps; readonly editing: string | undefined }) {
   const { api, navigate, openDrawer, pendingTotal } = props
@@ -78,7 +78,7 @@ export function Triage({ props, editing }: { readonly props: ViewProps; readonly
       </p>
       {/* One persistent region, so a screen reader hears what each decision did. */}
       <p class="sr-only" role="status">
-        {said === '' ? '' : `${said} ${list.tasks.length === 0 ? 'Nothing left to sort.' : `${list.tasks.length} left.`}`}
+        {decidedLine(said, list.tasks.length)}
       </p>
       {error === undefined ? null : (
         <div class="t-pad-x">

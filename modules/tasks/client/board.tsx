@@ -50,7 +50,7 @@ import {
 import { OverdueStrip, Tabs } from './phone.tsx'
 import { TaskSheet } from './task-sheet.tsx'
 import { useBoard, useWide } from './use-board.ts'
-import { useDecide, useTriage } from './use-triage.ts'
+import { decidedLine, useDecide, useTriage } from './use-triage.ts'
 
 /** On this device only (criterion 13). */
 const FILTER_KEY = 'factotum.tasks.filter'
@@ -87,21 +87,26 @@ export function Board({
   const board = useBoard(api)
   const { edge, hostProjects } = useBoardEdge(props)
   const wideNow = useWide()
-  // On a wide screen Triage is the first column of the board, so its cards are read here too.
-  const triage = useTriage(api, wideNow && (board.view?.triage ?? 0) > 0)
+  // On a wide screen Triage is the first column of the board, so its cards are read here too — and
+  // read again whenever the board's count of them moves (an agent, a capture, another device).
+  const triageCount = board.view?.triage ?? 0
+  const triageOn = wideNow && triageCount > 0
+  const triage = useTriage(api, triageOn, triageCount)
   const { act: boardAct } = board
   const { reload: triageReload } = triage
-  /** A change, then Triage read again: a card accepted from the column leaves it. */
+  /** A change, then Triage read again while the column shows: a card accepted from it leaves it. */
   const actAll = useCallback(
     async (path: string, body?: unknown): Promise<boolean> => {
       const sent = await boardAct(path, body)
-      if (triage.list !== undefined) await triageReload()
+      if (triageOn) await triageReload()
       return sent
     },
-    [boardAct, triageReload, triage.list],
+    [boardAct, triageReload, triageOn],
   )
-  const triageTasks = wideNow && (board.view?.triage ?? 0) > 0 ? triage.list?.tasks : undefined
-  const decider = useDecide(actAll, triageTasks)
+  const triageTasks = triageOn ? triage.list?.tasks : undefined
+  const captureInput = useRef<HTMLInputElement>(null)
+  // When the last card of the column is decided, the focus goes to the capture, not to the page.
+  const decider = useDecide(actAll, triageTasks, captureInput)
   const wide = wideNow
   const [filter, setFilterState] = useState<Filter>(readFilter)
   const [tab, setTab] = useState<Column>('todo')
@@ -112,7 +117,6 @@ export function Board({
   // A column's «+» points the capture at that column: until the field is left, Enter adds there by hand.
   const [pointed, setPointed] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  const captureInput = useRef<HTMLInputElement>(null)
   useCaptureKey(captureInput, wide && board.view !== undefined)
 
   const setFilter = (next: Filter): void => {
@@ -129,7 +133,7 @@ export function Board({
   const add = (title: string, status: Target): Promise<boolean> => board.act('tasks', { title, status })
   // To Triage, read by claude (criterion 21), with the projects of every host that answered (S12).
   const capture = (text: string): Promise<boolean> =>
-    board.act('capture', hostProjects === undefined || hostProjects.length === 0 ? { text } : { text, projects: hostProjects })
+    actAll('capture', hostProjects === undefined || hostProjects.length === 0 ? { text } : { text, projects: hostProjects })
   const toggle = (status: Pinned): void =>
     setOpened((was) => {
       const next = new Set(was)
@@ -251,7 +255,7 @@ export function Board({
             </button>
           )}
           {/* On a wide screen Triage is the board's first column: the chip is the phone's way in. */}
-          {view.triage > 0 && !(wide && triageTasks !== undefined) ? (
+          {view.triage > 0 && !(wide && triageTasks !== undefined && triageTasks.length > 0) ? (
             <button type="button" class="t-triage" onClick={() => navigate('triage')}>
               <Icon name="tray" size={wide ? 16 : 20} />
               <span class="sr-only">Triage, {view.triage} waiting</span>
@@ -294,9 +298,19 @@ export function Board({
         </div>
       ) : null}
 
-      {board.error === undefined ? null : (
+      {/* The column's own read can fail too: one notice for both, and Dismiss clears both. */}
+      {(board.error ?? (triageOn ? triage.error : undefined)) === undefined ? null : (
         <div class="t-pad-x">
-          <ErrorNotice message={board.error} action={{ label: 'Dismiss', run: board.clearError }} />
+          <ErrorNotice
+            message={board.error ?? triage.error ?? ''}
+            action={{
+              label: 'Dismiss',
+              run: () => {
+                board.clearError()
+                triage.clearError()
+              },
+            }}
+          />
         </div>
       )}
 
@@ -340,7 +354,7 @@ export function Board({
                 })}
           />
           <p class="sr-only" role="status">
-            {decider.said}
+            {decidedLine(decider.said, triageTasks?.length ?? 0)}
           </p>
         </>
       ) : (

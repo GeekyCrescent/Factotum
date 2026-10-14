@@ -38,8 +38,9 @@ export function TriageCard({
   const overdue = isOverdue(task, today)
   const classes = ['t-card', 't-tcard', reading === 'reading' ? 't-tcard-reading' : ''].filter((c) => c !== '').join(' ')
   return (
-    <li class={classes} data-card={task.id}>
-      <button type="button" class="t-card-open t-tcard-open" onClick={open} aria-label={`${task.title}. Open to edit`}>
+    <li class={classes}>
+      {/* The content IS the name: source, state and fields reach a screen reader, as on the board's card. */}
+      <button type="button" class="t-card-open t-tcard-open" data-triage-first onClick={open}>
         <span class="t-tsrc">
           <Icon name={source.kind === 'agent' ? 'terminal-window' : 'sparkle'} size={13} />
           {source.label} · {agoOf(task.createdAt, now)}
@@ -50,6 +51,7 @@ export function TriageCard({
           {task.due === null ? null : (
             <span class={overdue ? 't-overdue' : undefined}>
               <Icon name={overdue ? 'warning' : 'calendar-blank'} size={13} />
+              {overdue ? <span class="sr-only">Overdue, due </span> : null}
               {shortDay(task.due)}
             </span>
           )}
@@ -64,14 +66,15 @@ export function TriageCard({
           {reading === 'failed' ? <span class="t-tfailed">Couldn’t read it, the text is kept</span> : null}
         </span>
         {wrote === undefined ? null : <span class="t-twrote">«{wrote}»</span>}
+        <span class="sr-only">. Open to edit</span>
       </button>
       <div class="t-tacts">
         {/* aria-disabled, not disabled: a disabled button drops the focus it holds (decide() guards a double tap). */}
         <div class="t-tseg" role="group" aria-label={`Accept ${task.title} to`}>
-          <button type="button" data-triage-first aria-disabled={busy} onClick={() => decide('todo')}>
+          <button type="button" aria-label={`Move ${task.title} to Todo`} aria-disabled={busy} onClick={() => decide('todo')}>
             Todo
           </button>
-          <button type="button" aria-disabled={busy} onClick={() => decide('backlog')}>
+          <button type="button" aria-label={`Move ${task.title} to Backlog`} aria-disabled={busy} onClick={() => decide('backlog')}>
             Backlog
           </button>
         </div>
