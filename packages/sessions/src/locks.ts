@@ -34,6 +34,7 @@
 
 import { mkdir, open, readFile, readdir, rmdir, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { KeyedQueue } from './keyed-queue.ts'
 import type { SessionPaths } from './paths.ts'
 
 export interface LockInfo {
@@ -133,7 +134,7 @@ const RMDIR_FINE = new Set(['ENOTEMPTY', 'EEXIST', 'ENOENT', 'ENOTDIR'])
 export class SiteLocks {
   readonly #paths: SessionPaths
   readonly #pid: number
-  readonly #queues = new Map<string, Promise<unknown>>()
+  readonly #queue = new KeyedQueue()
 
   constructor(paths: SessionPaths, pid: number = process.pid) {
     this.#paths = paths
@@ -276,20 +277,9 @@ export class SiteLocks {
 
   // --- inside -------------------------------------------------------------
 
-  /**
-   * One site's queue. A REJECTED TASK DOES NOT LEAK into the next one: a disk error in one acquire
-   * must not leave the site closed until a restart (criterion 6c). The entry is deleted by IDENTITY,
-   * only when nothing has queued behind it, so the map does not grow with the sites.
-   */
+  /** One site's queue: `KeyedQueue`, with its rule that a rejected task does not poison the next (criterion 6c). */
   #run<T>(siteId: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.#queues.get(siteId) ?? Promise.resolve()
-    const next = previous.catch(() => undefined).then(task)
-    const tail = next.catch(() => undefined)
-    this.#queues.set(siteId, tail)
-    void tail.then(() => {
-      if (this.#queues.get(siteId) === tail) this.#queues.delete(siteId)
-    })
-    return next
+    return this.#queue.run(siteId, task)
   }
 
   /** The holder's file, created with `'wx'`: the same id twice loses here even past the queue. */
