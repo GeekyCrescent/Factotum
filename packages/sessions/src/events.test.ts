@@ -226,3 +226,9 @@ test('a reader that does not know a kind drops that line and keeps reading (crit
     [0, 2],
   )
 })
+
+test('a handoff event round-trips: one per crossing, written by the host that received it (spec 2026-10-07-dos-hosts, D8)', () => {
+  const event: SessionEvent = { seq: 4, at: 'x', kind: 'handoff', from: 'juans-macbook-pro', to: 'omarchy', hid: '0199e0c0-0000-7000-8000-000000000001' }
+  assert.deepEqual(parseLine(serialize(event)), event)
+  assert.equal(parseLine(JSON.stringify({ seq: 1, at: 'x', kind: 'handoff', from: 'a' })), undefined)
+})

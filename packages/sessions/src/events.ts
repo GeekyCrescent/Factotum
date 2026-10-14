@@ -97,6 +97,8 @@ export const sessionEventSchema = z.union([
     signal: z.string().optional(),
     reason: z.string().optional(),
   }),
+  // The eighth kind (spec 2026-10-07-dos-hosts, D8): one per crossing, from the host that received it.
+  z.object({ ...base, kind: z.literal('handoff'), from: z.string().min(1), to: z.string().min(1), hid: z.string().min(1) }),
 ])
 
 export function serialize(event: SessionEvent): string {

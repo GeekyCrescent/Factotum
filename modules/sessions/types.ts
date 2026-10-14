@@ -246,6 +246,7 @@ export type LaunchResult =
   | { readonly outcome: 'busy'; readonly sessionId: string }
   | { readonly outcome: 'stale'; readonly freshness: FreshnessReport }
   | { readonly outcome: 'rejected'; readonly reason: string }
+  | { readonly outcome: 'moved'; readonly to: string }
 
 export interface SessionSummary {
   readonly id: string
@@ -272,6 +273,8 @@ export interface SessionSummary {
    * `touchedOf` (`client/history.ts`) instead of reading this straight.
    */
   readonly touchedAt: string | undefined
+  /** The host it was moved to (spec 2026-10-07-dos-hosts, D8). `undefined` from a host before the field. */
+  readonly movedTo?: string | undefined
 }
 
 export interface Page {
@@ -316,6 +319,8 @@ export type SessionEvent = { readonly seq: number; readonly at: string } & (
     }
   | QuestionsEvent
   | ServiceEvent
+  /** One per crossing to or from the other host (spec 2026-10-07-dos-hosts, D8). */
+  | { readonly kind: 'handoff'; readonly from: string; readonly to: string; readonly hid: string }
 )
 
 // --- Questions the agent asks the owner (spec 2026-10-01-preguntas-con-opciones, D6 bis) ---

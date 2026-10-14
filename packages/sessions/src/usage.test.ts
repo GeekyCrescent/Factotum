@@ -34,6 +34,8 @@ const meta = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   autoTitle: undefined,
   archivedAt: undefined,
   touchedAt: undefined,
+  movedTo: undefined,
+  movedAt: undefined,
   ...over,
 })
 

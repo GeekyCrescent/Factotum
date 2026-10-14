@@ -208,6 +208,12 @@ function fromLaunch(result: LaunchResult): ModuleResponse {
       }
     case 'rejected':
       return invalid(result.reason)
+    case 'moved':
+      // A 409 like a busy site, with where it went: the screen opens «Moved to …» (spec 2026-10-07, D12).
+      return {
+        status: 409,
+        body: { error: { code: 'conflict', message: `this conversation was moved to ${result.to}` }, moved: { to: result.to } },
+      }
   }
 }
 

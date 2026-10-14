@@ -1527,3 +1527,12 @@ test('POST /projects/:id/pins: a bad id, name or body is a 400 and the engine is
   assert.equal((await pin({ id: 'web' }, {})).status, 400)
   assert.equal(asked, 0)
 })
+
+test('a reply to a conversation moved to the other host is a 409 that names it (spec 2026-10-07-dos-hosts, criterion 29)', async () => {
+  const { table } = await started(fakeEngine({ reply: async () => ({ outcome: 'moved', to: 'omarchy' }) }))
+  const response = await call(table, 'POST /sessions/:id/reply', request('POST', '/sessions/x/reply', { params: { id: 'x' }, body: { text: 'hi' } }))
+  assert.equal(response.status, 409)
+  assert.deepEqual((response.body as { moved: unknown }).moved, { to: 'omarchy' })
+  assert.equal((response.body as ErrorBody).error.code, 'conflict')
+  assert.match((response.body as ErrorBody).error.message, /moved to omarchy/)
+})

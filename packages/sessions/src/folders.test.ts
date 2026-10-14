@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NotificationMessage, Timers } from '@factotum/core'
 import { createEngine, REMOVING } from './engine.ts'
+import { summaryOf } from './history.ts'
 import { uuidv7 } from './id.ts'
 import { HANDOFF_HOLDER_PREFIX, SiteLocks } from './locks.ts'
 import { sessionPaths } from './paths.ts'
@@ -614,3 +615,17 @@ async function turnOver(stateDir: string, siteId: string): Promise<void> {
   const deadline = Date.now() + 10_000
   while ((await locks.heldBy(siteId)) !== undefined && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
 }
+
+test('A CONVERSATION MOVED TO THE OTHER HOST is read-only here: a reply is `moved`, and takes no lock (criterion 29)', async () => {
+  const { engine, root, stateDir } = await world({ sites: (r) => [{ id: 'web', path: join(r, 'web') }] })
+  await mkdir(join(root, 'web'))
+  const done = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
+  const id = done.outcome === 'started' ? done.sessionId : ''
+  await turnOver(stateDir, 'web')
+  const store = new SessionStore(sessionPaths(stateDir), () => new Date())
+  await store.patchMeta(id, (meta) => ({ ...meta, movedTo: 'omarchy', movedAt: new Date().toISOString() }))
+
+  assert.deepEqual(await engine.reply(id, 'again'), { outcome: 'moved', to: 'omarchy' })
+  assert.equal(summaryOf((await store.readMeta(id))!).movedTo, 'omarchy', 'the summary says where it went')
+  assert.equal(await new SiteLocks(sessionPaths(stateDir)).heldBy('web'), undefined, 'no lock was taken')
+})

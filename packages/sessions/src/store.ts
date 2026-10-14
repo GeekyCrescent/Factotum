@@ -20,7 +20,7 @@
  */
 
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { parseLog, stateFrom } from './events.ts'
 import { isSessionId } from './id.ts'
 import type { SessionPaths } from './paths.ts'
@@ -96,6 +96,14 @@ export interface SessionMeta {
    * `undefined` is a meta from before the field, and `touchedOf` says what it means.
    */
   readonly touchedAt: string | undefined
+  /**
+   * Where this conversation went, and when (spec 2026-10-07-dos-hosts, D8): set on the SOURCE once
+   * the other host confirmed it, and from then on the session is read-only here — a reply is
+   * `moved`. Same rule as `sitePath`: `string | undefined` AND REQUIRED, listed in `parseMeta`, and
+   * in the `NewSession` omit list. A meta from before the field reads as not moved.
+   */
+  readonly movedTo: string | undefined
+  readonly movedAt: string | undefined
 }
 
 /**
@@ -125,8 +133,50 @@ export type RemoveOutcome = 'removed' | 'unknown' | 'running'
 /** Everything but the parts the store owns. */
 export type NewSession = Omit<
   SessionMeta,
-  'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'autoTitle' | 'archivedAt' | 'touchedAt'
+  'state' | 'endedAt' | 'reason' | 'turns' | 'agentPid' | 'title' | 'autoTitle' | 'archivedAt' | 'touchedAt' | 'movedTo' | 'movedAt'
 >
+
+/** Where `importSession` is about to move something: the journal writes its intention first (D9). */
+export type ImportStep = 'replace' | 'install'
+
+/**
+ * A `meta.json` as a `SessionMeta`, or `undefined` when it is not one. PURE, and THE ONE LIST OF
+ * FIELDS: `#readMeta` reads through it, and so does the handoff when a meta arrives from the other
+ * host (spec 2026-10-07-dos-hosts, D8, v4.2) — a field missing here would be lost on the way.
+ *
+ * EVERY FIELD IS LISTED BY HAND, and a field left out of this list is not just unread: it is ERASED,
+ * because `patchMeta` reads through here and writes the result back. It is the
+ * zod-strips-unknown-keys trap of CLAUDE.md §2 in handwritten form — and `sitePath` would have
+ * fallen into it if the type had allowed it to be optional (TS2741 caught it).
+ */
+export function parseMeta(id: string, value: unknown): SessionMeta | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const json = value as Partial<SessionMeta>
+  // THE DIRECTORY NAMES THE SESSION, not the file's contents: a meta.json whose `id` says
+  // something else is not this session's, and an id read from a file must never become a path.
+  if (json.id !== id || typeof json.siteId !== 'string') return undefined
+  const text = (field: unknown) => (typeof field === 'string' ? field : undefined)
+  return {
+    id: json.id,
+    siteId: json.siteId,
+    entryId: typeof json.entryId === 'string' ? json.entryId : '',
+    state: json.state ?? 'failed',
+    startedAt: typeof json.startedAt === 'string' ? json.startedAt : new Date(0).toISOString(),
+    endedAt: json.endedAt ?? undefined,
+    reason: json.reason ?? undefined,
+    turns: typeof json.turns === 'number' ? json.turns : 1,
+    agentPid: typeof json.agentPid === 'number' ? json.agentPid : undefined,
+    sitePath: text(json.sitePath),
+    prompt: text(json.prompt),
+    agent: text(json.agent),
+    title: text(json.title),
+    autoTitle: text(json.autoTitle),
+    archivedAt: text(json.archivedAt),
+    touchedAt: text(json.touchedAt),
+    movedTo: text(json.movedTo),
+    movedAt: text(json.movedAt),
+  }
+}
 
 export class SessionStore {
   readonly #paths: SessionPaths
@@ -195,33 +245,7 @@ export class SessionStore {
     // thrown error is every site blocked. The reconciler treats `undefined` the same
     // as "no meta at all" and releases the lock, which is the safe direction.
     try {
-      const text = await readFile(this.#paths.metaFile(id), 'utf8')
-      const json = JSON.parse(text) as Partial<SessionMeta>
-      // THE DIRECTORY NAMES THE SESSION, not the file's contents: a meta.json whose `id` says
-      // something else is not this session's, and an id read from a file must never become a path.
-      if (json.id !== id || typeof json.siteId !== 'string') return undefined
-      return {
-        id: json.id,
-        siteId: json.siteId,
-        entryId: typeof json.entryId === 'string' ? json.entryId : '',
-        state: json.state ?? 'failed',
-        startedAt: typeof json.startedAt === 'string' ? json.startedAt : new Date(0).toISOString(),
-        endedAt: json.endedAt ?? undefined,
-        reason: json.reason ?? undefined,
-        turns: typeof json.turns === 'number' ? json.turns : 1,
-        agentPid: typeof json.agentPid === 'number' ? json.agentPid : undefined,
-        // EVERY FIELD IS LISTED BY HAND, and a field left out of this list is not just unread: it
-        // is ERASED, because `patchMeta` reads through here and writes the result back. It is
-        // the zod-strips-unknown-keys trap of CLAUDE.md §2 in handwritten form — and `sitePath`
-        // would have fallen into it if the type had allowed it to be optional (TS2741 caught it).
-        sitePath: typeof json.sitePath === 'string' ? json.sitePath : undefined,
-        prompt: typeof json.prompt === 'string' ? json.prompt : undefined,
-        agent: typeof json.agent === 'string' ? json.agent : undefined,
-        title: typeof json.title === 'string' ? json.title : undefined,
-        autoTitle: typeof json.autoTitle === 'string' ? json.autoTitle : undefined,
-        archivedAt: typeof json.archivedAt === 'string' ? json.archivedAt : undefined,
-        touchedAt: typeof json.touchedAt === 'string' ? json.touchedAt : undefined,
-      }
+      return parseMeta(id, JSON.parse(await readFile(this.#paths.metaFile(id), 'utf8')))
     } catch {
       return undefined
     }
@@ -263,6 +287,8 @@ export class SessionStore {
         archivedAt: undefined,
         // The launch IS the first interaction, and the id's own time is already this instant.
         touchedAt: session.startedAt,
+        movedTo: undefined,
+        movedAt: undefined,
       }
       await this.#writeMeta(meta)
       this.#nextSeq.set(session.id, 0)
@@ -408,6 +434,57 @@ export class SessionStore {
       this.#nextSeq.delete(id)
       this.#observer?.removed(id)
       return 'removed'
+    })
+  }
+
+  /**
+   * A session that arrived from the other host goes in (spec 2026-10-07-dos-hosts, D8), IN ITS TURN.
+   *
+   * An existing `sessions/<id>/` — the way back — is moved to `<replacedDir>/<id>` first, never
+   * deleted: until the handoff ends it may be the owner's only copy. `before(step)` is awaited before
+   * each move, so the handoff writes its journal's intention first; if it throws, that move does not
+   * happen. The meta written is THE ONE GIVEN — this host's `siteId` and `sitePath`, not the
+   * source's — and the index hears it through the observer.
+   */
+  async importSession(id: string, dir: string, replacedDir: string, before: (step: ImportStep) => Promise<void>, meta: SessionMeta): Promise<void> {
+    if (!isSessionId(id)) throw new Error(`"${id}" is not a session id`)
+    await this.#take(id, async () => {
+      const target = this.#paths.sessionDir(id)
+      if ((await lstat(target).catch(() => undefined)) !== undefined) {
+        await before('replace')
+        await mkdir(replacedDir, { recursive: true })
+        await rename(target, join(replacedDir, id))
+      }
+      await before('install')
+      await rename(dir, target)
+      this.#nextSeq.delete(id)
+      this.#removed.delete(id)
+      await this.#writeMeta(meta)
+    })
+  }
+
+  /**
+   * The undo of an import (D9): the session goes WITHOUT a tombstone — this is not the owner
+   * deleting it, and a `restoreSession` may bring the old one back. The index hears `removed`.
+   */
+  async discardImported(id: string): Promise<void> {
+    if (!isSessionId(id)) throw new Error(`"${id}" is not a session id`)
+    await this.#take(id, async () => {
+      await rm(this.#paths.sessionDir(id), { recursive: true, force: true })
+      this.#nextSeq.delete(id)
+      this.#observer?.removed(id)
+    })
+  }
+
+  /** The session an import replaced, back in its place (D9). The index hears its meta again. */
+  async restoreSession(id: string, from: string): Promise<void> {
+    if (!isSessionId(id)) throw new Error(`"${id}" is not a session id`)
+    await this.#take(id, async () => {
+      await rename(from, this.#paths.sessionDir(id))
+      this.#nextSeq.delete(id)
+      this.#removed.delete(id)
+      const meta = await this.#readMeta(id)
+      if (meta !== undefined) await this.#writeMeta(meta)
     })
   }
 

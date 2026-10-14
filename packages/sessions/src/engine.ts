@@ -656,6 +656,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     const meta = await store.readMeta(id)
     if (meta === undefined) return { outcome: 'rejected', reason: `no session "${id}"` }
     if (meta.state === 'running') return { outcome: 'rejected', reason: 'that session is still running' }
+    // Moved to the other host (spec 2026-10-07-dos-hosts, D8): one owner at a time, and it is not here.
+    if (meta.movedTo !== undefined) return { outcome: 'moved', to: meta.movedTo }
 
     const found = await siteFor(meta.siteId)
     if (found.kind !== 'ok') return { outcome: 'rejected', reason: found.reason }

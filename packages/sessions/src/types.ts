@@ -281,6 +281,8 @@ export type LaunchResult =
   | { readonly outcome: 'stale'; readonly freshness: FreshnessReport }
   /** Unknown site, unknown or disabled catalog entry, session not resumable. */
   | { readonly outcome: 'rejected'; readonly reason: string }
+  /** A reply to a conversation that went to the other host (spec 2026-10-07-dos-hosts, D8): read-only here. */
+  | { readonly outcome: 'moved'; readonly to: string }
 
 export interface SessionSummary {
   readonly id: string
@@ -306,6 +308,8 @@ export interface SessionSummary {
    * sorts and shows this one field and nothing else.
    */
   readonly touchedAt: string
+  /** The host it was moved to (spec 2026-10-07-dos-hosts, D8): the screen's «Moved to …» banner. */
+  readonly movedTo: string | undefined
 }
 
 /**
@@ -353,6 +357,19 @@ export type EventInput =
   | SubagentEvent
   | QuestionsEvent
   | ServiceEvent
+  | HandoffEvent
+
+/**
+ * A conversation crossed from one host to the other (spec 2026-10-07-dos-hosts, D8). ONE PER
+ * CROSSING, written by the host that RECEIVED it: the source never writes into the log it hands
+ * over, so on the way back the log here is an exact prefix of the one that arrives.
+ */
+export interface HandoffEvent {
+  readonly kind: 'handoff'
+  readonly from: string
+  readonly to: string
+  readonly hid: string
+}
 
 /**
  * A subagent the agent launched by itself, from the CLI's `task_started` / `task_notification`

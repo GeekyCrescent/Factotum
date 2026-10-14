@@ -79,6 +79,7 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
     archived: meta.archivedAt !== undefined,
     // RESOLVED HERE, not on the screen: the fallback for an old meta is one rule, in `touchedOf`.
     touchedAt: touchedOf(meta),
+    movedTo: meta.movedTo,
   }
 }
 
