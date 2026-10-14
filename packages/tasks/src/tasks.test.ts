@@ -7,7 +7,7 @@ import { BOARD_FILE } from './board/store.ts'
 import { createTasks } from './tasks.ts'
 import { createTasksLink } from './link.ts'
 import { fileURLToPath } from 'node:url'
-import { board, captureLog, eventually, fakeTimers, NOW, realTimers, silentNotify, task, ZONE } from './test-support.ts'
+import { board, captureLog, eventually, fakeTimers, manualTimers, NOW, realTimers, silentNotify, task, ZONE } from './test-support.ts'
 
 const FAKE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url))
 import type { Result, Tasks, TasksDeps } from './types.ts'
@@ -227,4 +227,19 @@ test('the link lists nothing until filled, and nothing after it is cleared', asy
 
   link.clear()
   assert.deepEqual(link.family.tools(), [])
+})
+
+test('the facade arms the reminders: one interval, and a due reminder goes out by itself (criterion 34)', async (t) => {
+  const due = new Date(NOW.getTime() - 60_000).toISOString()
+  const seed = JSON.stringify(board([task({ id: 'r', status: 'todo', cycle: '2026-W42', remindAt: due })]))
+  const sent: string[] = []
+  const timers = manualTimers()
+  const { tasks } = await harness(t, { timeZone: ZONE }, seed, {
+    timers: timers.timers,
+    notify: { canReach: () => true, send: async (message) => void sent.push(message.path) },
+  })
+  assert.deepEqual(timers.pending(), [60_000])
+  await eventually(() => sent.length === 1, 'the reminder')
+  assert.deepEqual(sent, ['/m/tasks/r'])
+  assert.notEqual(tasks.get('r')?.remindedAt, null)
 })

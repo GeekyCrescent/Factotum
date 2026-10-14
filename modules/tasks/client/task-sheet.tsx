@@ -40,6 +40,7 @@ import {
 } from './model.ts'
 import type { CaptureProject } from './agent-model.ts'
 import type { Edge } from './edge.ts'
+import { reminderShortcuts } from './reminder-model.ts'
 import { SessionsPanel } from './sessions-panel.tsx'
 import { Sheet } from './sheet.tsx'
 
@@ -288,6 +289,16 @@ function Properties({
       <Prop label="Reminder">
         <input type="datetime-local" value={draft.remind} disabled={readOnly} onInput={(event) => edit('remind', value(event))} />
       </Prop>
+      {readOnly || draft.remind !== '' || reminderShortcuts(draft.due).length === 0 ? null : (
+        // S6: from the due date, two hours one tap away. A due date alone never reminds.
+        <div class="t-remind-shortcuts">
+          {reminderShortcuts(draft.due).map((shortcut) => (
+            <button key={shortcut.value} type="button" class="btn sm quiet" onClick={() => edit('remind', shortcut.value)}>
+              {shortcut.label}
+            </button>
+          ))}
+        </div>
+      )}
       <Prop label="Estimate">
         <select value={draft.estimate} disabled={readOnly} onChange={(event) => edit('estimate', value(event))}>
           {ESTIMATES.map((e) => (

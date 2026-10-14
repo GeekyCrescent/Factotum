@@ -155,3 +155,15 @@
   flex: none;
   min-height: 36px;
 }
+
+/* S6: the reminder's two shortcuts, under its field. */
+.t-remind-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+  padding: 0 0 var(--space-2);
+}
+
+.t-remind-shortcuts .btn {
+  min-height: 36px;
+}

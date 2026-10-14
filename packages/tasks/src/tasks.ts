@@ -17,6 +17,7 @@ import { uuidv7 } from '@factotum/sessions'
 import { createCapturer } from './ai/capture.ts'
 import { runClaude, type RunResult } from './ai/run.ts'
 import { createAgentTools } from './agent.ts'
+import { createReminders } from './reminders.ts'
 import { createNext } from './ai/next.ts'
 import { captureOutputSchema, CAPTURE_JSON_SCHEMA, NEXT_JSON_SCHEMA, nextOutputSchema } from './ai/schema.ts'
 import { acceptTask, closeCycles, createTask, linkSession, moveTask, patchTask, removeTask, type Changed, type OpContext } from './board/ops.ts'
@@ -93,6 +94,10 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
       return cardOf(await store.change(op(input.value)))
     }
 
+  // D12, step 2: the reminders' tick is armed, and its first pass is NOT awaited (design D6).
+  const reminders = createReminders({ store, now: deps.now, timers: deps.timers, notify: deps.notify, log: deps.log })
+  reminders.start()
+
   const tasks: Tasks = {
     board: (filter) => boardView(store.current(), deps.now(), timeZone, filter),
 
@@ -140,7 +145,7 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
 
     stop: async () => {
       // The runs first: what they would have written is decided by the next start (criterion 23c).
-      await Promise.all([capturer.stop(), nexter.stop()])
+      await Promise.all([capturer.stop(), nexter.stop(), reminders.stop()])
       await store.idle()
     },
   }
