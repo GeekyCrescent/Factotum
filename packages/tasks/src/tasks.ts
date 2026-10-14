@@ -129,6 +129,8 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
 
     cycles: () => cycleSummaries(store.current()),
     cycle: (id) => store.current().cycles.find((c) => c.id === id),
+    // UUIDv7: by id is by creation, oldest first.
+    triage: () => store.current().tasks.filter((t) => t.status === 'triage').sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
 
     capture: async (raw) => {
       const input = parseCapture(raw)

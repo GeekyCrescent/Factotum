@@ -156,6 +156,8 @@ export interface Tasks {
   readonly closeCycles: (input: unknown) => Promise<Result<readonly ClosedCycle[]>>
   readonly cycles: () => readonly CycleSummary[]
   readonly cycle: (id: string) => ClosedCycle | undefined
+  /** The cards in triage, oldest first. Not a column: they never show on the board (criterion 19). */
+  readonly triage: () => readonly Task[]
   readonly capture: (input: unknown) => Promise<Result<Task>>
   readonly runNext: () => Result<{ readonly started: true }>
   readonly agent: AgentToolImpl

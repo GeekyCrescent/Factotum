@@ -1,0 +1,134 @@
+/*
+ * Triage and the AI capture (E4), prefixed `t-` like the rest of the module. Grafito tokens by name only: no colour
+ * values here, and every transition names its properties.
+ */
+
+/* --- The chip in the bar is a button now --------------------------------- */
+
+button.t-triage {
+  border: 0;
+  border-radius: var(--radius-10);
+  background: none;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button.t-triage:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* --- The AI button in the capture ---------------------------------------- */
+
+.t-capture-ai {
+  color: var(--accent-text);
+}
+
+.t-capture-ai:disabled {
+  color: var(--text-3);
+}
+
+/* --- The list -------------------------------------------------------------- */
+
+.t-triage-lead {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--text-small);
+}
+
+.t-triage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 var(--space-6);
+  max-width: 720px;
+}
+
+.t-triage-item {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3) var(--space-4) var(--space-2h);
+  border-bottom: 1px solid var(--line);
+}
+
+.t-triage-src,
+.t-triage-fields,
+.t-triage-reading {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+.t-triage-src {
+  gap: var(--space-1h);
+}
+
+.t-triage-fields span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.t-triage-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.35;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.t-triage-reading {
+  gap: var(--space-1h);
+  color: var(--text-2);
+}
+
+.t-triage-failed {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--err);
+}
+
+.t-triage-raw {
+  margin: 0;
+  font-size: var(--text-caption);
+  overflow-wrap: anywhere;
+}
+
+.t-triage-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.t-triage-acts .btn {
+  flex: 1;
+  max-width: 160px;
+  min-height: var(--hit);
+}
+
+.t-triage-discard {
+  color: var(--err);
+}
+
+.t-spin {
+  animation: t-spin 1s linear infinite;
+}
+
+@keyframes t-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-spin {
+    animation: none;
+  }
+}

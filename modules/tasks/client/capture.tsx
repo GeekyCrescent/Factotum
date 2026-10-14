@@ -1,7 +1,10 @@
 /**
- * Quick capture by hand (criterion 9): a title and Enter, straight to the column it was typed for —
- * Backlog or Todo, the only two the owner creates in. No AI: that capture, with the microphone, is the
- * second cut (E4, G3).
+ * Two captures in one field:
+ * - BY HAND (criterion 9): a title and Enter, straight to the column it was typed for — Backlog or
+ *   Todo, the only two the owner creates in. No AI.
+ * - WITH AI (criteria 21–24): the ✦ button sends the text to `POST /capture`; the card lands in Triage at
+ *   once and claude fills it in afterwards. The field then says so, until the next keystroke. The
+ *   microphone joins it with the shared dictation (G3).
  *
  * TWO SHAPES (redesign A): on the desktop a field in the toolbar that `N` focuses from anywhere on the
  * board, and that a column's «+» points at its column; on the phone, fixed at the bottom of the screen.
@@ -36,6 +39,7 @@ export function QuickCapture({
   target,
   label,
   add,
+  capture,
   sticky = false,
   input,
 }: {
@@ -43,43 +47,71 @@ export function QuickCapture({
   readonly label: string
   /** Resolves with whether the card was saved. */
   readonly add: (title: string, status: Target) => Promise<boolean>
+  /** To Triage, read by claude. Resolves with whether the card was saved. */
+  readonly capture?: (text: string) => Promise<boolean>
   /** The phone's: fixed at the bottom of the screen. */
   readonly sticky?: boolean
   readonly input?: RefObject<HTMLInputElement>
 }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [sent, setSent] = useState(false)
 
-  const submit = async (event: Event): Promise<void> => {
-    event.preventDefault()
-    const title = text.trim()
-    if (title === '' || saving) return
+  /** The text stays until the card is saved: a failure keeps what was typed. */
+  const send = async (save: (text: string) => Promise<boolean>, toTriage: boolean): Promise<void> => {
+    const typed = text.trim()
+    if (typed === '' || saving) return
     setSaving(true)
-    // The text stays until the card is saved: a failure keeps what was typed.
-    if (await add(title, target)) setText('')
+    if (await save(typed)) {
+      setText('')
+      setSent(toTriage)
+    }
     setSaving(false)
   }
+  const submit = (event: Event): void => {
+    event.preventDefault()
+    void send((title) => add(title, target), false)
+  }
+  const placeholder = sent ? 'In Triage, claude is reading it. Add another' : sticky ? `Add to ${label}` : `Add to ${label}, press N from anywhere`
 
   return (
-    <form class={sticky ? 't-capture t-capture-sticky' : 't-capture t-capture-bar'} onSubmit={(event) => void submit(event)}>
+    <form class={sticky ? 't-capture t-capture-sticky' : 't-capture t-capture-bar'} onSubmit={submit}>
       {sticky ? null : <Icon name="plus" size={16} class="t-capture-mark" />}
       <input
         {...(input === undefined ? {} : { ref: input })}
         class="t-capture-input"
         type="text"
         value={text}
-        maxLength={200}
-        placeholder={sticky ? `Add to ${label}` : `Add to ${label}, press N from anywhere`}
-        aria-label={`New card in ${label}`}
+        maxLength={capture === undefined ? 200 : 1000}
+        placeholder={placeholder}
+        aria-label={capture === undefined ? `New card in ${label}` : `New card: Enter adds it to ${label}, the AI button sends it to Triage`}
         enterKeyHint="done"
-        onInput={(event) => setText((event.target as HTMLInputElement).value)}
+        onInput={(event) => {
+          setSent(false)
+          setText((event.target as HTMLInputElement).value)
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') (event.target as HTMLInputElement).blur()
         }}
       />
+      {capture === undefined ? null : (
+        <button
+          type="button"
+          class="icon-btn t-capture-ai"
+          aria-label="Capture with AI, to Triage"
+          title="Capture with AI, to Triage"
+          disabled={text.trim() === '' || saving}
+          onClick={() => void send(capture, true)}
+        >
+          <Icon name="sparkle" size={18} />
+        </button>
+      )}
       <button type="submit" class="icon-btn" aria-label={`Add to ${label}`} disabled={text.trim() === '' || saving}>
         <Icon name="plus" size={18} />
       </button>
+      <span class="sr-only" role="status">
+        {sent ? 'Saved to Triage. Claude is reading it.' : ''}
+      </span>
     </form>
   )
 }
