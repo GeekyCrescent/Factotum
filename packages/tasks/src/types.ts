@@ -9,7 +9,7 @@
  * the assignment in `main.ts` would stop catching an argument that changes shape.
  */
 
-import type { Logger, Notifier, Timers } from '@factotum/core'
+import type { Logger, Notifier, PeerCaller, Timers } from '@factotum/core'
 
 export const STATUSES = ['triage', 'backlog', 'todo', 'in_progress', 'blocked', 'done', 'canceled'] as const
 export type Status = (typeof STATUSES)[number]
@@ -275,6 +275,20 @@ export interface Tasks {
   readonly runNext: () => Result<{ readonly started: true }>
   readonly nextStatus: () => NextStatus
   readonly agent: AgentToolImpl
+  /** Where the board lives, for `GET /where` (crit. 29b): here. */
+  readonly where: () => WhereView
+  /** `POST /agent-tasks`: a `create_task` the relay of the other host forwarded (design D8; S11). */
+  readonly fromPeer: (raw: unknown) => Promise<AgentToolResult>
+  readonly stop: () => Promise<void>
+}
+
+/** `GET /where` (crit. 29b): this host keeps the board, or relays to the one that does. */
+export type WhereView = { readonly mode: 'board' } | { readonly mode: 'relay'; readonly host: string }
+
+/** A host in relay mode (the Mac): no board, where the board is, and `create_task` forwarded (block R). */
+export interface Relay {
+  readonly where: () => WhereView
+  readonly agent: AgentToolImpl
   readonly stop: () => Promise<void>
 }
 
@@ -289,8 +303,13 @@ export interface TasksDeps {
   readonly notify: Notifier
   /** The seam for the tests' fake CLI. Never from the configuration; `CLAUDE_BIN` without it. */
   readonly claudeBin?: string
+  /** `ctx.peers` (block R): the relay forwards through it, and the board names the peer it heard from. */
+  readonly peers?: PeerCaller
 }
 
-export type CreateTasksResult = { readonly ok: true; readonly tasks: Tasks } | { readonly ok: false; readonly reason: string }
+export type CreateTasksResult =
+  | { readonly ok: true; readonly tasks: Tasks }
+  | { readonly ok: true; readonly relay: Relay }
+  | { readonly ok: false; readonly reason: string }
 
 export type CreateTasks = (deps: TasksDeps) => Promise<CreateTasksResult>

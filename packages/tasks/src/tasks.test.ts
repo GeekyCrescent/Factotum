@@ -33,6 +33,7 @@ async function harness(
   const deps: TasksDeps = { config, stateDir: dir, log, now: () => clock.now, timers: fakeTimers(), notify: silentNotify, ...over }
   const created = await createTasks(deps)
   if (!created.ok) throw new Error(`expected tasks, got: ${created.reason}`)
+  if (!('tasks' in created)) throw new Error('expected a board, got a relay')
   t.after(() => created.tasks.stop())
   return { tasks: created.tasks, dir, clock, log }
 }
@@ -204,8 +205,15 @@ test('a bad block does not start, with the reason of the config (criterion 1)', 
   assert.match(await refused({ timeZone: 'Mars/Olympus' }), /^tasks\.timeZone:/)
 })
 
-test('relay mode does not start in the first cut, and says why', async () => {
-  assert.match(await refused({ mode: 'relay', relayTo: 'omarchy' }), /relay/)
+test('relay mode starts with no board file: it keeps no board (block R)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tasks-facade-'))
+  try {
+    const created = await createTasks({ config: { mode: 'relay', relayTo: 'omarchy' }, stateDir: dir, log: captureLog(), now: () => NOW, timers: fakeTimers(), notify: silentNotify })
+    assert.ok(created.ok && 'relay' in created)
+    await assert.rejects(readFile(join(dir, BOARD_FILE), 'utf8'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('a damaged board does not start (criterion 3)', async () => {

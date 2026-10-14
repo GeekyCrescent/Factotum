@@ -25,6 +25,7 @@ export type {
   NextStatus,
   Priority,
   ProjectRef,
+  Relay,
   Result,
   SessionLink,
   Status,
@@ -35,6 +36,7 @@ export type {
   Tasks,
   TasksDeps,
   TasksLink,
+  WhereView,
 } from './types.ts'
 export { createTasks } from './tasks.ts'
 export { createTasksLink } from './link.ts'

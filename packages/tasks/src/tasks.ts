@@ -4,7 +4,7 @@
  * EVERY INPUT FROM OUTSIDE ARRIVES AS `unknown` and is shaped here (`shape.ts`) before an op sees it,
  * so the `400` with its field comes from one place. Every change goes through the store's queue.
  *
- * Relay mode does not start yet: it needs block R.
+ * RELAY MODE (block R) builds no board at all: `relay.ts`.
  *
  * NOTHING HERE LOGS A TITLE, notes or subtasks (criterion 41): the store logs codes and the facade
  * logs nothing about a card.
@@ -16,7 +16,8 @@ import type { z } from 'zod'
 import { uuidv7 } from '@factotum/sessions'
 import { createCapturer } from './ai/capture.ts'
 import { runClaude, type RunResult } from './ai/run.ts'
-import { createAgentTools } from './agent.ts'
+import { createAgentTools, createPeerIntake } from './agent.ts'
+import { createRelay } from './relay.ts'
 import { createReminders } from './reminders.ts'
 import { createNext } from './ai/next.ts'
 import { captureOutputSchema, CAPTURE_JSON_SCHEMA, NEXT_JSON_SCHEMA, nextOutputSchema } from './ai/schema.ts'
@@ -45,7 +46,10 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
   const parsed = parseTasksConfig(deps.config)
   if (!parsed.ok) return { ok: false, reason: parsed.reason }
   if (parsed.config.mode === 'relay') {
-    return { ok: false, reason: 'relay mode is not available yet: it forwards to the board host and arrives with block R' }
+    // No board on this host: where it is, and create_task forwarded there (block R).
+    const relayTo = parsed.config.relayTo
+    if (relayTo === undefined) return { ok: false, reason: 'relay mode needs relayTo: the name of the host that keeps the board' }
+    return { ok: true, relay: createRelay({ relayTo, peers: deps.peers, log: deps.log }) }
   }
   const timeZone = parsed.timeZone
 
@@ -142,6 +146,8 @@ export async function createTasks(deps: TasksDeps): Promise<CreateTasksResult> {
     runNext: () => nexter.start(),
     nextStatus: () => nexter.status(),
     agent: createAgentTools({ store, opContext, log: deps.log }),
+    where: () => ({ mode: 'board' }),
+    fromPeer: createPeerIntake({ store, opContext, log: deps.log }, deps.peers),
 
     stop: async () => {
       // The runs first: what they would have written is decided by the next start (criterion 23c).

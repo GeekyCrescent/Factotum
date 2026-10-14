@@ -36,3 +36,20 @@ export function toStoredHost(chosen: string | undefined, where: Where): string |
   const board = where.boardHost ?? where.selfName
   return name === board ? null : name
 }
+
+export type RelayTarget = { readonly kind: 'self' } | { readonly kind: 'peer' } | { readonly kind: 'unreachable' }
+
+/**
+ * Where a relay sends the screen (crit. 29b): the serving host itself, the other host through the
+ * proxy, or nowhere because that host is down or not one of this app's. `undefined` until `hosts`.
+ */
+export function relayTarget(
+  relayTo: string,
+  hosts: readonly { readonly name: string; readonly self: boolean; readonly reachable: boolean }[],
+): RelayTarget | undefined {
+  if (hosts.length === 0) return undefined
+  const host = hosts.find((h) => h.name === relayTo)
+  if (host === undefined) return { kind: 'unreachable' }
+  if (host.self) return { kind: 'self' }
+  return host.reachable ? { kind: 'peer' } : { kind: 'unreachable' }
+}

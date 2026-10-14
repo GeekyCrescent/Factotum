@@ -19,6 +19,7 @@ import { Board } from './board.tsx'
 import type { ViewProps } from './contract.ts'
 import { CycleDetail, Cycles } from './cycles.tsx'
 import { safeDecode } from './model.ts'
+import { RelayGate } from './relay-gate.tsx'
 import { Triage } from './triage.tsx'
 
 const CYCLES = 'cycles'
@@ -26,6 +27,15 @@ const TRIAGE = 'triage'
 const NEXT = 'next'
 
 function TasksView(props: ViewProps) {
+  // Relay mode (crit. 29b): asked alongside the screen, and the owner is taken to the board.
+  return (
+    <RelayGate props={props}>
+      <Screen {...props} />
+    </RelayGate>
+  )
+}
+
+function Screen(props: ViewProps) {
   const { rest } = props
   if (rest === NEXT) return <Board props={props} openTask={undefined} asking />
   if (rest === TRIAGE) return <Triage props={props} editing={undefined} />

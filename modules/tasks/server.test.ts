@@ -78,6 +78,11 @@ function fakeTasks(calls: Calls, over: Partial<Tasks> = {}): Tasks {
     },
     nextStatus: () => ({ running: false, last: { at: 'n', items: [{ id: 'c1', why: 'due' }], note: '' }, error: null }),
     agent: AGENT,
+    where: () => ({ mode: 'board' }),
+    fromPeer: async (raw) => {
+      calls.log.push(`fromPeer ${JSON.stringify(raw)}`)
+      return { content: [{ type: 'text', text: 'added' }] }
+    },
     stop: async () => {
       calls.log.push('stop')
     },
@@ -318,4 +323,32 @@ test('GET /next answers where it stands and the last answer, with no-store (crit
   assert.equal(response.status, 200)
   assert.equal(response.headers?.['cache-control'], 'no-store')
   assert.deepEqual((response.body as { last: { items: unknown[] } }).last.items, [{ id: 'c1', why: 'due' }])
+})
+
+test('GET /where in board mode says board; POST /agent-tasks hands the body over and answers 200 with the result', async () => {
+  const { routes, calls } = await started()
+  assert.deepEqual((await call(routes, 'GET /where')).body, { mode: 'board' })
+  const response = await call(routes, 'POST /agent-tasks', { body: { title: 'x', sessionId: 's', siteId: 'n' } })
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body, { content: [{ type: 'text', text: 'added' }] })
+  assert.deepEqual(calls.log, ['fromPeer {"title":"x","sessionId":"s","siteId":"n"}'])
+})
+
+test('R0b: in relay mode GET /where says where the board is, and every other route is a 501 that names it', async () => {
+  const events: string[] = []
+  const relay = { where: () => ({ mode: 'relay', host: 'omarchy' }) as const, agent: AGENT, stop: async () => void events.push('relay stopped') }
+  const module = tasksModule(async () => ({ ok: true, relay }), recordingLink(events))
+  const ctx = context()
+  const routes = module.routes!(ctx)
+  const handle = await module.start!(ctx)
+  assert.deepEqual((await call(routes, 'GET /where')).body, { mode: 'relay', host: 'omarchy' })
+  for (const key of ['GET /board', 'POST /tasks', 'POST /capture', 'GET /triage', 'POST /agent-tasks', 'GET /next']) {
+    const response = await call(routes, key)
+    assert.equal(response.status, 501, key)
+    assert.equal((response.body as { error: { host: string } }).error.host, 'omarchy', key)
+  }
+  // The relay's create_task fills the link, as the board's does.
+  assert.deepEqual(events, ['fill'])
+  await handle?.stop?.()
+  assert.deepEqual(events, ['fill', 'clear', 'relay stopped'])
 })
