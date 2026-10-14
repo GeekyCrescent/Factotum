@@ -9,7 +9,7 @@
  * the owner's.
  */
 
-import { lstat, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parseMeta, type SessionMeta } from '../store.ts'
 import { cliDirOf, findTranscripts } from './cli-paths.ts'
@@ -130,6 +130,8 @@ export async function undoInstall(host: Pick<HandoffHost, 'store' | 'uploadsRoot
       await attempt('removeTranscript', entry, async () => {
         await rm(join(folder, `${entry.id}.jsonl`), { force: true })
         await rm(join(folder, entry.id), { recursive: true, force: true })
+        // The folder the install made, if nothing else is in it: a folder the CLI uses keeps its files.
+        await rmdir(folder).catch(() => undefined)
       })
     }
   }
@@ -142,6 +144,8 @@ export async function undoInstall(host: Pick<HandoffHost, 'store' | 'uploadsRoot
       const folder = entry.path
       const keep = join(work.replaced, 'cli', basename(folder))
       await attempt('restoreTranscript', entry, async () => {
+        // Its folder may be gone: the undo above removes a folder the install left empty.
+        await mkdir(folder, { recursive: true })
         if (await exists(join(keep, `${entry.id}.jsonl`))) await rename(join(keep, `${entry.id}.jsonl`), join(folder, `${entry.id}.jsonl`))
         if (await exists(join(keep, entry.id))) await rename(join(keep, entry.id), join(folder, entry.id))
       })

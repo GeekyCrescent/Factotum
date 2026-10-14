@@ -332,9 +332,14 @@ export function createTarget(deps: TargetDeps): Target {
     }
 
     disarm(hid, siteId)
+    // ONE journal for every step of `installing`: each intention is written to it before its step, so
+    // a failure halfway leaves the undo exactly what was intended — the branch created included.
     let journal = await save(prepared, { phase: 'installing', wip })
+    const step = async (patch: Partial<Journal>) => {
+      journal = await save(journal, patch)
+    }
     try {
-      journal = await installGit(path, journal)
+      await installGit(path, journal, step)
       if (wip !== undefined && (await applyWip(path, wip, host.gitEnv)) !== 'applied') throw new Failure('wip-apply-failed')
       const event = { from: journal.peer, to: journal.targetName ?? 'this host', hid }
       for (const sessionId of journal.sessionIds ?? []) {
@@ -342,15 +347,12 @@ export function createTarget(deps: TargetDeps): Target {
           host,
           work,
           {
-            intend: async (change) => {
-              journal = await save(journal, {
+            intend: async (change) =>
+              await step({
                 installed: change.installed === undefined ? journal.installed : [...journal.installed, change.installed],
                 replaced: change.replaced === undefined ? journal.replaced : [...journal.replaced, change.replaced],
-              })
-            },
-            warn: async (code) => {
-              journal = await save(journal, { warnings: [...journal.warnings, code] })
-            },
+              }),
+            warn: async (code) => await step({ warnings: [...journal.warnings, code] }),
           },
           { sessionId, siteId, projectPath: path, event },
         )
@@ -361,20 +363,19 @@ export function createTarget(deps: TargetDeps): Target {
       return refuse(undone.phase === 'abort-failed' ? 'abort-failed' : reason, 'the handoff could not be installed here, and was undone', handoffOf(undone))
     }
     // The phase BEFORE the lock goes (D9): a restart between the two finds `committed` and lets go.
-    journal = await save(journal, { phase: 'committed' })
+    await step({ phase: 'committed' })
     await host.locks.release(siteId, holder(hid))
     return ok({ imported: journal.sessionIds ?? [], handoff: { warnings: journal.warnings } })
   }
 
-  /** The branch, the fast-forward: the intention (`branchCreated`) before the `checkout -b`. */
-  async function installGit(path: string, start: Journal): Promise<Journal> {
-    let journal = start
+  /** The branch, the fast-forward: the intention (`branchCreated`) written before the `checkout -b`. */
+  async function installGit(path: string, journal: Journal, step: (patch: Partial<Journal>) => Promise<void>): Promise<void> {
     const branch = journal.branch ?? ''
     const head = journal.head ?? ''
     if (journal.prevBranch !== branch) {
       if (journal.branchHead !== undefined) await git(path, 'checkout', '-q', '--no-overwrite-ignore', branch)
       else {
-        journal = await save(journal, { branchCreated: true })
+        await step({ branchCreated: true })
         await git(path, 'checkout', '-q', '--no-overwrite-ignore', '-b', branch, head)
         if (await handoffGitSucceeds(path, ['rev-parse', '--verify', '-q', `refs/remotes/origin/${branch}`], gitOptions)) {
           await git(path, 'branch', `--set-upstream-to=origin/${branch}`, branch).catch(() => undefined)
@@ -385,7 +386,6 @@ export function createTarget(deps: TargetDeps): Target {
       throw new Failure('head-mismatch')
     })
     if ((await git(path, 'rev-parse', 'HEAD')).trim() !== head) throw new Failure('head-mismatch')
-    return journal
   }
 
   async function abort(hid: string, siteId: string): Promise<Wire> {
