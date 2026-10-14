@@ -277,6 +277,8 @@ export interface TasksDeps {
   readonly now: () => Date
   readonly timers: Timers
   readonly notify: Notifier
+  /** The seam for the tests' fake CLI. Never from the configuration; `CLAUDE_BIN` without it. */
+  readonly claudeBin?: string
 }
 
 export type CreateTasksResult = { readonly ok: true; readonly tasks: Tasks } | { readonly ok: false; readonly reason: string }

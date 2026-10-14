@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import { BOARD_FILE } from './board/store.ts'
 import { createTasks } from './tasks.ts'
 import { createTasksLink } from './link.ts'
-import { board, captureLog, fakeTimers, NOW, silentNotify, task, ZONE } from './test-support.ts'
+import { fileURLToPath } from 'node:url'
+import { board, captureLog, eventually, fakeTimers, NOW, realTimers, silentNotify, task, ZONE } from './test-support.ts'
+
+const FAKE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url))
 import type { Result, Tasks, TasksDeps } from './types.ts'
 
 interface Harness {
@@ -16,15 +19,21 @@ interface Harness {
   readonly log: ReturnType<typeof captureLog>
 }
 
-async function harness(t: { after: (fn: () => Promise<void>) => void }, config: unknown = { timeZone: ZONE }, seed?: string): Promise<Harness> {
+async function harness(
+  t: { after: (fn: () => Promise<void>) => void },
+  config: unknown = { timeZone: ZONE },
+  seed?: string,
+  over: Partial<TasksDeps> = {},
+): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'tasks-facade-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   if (seed !== undefined) await writeFile(join(dir, BOARD_FILE), seed, { mode: 0o600 })
   const clock = { now: NOW }
   const log = captureLog()
-  const deps: TasksDeps = { config, stateDir: dir, log, now: () => clock.now, timers: fakeTimers(), notify: silentNotify }
+  const deps: TasksDeps = { config, stateDir: dir, log, now: () => clock.now, timers: fakeTimers(), notify: silentNotify, ...over }
   const created = await createTasks(deps)
   if (!created.ok) throw new Error(`expected tasks, got: ${created.reason}`)
+  t.after(() => created.tasks.stop())
   return { tasks: created.tasks, dir, clock, log }
 }
 
@@ -122,9 +131,27 @@ test('a week later the board asks to close; closing archives and the history lis
   assert.deepEqual(errorOf(await tasks.closeCycles({ from: '2026-W42' })), { code: 'conflict' })
 })
 
-test('the members of the second cut answer not-yet, and the agent lists no tool', async (t) => {
+test('a capture through the facade: triage now, parsed by claude (the fake CLI) afterwards, in <stateDir>/run', async (t) => {
+  const { tasks, dir } = await harness(t, { timeZone: ZONE }, undefined, { timers: realTimers, claudeBin: FAKE })
+  const created = ok(await tasks.capture({ text: 'comprar pan mañana', projects: [{ host: null, siteId: 'factotum', name: 'Factotum' }] }))
+  assert.equal(created.status, 'triage')
+  await eventually(() => tasks.get(created.id)?.source.kind === 'capture' && (tasks.get(created.id)?.source as { parse: string }).parse === 'ok', 'parsed')
+  assert.equal(tasks.get(created.id)?.title, 'parsed')
+  assert.equal(tasks.board().triage, 1)
+  assert.match(await readFile(join(dir, 'run', 'fake-claude.prompt.1'), 'utf8'), /<capture>comprar pan mañana<\/capture>/)
+})
+
+test('a capture that is not one is a 400 with its field, and nothing is written', async (t) => {
   const { tasks } = await harness(t)
-  assert.deepEqual(errorOf(await tasks.capture({ text: 'x' })), { code: 'not-yet' })
+  assert.deepEqual(errorOf(await tasks.capture({ text: '   ' })), { code: 'invalid', field: 'text' })
+  assert.deepEqual(errorOf(await tasks.capture({ text: 'x'.repeat(1001) })), { code: 'invalid', field: 'text' })
+  const many = Array.from({ length: 101 }, (_, i) => ({ host: null, siteId: `p${i}`, name: 'P' }))
+  assert.deepEqual(errorOf(await tasks.capture({ text: 'x', projects: many })), { code: 'invalid', field: 'projects' })
+  assert.equal(tasks.board().triage, 0)
+})
+
+test('the members still to come answer not-yet, and the agent lists no tool', async (t) => {
+  const { tasks } = await harness(t)
   assert.deepEqual(errorOf(tasks.runNext()), { code: 'not-yet' })
   assert.deepEqual(tasks.agent.tools(), [])
   const result = await tasks.agent.call({ sessionId: 's', siteId: 'x', toolUseId: undefined, name: 'create_task', raw: {} })
