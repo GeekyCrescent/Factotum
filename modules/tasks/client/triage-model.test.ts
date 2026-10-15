@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Task } from '../types.ts'
-import { agoOf, anyReading, readingOf, sourceOf, wroteOf } from './triage-model.ts'
+import { agoOf, anyReading, originSessionOf, readingOf, sourceOf, wroteOf } from './triage-model.ts'
+import type { Where } from './where.ts'
 
 function card(over: Partial<Task> = {}): Task {
   return {
@@ -54,6 +55,25 @@ test('sourceOf: «Captured», or «Agent» with its project and host (crit. 20)'
   })
   assert.deepEqual(sourceOf(card({ source: { kind: 'agent', host: null, sessionId: 's', siteId: 'bwr' } })), { kind: 'agent', label: 'Agent · bwr' })
   assert.deepEqual(sourceOf(card({ source: { kind: 'owner' } })), { kind: 'owner', label: 'Added by hand' })
+})
+
+test('originSessionOf: the session an agent card came from, on its host as the client names it, from both apps (crit. 20, 30b)', () => {
+  const OMARCHY_APP: Where = { boardHost: undefined, selfName: 'omarchy' }
+  const MAC_APP: Where = { boardHost: 'omarchy', selfName: 'mac' }
+  const onBoard = card({ source: { kind: 'agent', host: null, sessionId: 'abc', siteId: 'bwr' } })
+  const onMac = card({ source: { kind: 'agent', host: 'mac', sessionId: 'def', siteId: 'site' } })
+
+  assert.deepEqual(originSessionOf(onBoard, OMARCHY_APP), { sessionId: 'abc', host: undefined })
+  assert.deepEqual(originSessionOf(onBoard, MAC_APP), { sessionId: 'abc', host: 'omarchy' })
+  assert.deepEqual(originSessionOf(onMac, OMARCHY_APP), { sessionId: 'def', host: 'mac' })
+  assert.deepEqual(originSessionOf(onMac, MAC_APP), { sessionId: 'def', host: undefined })
+})
+
+test('originSessionOf: nothing for a capture or a card by hand, nor before the hosts are known', () => {
+  const where: Where = { boardHost: undefined, selfName: 'omarchy' }
+  assert.equal(originSessionOf(card(), where), undefined)
+  assert.equal(originSessionOf(card({ source: { kind: 'owner' } }), where), undefined)
+  assert.equal(originSessionOf(card({ source: { kind: 'agent', host: null, sessionId: 'abc', siteId: 'bwr' } }), undefined), undefined)
 })
 
 test('wroteOf: what the owner typed, once claude rewrote it; nothing while reading, or when the title is the text', () => {

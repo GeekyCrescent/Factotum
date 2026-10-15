@@ -43,6 +43,7 @@ import type { Edge } from './edge.ts'
 import { reminderShortcuts } from './reminder-model.ts'
 import { SessionsPanel } from './sessions-panel.tsx'
 import { Sheet } from './sheet.tsx'
+import { originSessionOf, sourceOf } from './triage-model.ts'
 
 interface Props {
   readonly api: Api
@@ -212,12 +213,29 @@ function Editor({
       {edge === undefined ? null : <SessionsPanel task={task} edge={edge} readOnly={readOnly} act={act} />}
       {task.remindedAt !== null ? <p class="dim-2">Reminder sent.</p> : task.reminderMissed ? <p class="t-overdue">Reminder missed.</p> : null}
       <p class="dim-2 t-provenance">
-        {task.source.kind === 'owner' ? 'Added by you' : task.source.kind === 'capture' ? 'Captured' : 'Agent'} · {new Date(task.createdAt).toLocaleDateString()}
+        {task.source.kind === 'owner' ? 'Added by you' : sourceOf(task).label} · {new Date(task.createdAt).toLocaleDateString()}
         {task.completedAt === null ? '' : ` · done ${new Date(task.completedAt).toLocaleDateString()}`}
         {task.sessions.length === 0 ? '' : ` · ${task.sessions.length} linked session${task.sessions.length === 1 ? '' : 's'}`}
       </p>
+      {edge === undefined ? null : <OriginSession task={task} edge={edge} />}
       {readOnly ? null : <Delete act={act} path={path} onClose={onClose} />}
     </Sheet>
+  )
+}
+
+/** An agent's card: the session that created it, one tap away (crit. 20). Waits for the hosts. */
+function OriginSession({ task, edge }: { readonly task: Task; readonly edge: Edge }) {
+  const origin = originSessionOf(task, edge.where)
+  if (origin === undefined) return null
+  return (
+    <button
+      type="button"
+      class="btn quiet t-origin"
+      onClick={() => edge.openModule('sessions', encodeURIComponent(origin.sessionId), { host: origin.host ?? null })}
+    >
+      <Icon name="terminal-window" size={16} />
+      Open the session that created it
+    </button>
   )
 }
 
