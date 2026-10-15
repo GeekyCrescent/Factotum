@@ -4,6 +4,7 @@
  */
 
 import type { Task } from '../types.ts'
+import { toClientHost, type Where } from './where.ts'
 
 export type Reading = 'reading' | 'failed'
 
@@ -26,7 +27,7 @@ export interface Source {
 
 /**
  * Where a card came from (crit. 20). The agent's host is printed as STORED: `null` is the board's own
- * host, so it is left out. The link to the session arrives with the edge to `sessions` (block G).
+ * host, so it is left out. The link to the session is `originSessionOf`.
  */
 export function sourceOf(task: Task): Source {
   const source = task.source
@@ -35,6 +36,16 @@ export function sourceOf(task: Task): Source {
     return { kind: 'agent', label: `Agent · ${source.siteId}${source.host === null ? '' : ` on ${source.host}`}` }
   }
   return { kind: 'owner', label: 'Added by hand' }
+}
+
+/**
+ * The session an agent's card came from, on its host as THIS app names it (`toClientHost`, crit. 30b):
+ * what «Open the session» goes to (crit. 20). Nothing for any other source, nor before `where` exists.
+ */
+export function originSessionOf(task: Task, where: Where | undefined): { readonly sessionId: string; readonly host: string | undefined } | undefined {
+  const source = task.source
+  if (source.kind !== 'agent' || where === undefined) return undefined
+  return { sessionId: source.sessionId, host: toClientHost(source.host, where) }
 }
 
 /** «You wrote: …» — only once claude rewrote the title; otherwise the title already is the text. */

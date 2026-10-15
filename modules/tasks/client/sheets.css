@@ -252,9 +252,14 @@
   font-size: var(--text-caption);
 }
 
+/* «Open the session that created it» and Delete: quiet rows at the sheet's foot, on the text's edge. */
+.t-origin,
 .t-delete {
   justify-self: start;
   margin-left: calc(-1 * var(--space-4));
+}
+
+.t-delete {
   color: var(--err);
 }
 
