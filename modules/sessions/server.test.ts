@@ -155,6 +155,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'timers',
     // The titler's settings (spec 2026-09-30, D9), from the module's one schema.
     'titles',
+    // The owner's switch for writes outside the site, from the same schema.
+    'allowOutside',
     // The ceiling of one upload, the module's one literal (spec 2026-10-01, D4).
     'uploadMaxBytes',
   ].sort())
@@ -492,6 +494,8 @@ test('an empty fragment is valid: a module that needs configuring to start is ba
     sites: [],
     catalog: [],
     sharedPaths: [],
+    // Off unless the owner turns it on: the gate as designed.
+    allowOutside: false,
     titles: { enabled: true, model: 'haiku', effort: 'low' },
   })
   // Half a `titles` is filled in, not replaced.

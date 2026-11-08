@@ -48,6 +48,12 @@ export interface DecideInput {
    * must never ask by omission.
    */
   readonly canAsk: boolean
+  /**
+   * The owner's switch (`allowOutside` in the config): a write outside the boundary is ALLOWED, and
+   * nobody is asked. After a month of 223 approvals and no real denial, the ask only cost time — and
+   * the 31 that timed out cost the turn. Absent means the gate as it always was.
+   */
+  readonly allowOutside?: boolean
 }
 
 export interface DecisionResult {
@@ -124,5 +130,8 @@ export function decide(input: DecideInput): DecisionResult {
   // With none declared it is byte for byte what it always was: the common case does
   // not pay for the rare one.
   const also = shared.length === 0 ? '' : ` or ${shared.map((path) => path.path).join(', ')}`
+  if (input.allowOutside === true) {
+    return { decision: 'allow', reason: `allowed outside ${input.site.id}${also}: ${target}` }
+  }
   return { decision: input.canAsk ? 'ask' : 'deny', reason: `writes outside ${input.site.id}${also}: ${target}` }
 }

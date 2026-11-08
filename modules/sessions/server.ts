@@ -809,6 +809,7 @@ export function sessionsModule(
         hookUrl,
         notify: ctx.notify,
         titles: ctx.config.titles,
+        allowOutside: ctx.config.allowOutside,
         uploadMaxBytes: UPLOAD_MAX_BYTES,
         peers: ctx.peers,
         ...(options.agentTools === undefined ? {} : { agentTools: options.agentTools }),

@@ -216,6 +216,8 @@ export interface EngineSetup {
   readonly notify: Notifier
   /** The titler's settings, parsed by the module's one schema (spec 2026-09-30, D9). */
   readonly titles: TitlesConfig
+  /** `allowOutside` from the config: writes outside the boundary go through unasked. Absent is false. */
+  readonly allowOutside?: boolean
   /**
    * The ceiling of one upload, from the module's one literal (spec 2026-10-01, D4). OPTIONAL so the
    * setups that predate uploads still compile; without it the engine reports the kernel's ceiling.

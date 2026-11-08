@@ -835,6 +835,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // Asked HERE and handed in as data, so `decide` stays pure. Synchronous by contract: no
       // I/O happens before the gate knows whether it may ask (ADR-0008).
       canAsk: setup.notify.canReach(),
+      allowOutside: setup.allowOutside === true,
     })
 
     // Whose call this was. Only for the log — `decidePure` never sees it, so a subagent is held to

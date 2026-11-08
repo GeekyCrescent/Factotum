@@ -276,3 +276,24 @@ test('run_in_background false, absent, the STRING "true", or no object at all: t
 test('only Bash: another tool with run_in_background is not touched', () => {
   assert.equal(ask('Agent', { prompt: 'x', run_in_background: true }).decision, 'allow')
 })
+
+// ---------------------------------------------------------------------------
+// allowOutside — the owner's switch: writes outside the boundary go through, nobody is asked
+// ---------------------------------------------------------------------------
+
+const decideOpen = (canAsk: boolean, toolName: string, toolInput: unknown) =>
+  decide({ toolName, toolInput, cwd: CWD, site: SITE, canAsk, allowOutside: true })
+
+test('with allowOutside, a write outside the boundary is ALLOWED whether or not someone can be asked', () => {
+  const input = { file_path: '/etc/hosts' }
+  assert.equal(decideOpen(true, 'Write', input).decision, 'allow')
+  assert.equal(decideOpen(false, 'Write', input).decision, 'allow')
+})
+
+test('with allowOutside, the reason still names where the write went', () => {
+  assert.equal(decideOpen(true, 'Edit', { file_path: '/etc/hosts' }).reason, 'allowed outside work: /etc/hosts')
+})
+
+test('allowOutside does not touch the background Bash redirect: that is a redirect, not a permission', () => {
+  assert.equal(decideOpen(true, 'Bash', { command: 'x', run_in_background: true }).decision, 'deny')
+})

@@ -107,6 +107,12 @@ export const sessionsConfigSchema = z
      */
     sharedPaths: z.array(boundaryPath).default([]),
     /**
+     * A write outside the session's site goes through instead of asking the owner. Off by default:
+     * the gate as designed (ADR-0009). On, nothing about the boundary is enforced except the
+     * background-Bash redirect, which is not a permission.
+     */
+    allowOutside: z.boolean().default(false),
+    /**
      * The titler (spec 2026-09-30, D9). `.prefault({})` and NOT `.default({})`: zod 4 hands a default
      * back WITHOUT parsing it, so the fields' own defaults would never apply — and tsc says so.
      */

@@ -202,6 +202,8 @@ export interface EngineSetup {
   readonly notify: Notifier
   /** The titler's settings, parsed by the module's one schema (spec 2026-09-30, D9). */
   readonly titles: TitlesConfig
+  /** `allowOutside` from the config: writes outside the boundary go through unasked. */
+  readonly allowOutside?: boolean
   /** The ceiling of one upload: `UPLOAD_MAX_BYTES` from `config.ts`, the one literal (spec 2026-10-01, D4). */
   readonly uploadMaxBytes?: number
   /** `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4). REQUIRED here: `server.ts` cannot forget it. */
