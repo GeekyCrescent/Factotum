@@ -28,7 +28,7 @@ const meta = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   turns: 1,
   agentPid: undefined,
   sitePath: undefined,
-  agent: undefined,
+  agent: undefined, model: undefined,
   prompt: undefined,
   title: undefined,
   autoTitle: undefined,

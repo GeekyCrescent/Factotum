@@ -208,7 +208,7 @@ test('THE WAY BACK: the copy of the session and of its transcript this host had 
   const sc = await targetScenario()
   const [session] = sc.sessions
   // What this host had: the session as it left, and its transcript in another folder.
-  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, prompt: 'p' })
+  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, model: undefined, prompt: 'p' })
   await sc.target.host.store.patchMeta(session!.id, (m) => ({ ...m, state: 'finished', movedTo: 'juans-macbook-pro', movedAt: new Date().toISOString() }))
   const oldFolder = join(sc.target.host.claudeProjects, '-elsewhere')
   await mkdir(oldFolder, { recursive: true })
@@ -284,7 +284,7 @@ test('A RESTORE THAT FAILS: abort-failed with its leftovers, the lock let go, th
   const base = await targetScenario({ sessions: 2 })
   const [first] = base.sessions
   // The way back for the first: this host had it.
-  await base.target.host.store.create({ id: first!.id, siteId: 'obsidian', entryId: 'free', startedAt: first!.startedAt, sitePath: base.w.target, agent: undefined, prompt: 'p' })
+  await base.target.host.store.create({ id: first!.id, siteId: 'obsidian', entryId: 'free', startedAt: first!.startedAt, sitePath: base.w.target, agent: undefined, model: undefined, prompt: 'p' })
   await base.target.host.store.patchMeta(first!.id, (m) => ({ ...m, state: 'finished', movedTo: 'juans-macbook-pro', movedAt: new Date().toISOString() }))
   let imports = 0
   const sc = wrapped(base, {

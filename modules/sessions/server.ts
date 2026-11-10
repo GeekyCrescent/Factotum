@@ -35,6 +35,7 @@ import {
   parseFilesQuery,
   parseIds,
   parseLaunchAgent,
+  parseLaunchModel,
   parseLayout,
   parsePin,
   parseProjectPatch,
@@ -433,6 +434,8 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
       if (HAS_NUL.test(prompt)) return invalid(NUL_REFUSED)
       const agent = parseLaunchAgent(req.body)
       if (!agent.ok) return invalid(agent.message)
+      const model = parseLaunchModel(req.body)
+      if (!model.ok) return invalid(model.message)
       return fromLaunch(
         await engine.launch({
           siteId,
@@ -441,6 +444,7 @@ function routeTable(holder: EngineHolder, home: string): RouteTable {
           force: body?.force === true,
           // Left out when absent: `agent?: string` does not take an explicit undefined.
           ...(agent.value === undefined ? {} : { agent: agent.value }),
+          ...(model.value === undefined ? {} : { model: model.value }),
         }),
       )
     }),
@@ -810,6 +814,7 @@ export function sessionsModule(
         notify: ctx.notify,
         titles: ctx.config.titles,
         allowOutside: ctx.config.allowOutside,
+        models: ctx.config.models,
         uploadMaxBytes: UPLOAD_MAX_BYTES,
         peers: ctx.peers,
         ...(options.agentTools === undefined ? {} : { agentTools: options.agentTools }),

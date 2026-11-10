@@ -36,7 +36,7 @@ test('prepare: the journal before the lock, the lock taken, prevBranch/prevHead/
 test('prepare digests the copies this host already has (the way back): the target compares nothing (D7)', async () => {
   const sc = await targetScenario()
   const [session] = sc.sessions
-  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, prompt: 'p' })
+  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, model: undefined, prompt: 'p' })
   await sc.target.host.store.append(session!.id, { kind: 'message', role: 'user', text: 'here' })
   // It left from here: the way back (a copy this host still owned would be refused).
   await sc.target.host.store.patchMeta(session!.id, (m) => ({ ...m, state: 'finished', movedTo: 'juans-macbook-pro', movedAt: new Date().toISOString() }))

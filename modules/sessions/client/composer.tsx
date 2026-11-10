@@ -135,10 +135,13 @@ export function LaunchComposer({
   // The agent the session launches as (spec 2026-10-03-skills-a-mano, D8). Changing project keeps it:
   // the list is the machine's, not the project's.
   const [agent, setAgent] = useState<string | undefined>(undefined)
+  // The model it launches on. `''` is the owner's settings, the only choice when the config lists none.
+  const models = setup.models ?? []
+  const [model, setModel] = useState('')
   const attach = useAttachments(api, uploadsOf(setup))
   const s = useSend(async (text, force) => {
     const sent = attach.items.filter((item) => item.state === 'ready')
-    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force, ...(agent === undefined ? {} : { agent }) })
+    const result = await api.post<{ sessionId: string }>('sessions', { siteId, entryId, text: withRefs(text, sent), force, ...(agent === undefined ? {} : { agent }), ...(model === '' ? {} : { model }) })
     attach.clear(sent.map((item) => item.key))
     dictation.clear()
     onLaunched(result.sessionId)
@@ -227,6 +230,19 @@ export function LaunchComposer({
               <Icon name="x" size={12} />
             </button>
           </span>
+        )}
+        {models.length === 0 ? null : (
+          <label class="chip s-pick">
+            <select aria-label="Model" value={model} onChange={(e) => setModel((e.target as HTMLSelectElement).value)}>
+              <option value="">Default model</option>
+              {models.map((choice) => (
+                <option key={choice.model} value={choice.model}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+            <Icon name="caret-down" size={12} />
+          </label>
         )}
         {/* One usable entry is nothing to choose between (criterion 27). */}
         {usable.length > 1 ? (

@@ -74,6 +74,7 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
     turns: meta.turns,
     prompt: meta.prompt,
     agent: meta.agent,
+    model: meta.model,
     title: meta.title,
     autoTitle: meta.autoTitle,
     archived: meta.archivedAt !== undefined,

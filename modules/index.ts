@@ -50,7 +50,7 @@ export type {
   SessionState,
   SessionSummary,
 } from './sessions/types.ts'
-export { INVOKABLE_NAME, sessionsConfigSchema } from './sessions/config.ts'
+export { INVOKABLE_NAME, MODEL_NAME, sessionsConfigSchema } from './sessions/config.ts'
 
 /**
  * The mail digest (spec 2026-10-05-bandeja-resumida): a factory too, for the same reason as

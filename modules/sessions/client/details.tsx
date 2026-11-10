@@ -23,6 +23,8 @@ export function Details({
   const rows: readonly (readonly [string, string, boolean?])[] = [
     ['Conversation', summary === undefined ? '' : nameOf(summary)],
     ['Run', `${entry?.label ?? summary?.entryId ?? ''}${summary?.agent === undefined ? '' : ` as ${summary.agent}`}`],
+    // The configured label when the config still lists it; the bare name otherwise. Hidden for the settings' model.
+    ['Model', setup.models?.find((choice) => choice.model === summary?.model)?.label ?? summary?.model ?? ''],
     ['Started', summary === undefined ? '' : started(summary.startedAt)],
     ['Duration', summary === undefined ? '' : duration(summary.startedAt, summary.endedAt, now)],
     ['Turns', summary === undefined ? '' : String(summary.turns)],

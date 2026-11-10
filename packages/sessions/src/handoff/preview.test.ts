@@ -70,7 +70,7 @@ test('a session the target already has, whose log here does not extend its own, 
   const { source, target } = await twoHosts(w)
   const session = await addSession(source, { siteId: 'vault', transcript: 'x\n' })
   // The target has a copy of it that went another way.
-  await target.host.store.create({ id: session.id, siteId: 'obsidian', entryId: 'free', startedAt: session.startedAt, sitePath: w.target, agent: undefined, prompt: 'p' })
+  await target.host.store.create({ id: session.id, siteId: 'obsidian', entryId: 'free', startedAt: session.startedAt, sitePath: w.target, agent: undefined, model: undefined, prompt: 'p' })
   await target.host.store.append(session.id, { kind: 'message', role: 'user', text: 'something else' })
   const { plan } = await compute(source.host, 'omarchy')
   assert.deepEqual(plan.skipped, [{ siteId: 'vault', sessionId: session.id, reason: 'history-diverged' }])

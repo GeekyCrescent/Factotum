@@ -49,7 +49,7 @@ async function world(seeds: readonly Seed[], list: object | null = LIST): Promis
   for (const seed of seeds) {
     const startedAt = NOW - seed.daysAgo * DAY
     const id = uuidv7(startedAt + seq++)
-    await store.create({ id, siteId: 'a', entryId: seed.entryId ?? 'free', startedAt: new Date(startedAt).toISOString(), sitePath: undefined, agent: seed.agent, prompt: undefined })
+    await store.create({ id, siteId: 'a', entryId: seed.entryId ?? 'free', startedAt: new Date(startedAt).toISOString(), sitePath: undefined, agent: seed.agent, model: undefined, prompt: undefined })
     // The clock of an event is the store's: this one stands at the start of its session.
     for (const event of seed.events) await store.append(id, event)
     const endedAt = new Date(startedAt + 1000).toISOString()

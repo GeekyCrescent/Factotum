@@ -25,7 +25,7 @@ function meta(over: Partial<SessionMeta> = {}): SessionMeta {
     agentPid: undefined,
     sitePath: '/Users/ferro/vault',
     prompt: 'p',
-    agent: undefined,
+    agent: undefined, model: undefined,
     title: undefined,
     autoTitle: undefined,
     archivedAt: undefined,

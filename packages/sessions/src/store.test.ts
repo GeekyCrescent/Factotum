@@ -32,7 +32,7 @@ async function freshStore(): Promise<{ store: SessionStore; paths: ReturnType<ty
 const ID = '019965aa-0000-7000-8000-000000000001'
 
 async function started(store: SessionStore, id = ID) {
-  return await store.create({ id, siteId: 'work', entryId: 'free', startedAt: '2026-09-15T00:00:00.000Z', sitePath: undefined, agent: undefined, prompt: undefined })
+  return await store.create({ id, siteId: 'work', entryId: 'free', startedAt: '2026-09-15T00:00:00.000Z', sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
 }
 
 const msg = (text: string): EventInput => ({ kind: 'message', role: 'assistant', text })
@@ -203,9 +203,9 @@ test('patching a session that has no readable meta returns undefined rather than
 
 test('sessions list newest first, by id, with no in-memory index', async () => {
   const { store } = await freshStore()
-  await store.create({ id: '019965aa-0000-7000-8000-000000000001', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, prompt: undefined })
-  await store.create({ id: '019965ab-0000-7000-8000-000000000002', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, prompt: undefined })
-  await store.create({ id: '019965ac-0000-7000-8000-000000000003', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: '019965aa-0000-7000-8000-000000000001', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
+  await store.create({ id: '019965ab-0000-7000-8000-000000000002', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
+  await store.create({ id: '019965ac-0000-7000-8000-000000000003', siteId: 'a', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
 
   assert.deepEqual(await store.listIds(), [
     '019965ac-0000-7000-8000-000000000003',
@@ -234,7 +234,7 @@ test('a rejected write does not poison the queue for the next caller', async () 
 
 test('the first prompt survives a patchMeta round trip, and a meta from before the field reads as undefined', async () => {
   const { store, paths } = await freshStore()
-  await store.create({ id: ID, siteId: 'work', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, prompt: 'rename loadConfig' })
+  await store.create({ id: ID, siteId: 'work', entryId: 'free', startedAt: 'x', sitePath: undefined, agent: undefined, model: undefined, prompt: 'rename loadConfig' })
 
   await store.patchMeta(ID, (m) => ({ ...m, turns: m.turns + 1 }))
   assert.equal((await store.readMeta(ID))?.prompt, 'rename loadConfig', 'patchMeta must not erase it')
@@ -406,6 +406,7 @@ test('parseMeta reads a meta with every field of SessionMeta back as it was, and
     sitePath: '/p',
     prompt: 'p',
     agent: 'a',
+    model: 'fable',
     title: 't',
     autoTitle: 'at',
     archivedAt: '2026-10-14T02:00:00.000Z',
@@ -417,6 +418,14 @@ test('parseMeta reads a meta with every field of SessionMeta back as it was, and
   assert.equal(parseMeta(ID, { id: 'another-id', siteId: 'x' }), undefined)
   assert.equal(parseMeta(ID, 'not an object'), undefined)
   assert.equal(parseMeta(ID, null), undefined)
+})
+
+test('parseMeta drops a model the CLI could misread, so a meta from the other host never puts a flag in argv', () => {
+  const base = { id: ID, siteId: 'work' }
+  assert.equal(parseMeta(ID, { ...base, model: 'opus[1m]' })?.model, 'opus[1m]')
+  for (const model of ['--dangerous', '-x', 'a b', '', 'Opus', 42]) {
+    assert.equal(parseMeta(ID, { ...base, model })?.model, undefined, JSON.stringify(model))
+  }
 })
 
 /** An imported session's directory, as `staging/<id>/session/` holds it: its meta and its log. */

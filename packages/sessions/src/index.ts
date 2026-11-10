@@ -37,6 +37,7 @@ export type {
   SessionSummary,
   SiteConfig,
   TitlerEffort,
+  ModelChoice,
   TitlesConfig,
 } from './types.ts'
 
@@ -62,7 +63,7 @@ export { killQuietly } from './titler/index.ts'
 export type { AgentExit, AgentRun, BuildArgsInput, RunOptions } from './run.ts'
 export { contains, insideSite, inspectSite, resolveAgainst } from './sites.ts'
 export type { Site } from './sites.ts'
-export { findInvokable, isInvokableName, NAME, resolveCatalog } from './catalog.ts'
+export { findInvokable, isInvokableName, MODEL_NAME, NAME, resolveCatalog } from './catalog.ts'
 export type { Invoke, ResolvedEntry } from './catalog.ts'
 export { isTerminal, parseLine, parseLog, serialize, stateFrom, SESSION_STATES } from './events.ts'
 export { sessionPaths } from './paths.ts'

@@ -57,6 +57,14 @@ export const SITE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
  */
 export const INVOKABLE_NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
+/**
+ * What a model must look like to reach argv as `--model <name>`: an alias (`fable`), an alias with its
+ * context suffix (`opus[1m]`) or a full id (`claude-fable-5-1`). Never a leading `-`, so it cannot become
+ * a flag. A COPY of `MODEL_NAME` in `packages/sessions/src/catalog.ts`, for the reason `INVOKABLE_NAME` is one;
+ * `packages/cli/src/model-name.test.ts` fails if the two ever differ.
+ */
+export const MODEL_NAME = /^[a-z0-9][a-z0-9.[\]-]{0,63}$/
+
 export const siteIdSchema = z.string().regex(SITE_ID_PATTERN, 'a site id must match /^[a-z0-9][a-z0-9-]*$/')
 
 /** Exported so the projects registry is built from it (spec 2026-09-29, criterion 3). */
@@ -81,6 +89,12 @@ const catalogEntrySchema = z.object({
     kind: z.string().min(1),
     name: z.string().optional(),
   }),
+})
+
+/** A model a launch may choose: what the screen says, and what reaches `--model`. */
+const modelChoiceSchema = z.object({
+  label: z.string().min(1),
+  model: z.string().regex(MODEL_NAME, 'a model must match /^[a-z0-9][a-z0-9.[\]-]{0,63}$/, like "fable" or "opus[1m]"'),
 })
 
 /** Every field has a default: a config with no `titles` titles with Haiku, thinking little. */
@@ -118,6 +132,11 @@ export const sessionsConfigSchema = z
      */
     titles: titlesSchema.prefault({}),
     /**
+     * The models a launch may choose from. Empty, the default: no choice is offered and every session
+     * runs on the owner's settings, as it did before this existed. Also the engine's allow-list.
+     */
+    models: z.array(modelChoiceSchema).default([]),
+    /**
      * Dictation (spec 2026-10-03, D3). Interpreted in start() by `dictation/config.ts`, NEVER here: a typo
      * in it must switch off dictation, not sessions — and a failure of this schema takes the whole fragment.
      */
@@ -134,6 +153,10 @@ export const sessionsConfigSchema = z
   .refine(
     (value) => new Set(value.sites.map((site) => site.id)).size === value.sites.length,
     { message: 'two sites declare the same id', path: ['sites'] },
+  )
+  .refine(
+    (value) => new Set(value.models.map((choice) => choice.model)).size === value.models.length,
+    { message: 'two entries declare the same model', path: ['models'] },
   )
 
 /**

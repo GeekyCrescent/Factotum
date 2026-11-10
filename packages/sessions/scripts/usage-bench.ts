@@ -69,7 +69,7 @@ try {
     // Spread over 25 days, so the 30-day window takes all of them.
     const startedAt = now - (s % 25) * DAY_MS - s
     const id = uuidv7(startedAt)
-    await store.create({ id, siteId: 'a', entryId: 'free', startedAt: new Date(startedAt).toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
+    await store.create({ id, siteId: 'a', entryId: 'free', startedAt: new Date(startedAt).toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
     for (let i = 0; i < EVENTS_PER_SESSION; i++) await store.append(id, eventOf(i))
     await store.patchMeta(id, (m) => ({ ...m, state: 'finished', endedAt: new Date(startedAt + 1000).toISOString() }))
   }

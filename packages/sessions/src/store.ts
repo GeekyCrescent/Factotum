@@ -21,6 +21,7 @@
 
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { MODEL_NAME } from './catalog.ts'
 import { parseLog, stateFrom } from './events.ts'
 import { isSessionId } from './id.ts'
 import type { SessionPaths } from './paths.ts'
@@ -72,6 +73,12 @@ export interface SessionMeta {
    * once, at launch; a reply never passes `--agent` and the session still is that agent.
    */
   readonly agent: string | undefined
+  /**
+   * The model it was launched on (`--model <name>`), or `undefined` for the owner's settings. Same
+   * rule as `sitePath`: `string | undefined` AND REQUIRED, and listed in `parseMeta`. Written once, at
+   * launch, and read on EVERY reply: unlike `agent`, the CLI does not remember it across a resume.
+   */
+  readonly model: string | undefined
   /**
    * The owner's title (spec 2026-09-29, D4). Listed in `#readMeta` like every field here, or the
    * next `patchMeta` — a finalize, a reconcile — would erase it (criterion 29).
@@ -170,6 +177,8 @@ export function parseMeta(id: string, value: unknown): SessionMeta | undefined {
     sitePath: text(json.sitePath),
     prompt: text(json.prompt),
     agent: text(json.agent),
+    // Checked, not just typed: a reply passes it to argv, and a meta from the other host is outside input.
+    model: typeof json.model === 'string' && MODEL_NAME.test(json.model) ? json.model : undefined,
     title: text(json.title),
     autoTitle: text(json.autoTitle),
     archivedAt: text(json.archivedAt),

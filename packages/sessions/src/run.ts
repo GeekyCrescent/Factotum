@@ -24,6 +24,11 @@ export interface BuildArgsInput {
   readonly mcpConfigPath: string
   /** Second turn and beyond. */
   readonly resume: boolean
+  /**
+   * The model chosen at launch (`--model`), or `undefined` for the owner's settings. REQUIRED, like
+   * `mcpConfigPath`: a caller that forgot it would compile and quietly answer on the default model.
+   */
+  readonly model: string | undefined
 }
 
 export function buildArgs(opts: BuildArgsInput): readonly string[] {
@@ -74,6 +79,9 @@ export function buildArgs(opts: BuildArgsInput): readonly string[] {
   // Same reasoning one step along: the thread already knows which agent it is, so
   // re-declaring it on a resume is at best noise.
   if (!opts.resume && opts.invoke.kind === 'subagent') args.push('--agent', opts.invoke.name)
+  // NOT the same reasoning, and the opposite outcome: the thread does not remember its model. With
+  // `-p`, a resume without `--model` answers on the settings' model, so it goes on EVERY turn.
+  if (opts.model !== undefined) args.push('--model', opts.model)
   return args
 }
 

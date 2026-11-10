@@ -204,12 +204,20 @@ export interface EngineSetup {
   readonly titles: TitlesConfig
   /** `allowOutside` from the config: writes outside the boundary go through unasked. */
   readonly allowOutside?: boolean
+  /** The models a launch may choose from. REQUIRED here: `server.ts` cannot forget it. */
+  readonly models: readonly ModelChoice[]
   /** The ceiling of one upload: `UPLOAD_MAX_BYTES` from `config.ts`, the one literal (spec 2026-10-01, D4). */
   readonly uploadMaxBytes?: number
   /** `ctx.peers`, handed over whole (spec 2026-10-07-dos-hosts, D4). REQUIRED here: `server.ts` cannot forget it. */
   readonly peers: PeerCaller
   /** MCP tools from other modules (spec 2026-10-14-tareas-kanban, D7): the task board's `create_task`. */
   readonly agentTools?: readonly AgentToolFamily[]
+}
+
+/** The mirror of the engine's `ModelChoice`. */
+export interface ModelChoice {
+  readonly label: string
+  readonly model: string
 }
 
 /** A tool as the sessions MCP's `tools/list` describes it: the mirror of `McpTool`. */
@@ -261,6 +269,8 @@ export interface LaunchInput {
   readonly force: boolean
   /** Launch as this agent (`--agent`). Only with a free-prompt entry, and only a name the CLI announced. */
   readonly agent?: string
+  /** Launch on this model (`--model`). Only a name from the configured `models`. */
+  readonly model?: string
 }
 
 export interface FreshnessReport {
@@ -293,6 +303,11 @@ export interface SessionSummary {
   readonly prompt: string | undefined
   /** The agent it was launched as. `undefined` for a plain session. */
   readonly agent: string | undefined
+  /**
+   * The model it was launched on. `undefined`: the owner's settings. OPTIONAL in the type: a host of an
+   * earlier build does not send it, and the test double of the engine must compile untouched.
+   */
+  readonly model?: string | undefined
   /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
   readonly title: string | undefined
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
@@ -578,6 +593,8 @@ export interface EngineSetupView {
   readonly uploads?: UploadsView
   /** Optional for the same reason as `uploads` (spec 2026-10-01-referencias-y-tab, D6; criterion 17). */
   readonly files?: FilesView
+  /** Optional for the same reason as `uploads`: a daemon from before sends none, and then there is no choice. */
+  readonly models?: readonly ModelChoice[]
 }
 
 // --- Listing a folder for `@` references (spec 2026-10-01-referencias-y-tab, D5, D6) -------------
