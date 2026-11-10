@@ -10,7 +10,7 @@
 
 import { join, normalize } from 'node:path'
 import { z } from 'zod'
-import { boundaryPath, INVOKABLE_NAME, siteIdSchema } from './config.ts'
+import { boundaryPath, INVOKABLE_NAME, MODEL_NAME, siteIdSchema } from './config.ts'
 import { CATEGORIES_MAX, categoryIdSchema, colorSchema, NAME_MAX } from './registry.ts'
 import type { Color, FilesQuery, ProjectLayout } from './types.ts'
 
@@ -160,6 +160,16 @@ export function parseLaunchAgent(body: unknown): Parsed<string | undefined> {
     return { ok: false, message: 'agent is not a name the CLI can be given' }
   }
   return { ok: true, value: agent }
+}
+
+/** `value: undefined`: absent, the owner's settings. `ok: false`: present and not a model name (400). */
+export function parseLaunchModel(body: unknown): Parsed<string | undefined> {
+  const model = record(body)['model']
+  if (model === undefined) return { ok: true, value: undefined }
+  if (typeof model !== 'string' || !MODEL_NAME.test(model)) {
+    return { ok: false, message: 'model is not a name the CLI can be given' }
+  }
+  return { ok: true, value: model }
 }
 
 export function parseArchived(body: unknown): Parsed<boolean> {

@@ -107,7 +107,7 @@ test('a history that went another way on the target, found at prepare: history-d
   intercept(s.l, async (method, path, body, file, next) => {
     if (path.endsWith('/prepare')) {
       // Between the plan and prepare, omarchy gets its own copy of the session, which went elsewhere.
-      await s.l.omarchy.host.store.create({ id: s.session.id, siteId: 'obsidian', entryId: 'free', startedAt: s.session.startedAt, sitePath: s.l.w.target, agent: undefined, prompt: 'p' })
+      await s.l.omarchy.host.store.create({ id: s.session.id, siteId: 'obsidian', entryId: 'free', startedAt: s.session.startedAt, sitePath: s.l.w.target, agent: undefined, model: undefined, prompt: 'p' })
       await s.l.omarchy.host.store.append(s.session.id, { kind: 'message', role: 'user', text: 'elsewhere' })
       await s.l.omarchy.host.store.patchMeta(s.session.id, (m) => ({ ...m, state: 'finished' }))
     }

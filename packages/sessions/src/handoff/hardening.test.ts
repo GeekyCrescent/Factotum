@@ -45,7 +45,7 @@ for (const [what, patch, reason] of [
   test(`a session the peer names that is ${what} is not replaced: ${reason}, and nothing is held`, async () => {
     const sc = await targetScenario()
     const [session] = sc.sessions
-    await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, prompt: 'p' })
+    await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, model: undefined, prompt: 'p' })
     await sc.target.host.store.patchMeta(session!.id, (m) => ({ ...m, ...patch }))
     assert.equal(reasonOf(await sc.t.prepare(sc.hid, sc.siteId, await prepareBody(sc))), reason)
     assert.deepEqual(await sc.target.host.locks.holders(sc.siteId), [])
@@ -55,7 +55,7 @@ for (const [what, patch, reason] of [
 test('the commit checks the BYTES: a log that does not continue this host’s copy is history-diverged, and nothing is touched', async () => {
   const sc = await targetScenario()
   const [session] = sc.sessions
-  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, prompt: 'p' })
+  await sc.target.host.store.create({ id: session!.id, siteId: 'obsidian', entryId: 'free', startedAt: session!.startedAt, sitePath: sc.w.target, agent: undefined, model: undefined, prompt: 'p' })
   await sc.target.host.store.append(session!.id, { kind: 'message', role: 'user', text: 'only here' })
   await sc.target.host.store.patchMeta(session!.id, (m) => ({ ...m, state: 'finished', movedTo: 'juans-macbook-pro' }))
   // The source (lying, or behind) says its log extends ours; prepare cannot see the bytes.

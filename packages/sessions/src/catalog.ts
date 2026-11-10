@@ -39,6 +39,14 @@ const KINDS = ['none', 'command', 'subagent'] as const
  */
 export const NAME = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
+/**
+ * A model that reaches argv as `--model <name>`: `fable`, `opus[1m]`, `claude-fable-5-1`. Never a leading
+ * `-`. A COPY of `MODEL_NAME` in `modules/sessions/config.ts`, tied to it by
+ * `packages/cli/src/model-name.test.ts`. A launch is checked against the configured list; THIS is what
+ * checks a `meta.json` — the one a handoff brings from the other host included — before a reply passes it.
+ */
+export const MODEL_NAME = /^[a-z0-9][a-z0-9.[\]-]{0,63}$/
+
 /** The rule as a question, for callers that hold a name and no catalog entry. */
 export function isInvokableName(name: string): boolean {
   return NAME.test(name)

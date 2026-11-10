@@ -159,6 +159,8 @@ test('start() builds the engine with the setup WHOLE, and reconciles before serv
     'allowOutside',
     // The ceiling of one upload, the module's one literal (spec 2026-10-01, D4).
     'uploadMaxBytes',
+    // The models a launch may choose from, from the same schema.
+    'models',
   ].sort())
   assert.equal(setup.stateDir, '/state/modules/sessions')
   // Three levels above `<root>/<env>/modules/sessions`; this fixture has no env level, so `/`.
@@ -317,6 +319,25 @@ test('an agent that is not text, or not a name the CLI can be given, is a 400 an
     assert.match((response.body as ErrorBody).error.message, /agent is not a name the CLI can be given/)
   }
   assert.equal(reached, 0)
+})
+
+test('a launch hands the engine the model, or none when the body has none; a bad one is a 400', async () => {
+  const seen: (string | undefined)[] = []
+  const { table } = await started(
+    fakeEngine({
+      launch: async (input) => {
+        seen.push(input.model)
+        return { outcome: 'started', sessionId: 'x' }
+      },
+    }),
+  )
+  const base = { siteId: 'a', entryId: 'free', text: 'x' }
+  assert.equal((await call(table, 'POST /sessions', request('POST', '/sessions', { body: { ...base, model: 'fable' } }))).status, 200)
+  assert.equal((await call(table, 'POST /sessions', request('POST', '/sessions', { body: base }))).status, 200)
+  const bad = await call(table, 'POST /sessions', request('POST', '/sessions', { body: { ...base, model: '--x' } }))
+  assert.equal(bad.status, 400)
+  assert.match((bad.body as ErrorBody).error.message, /model is not a name the CLI can be given/)
+  assert.deepEqual(seen, ['fable', undefined])
 })
 
 test('a reply with no text is a 400', async () => {
@@ -496,6 +517,8 @@ test('an empty fragment is valid: a module that needs configuring to start is ba
     sharedPaths: [],
     // Off unless the owner turns it on: the gate as designed.
     allowOutside: false,
+    // No choice offered: every session runs on the owner's settings, as before.
+    models: [],
     titles: { enabled: true, model: 'haiku', effort: 'low' },
   })
   // Half a `titles` is filled in, not replaced.

@@ -219,6 +219,11 @@ export interface EngineSetup {
   /** `allowOutside` from the config: writes outside the boundary go through unasked. Absent is false. */
   readonly allowOutside?: boolean
   /**
+   * The models a launch may choose from, parsed by the module's one schema. OPTIONAL so the setups
+   * that predate it still compile; absent is none, and then every session runs on the owner's settings.
+   */
+  readonly models?: readonly ModelChoice[]
+  /**
    * The ceiling of one upload, from the module's one literal (spec 2026-10-01, D4). OPTIONAL so the
    * setups that predate uploads still compile; without it the engine reports the kernel's ceiling.
    */
@@ -255,6 +260,12 @@ export interface AgentToolFamily {
   }) => Promise<ToolResult>
 }
 
+/** A model the owner may launch a session on: what the screen says, and what reaches `--model`. */
+export interface ModelChoice {
+  readonly label: string
+  readonly model: string
+}
+
 /** How much the titler thinks. The CLI's `--effort` levels. */
 export type TitlerEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -281,6 +292,8 @@ export interface LaunchInput {
   readonly force: boolean
   /** Launch as this agent (`--agent`). Only with a free-prompt entry, and only a name the CLI announced. */
   readonly agent?: string
+  /** Launch on this model (`--model`). Only a name from the configured `models`; absent is the owner's settings. */
+  readonly model?: string
 }
 
 export interface FreshnessReport {
@@ -331,6 +344,8 @@ export interface SessionSummary {
   readonly prompt: string | undefined
   /** The agent it was launched as. `undefined` for a plain session. */
   readonly agent: string | undefined
+  /** The model it was launched on. `undefined`: the owner's settings. */
+  readonly model: string | undefined
   /** The owner's title. `undefined` until renamed: the client falls back to the prompt (D5). */
   readonly title: string | undefined
   /** The titler's title (spec 2026-09-30, D1). Shown when there is no owner's title. */
@@ -588,6 +603,8 @@ export interface EngineSetupView {
      */
     readonly kind?: string | undefined
   }[]
+  /** What a launch may choose to run on. Empty: no choice, the owner's settings. */
+  readonly models: readonly ModelChoice[]
   /** Whether this host takes files, and up to how big (spec 2026-10-01, D8, D10). */
   readonly uploads: UploadsView
   /** Whether this host lists project folders for `@` references (spec 2026-10-01-referencias-y-tab, D5). */

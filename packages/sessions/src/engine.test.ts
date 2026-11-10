@@ -91,6 +91,7 @@ async function world(
     registry?: EngineSetup['registry']
     titles?: TitlesConfig
     agentTools?: EngineSetup['agentTools']
+    models?: EngineSetup['models']
   } = {},
 ): Promise<World> {
   const home = await mkdtemp(join(tmpdir(), 'factotum-engine-'))
@@ -107,6 +108,7 @@ async function world(
     ...registryOf(options.sites ?? [{ id: 'work', path: siteDir }]),
     ...(options.registry === undefined ? {} : { registry: options.registry }),
     ...(options.agentTools === undefined ? {} : { agentTools: options.agentTools }),
+    ...(options.models === undefined ? {} : { models: options.models }),
     catalog: CATALOG,
     log: { info: () => undefined, warn: (m: string) => void warnings.push(m), error: () => undefined },
     now: () => new Date(),
@@ -680,7 +682,7 @@ test('cancelling a session that a dead daemon left behind closes it anyway', asy
     startedAt: new Date().toISOString(),
     sitePath: undefined,
     prompt: undefined,
-    agent: undefined,
+    agent: undefined, model: undefined,
   })
 
   await engine.cancel(orphan)
@@ -758,7 +760,7 @@ test('reconcile through the facade releases a lock left by a dead daemon', async
   const { engine, stateDir, locks } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const stale = '019965aa-0000-7000-8000-0000000000bb'
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   await engine.reconcile()
@@ -1040,7 +1042,7 @@ test('a session that died WITH THE DAEMON is announced on the way back up, with 
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000cc'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await engine.reconcile()
@@ -1056,7 +1058,7 @@ test('a session stop() already closed is NOT announced a second time by reconcil
   const { engine, stateDir, notices } = await world()
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const closed = '019965aa-0000-7000-8000-0000000000dd'
-  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: closed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
   // What stop() leaves: a terminal meta over a lock it deliberately did not release.
   await store.patchMeta(closed, (m) => ({ ...m, state: 'cancelled', reason: 'the daemon was shutting down' }))
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', closed, new Date().toISOString())
@@ -1071,7 +1073,7 @@ test('reconcile does not wait on a notice — a hanging push service cannot disa
   const { engine, stateDir } = await world({ notify: hanging })
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   const crashed = '019965aa-0000-7000-8000-0000000000ee'
-  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: undefined })
+  await store.create({ id: crashed, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: undefined })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', crashed, new Date().toISOString())
 
   await Promise.race([engine.reconcile(), new Promise((_, reject) => setTimeout(() => reject(new Error('reconcile waited')), 2_000))])
@@ -1610,7 +1612,7 @@ test('THE INDEX SEES WHAT RECONCILE WROTE: a session a crash left running lists 
   const store = new SessionStore(sessionPaths(stateDir), () => new Date())
   await store.ensureRoots()
   const stale = uuidv7()
-  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: siteDir, agent: undefined, prompt: 'left running' })
+  await store.create({ id: stale, siteId: 'work', entryId: 'free', startedAt: new Date().toISOString(), sitePath: siteDir, agent: undefined, model: undefined, prompt: 'left running' })
   await new SiteLocks(sessionPaths(stateDir), 999_999).acquire('work', stale, new Date().toISOString())
 
   const engine = await engineOver(stateDir, [{ id: 'work', path: siteDir }])
@@ -1824,7 +1826,7 @@ test('REMOVED PROJECTS: conversations whose project is not registered are counte
   await store.ensureRoots()
   for (let i = 0; i < 3; i++) {
     const id = uuidv7()
-    await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, prompt: 'old' })
+    await store.create({ id, siteId: 'demo', entryId: 'free', startedAt: new Date().toISOString(), sitePath: undefined, agent: undefined, model: undefined, prompt: 'old' })
     await store.patchMeta(id, (m) => ({ ...m, state: 'finished' }))
   }
   const engine = await engineOver(stateDir, [{ id: 'a', path: a }])
@@ -2175,6 +2177,60 @@ test('a launch without an agent has no --agent and an undefined meta.agent (crit
   const [first] = await argvOf(stateDir, id)
   assert.equal(first?.includes('--agent'), false)
   assert.equal((await store.readMeta(id))?.agent, undefined)
+  await engine.stop()
+})
+
+// ---------------------------------------------------------------------------
+// The model chosen at launch
+// ---------------------------------------------------------------------------
+
+const MODELS = [
+  { label: 'Opus', model: 'opus[1m]' },
+  { label: 'Fable', model: 'fable' },
+]
+
+test('view() lists the configured models, and none when the config has none', async () => {
+  const configured = await world({ models: MODELS })
+  assert.deepEqual(configured.engine.view().models, MODELS)
+  const bare = await world()
+  assert.deepEqual(bare.engine.view().models, [])
+  await configured.engine.stop()
+  await bare.engine.stop()
+})
+
+test('a launch with a model passes --model on EVERY turn and saves it in meta.json', async () => {
+  const { engine, stateDir, store } = await world({ models: MODELS })
+  const result = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, model: 'fable' })
+  assert.equal(result.outcome, 'started', JSON.stringify(result))
+  const id = result.outcome === 'started' ? result.sessionId : ''
+  await endOfTurn(engine, id)
+  assert.equal((await engine.reply(id, QUICK)).outcome, 'started')
+  await endOfTurn(engine, id)
+
+  const turns = await argvOf(stateDir, id)
+  assert.equal(turns.length, 2)
+  for (const argv of turns) assert.equal(argv[argv.indexOf('--model') + 1], 'fable', JSON.stringify(argv))
+  // patchMeta ran at the end of both turns: the field has to survive them.
+  assert.equal((await store.readMeta(id))?.model, 'fable')
+  await engine.stop()
+})
+
+test('a model that is not in the configured list is rejected, and leaves no lock behind', async () => {
+  const { engine } = await world({ models: MODELS })
+  const missing = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, model: 'sonnet' })
+  assert.deepEqual(missing, { outcome: 'rejected', reason: 'no model "sonnet" in the configured list' })
+  const flag = await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false, model: '--dangerous' })
+  assert.deepEqual(flag, { outcome: 'rejected', reason: 'no model "--dangerous" in the configured list' })
+  assert.equal((await engine.launch({ siteId: 'work', entryId: 'free', text: QUICK, force: false })).outcome, 'started')
+  await engine.stop()
+})
+
+test('a launch without a model has no --model and an undefined meta.model', async () => {
+  const { engine, stateDir, store } = await world({ models: MODELS })
+  const id = await finished(engine, 'work', QUICK)
+  const [first] = await argvOf(stateDir, id)
+  assert.equal(first?.includes('--model'), false)
+  assert.equal((await store.readMeta(id))?.model, undefined)
   await engine.stop()
 })
 

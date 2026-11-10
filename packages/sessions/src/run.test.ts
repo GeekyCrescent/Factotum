@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildArgs } from './run.ts'
 
-const base = { sessionId: 'sid-1', input: 'do the thing', settingsPath: '/state/settings.json', mcpConfigPath: '/state/mcp.json' }
+const base = { sessionId: 'sid-1', input: 'do the thing', settingsPath: '/state/settings.json', mcpConfigPath: '/state/mcp.json', model: undefined }
 
 function argsFor(invoke: Parameters<typeof buildArgs>[0]['invoke'], resume: boolean): readonly string[] {
   return buildArgs({ ...base, invoke, resume })
@@ -139,4 +139,27 @@ test('so a follow-up can itself start with a slash command, and the CLI honours 
 test('an empty follow-up to a command does not become a bare slash', () => {
   const args = buildArgs({ ...base, input: '', invoke: { kind: 'command', name: 'x' }, resume: false })
   assert.equal(promptOf(args), '/x')
+})
+
+// ---------------------------------------------------------------------------
+// The model chosen at launch
+// ---------------------------------------------------------------------------
+
+test('no model chosen passes no --model, so the CLI falls back to the owner’s settings', () => {
+  for (const resume of [false, true]) assert.equal(argsFor({ kind: 'none' }, resume).includes('--model'), false)
+})
+
+test('A CHOSEN MODEL IS PASSED ON EVERY TURN, the resume included', () => {
+  // Unlike `--agent`: with `-p`, a resume without `--model` goes back to the settings' model,
+  // so a conversation launched on Fable would answer its second turn on Opus.
+  for (const resume of [false, true]) {
+    const args = buildArgs({ ...base, model: 'fable', invoke: { kind: 'none' }, resume })
+    assert.equal(args[args.indexOf('--model') + 1], 'fable')
+  }
+})
+
+test('the model rides along with --agent on a first turn', () => {
+  const args = buildArgs({ ...base, model: 'opus[1m]', invoke: { kind: 'subagent', name: 'ecc:planner' }, resume: false })
+  assert.equal(args[args.indexOf('--model') + 1], 'opus[1m]')
+  assert.equal(args[args.indexOf('--agent') + 1], 'ecc:planner')
 })

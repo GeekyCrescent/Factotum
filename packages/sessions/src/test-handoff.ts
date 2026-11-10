@@ -107,7 +107,7 @@ export interface SessionOptions {
 export async function addSession(test: TestHost, options: SessionOptions): Promise<SessionMeta> {
   const id = uuidv7(Date.now())
   const project = test.projects.find((p) => p.id === options.siteId)
-  await test.host.store.create({ id, siteId: options.siteId, entryId: 'free', startedAt: new Date().toISOString(), sitePath: project?.path, agent: undefined, prompt: 'p' })
+  await test.host.store.create({ id, siteId: options.siteId, entryId: 'free', startedAt: new Date().toISOString(), sitePath: project?.path, agent: undefined, model: undefined, prompt: 'p' })
   for (const event of options.events ?? [{ kind: 'message', role: 'user', text: 'hello' } as const]) await test.host.store.append(id, event)
   const meta = await test.host.store.patchMeta(id, (m) => ({ ...m, state: 'finished', endedAt: new Date().toISOString(), ...options.meta }))
   if (options.transcript !== undefined) {

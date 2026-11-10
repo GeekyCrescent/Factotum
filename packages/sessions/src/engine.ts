@@ -62,6 +62,7 @@ import type {
   InvalidId,
   LaunchInput,
   LaunchResult,
+  ModelChoice,
   SessionEngine,
   SessionState,
   SiteMissing,
@@ -243,6 +244,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
   })
 
   const catalog: readonly ResolvedEntry[] = resolveCatalog(setup.catalog)
+  const models: readonly ModelChoice[] = setup.models ?? []
   for (const entry of catalog) {
     if (entry.disabledReason !== undefined) {
       log.warn(`catalog entry "${entry.id}" is disabled: ${entry.disabledReason}`)
@@ -416,6 +418,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
     text: string,
     files: SessionFiles,
     resume: boolean,
+    model: string | undefined,
   ): Live {
     /**
      * FINALIZE IS THE ONLY THING THAT WRITES A TERMINAL STATE, and this is where that
@@ -439,6 +442,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       settingsPath: files.settings,
       mcpConfigPath: files.mcp,
       resume,
+      model,
       cwd: site.path,
       onInit: announced.take,
       onEvent: async (event) => {
@@ -569,6 +573,12 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       invoke = { kind: 'subagent', name: input.agent }
     }
 
+    // Only a model the owner configured: the list is the allow-list, so a name the CLI could read as
+    // a flag never reaches argv even without the server in front.
+    if (input.model !== undefined && !models.some((choice) => choice.model === input.model)) {
+      return { outcome: 'rejected', reason: `no model "${input.model}" in the configured list` }
+    }
+
     const sessionId = uuidv7(setup.now().getTime())
     const acquired = await locks.acquire(input.siteId, sessionId, setup.now().toISOString(), modeFor(input.siteId))
     if (!acquired.ok) {
@@ -622,6 +632,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // The words, or the names of the files when there are none — never a path (spec 2026-10-01, D7).
         prompt: promptOf(input.text, uploads.root).slice(0, PROMPT_CHARS),
         agent: input.agent,
+        model: input.model,
       })
 
       if (site.isRepo && siblings > 0) {
@@ -638,7 +649,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       // A catalog entry can launch with no text, and an empty bubble says nothing.
       if (input.text.trim() !== '') await store.append(sessionId, { kind: 'message', role: 'user', text: input.text })
 
-      const running = spawnFor(sessionId, site, invoke, input.text, files, false)
+      const running = spawnFor(sessionId, site, invoke, input.text, files, false, input.model)
       await store.patchMeta(sessionId, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(sessionId, { kind: 'state', state: 'running', reason: undefined })
 
@@ -732,7 +743,8 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
       }
       await store.append(id, { kind: 'message', role: 'user', text })
 
-      const running = spawnFor(id, site, entry.invoke, text, files, true)
+      // The model it launched on, not today's list: a conversation keeps answering on the model it began with.
+      const running = spawnFor(id, site, entry.invoke, text, files, true, meta.model)
       await store.patchMeta(id, (current) => ({ ...current, agentPid: running.run.pid }))
       await store.append(id, { kind: 'state', state: 'running', reason: undefined })
 
@@ -991,6 +1003,7 @@ export async function createEngine(setup: EngineSetup, deps: EngineDeps = {}): P
         // A disabled entry's `invoke` is undefined (`ResolvedEntry`, catalog.ts): so is its kind.
         kind: entry.invoke?.kind,
       })),
+      models,
       uploads: uploads.view,
       files: { maxEntries: MAX_ENTRIES },
     }

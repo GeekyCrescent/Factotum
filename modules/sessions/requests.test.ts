@@ -6,6 +6,7 @@ import {
   parseArchived,
   parseIds,
   parseLaunchAgent,
+  parseLaunchModel,
   parseLayout,
   parsePin,
   parseProjectPatch,
@@ -117,6 +118,17 @@ test('parseLaunchAgent: absent is no agent, a name passes, anything else is refu
   })
   for (const agent of [3, null, '', 'x y', '-x', '/x', ['a']]) {
     assert.deepEqual(parseLaunchAgent({ agent }), { ok: false, message: 'agent is not a name the CLI can be given' }, JSON.stringify(agent))
+  }
+})
+
+test('parseLaunchModel: absent is the settings, a model name passes, anything else is refused', () => {
+  assert.deepEqual(parseLaunchModel({}), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchModel(undefined), { ok: true, value: undefined })
+  assert.deepEqual(parseLaunchModel({ model: 'fable' }), { ok: true, value: 'fable' })
+  assert.deepEqual(parseLaunchModel({ model: 'opus[1m]' }), { ok: true, value: 'opus[1m]' })
+  assert.deepEqual(parseLaunchModel({ model: 'claude-fable-5-1' }), { ok: true, value: 'claude-fable-5-1' })
+  for (const model of [3, null, '', 'x y', '-x', '--model', 'Opus', ['a']]) {
+    assert.deepEqual(parseLaunchModel({ model }), { ok: false, message: 'model is not a name the CLI can be given' }, JSON.stringify(model))
   }
 })
 
