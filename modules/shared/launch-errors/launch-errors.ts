@@ -1,10 +1,12 @@
 /**
- * Reading a failed LAUNCH of the sessions module, for «Run agent» (design D9; criteria 31, 31b).
+ * Reading a failed LAUNCH of the sessions module, from another module's screen: «Run agent» of tasks
+ * (spec 2026-10-14-tareas-kanban, design D9) and the mockup stages (spec 2026-11-12-maquetas, D5).
  *
- * A COPY, NOT AN IMPORT: copied from the sessions module's launch errors (2026-10-15), because this
- * module cannot import that one (criterion 44). If those change, this copy stays behind; accepted until
- * a second consumer asks for them to move to `modules/shared/`, as the dictation did. `movedOf` is not
- * copied: it reads a REPLY's 409, and a launch never answers `moved`.
+ * A COPY of the sessions module's launch errors (`modules/sessions/client/errors.ts`, 2026-10-15), moved
+ * here from tasks when mockups became its second consumer, as the dictation did. Sessions keeps its own:
+ * that file also carries `messageOf` and `movedOf` and has sixteen importers, so splitting it is a move no
+ * consumer asks for. If those change, this copy stays behind; declared. `movedOf` is not copied: it reads
+ * a REPLY's 409, and a launch never answers `moved`. Imports nothing from any module.
  *
  * Pure and structural: the shell hangs `status` and `body` on an ordinary `Error`, read by a cast.
  */

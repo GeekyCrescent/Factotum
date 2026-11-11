@@ -7,6 +7,7 @@
 
 import type { Block, Inline, List } from './markdown.ts'
 import { blocks } from './markdown.ts'
+import './markdown.css'
 
 const HEADINGS = ['h3', 'h4', 'h5', 'h6', 'h6', 'h6'] as const
 
