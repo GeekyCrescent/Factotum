@@ -183,3 +183,19 @@ test('crit. 32: an accepted build keeps its preview URL on the mockup and waits 
   assert.equal(accepted.urls.preview, 'https://acme-mockup-x.vercel.app')
   assert.equal(accepted.urls.prod, undefined)
 })
+
+test('crit. 33: an accepted deliver is done, keeps the production URL, and the mockup is delivered', () => {
+  const m = withStep(mockup({ id: 'm', urls: { preview: 'https://acme-mockup-x.vercel.app' } }), 'deliver', { status: 'running', run: { id: 'd', kind: 'deliver', siteId: 'acme', startedAt: NOW.toISOString() } })
+  const accepted = value(acceptSubmit(m, 'd', { sessionId: SESSION, summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }, LATER))
+  assert.equal(accepted.stages.deliver.status, 'done')
+  assert.equal(accepted.stages.deliver.version, 1)
+  assert.equal(accepted.status, 'delivered')
+  assert.deepEqual(accepted.urls, { preview: 'https://acme-mockup-x.vercel.app', prod: 'https://acme-mockup.vercel.app' })
+})
+
+test('crit. 20: approving the build leaves deliver ready', () => {
+  const m = withStep(withStep(mockup({ id: 'm' }), 'build', { status: 'waiting', version: 1 }), 'deliver', { status: 'locked' })
+  const approved = value(decide(m, { step: 'build', action: 'approve' }, NOW))
+  assert.equal(approved.stages.build.status, 'done')
+  assert.equal(approved.stages.deliver.status, 'ready')
+})

@@ -153,6 +153,31 @@ export function appDir(ctx: PromptContext): string {
   return join(ctx.workDir, APP_DIR)
 }
 
+/**
+ * Publishing a folder to PRODUCTION (D4; criteria 33, 35, 37). Measured in A3: the production alias
+ * `<project>.vercel.app` answers 200 even with the protection on, so the protection cannot hold a
+ * production deploy back. `check_real_data` therefore comes BEFORE `vercel deploy --prod`, on the very
+ * folder that is deployed — and Vercel's edge keeps serving a deployment for minutes after it is
+ * removed (G5), so a copy must never reach production at all. What is handed in is the alias, the URL
+ * that stays.
+ */
+export function productionSection(dir: string, vercelProject: string): string {
+  return [
+    '',
+    '## Publishing to production',
+    '',
+    `Publish ${dir} to production, from inside that folder, in this order:`,
+    '',
+    `1. \`vercel link --yes --project ${vercelProject}\``,
+    '2. Call the tool `check_real_data` with your runId. Production is public the moment it deploys, so it must be clear BEFORE you deploy. If it is not clear, fix what it says and call it again; never deploy without a clear answer.',
+    '3. `vercel deploy --prod --yes` — it prints the deployment URL and the production alias.',
+    `4. The production alias is the URL to hand in: the \`*.vercel.app\` domain without a hash, normally https://${vercelProject}.vercel.app (\`vercel inspect <deployment url>\` lists it under Aliases).`,
+    '5. `curl -s -o /dev/null -w "%{http_code}" <alias>` until it answers 200; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
+    '',
+    'If `vercel` fails (not logged in, no network, a quota) or the alias never answers 200, do NOT call `submit_stage`: say in your reply what failed, with the command and its error, and end your turn. The owner retries the stage.',
+  ].join('\n')
+}
+
 /** How the stage ends: the exact files, and `submit_stage` with its runId. */
 export function closing(ctx: PromptContext): string {
   const spec = RUN_SPECS[ctx.stage]

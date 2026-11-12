@@ -199,11 +199,11 @@ test('crit. 14: start makes a run on the docs site, with the prompt and the titl
   assert.equal(mockups.get(m.id)?.stages.brief.run?.id, ticket.runId)
 })
 
-test('crit. 19: a second start is a conflict; a stage of the next cut is not-yet', async () => {
+test('crit. 19: a second start is a conflict, and so is a stage that is not ready', async () => {
   const m = await created()
   value(await mockups.startRun(m.id, { kind: 'brief' }))
   assert.equal(code(await mockups.startRun(m.id, { kind: 'brief' })), 'conflict')
-  assert.equal(code(await mockups.startRun(m.id, { kind: 'deliver' })), 'not-yet')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'deliver' })), 'conflict')
   assert.equal(code(await mockups.startRun('nope', { kind: 'brief' })), 'not-found')
 })
 
@@ -463,4 +463,22 @@ test('crit. 29: a build redo starts with the comment and the preview it replaces
   assert.ok(decided.run.text.includes(BUILD_PREVIEW))
   assert.deepEqual(await readdir(join(m.vaultDir, '_versions')).catch(() => []), [], 'no stage before it was redone, and build keeps no document')
   assert.equal(decided.mockup.stages.build.status, 'running')
+})
+
+test('crit. 20, 33: approving the build leaves deliver ready on the work-dir project; its submission delivers the mockup', async () => {
+  const m = await waitingBuild()
+  const decided = value(await mockups.decide(m.id, { step: 'build', action: 'approve' }))
+  assert.equal(decided.mockup.stages.deliver.status, 'ready')
+  const ticket = value(await mockups.startRun(m.id, { kind: 'deliver' }))
+  assert.equal(ticket.siteId, 'acme')
+  assert.equal(ticket.title, 'Mockup · deliver · Acme app')
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  await writeFile(join(m.vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía\n')
+  const raw = { runId: ticket.runId, files: ['06-presenter-guide.md'], summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  const after = mockups.get(m.id)
+  assert.equal(after?.status, 'delivered')
+  assert.equal(after?.urls.prod, 'https://acme-mockup.vercel.app')
+  assert.equal(value(await mockups.docs(m.id, 'deliver')).files[0]?.name, '06-presenter-guide.md')
 })

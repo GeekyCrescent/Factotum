@@ -36,7 +36,11 @@ export function StagePanel({
       <div class={`mk-stage-head mk-st-${step.status}`}>
         <Glyph status={step.status} /> <span>{label}</span> <span class="mk-cap">{statusLine(step)}</span>
       </div>
-      {step.status === 'running' ? <p class="mk-small">A session is working on it. The gate opens here when it submits, with a push.</p> : null}
+      {step.status === 'running' ? (
+        <p class="mk-small">
+          {actions.gate === null ? 'A session is putting it in production. There is no gate: it is delivered when the session submits.' : 'A session is working on it. The gate opens here when it submits, with a push.'}
+        </p>
+      ) : null}
       {step.status === 'locked' ? <p class="mk-small">It opens when the stage before it is approved.</p> : null}
       {start === undefined ? null : (
         <button type="button" class="btn primary mk-big" disabled={busy || start.disabled !== undefined} onClick={onStart}>

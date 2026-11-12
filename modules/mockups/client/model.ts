@@ -9,7 +9,7 @@ import { STAGE_IDS, type Mockup, type MockupsSetup, type Run, type StageId, type
 /** A COPY of the package's `STARTING_OFFER_MS` (criterion 18): «Abandon» after this without a session. */
 export const STARTING_OFFER_MS = 2 * 60_000
 /** A COPY of the package's `CUT_KINDS`: what this cut launches. The rest shows, with «next cut». */
-export const CUT_STAGES: readonly StageId[] = ['brief', 'concepts', 'plan', 'build']
+export const CUT_STAGES: readonly StageId[] = ['brief', 'concepts', 'plan', 'build', 'deliver']
 
 /** A COPY of the gates and the order of the package's stage table (D2). */
 const GATES: Readonly<Record<StageId, 'approve' | 'choose' | null>> = { brief: 'approve', concepts: 'choose', plan: 'choose', build: 'approve', deliver: null }

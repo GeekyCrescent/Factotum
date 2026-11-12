@@ -86,7 +86,7 @@ export function previousStage(id: StageId): StageId | null {
 }
 
 /** What THIS cut launches (tasks.md: cut 1 is brief, cut 2 adds concepts and plan, cut 3 the rest by block). The rest answers `not-yet`. */
-export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts', 'plan', 'build']
+export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts', 'plan', 'build', 'deliver']
 
 export function isLaunchable(kind: RunKind): boolean {
   return CUT_KINDS.includes(kind)

@@ -7,6 +7,7 @@ import { previousStage, STAGES } from '../stages.ts'
 import type { Mockup, StageId } from '../types.ts'
 import { briefPrompt } from './brief.ts'
 import { buildPrompt } from './build.ts'
+import { deliverPrompt } from './deliver.ts'
 import type { PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
 import { planPrompt } from './plan.ts'
@@ -44,6 +45,8 @@ export function promptFor(ctx: PromptContext): string | null {
       return planPrompt(ctx)
     case 'build':
       return buildPrompt(ctx)
+    case 'deliver':
+      return deliverPrompt(ctx)
     default:
       return null
   }

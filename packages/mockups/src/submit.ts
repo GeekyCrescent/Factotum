@@ -32,14 +32,15 @@ export const SUBMIT_STAGE = 'submit_stage'
 export const CHECK_REAL_DATA = 'check_real_data'
 
 const TAKE_DOWN =
-  'Do not turn the protection off. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
+  'Do not turn the protection off, and do not deploy to production. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
   'replace the copy with invented data of the same shape, and deploy again.'
 
 const CHECK_TOOL: AgentTool = {
   name: CHECK_REAL_DATA,
   description:
-    'Before a deploy is opened to the public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
-    'Call it with the runId from your instructions after deploying (still protected) and before turning the protection off.',
+    'Before anything is public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
+    'Call it with the runId from your instructions: for a preview, after deploying (still protected) and before turning the protection off; ' +
+    'for production, before `vercel deploy --prod`.',
   inputSchema: {
     type: 'object',
     properties: { runId: { type: 'string', description: 'The runId from your instructions.' } },
@@ -126,7 +127,7 @@ async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string
     return refuse(`Not clear: ${guarded.reason} ${TAKE_DOWN}`)
   }
   deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check is clear`)
-  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may turn the protection off.', false)
+  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may go on: turn the protection off, or deploy to production.', false)
 }
 
 /** Check 3. `undefined`: every file is there, inside, and not empty. */

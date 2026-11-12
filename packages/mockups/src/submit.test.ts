@@ -444,3 +444,41 @@ test('crit. 16: a stage that deploys nothing refuses a previewUrl it was handed'
   assert.match(textOf(result), /takes no previewUrl/)
   assert.equal(brief()?.status, 'running')
 })
+
+/** A deliver run, the build approved behind it, and the presenter guide written. */
+async function seedDeliver(): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme', urls: { preview: PREVIEW } })
+    for (const id of ['brief', 'concepts', 'plan', 'build'] as const) m = withStep(m, id, { status: 'done', version: 1 })
+    m = withStep(m, 'deliver', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind: 'deliver', runId: 'd1', siteId: 'acme' }, NOW))] } } }
+  })
+  await writeFile(join(vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía del presentador\n')
+}
+const PROD = 'https://acme-mockup.vercel.app'
+const callDeliver = (raw: Record<string, unknown>) => call({ runId: 'd1', files: ['06-presenter-guide.md'], summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 33: a deliver without its prodUrl, or with a preview instead, is refused', async () => {
+  await seedDeliver()
+  assert.match(textOf(await callDeliver({})), /needs prodUrl/)
+  assert.match(textOf(await callDeliver({ previewUrl: PREVIEW, prodUrl: PROD })), /takes no previewUrl/)
+  assert.match(textOf(await callDeliver({ prodUrl: 'https://acme-directions.vercel.app' })), /acme-mockup/)
+  assert.equal(built()?.stages.deliver.status, 'running')
+})
+
+test('crit. 16, check 3: a deliver must write 06-presenter-guide.md in the mockup folder', async () => {
+  await seedDeliver()
+  await rm(join(vaultDir, '06-presenter-guide.md'))
+  assert.match(textOf(await callDeliver({ prodUrl: PROD })), /06-presenter-guide\.md does not exist/)
+})
+
+test('crit. 33: a deliver is accepted: done, the mockup delivered with both URLs, and no push — it has no gate', async () => {
+  await seedDeliver()
+  const result = await callDeliver({ prodUrl: PROD })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(textOf(result), 'Submitted. End your turn now.')
+  assert.equal(built()?.stages.deliver.status, 'done')
+  assert.equal(built()?.status, 'delivered')
+  assert.deepEqual(built()?.urls, { preview: PREVIEW, prod: PROD })
+  assert.deepEqual(notify.sent, [])
+})

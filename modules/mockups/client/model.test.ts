@@ -57,10 +57,10 @@ test('crit. 19: another run alive in the mockup blocks a start, with its stage n
   assert.match(launchBlocked(m, 'plan', { sessions: true }) ?? '', /concepts is running/)
 })
 
-test('a stage of a later block is shown and cannot start (E4); build now can', () => {
+test('cut 3: every stage can start, build and deliver included (E4 is over)', () => {
   const done = { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' } } as const
   const m = mockup('a', { ...done, build: { status: 'done' }, deliver: { status: 'ready' } }, { buildSiteId: 'acme' })
-  assert.equal(stageActions(m, 'deliver', { sessions: true, now: NOW }).start?.disabled, 'next cut')
+  assert.equal(stageActions(m, 'deliver', { sessions: true, now: NOW }).start?.disabled, undefined)
   const b = mockup('a', { ...done, build: { status: 'ready' } }, { buildSiteId: 'acme' })
   assert.equal(stageActions(b, 'build', { sessions: true, now: NOW }).start?.disabled, undefined)
   const p = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'ready' } })
@@ -85,7 +85,7 @@ test('crit. 27, 28: after approving or choosing, the screen launches the next st
   assert.equal(afterDecision('brief'), 'concepts')
   assert.equal(afterDecision('concepts'), 'plan')
   assert.equal(afterDecision('plan'), 'build')
-  assert.equal(afterDecision('build'), undefined)
+  assert.equal(afterDecision('build'), 'deliver', 'crit. 20: approving the build launches deliver')
   assert.equal(afterDecision('deliver'), undefined)
 })
 

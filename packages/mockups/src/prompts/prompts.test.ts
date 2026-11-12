@@ -5,6 +5,7 @@ import { briefPrompt } from './brief.ts'
 import { choiceSection, type PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
 import { buildPrompt } from './build.ts'
+import { deliverPrompt } from './deliver.ts'
 import { planPrompt } from './plan.ts'
 import { contextFor, promptFor } from './index.ts'
 
@@ -54,11 +55,12 @@ test('Word through textutil, PDF through the read tool, and a PDF without text r
   assert.match(prompt, /no text layer.*as an image/s)
 })
 
-test('promptFor answers brief, concepts, plan and build, and null for a kind of a later block', () => {
+test('promptFor answers every stage, and null for a kind of a later block', () => {
   assert.equal(promptFor(CTX), briefPrompt(CTX))
   assert.equal(promptFor({ ...CTX, stage: 'concepts' }), conceptsPrompt({ ...CTX, stage: 'concepts' }))
   assert.equal(promptFor({ ...CTX, stage: 'plan' }), planPrompt({ ...CTX, stage: 'plan' }))
   assert.equal(promptFor({ ...CTX, stage: 'build' }), buildPrompt({ ...CTX, stage: 'build' }))
+  assert.equal(promptFor({ ...CTX, stage: 'deliver' }), deliverPrompt({ ...CTX, stage: 'deliver' }))
   assert.equal(promptFor({ ...CTX, stage: 'change' }), null)
 })
 
@@ -276,4 +278,39 @@ test('crit. 28: contextFor hands build the direction chosen at plan, and the moc
   const ctx = contextFor(m, 'build', 'r1')
   assert.deepEqual(ctx.chosen, { stage: 'plan', file: '05-visual-direction.md', option: options[0] })
   assert.deepEqual(ctx.urls, { preview: 'https://p-mockup-x.vercel.app' })
+})
+
+const DELIVER: PromptContext = { ...CTX, stage: 'deliver', urls: { preview: 'https://medical-trust-center-mockup-abc-team.vercel.app' } }
+
+test('the deliver prompt', (t) => {
+  t.assert.snapshot(deliverPrompt(DELIVER))
+})
+
+test('crit. 33: deliver deploys to production from mockup-app/, without changing the approved app, and hands in prodUrl', () => {
+  const prompt = deliverPrompt(DELIVER)
+  assert.ok(prompt.includes(`${CTX.workDir}/mockup-app`))
+  assert.ok(prompt.includes('vercel link --yes --project medical-trust-center-mockup'))
+  assert.match(prompt, /vercel deploy --prod --yes/)
+  assert.match(prompt, /Do not change the app/)
+  assert.match(prompt, /prodUrl/)
+  assert.ok(prompt.includes('files ["06-presenter-guide.md"]'))
+})
+
+test('crit. 35, A3: production is public the moment it deploys, so check_real_data comes BEFORE vercel deploy --prod', () => {
+  const prompt = deliverPrompt(DELIVER)
+  const checked = prompt.indexOf('check_real_data')
+  const deploy = prompt.indexOf('vercel deploy --prod --yes')
+  assert.ok(checked !== -1 && checked < deploy, 'check → deploy')
+  assert.doesNotMatch(prompt, /protection enable/, 'protection does not cover the production alias (A3)')
+  assert.match(prompt, /If `vercel` fails.*do NOT call `submit_stage`/s)
+})
+
+test('crit. 33: the presenter guide has the shape of the guides made by hand, in the language of the inputs', () => {
+  const prompt = deliverPrompt(DELIVER)
+  assert.ok(prompt.includes(`${CTX.vaultDir}/06-presenter-guide.md`))
+  for (const section of ['What the mockup is, and is not', 'How to open it', 'Demo props', 'The walk-through, step by step', 'Awkward questions', 'Out of scope']) {
+    assert.ok(prompt.includes(section), section)
+  }
+  assert.match(prompt, /language of the inputs/)
+  assert.match(prompt, /the step that sells it/i)
 })

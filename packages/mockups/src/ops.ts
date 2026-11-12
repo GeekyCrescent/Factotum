@@ -138,7 +138,9 @@ export function acceptSubmit(m: Mockup, runId: string, input: AcceptInput, now: 
     summary: input.summary,
     ...(input.options === undefined ? {} : { options: input.options }),
   }
-  return ok(put(withUrls(m, input), found.stage, step, now))
+  // The last stage puts the app in production: the mockup is delivered (criterion 33).
+  const handed = withUrls(m, input)
+  return ok(put(spec.next === null ? { ...handed, status: 'delivered' } : handed, found.stage, step, now))
 }
 
 function withUrls(m: Mockup, input: AcceptInput): Mockup {
