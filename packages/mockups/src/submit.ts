@@ -9,7 +9,8 @@
  *    its REAL path inside `vaultDir` or `workDir`.
  * 4. a stage with options gets 2 or 3, with distinct ids (and, in plan, each with its `url`); a stage
  *    without options gets none.
- * Checks 5–6 (the URLs, the guard) arrive with the stages that need them (block G, cut 3).
+ * 5. every URL (an option's, `previewUrl`, `prodUrl`) is `https://<something>.vercel.app` (A3);
+ * 6. a stage that publishes passes the real-data guard (`guard.ts`, criterion 35), which fails closed.
  *
  * Accepted: `acceptSubmit` and, with a gate, ONE push with a fixed body — nothing of the summary nor
  * of the documents leaves the private network (criterion 26). NEVER THROWS, and the log carries ids.
@@ -18,6 +19,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Logger, Notifier } from '@factotum/core'
+import { guard, GUARD_LIMITS, type GuardLimits } from './guard.ts'
 import { acceptSubmit, findRun, linkSession } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
@@ -62,6 +64,8 @@ export interface SubmitDeps {
   readonly log: Logger
   readonly notify: Notifier
   readonly caseInsensitive: boolean
+  /** The seam for the tests of the guard's caps. */
+  readonly guardLimits?: GuardLimits
 }
 
 const text = (body: string, isError: boolean): AgentToolResult => ({ content: [{ type: 'text', text: body }], ...(isError ? { isError: true as const } : {}) })
@@ -137,6 +141,31 @@ export function checkOptions(kind: RunKind, options: SubmitInput['options']): st
   return undefined
 }
 
+/** Check 5: `https://<something>.vercel.app`, nothing else (no port, no user, no other host). */
+export function isVercelUrl(raw: string): boolean {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  const host = url.hostname
+  return url.protocol === 'https:' && url.port === '' && url.username === '' && url.password === '' && host.endsWith('.vercel.app') && host.length > '.vercel.app'.length
+}
+
+/** Check 5. `undefined`: every URL handed in is a Vercel deployment. */
+export function checkUrls(input: SubmitInput): string | undefined {
+  const urls: readonly [string, string | undefined][] = [
+    ...(input.options ?? []).map((option): [string, string | undefined] => [`option ${option.id}'s url`, option.url]),
+    ['previewUrl', input.previewUrl],
+    ['prodUrl', input.prodUrl],
+  ]
+  for (const [what, url] of urls) {
+    if (url !== undefined && !isVercelUrl(url)) return `${what} must be https://<something>.vercel.app, the URL vercel deploy printed.`
+  }
+  return undefined
+}
+
 async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: unknown): Promise<AgentToolResult> {
   const shaped = parseSubmit(raw)
   if (!shaped.ok) return refuse(`Not submitted: ${shaped.field} ${shaped.reason}. Fix it and call again.`)
@@ -147,8 +176,15 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   if (live.run.siteId !== siteId) return refuse('This session runs in another project than the stage it is submitting. Submit from the session the stage launched.')
   if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return refuse('That run belongs to another session. Submit from the session the stage launched.')
 
-  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options)
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input)
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
+  if (RUN_SPECS[live.stage].guard) {
+    const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+    if (!guarded.ok) {
+      deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} refused by the real-data guard`)
+      return refuse(`Not submitted: ${guarded.reason}`)
+    }
+  }
 
   const now = deps.now()
   const result = await deps.store.change((file) => {

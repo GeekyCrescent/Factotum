@@ -21,6 +21,10 @@ export interface RunSpec {
   readonly files: readonly string[]
   readonly options: OptionRule | null
   readonly gate: 'approve' | 'choose' | null
+  /** It publishes from the work-dir: the real-data guard runs before it is accepted (D3, check 6). */
+  readonly guard: boolean
+  /** Folders of the work-dir the stage writes, copied to `<dir>/_versions/v<k>/` before a redo (D7). */
+  readonly versionedDirs?: readonly string[]
 }
 
 export interface StageSpec extends RunSpec {
@@ -31,26 +35,28 @@ export interface StageSpec extends RunSpec {
 }
 
 export const STAGES: Readonly<Record<StageId, StageSpec>> = {
-  brief: { id: 'brief', site: 'docs', files: ['01-brief.md'], options: null, gate: 'approve', next: 'concepts' },
-  concepts: { id: 'concepts', site: 'docs', files: ['02-concepts.md'], options: { min: 2, max: 3, url: false }, gate: 'choose', next: 'plan', chosenIn: '02-concepts.md' },
+  brief: { id: 'brief', site: 'docs', files: ['01-brief.md'], options: null, gate: 'approve', guard: false, next: 'concepts' },
+  concepts: { id: 'concepts', site: 'docs', files: ['02-concepts.md'], options: { min: 2, max: 3, url: false }, gate: 'choose', guard: false, next: 'plan', chosenIn: '02-concepts.md' },
   plan: {
     id: 'plan',
     site: 'docs',
     files: ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md'],
     options: { min: 2, max: 3, url: true },
     gate: 'choose',
+    guard: true,
+    versionedDirs: ['directions'],
     next: 'build',
     chosenIn: '05-visual-direction.md',
   },
-  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', next: 'deliver' },
-  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, next: null },
+  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', guard: true, next: 'deliver' },
+  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, guard: true, next: null },
 }
 
 /** Every kind of run: the stages, and the two of the changes track (not stages, D2). */
 export const RUN_SPECS: Readonly<Record<RunKind, RunSpec>> = {
   ...STAGES,
-  change: { site: 'work', files: [], options: null, gate: 'approve' },
-  redeploy: { site: 'work', files: [], options: null, gate: null },
+  change: { site: 'work', files: [], options: null, gate: 'approve', guard: true },
+  redeploy: { site: 'work', files: [], options: null, gate: null, guard: true },
 }
 
 export function nextStage(id: StageId): StageId | null {
@@ -63,7 +69,7 @@ export function previousStage(id: StageId): StageId | null {
 }
 
 /** What THIS cut launches (tasks.md: cut 1 is brief, cut 2 adds concepts and plan). The rest answers `not-yet`. */
-export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts']
+export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts', 'plan']
 
 export function isLaunchable(kind: RunKind): boolean {
   return CUT_KINDS.includes(kind)

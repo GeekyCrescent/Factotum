@@ -37,7 +37,7 @@ import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRu
 import { isLaunchable, RUN_SPECS, STAGES } from './stages.ts'
 import { codeOf, openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool } from './submit.ts'
-import { createMockupDir, createProject, listProjects, readDocs, versionDocs, writeChosen } from './vault.ts'
+import { createMockupDir, createProject, listProjects, readDocs, versionDirections, versionDocs, writeChosen } from './vault.ts'
 import {
   STAGE_IDS,
   type CreateMockupsResult,
@@ -318,7 +318,9 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         // COPIED, never moved: if the launch fails, the document is still where it was (criterion 29).
         let previous: readonly string[]
         try {
-          previous = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+          const docs = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+          const dirs = (STAGES[step].versionedDirs ?? []).length === 0 ? null : await versionDirections(m.workDir, current.version)
+          previous = dirs === null ? docs : [...docs, dirs]
         } catch (error) {
           log.warn(`mockup ${id}: the ${step} version could not be kept (${codeOf(error)})`)
           return { ok: false, error: { code: 'module-error', reason: `the current version could not be copied aside, so nothing was redone (${error instanceof Error ? error.message : codeOf(error)})` } }
