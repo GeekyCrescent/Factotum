@@ -1,0 +1,72 @@
+{
+  "identity": {
+    "name": "Juan Rodrigo Ferro Rayón",
+    "email": "ferro.rayon@gmail.com",
+    "phone": "+61 401 555 638",
+    "linkedin": "linkedin.com/in/juan-rodrigo-ferro-rayón-7a0039334",
+    "city": "Sydney",
+    "suburb": "Sydney",
+    "timezone": "Australia/Sydney",
+    "portfolioUrl": "https://geekycrescent.github.io/",
+    "cvAvailabilityLine": "Available 12 Jan – mid-Jul 2027 · full-time to late Feb, then 16–20 h/week · Student visa (subclass 500)"
+  },
+  "situation": "In Sydney on a Student visa (subclass 500), valid to 30 August 2027. It allows up to 48 hours of work per fortnight during study periods and unrestricted hours during scheduled course breaks. No role that requires citizenship, permanent residency or a security clearance. Studying a Master of Information Systems Management at Macquarie University. Works remotely for BWR, a Mexican software consultancy; whether those hours count against the visa limit is not confirmed yet, so an application never states anything about it. Portfolio https://geekycrescent.github.io/ and GitHub github.com/GeekyCrescent.",
+  "availability": "Available from 12 January 2027: full-time until Macquarie University's Session 1 starts in late February, then 16–20 hours per week during semester, through mid-July 2027. Leaves Australia on 20 July 2027, so nothing past mid-July. Away from Sydney from 26 November 2026 to 10 January 2027: video interviews only in that time, and mornings Sydney time work best.",
+  "absences": [{ "from": "2026-11-26", "to": "2027-01-10", "label": "Away from Sydney" }],
+  "goals": [
+    {
+      "id": "sydney-semester",
+      "label": "Sydney, part-time during semester",
+      "enabled": true,
+      "text": "Part-time, contract or casual roles in Sydney for a fixed January–July 2027 engagement: full-time until late February, then 16–20 hours per week. Hybrid or on site.",
+      "payFloor": null,
+      "sources": ["seek", "greenhouse", "lever", "ashby", "workable", "linkedin-alerts"]
+    },
+    {
+      "id": "big-internships",
+      "label": "Internships at large companies",
+      "enabled": true,
+      "text": "Internship programmes of large companies in Sydney that fit the January–July 2027 window. Watch their careers pages in the months they open.",
+      "payFloor": null,
+      "sources": ["seek", "watch", "linkedin-alerts"]
+    },
+    {
+      "id": "remote-anywhere",
+      "label": "Remote in any country",
+      "enabled": true,
+      "text": "Remote roles in any country, only where the company hires contractors outside its own country. Never US-only roles.",
+      "payFloor": null,
+      "sources": ["wwr", "remoteok", "remotive", "yc"]
+    },
+    {
+      "id": "good-money",
+      "label": "Good money, with a minimum rate",
+      "enabled": true,
+      "text": "Better-paid contract work with a minimum hourly rate. The floor is not set yet: until it is, nothing is discarded for pay.",
+      "payFloor": null,
+      "sources": ["seek", "wwr", "remoteok"]
+    }
+  ],
+  "level": "Junior, about one year of commercial experience. Stronger only in GenAI (production LLM agents on Amazon Bedrock). Never present as senior.",
+  "redLines": {
+    "text": "Nothing senior, lead, principal, staff or head. Nothing unpaid or equity-only. Nothing that requires citizenship, permanent residency or a security clearance. Health is where the work happened, not the goal: never in the headline unless the employer is a health employer.",
+    "titleWords": ["senior", "lead", "principal", "staff", "architect", "head"],
+    "requirementWords": ["citizenship", "permanent resident", "clearance", "baseline"],
+    "unpaid": true,
+    "equityOnly": true
+  },
+  "preferences": {
+    "text": "Software, cloud and AI teams. TypeScript, Next.js, React, Python, AWS and Amazon Bedrock. Commute anywhere in Sydney; hybrid or fully remote are fine.",
+    "rateExpectation": ""
+  },
+  "forbiddenStacks": ["Go", "Rust", "Kubernetes", "Terraform", "Kafka"],
+  "confidential": ["Christus Muguerza", "Médica Sur", "Secretaría de Salud", "IMSS"],
+  "batchSize": 10,
+  "weights": { "partTime": 30, "skills": 25, "hiring": 20, "visa": 15, "access": 10 },
+  "followup": {
+    "subject": "Following up — {role} application, Juan Rodrigo Ferro Rayón",
+    "first": "Hi {greetingName},\n\nI applied for the {role} position on {sentDate} and wanted to follow up briefly. I'm still very interested in the {role} role at {company}.\n\nAs a quick reminder: I'm a software engineer with about a year of commercial experience building LLM agents on AWS and full-stack TypeScript applications, and I'm available from 12 January 2027 — full-time until late February, then 16–20 hours per week through June 2027. I'm in Sydney on a Student visa (subclass 500).\n\nIf it helps, I'm happy to do a short call at a time that suits you.\n\nKind regards,\n{signature}",
+    "second": "Hi {greetingName},\n\nI'm following up once more on my application for the {role} position, sent on {sentDate}. I'm still very interested in the {role} role at {company}.\n\nAs a quick reminder: I'm a software engineer with about a year of commercial experience building LLM agents on AWS and full-stack TypeScript applications, and I'm available from 12 January 2027 — full-time until late February, then 16–20 hours per week through June 2027. I'm in Sydney on a Student visa (subclass 500).\n\nIf it helps, I'm happy to do a short call at a time that suits you.\n\nKind regards,\n{signature}",
+    "linkedin": "Hi {greetingName}, I applied for {role} at {company} last week. I build LLM agents on AWS and full-stack TypeScript apps, and I'm available in Sydney from 12 Jan 2027 (part-time through June). Happy to share more if useful. — Juan Rodrigo"
+  }
+}
