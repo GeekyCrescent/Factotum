@@ -4,7 +4,8 @@
  *
  * WHAT THIS WRITES, and nothing else (requirements §5, «Rutas declaradas»): a new project's folder and
  * hub under `projectsDir`, its work-dir under `workRoot`, one line and one link in `mapFile`, the
- * mockup folder, and the copies in `_versions/`. A document is only READ here: the sessions write them.
+ * mockup folder, the copies in `_versions/`, and `chosen:` in a document's frontmatter (D6). Nothing
+ * else of a document is written here: the sessions write them.
  *
  * THE MAP IS THE OWNER'S, not ours: if it does not have the shape this expects, it is left exactly as
  * it was and the answer says so (criterion 6b). It is written to a temporary file and renamed, keeping
@@ -312,6 +313,35 @@ export async function versionDocs(vaultDir: string, files: readonly string[], k:
     }
   }
   return kept
+}
+
+/**
+ * `text` with `key: value` in its frontmatter: the line replaced if the key is there, added at the end
+ * of the frontmatter if not, and a frontmatter made if the text has none. Pure. The value is one
+ * plain token (an option id), never quoted.
+ */
+export function withFrontmatterKey(text: string, key: string, value: string): string {
+  const lines = text.split('\n')
+  const end = lines[0]?.trim() === '---' ? lines.findIndex((line, i) => i > 0 && line.trim() === '---') : -1
+  if (end === -1) return ['---', `${key}: ${value}`, '---', text].join('\n')
+  const at = lines.findIndex((line, i) => i > 0 && i < end && line.startsWith(`${key}:`))
+  const updated = [...lines]
+  if (at === -1) updated.splice(end, 0, `${key}: ${value}`)
+  else updated[at] = `${key}: ${value}`
+  return updated.join('\n')
+}
+
+/**
+ * Criterion 28: the ONE key the module writes in a document of the owner (D1, D6) — read, change the
+ * key, write to a temporary file and rename, keeping the mode. A document that is missing, or a link
+ * out of the mockup folder, THROWS: the choice is not recorded half.
+ */
+export async function writeChosen(vaultDir: string, file: string, optionId: string, caseInsensitive: boolean): Promise<void> {
+  const doc = await docOf(vaultDir, file, caseInsensitive)
+  if (doc.kind === 'missing') throw new Error(`${file} does not exist in the mockup folder`)
+  if (doc.kind === 'outside') throw new Error(`${file} is outside the mockup folder or not a file`)
+  const mode = (await stat(doc.path)).mode & 0o777
+  await writeAtomically(doc.path, withFrontmatterKey(await readFile(doc.path, 'utf8'), 'chosen', optionId), mode)
 }
 
 /** The documents of a stage that exist, read now (criterion 25). Over `DOC_MAX_BYTES` together: `too-large`. */

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Mockup, StageId, Step } from '../types.ts'
-import { crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
+import { afterDecision, crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
 
 const NOW = new Date('2026-11-12T10:00:00.000Z')
 const SESSION = '0192f3a4-5b6c-7d8e-9f01-23456789abcd'
@@ -57,10 +57,29 @@ test('crit. 19: another run alive in the mockup blocks a start, with its stage n
   assert.match(launchBlocked(m, 'plan', { sessions: true }) ?? '', /concepts is running/)
 })
 
-test('a stage of the next cut is shown and cannot start (E4)', () => {
-  const m = mockup('a', { brief: { status: 'done' }, concepts: { status: 'ready' } })
-  const actions = stageActions(m, 'concepts', { sessions: true, now: NOW })
-  assert.equal(actions.start?.disabled, 'next cut')
+test('a stage of a later block is shown and cannot start (E4); concepts now can', () => {
+  const m = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'ready' } })
+  assert.equal(stageActions(m, 'plan', { sessions: true, now: NOW }).start?.disabled, 'next cut')
+  const c = mockup('a', { brief: { status: 'done' }, concepts: { status: 'ready' } })
+  assert.equal(stageActions(c, 'concepts', { sessions: true, now: NOW }).start?.disabled, undefined)
+})
+
+test('crit. 28: a choosing gate offers choose, not approve; an approving gate the other way round', () => {
+  const options = [{ id: 'a', title: 'A', blurb: 'a' }, { id: 'b', title: 'B', blurb: 'b' }]
+  const c = stageActions(mockup('a', { brief: { status: 'done' }, concepts: { status: 'waiting', version: 1, options } }), 'concepts', { sessions: true, now: NOW })
+  assert.equal(c.gate, 'choose')
+  assert.equal(c.approve, false)
+  assert.equal(c.choose, true)
+  const b = stageActions(mockup('a', { brief: { status: 'waiting', version: 1 } }), 'brief', { sessions: true, now: NOW })
+  assert.equal(b.gate, 'approve')
+  assert.equal(b.approve, true)
+  assert.equal(b.choose, false)
+})
+
+test('crit. 27, 28: after approving or choosing, the screen launches the next stage only if this cut launches it', () => {
+  assert.equal(afterDecision('brief'), 'concepts')
+  assert.equal(afterDecision('concepts'), undefined)
+  assert.equal(afterDecision('deliver'), undefined)
 })
 
 test('a work-dir stage without a build project says why', () => {

@@ -203,7 +203,7 @@ test('crit. 19: a second start is a conflict; a stage of the next cut is not-yet
   const m = await created()
   value(await mockups.startRun(m.id, { kind: 'brief' }))
   assert.equal(code(await mockups.startRun(m.id, { kind: 'brief' })), 'conflict')
-  assert.equal(code(await mockups.startRun(m.id, { kind: 'concepts' })), 'not-yet')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'plan' })), 'not-yet')
   assert.equal(code(await mockups.startRun('nope', { kind: 'brief' })), 'not-found')
 })
 
@@ -231,7 +231,7 @@ test('crit. 25: the documents of a stage, read now; an unknown stage is invalid'
   assert.equal(code(await mockups.docs(m.id, 'nope')), 'invalid')
 })
 
-test('crit. 27 / E4: approving the brief leaves concepts ready, and starting it is not-yet', async () => {
+test('crit. 27: approving the brief leaves concepts ready; the screen launches it', async () => {
   const m = await waitingBrief()
   const decided = value(await mockups.decide(m.id, { step: 'brief', action: 'approve' }))
   assert.equal(decided.mockup.stages.brief.status, 'done')
@@ -299,4 +299,64 @@ test('review: projects() is a result, and an unreadable projects folder is a mod
   mockups = await make({ ...config(), vault: { projectsDir: join(root, 'missing') } })
   assert.equal(code(await mockups.projects()), 'module-error')
   assert.equal(code(await mockups.create(EXISTING)), 'module-error')
+})
+
+/** Concepts that ran and were submitted with options a, b, c: waiting at their gate. */
+async function waitingConcepts(): Promise<Mockup> {
+  const m = await waitingBrief()
+  value(await mockups.decide(m.id, { step: 'brief', action: 'approve' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'concepts' }))
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  await writeFile(join(m.vaultDir, '02-concepts.md'), '---\ntitle: Conceptos\n---\n# Conceptos\n')
+  const options = ['a', 'b', 'c'].map((id) => ({ id, title: `Concept ${id}`, blurb: `Blurb ${id}` }))
+  const raw = { runId: ticket.runId, files: ['02-concepts.md'], summary: 's', options }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'personal', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  const after = mockups.get(m.id)
+  assert.ok(after !== undefined)
+  return after
+}
+
+test('crit. 14: concepts start on the docs site, with a prompt that reads the brief', async () => {
+  const m = await waitingBrief()
+  value(await mockups.decide(m.id, { step: 'brief', action: 'approve' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'concepts' }))
+  assert.equal(ticket.siteId, 'personal')
+  assert.equal(ticket.title, 'Mockup · concepts · Acme app')
+  assert.ok(ticket.text.includes(join(m.vaultDir, '01-brief.md')))
+})
+
+test('crit. 28: choosing writes chosen: <id> into 02-concepts.md and the state, and plan goes ready', async () => {
+  const m = await waitingConcepts()
+  const decided = value(await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'b' }))
+  assert.equal(decided.mockup.stages.concepts.chosen, 'b')
+  assert.equal(decided.mockup.stages.concepts.status, 'done')
+  assert.equal(decided.mockup.stages.plan.status, 'ready')
+  assert.equal(await readFile(join(m.vaultDir, '02-concepts.md'), 'utf8'), '---\ntitle: Conceptos\nchosen: b\n---\n# Conceptos\n')
+  assert.ok(log.lines.includes(`info mockup ${m.id}: concepts chosen, version 1`))
+})
+
+test('crit. 28: a choice without an option, or of one not offered, is invalid and the document is untouched', async () => {
+  const m = await waitingConcepts()
+  assert.equal(code(await mockups.decide(m.id, { step: 'concepts', action: 'choose' })), 'invalid')
+  assert.equal(code(await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'z' })), 'invalid')
+  assert.equal(code(await mockups.decide(m.id, { step: 'concepts', action: 'approve' })), 'invalid')
+  assert.equal(await readFile(join(m.vaultDir, '02-concepts.md'), 'utf8'), '---\ntitle: Conceptos\n---\n# Conceptos\n')
+  assert.equal(mockups.get(m.id)?.stages.concepts.status, 'waiting')
+})
+
+test('crit. 28: a document that cannot take the choice is a module-error, and the state does not move', async () => {
+  const m = await waitingConcepts()
+  await rm(join(m.vaultDir, '02-concepts.md'))
+  const result = await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'b' })
+  assert.equal(code(result), 'module-error')
+  assert.equal(mockups.get(m.id)?.stages.concepts.status, 'waiting')
+})
+
+test('crit. 29: a redo of concepts copies 02-concepts.md to _versions/ and starts the run', async () => {
+  const m = await waitingConcepts()
+  const decided = value(await mockups.decide(m.id, { step: 'concepts', action: 'redo', comment: 'otro ángulo' }))
+  assert.ok(decided.run !== undefined)
+  assert.match(decided.run.text, /_versions\/02-concepts-v1\.md/)
+  assert.equal(decided.mockup.stages.concepts.status, 'running')
 })
