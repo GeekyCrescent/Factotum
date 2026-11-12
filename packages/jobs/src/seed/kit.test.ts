@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
+import { fillSlots } from '../build/slots.ts'
+import { loadProfileSeed } from '../profile.ts'
+import type { Profile } from '../types.ts'
 import { parseCvs, parseKit, resolveFormAnswer, resolveKitRef, seedFollowupTemplates } from './kit.ts'
 
 const fixture = (name: string) => readFile(new URL(`../../test/fixtures/${name}`, import.meta.url), 'utf8')
@@ -10,9 +13,17 @@ const kit = parseKit(KIT_MD)
 
 const BRACKET = /\[[^\]\n]{1,80}\]/
 
-// TODO(S7): use fillSlots from build/slots.ts — a stand-in that fills only the kit's three slots.
-const fillKitSlots = (text: string) =>
-  text.replaceAll('{suburb}', 'Ryde').replaceAll('{timezone}', 'UTC−6 / Mexico City').replaceAll('{rate}', 'A$40 per hour')
+/** A test profile with the three fields the kit's slots need (design D6 «Huecos»). */
+const PROFILE: Profile = (() => {
+  const seeded = loadProfileSeed()
+  if (!seeded.ok) throw new Error(seeded.error.reason)
+  const { identity, preferences } = seeded.value
+  return {
+    ...seeded.value,
+    identity: { ...identity, suburb: 'Ryde', timezone: 'UTC+11 / Sydney' },
+    preferences: { ...preferences, rateExpectation: 'A$40 per hour' },
+  }
+})()
 
 test('a section splits into questions: a bold line is the label, the blockquote after it the answer', () => {
   assert.deepEqual(kit.sections.get(2), [
@@ -120,7 +131,8 @@ test('after filling suburb, timezone and rate, no resolved answer carries a [...
     ['Hours / availability?', 'see [[00-kit-base]] §1.'],
   ] as const
   for (const [question, answer] of questions) {
-    const filled = fillKitSlots(resolveFormAnswer(question, answer, kit).answer)
+    const { text: filled, missing } = fillSlots(resolveFormAnswer(question, answer, kit).answer, PROFILE)
+    assert.deepEqual(missing, [], question)
     assert.ok(!BRACKET.test(filled), `${question} → ${filled}`)
     assert.ok(!/\{[a-z]+\}/i.test(filled), `${question} → ${filled}`)
   }
