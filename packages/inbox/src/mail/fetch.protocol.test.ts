@@ -16,9 +16,9 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AccountConfig } from '../config.ts'
-import { fetchItems, startFakeImap } from '../test-imap-server.ts'
+import { fetchItems, startFakeImap } from '@factotum/mail/testing'
 import { realTimers } from '../test-support.ts'
-import { connectImapFlow, type ConnectImap } from './client.ts'
+import { connectImapFlow, type ConnectImap } from '@factotum/mail'
 import { fetchAccount } from './fetch.ts'
 
 /** Guardrail 1, both lists. A command is its verb, with the `UID` prefix when it has one. */

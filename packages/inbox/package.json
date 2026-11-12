@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "@factotum/core": "workspace:*",
+    "@factotum/mail": "workspace:*",
     "@factotum/sessions": "workspace:*",
-    "imapflow": "2.2.5",
     "zod": "^4.1.12"
   }
 }

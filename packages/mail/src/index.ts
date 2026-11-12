@@ -1,3 +1,16 @@
 /** The public surface of @factotum/mail (design D4). */
 
-export {}
+export {
+  connectImapFlow,
+  type BodyQuery,
+  type ConnectImap,
+  type FetchMessageObject,
+  type ImapClient,
+  type ImapOptions,
+  type MessageStructureObject,
+  type MetaQuery,
+} from './imap/client.ts'
+export { countAttachments, decodePart, MAX_BODY_CHARS, pickPart, plainText, type PickedPart } from './imap/body.ts'
+export { addressesIn, parseHeaderBlock } from './imap/headers.ts'
+export { closeQuietly, IMAP_PORT, imapOptions, reasonOf, untilAborted } from './imap/session.ts'
+export { readPassword, type PasswordResult } from './secrets.ts'

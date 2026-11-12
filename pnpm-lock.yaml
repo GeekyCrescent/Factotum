@@ -88,12 +88,12 @@ importers:
       '@factotum/core':
         specifier: workspace:*
         version: link:../core
+      '@factotum/mail':
+        specifier: workspace:*
+        version: link:../mail
       '@factotum/sessions':
         specifier: workspace:*
         version: link:../sessions
-      imapflow:
-        specifier: 2.2.5
-        version: 2.2.5
       zod:
         specifier: ^4.1.12
         version: 4.6.3

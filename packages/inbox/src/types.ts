@@ -7,7 +7,7 @@
  */
 
 import type { Logger, Timers } from '@factotum/core'
-import type { ConnectImap } from './mail/client.ts'
+import type { ConnectImap } from '@factotum/mail'
 
 export type Category = 'action' | 'unsubscribe' | 'spam' | 'info'
 export type EntryCategory = Category | 'unclassified'

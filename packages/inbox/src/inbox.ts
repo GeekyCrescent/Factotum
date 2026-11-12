@@ -21,9 +21,8 @@ import type { Verdict } from './classify/schema.ts'
 import { parseInboxConfig, type InboxConfig } from './config.ts'
 import { assemble, keyOf, type AccountOutcome, type BatchTally } from './digest/assemble.ts'
 import { openDigestStore, type DigestStore } from './digest/store.ts'
-import { connectImapFlow } from './mail/client.ts'
+import { connectImapFlow, readPassword } from '@factotum/mail'
 import { fetchAccount, type FetchedMail } from './mail/fetch.ts'
-import { readPassword } from './secrets.ts'
 import type { AccountStatus, AccountView, CreateInboxResult, Inbox, InboxDeps, InboxStatus, Progress } from './types.ts'
 
 /** Measured budget (tasks §M, A6): accounts × 90 s + ceil(400 / 40) × 38 s fits under this. */
