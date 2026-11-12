@@ -199,11 +199,11 @@ test('crit. 14: start makes a run on the docs site, with the prompt and the titl
   assert.equal(mockups.get(m.id)?.stages.brief.run?.id, ticket.runId)
 })
 
-test('crit. 19: a second start is a conflict; a stage of the next cut is not-yet', async () => {
+test('crit. 19: a second start is a conflict, and so is a stage that is not ready', async () => {
   const m = await created()
   value(await mockups.startRun(m.id, { kind: 'brief' }))
   assert.equal(code(await mockups.startRun(m.id, { kind: 'brief' })), 'conflict')
-  assert.equal(code(await mockups.startRun(m.id, { kind: 'build' })), 'not-yet')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'deliver' })), 'conflict')
   assert.equal(code(await mockups.startRun('nope', { kind: 'brief' })), 'not-found')
 })
 
@@ -398,4 +398,159 @@ test('review: two choices at once — one wins, and the document says what the s
   assert.deepEqual([code(x), code(y)].sort(), ['conflict', 'ok'])
   const chosen = mockups.get(m.id)?.stages.concepts.chosen
   assert.match(await readFile(join(m.vaultDir, '02-concepts.md'), 'utf8'), new RegExp(`\\nchosen: ${chosen}\\n`))
+})
+
+/** The plan submitted and direction a chosen: build ready, on a mockup whose work-dir is the sessions project acme. */
+async function chosenPlan(): Promise<Mockup> {
+  const m = await waitingConcepts()
+  value(await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'a' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'plan' }))
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  const files = ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md']
+  for (const doc of files) await writeFile(join(m.vaultDir, doc), `---\ntitle: ${doc}\n---\n# ${doc}\n`)
+  const options = ['a', 'b'].map((id) => ({ id, title: `Direction ${id}`, blurb: id, url: `https://acme-directions-x.vercel.app/${id}.html` }))
+  const submitted = await mockups.agent.call({ sessionId: SESSION, siteId: 'personal', toolUseId: 't', name: SUBMIT_STAGE, raw: { runId: ticket.runId, files, summary: 's', options } })
+  assert.equal(submitted.isError, undefined, submitted.content[0]?.text)
+  value(await mockups.decide(m.id, { step: 'plan', action: 'choose', optionId: 'a' }))
+  return value(await mockups.setSite(m.id, { siteId: 'acme' }))
+}
+
+const BUILD_PREVIEW = 'https://acme-mockup-abc-team.vercel.app'
+
+/** A build that ran and handed its preview: waiting at its gate. */
+async function waitingBuild(): Promise<Mockup> {
+  const m = await chosenPlan()
+  const ticket = value(await mockups.startRun(m.id, { kind: 'build' }))
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  await mkdir(join(m.workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(m.workDir, 'mockup-app', 'package.json'), '{"name":"acme"}\n')
+  const raw = { runId: ticket.runId, files: ['mockup-app/package.json'], summary: 's', previewUrl: BUILD_PREVIEW }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  return mockups.get(m.id) ?? assert.fail('gone')
+}
+
+test('crit. 14: build needs the work-dir as a sessions project before it starts', async () => {
+  const m = await chosenPlan()
+  value(await mockups.setSite(m.id, { refused: 'it is inside a project' }))
+  const refused = await mockups.startRun(m.id, { kind: 'build' })
+  assert.equal(code(refused), 'conflict')
+  assert.match(refused.ok ? '' : refused.error.reason, /no build project: it is inside a project/)
+})
+
+test('crit. 14, 28: build starts on the work-dir project, with the chosen direction and the <slug>-mockup project in its prompt', async () => {
+  const m = await chosenPlan()
+  const ticket = value(await mockups.startRun(m.id, { kind: 'build' }))
+  assert.equal(ticket.siteId, 'acme')
+  assert.equal(ticket.title, 'Mockup · build · Acme app')
+  assert.match(ticket.text, /chose «Direction a» \(a\)/)
+  assert.ok(ticket.text.includes('acme-mockup'))
+  assert.ok(ticket.text.includes(join(m.workDir, 'mockup-app')))
+})
+
+test('crit. 32: a build handed in waits at its gate with its preview on the mockup', async () => {
+  const m = await waitingBuild()
+  assert.equal(m.stages.build.status, 'waiting')
+  assert.equal(m.urls.preview, BUILD_PREVIEW)
+})
+
+test('crit. 29: a build redo starts with the comment and the preview it replaces, and copies nothing into the vault', async () => {
+  const m = await waitingBuild()
+  const decided = value(await mockups.decide(m.id, { step: 'build', action: 'redo', comment: 'el paso 3 más lento' }))
+  assert.ok(decided.run !== undefined)
+  assert.equal(decided.run.siteId, 'acme')
+  assert.match(decided.run.text, /> el paso 3 más lento/)
+  assert.ok(decided.run.text.includes(BUILD_PREVIEW))
+  assert.deepEqual(await readdir(join(m.vaultDir, '_versions')).catch(() => []), [], 'no stage before it was redone, and build keeps no document')
+  assert.equal(decided.mockup.stages.build.status, 'running')
+})
+
+test('crit. 20, 33: approving the build leaves deliver ready on the work-dir project; its submission delivers the mockup', async () => {
+  const m = await waitingBuild()
+  const decided = value(await mockups.decide(m.id, { step: 'build', action: 'approve' }))
+  assert.equal(decided.mockup.stages.deliver.status, 'ready')
+  const ticket = value(await mockups.startRun(m.id, { kind: 'deliver' }))
+  assert.equal(ticket.siteId, 'acme')
+  assert.equal(ticket.title, 'Mockup · deliver · Acme app')
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  await writeFile(join(m.vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía\n')
+  const raw = { runId: ticket.runId, files: ['06-presenter-guide.md'], summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  const after = mockups.get(m.id)
+  assert.equal(after?.status, 'delivered')
+  assert.equal(after?.urls.prod, 'https://acme-mockup.vercel.app')
+  assert.equal(value(await mockups.docs(m.id, 'deliver')).files[0]?.name, '06-presenter-guide.md')
+})
+
+// ── The changes track (criterion 36) ──
+
+/** The build approved and deliver submitted: delivered. */
+async function deliveredMockup(): Promise<Mockup> {
+  const m = await waitingBuild()
+  value(await mockups.decide(m.id, { step: 'build', action: 'approve' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'deliver' }))
+  await writeFile(join(m.vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía\n')
+  const raw = { runId: ticket.runId, files: ['06-presenter-guide.md'], summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  return mockups.get(m.id) ?? assert.fail('gone')
+}
+
+const submitAs = async (runId: string, raw: Record<string, unknown>) =>
+  await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw: { runId, summary: 's', ...raw } })
+
+test('crit. 36: a change is asked only of a delivered mockup, with a text', async () => {
+  const m = await created()
+  assert.equal(code(await mockups.requestChange(m.id, { text: 'logo' })), 'conflict')
+  value(await mockups.archive(m.id))
+  const d = await deliveredMockup()
+  assert.equal(code(await mockups.requestChange(d.id, {})), 'invalid')
+  assert.equal(code(await mockups.requestChange('nope', { text: 'logo' })), 'not-found')
+})
+
+test('crit. 14, 36: asking a change starts its run on the work-dir project, with the request literal; one change at a time', async () => {
+  const m = await deliveredMockup()
+  const asked = value(await mockups.requestChange(m.id, { text: 'El logo secreto más grande' }))
+  assert.ok(asked.run !== undefined)
+  assert.equal(asked.run.siteId, 'acme')
+  assert.equal(asked.run.title, 'Mockup · change · Acme app')
+  assert.match(asked.run.text, /> El logo secreto más grande/)
+  assert.equal(asked.mockup.status, 'changing')
+  assert.equal(asked.mockup.changes[0]?.status, 'running')
+  assert.equal(code(await mockups.requestChange(m.id, { text: 'otro' })), 'conflict')
+  assert.ok(!log.lines.join('\n').includes('secreto'), 'crit. 42')
+})
+
+test('crit. 36, end to end: change → redo → approve → redeploy abandoned → «Start redeploy» → done, and a line in changes.md', async () => {
+  const m = await deliveredMockup()
+  const asked = value(await mockups.requestChange(m.id, { text: 'logo más grande' }))
+  const changeId = asked.mockup.changes[0]?.id ?? assert.fail('no change')
+  assert.equal((await submitAs(asked.run?.runId ?? '', { files: ['mockup-app/package.json'], previewUrl: 'https://acme-mockup-c1-team.vercel.app' })).isError, undefined)
+
+  const redo = value(await mockups.decide(m.id, { step: { changeId }, action: 'redo', comment: 'aún más' }))
+  assert.ok(redo.run !== undefined)
+  assert.match(redo.run.text, /> aún más/)
+  assert.ok(redo.run.text.includes('https://acme-mockup-c1-team.vercel.app'), 'the redo names the preview it replaces')
+  assert.equal((await submitAs(redo.run.runId, { files: ['mockup-app/package.json'], previewUrl: 'https://acme-mockup-c2-team.vercel.app' })).isError, undefined)
+  assert.equal(mockups.get(m.id)?.changes[0]?.version, 2)
+
+  const approvedChange = value(await mockups.decide(m.id, { step: { changeId }, action: 'approve' }))
+  assert.equal(approvedChange.mockup.changes[0]?.phase, 'approved')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'redeploy' })), 'invalid', 'a redeploy names its change')
+
+  const first = value(await mockups.startRun(m.id, { kind: 'redeploy', changeId }))
+  assert.equal(first.title, 'Mockup · redeploy · Acme app')
+  assert.match(first.text, /vercel deploy --prod --yes/)
+  const back = value(await mockups.abandonRun(first.runId, { reason: 'busy' }))
+  assert.equal(back.changes[0]?.phase, 'approved')
+  assert.equal(back.changes[0]?.status, 'ready')
+
+  const second = value(await mockups.startRun(m.id, { kind: 'redeploy', changeId }))
+  await writeFile(join(m.vaultDir, 'changes.md'), '---\ntitle: Cambios\n---\n- 2026-11-13 — logo más grande — https://acme-mockup.vercel.app\n')
+  assert.equal((await submitAs(second.runId, { files: ['changes.md'], prodUrl: 'https://acme-mockup.vercel.app' })).isError, undefined)
+  const after = mockups.get(m.id)
+  assert.equal(after?.changes[0]?.status, 'done')
+  assert.equal(after?.status, 'delivered')
+  assert.ok(log.lines.includes(`info mockup ${m.id}: change ${changeId} approved, version 2`))
 })

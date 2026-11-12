@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { abandonRun, acceptSubmit, archive, decide, findRun, linkSession, newMockup, stallRun, startRun } from './ops.ts'
+import { abandonRun, acceptSubmit, archive, decide, decideChange, findRun, linkSession, liveRun, newMockup, requestChange, stallRun, startRun } from './ops.ts'
 import { mockup, NOW, OTHER_SESSION, SESSION, withStep } from './test-support.ts'
-import type { Mockup, Result } from './types.ts'
+import { STAGE_IDS, type Change, type Mockup, type Result } from './types.ts'
 
 const LATER = new Date(NOW.getTime() + 60_000)
 const RUN = { kind: 'brief' as const, runId: 'r1', siteId: 'personal' }
@@ -174,4 +174,137 @@ test('ops never touch their input', () => {
   startRun(before, RUN, NOW)
   archive(before, NOW)
   assert.equal(JSON.stringify(before), frozen)
+})
+
+test('crit. 32: an accepted build keeps its preview URL on the mockup and waits at its gate', () => {
+  const m = withStep(mockup({ id: 'm' }), 'build', { status: 'running', run: { id: 'b', kind: 'build', siteId: 'acme', startedAt: NOW.toISOString() } })
+  const accepted = value(acceptSubmit(m, 'b', { sessionId: SESSION, summary: 's', previewUrl: 'https://acme-mockup-x.vercel.app' }, LATER))
+  assert.equal(accepted.stages.build.status, 'waiting')
+  assert.equal(accepted.urls.preview, 'https://acme-mockup-x.vercel.app')
+  assert.equal(accepted.urls.prod, undefined)
+})
+
+test('crit. 33: an accepted deliver is done, keeps the production URL, and the mockup is delivered', () => {
+  const m = withStep(mockup({ id: 'm', urls: { preview: 'https://acme-mockup-x.vercel.app' } }), 'deliver', { status: 'running', run: { id: 'd', kind: 'deliver', siteId: 'acme', startedAt: NOW.toISOString() } })
+  const accepted = value(acceptSubmit(m, 'd', { sessionId: SESSION, summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }, LATER))
+  assert.equal(accepted.stages.deliver.status, 'done')
+  assert.equal(accepted.stages.deliver.version, 1)
+  assert.equal(accepted.status, 'delivered')
+  assert.deepEqual(accepted.urls, { preview: 'https://acme-mockup-x.vercel.app', prod: 'https://acme-mockup.vercel.app' })
+})
+
+test('crit. 20: approving the build leaves deliver ready', () => {
+  const m = withStep(withStep(mockup({ id: 'm' }), 'build', { status: 'waiting', version: 1 }), 'deliver', { status: 'locked' })
+  const approved = value(decide(m, { step: 'build', action: 'approve' }, NOW))
+  assert.equal(approved.stages.build.status, 'done')
+  assert.equal(approved.stages.deliver.status, 'ready')
+})
+
+// ── The changes track (D2; criterion 36) ──
+
+const PROD_URL = 'https://acme-mockup.vercel.app'
+
+/** A delivered mockup: every stage done, both URLs. */
+function delivered(): Mockup {
+  let m = mockup({ id: 'm', buildSiteId: 'acme', status: 'delivered', urls: { preview: 'https://acme-mockup-b.vercel.app', prod: PROD_URL } })
+  for (const id of STAGE_IDS) m = withStep(m, id, { status: 'done', version: 1 })
+  return m
+}
+const CHANGE_RUN = { kind: 'change' as const, changeId: 'c1', runId: 'x1', siteId: 'acme' }
+const asked = (): Mockup => value(requestChange(delivered(), { changeId: 'c1', text: 'Logo más grande' }, NOW))
+const change = (m: Mockup): Change => m.changes.find((c) => c.id === 'c1') ?? assert.fail('no change c1')
+/** A change that ran and handed its preview: waiting at its gate. */
+function changeWaiting(): Mockup {
+  const started = value(startRun(asked(), CHANGE_RUN, NOW))
+  return value(acceptSubmit(started, 'x1', { sessionId: SESSION, summary: 's', previewUrl: 'https://acme-mockup-c-team.vercel.app' }, LATER))
+}
+const approved = (): Mockup => value(decideChange(changeWaiting(), { changeId: 'c1', action: 'approve' }, LATER))
+const REDEPLOY = { kind: 'redeploy' as const, changeId: 'c1', runId: 'y1', siteId: 'acme' }
+
+test('crit. 36: a change is asked of a delivered mockup: ready, phase change, and the mockup is changing', () => {
+  const m = asked()
+  assert.deepEqual(change(m), { id: 'c1', text: 'Logo más grande', phase: 'change', status: 'ready', version: 0, history: [] })
+  assert.equal(m.status, 'changing')
+})
+
+test('crit. 36: no change before delivery, none on an archived mockup, and one open at a time', () => {
+  assert.equal(code(requestChange(mockup({ id: 'm' }), { changeId: 'c1', text: 't' }, NOW)), 'conflict')
+  assert.equal(code(requestChange({ ...delivered(), status: 'archived' }, { changeId: 'c1', text: 't' }, NOW)), 'conflict')
+  assert.equal(code(requestChange(asked(), { changeId: 'c2', text: 'otro' }, NOW)), 'conflict')
+})
+
+test('crit. 36: a change runs on its own track — its run is found by id and is the live one', () => {
+  const m = value(startRun(asked(), CHANGE_RUN, NOW))
+  assert.equal(change(m).status, 'running')
+  assert.equal(change(m).run?.kind, 'change')
+  assert.equal(findRun(m, 'x1')?.change?.id, 'c1')
+  assert.equal(findRun(m, 'x1')?.stage, undefined)
+  assert.equal(liveRun(m)?.id, 'x1')
+  assert.equal(code(startRun(m, { ...CHANGE_RUN, runId: 'x2' }, NOW)), 'conflict', 'crit. 19: one run at a time')
+})
+
+test('a change run needs its change: none, or another id, is not-found', () => {
+  assert.equal(code(startRun(asked(), { ...CHANGE_RUN, changeId: 'nope' }, NOW)), 'not-found')
+})
+
+test('crit. 36: an accepted change waits at its own gate with its preview; the build’s preview stays', () => {
+  const m = changeWaiting()
+  assert.equal(change(m).status, 'waiting')
+  assert.equal(change(m).version, 1)
+  assert.equal(change(m).previewUrl, 'https://acme-mockup-c-team.vercel.app')
+  assert.equal(m.urls.preview, 'https://acme-mockup-b.vercel.app')
+  assert.equal(m.status, 'changing')
+})
+
+test('crit. 15, 29: abandoning a first change run goes back to ready; a redo’s, to waiting with its comment', () => {
+  assert.equal(change(value(abandonRun(value(startRun(asked(), CHANGE_RUN, NOW)), 'x1', NOW))).status, 'ready')
+  const redo = value(startRun(changeWaiting(), { ...CHANGE_RUN, runId: 'x2', redo: { comment: 'más grande aún' } }, NOW))
+  const back = change(value(abandonRun(redo, 'x2', NOW)))
+  assert.equal(back.status, 'waiting')
+  assert.equal(back.pendingComment, 'más grande aún')
+})
+
+test('crit. 36: the change gate approves into phase approved, ready for its redeploy; a redo needs a comment', () => {
+  const m = approved()
+  assert.equal(change(m).phase, 'approved')
+  assert.equal(change(m).status, 'ready')
+  assert.deepEqual(change(m).history, [{ at: LATER.toISOString(), action: 'approve', version: 1 }])
+  assert.equal(code(decideChange(changeWaiting(), { changeId: 'c1', action: 'redo' }, NOW)), 'invalid')
+  assert.equal(code(decideChange(changeWaiting(), { changeId: 'c1', action: 'choose' }, NOW)), 'invalid')
+  assert.equal(code(decideChange(asked(), { changeId: 'c1', action: 'approve' }, NOW)), 'conflict')
+  assert.equal(code(decideChange(changeWaiting(), { changeId: 'nope', action: 'approve' }, NOW)), 'not-found')
+  assert.equal(change(value(decideChange(changeWaiting(), { changeId: 'c1', action: 'redo', comment: 'x' }, NOW))).status, 'waiting')
+})
+
+test('crit. 36: a redeploy runs only on an approved change, and the change run is never launched again', () => {
+  assert.equal(code(startRun(changeWaiting(), REDEPLOY, NOW)), 'conflict')
+  assert.equal(code(startRun(approved(), { ...CHANGE_RUN, runId: 'x9' }, NOW)), 'conflict')
+  const m = value(startRun(approved(), REDEPLOY, NOW))
+  assert.equal(change(m).phase, 'redeploy')
+  assert.equal(change(m).status, 'running')
+})
+
+test('crit. 36: a redeploy abandoned — stalled first or not — goes back to approved, with «Start redeploy»', () => {
+  const running = value(startRun(approved(), REDEPLOY, NOW))
+  for (const m of [running, value(stallRun(running, 'y1', NOW))]) {
+    const back = change(value(abandonRun(m, 'y1', NOW)))
+    assert.equal(back.phase, 'approved')
+    assert.equal(back.status, 'ready')
+    assert.equal(back.run, undefined)
+  }
+  assert.equal(change(value(stallRun(running, 'y1', NOW))).status, 'stalled')
+})
+
+test('crit. 36: an accepted redeploy closes the change, updates production, and the mockup is delivered again', () => {
+  const m = value(acceptSubmit(value(startRun(approved(), REDEPLOY, NOW)), 'y1', { sessionId: SESSION, summary: 's', prodUrl: PROD_URL }, LATER))
+  assert.equal(change(m).status, 'done')
+  assert.equal(change(m).version, 1, 'L3: production is the version the owner approved, not a new one')
+  assert.equal(change(m).run, undefined)
+  assert.equal(m.status, 'delivered')
+  assert.equal(m.urls.prod, PROD_URL)
+  assert.equal(code(requestChange(m, { changeId: 'c2', text: 'otro' }, NOW)), 'ok', 'the next change can be asked')
+})
+
+test('archive refuses a mockup whose change is running', () => {
+  assert.equal(code(archive(value(startRun(asked(), CHANGE_RUN, NOW)), NOW)), 'conflict')
 })

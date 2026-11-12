@@ -75,14 +75,14 @@
 @keyframes mk-fade { from { opacity: .3; } }
 
 /* The document and its margin. */
-.mk-body { display: grid; grid-template-columns: 1fr 340px; flex: 1; }
+.mk-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; flex: 1; }
 .mk-page { padding: 24px 32px 48px; min-width: 0; }
 .mk-inner { max-width: 72ch; margin: 0 auto; }
 .mk-doc + .mk-doc { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 24px; }
 .mk-keys { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .mk-keys dt { color: var(--text-3); font-size: 13px; }
 .mk-keys dd { margin: 0; font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
-.mk-margin { border-left: 1px solid var(--line); background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 22px; }
+.mk-margin { border-left: 1px solid var(--line); background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 
 /* Gate and stage panel. */
 .mk-gate, .mk-stage { display: flex; flex-direction: column; gap: 10px; }
@@ -119,7 +119,7 @@
   .mk-st-btn { flex-direction: row-reverse; align-items: center; gap: 10px; }
   .mk-seg { width: 6px; height: 28px; }
   .mk-lab { flex: 1; }
-  .mk-body { grid-template-columns: 1fr; }
+  .mk-body { grid-template-columns: minmax(0, 1fr); }
   .mk-page { padding: 16px; }
   .mk-margin { border-left: 0; border-top: 1px solid var(--line); padding-bottom: 96px; }
   .mk-thumb { display: block; position: sticky; bottom: 0; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; }
@@ -146,3 +146,14 @@
 .mk-picked .mk-option-mark { box-shadow: inset 0 0 0 4px var(--accent); }
 .mk-option-open { margin: 0 14px 12px; align-self: flex-start; }
 .mk-option:has(.mk-option-open) { display: flex; flex-direction: column; }
+.mk-project a.mk-ellipsis { display: block; max-width: 100%; color: var(--accent); }
+
+/* The changes after delivery (criterion 36). */
+.mk-tabs { display: flex; gap: 8px; padding-top: 8px; }
+.mk-changes { display: flex; flex-direction: column; gap: 20px; }
+.mk-change-open { display: flex; flex-direction: column; gap: 10px; }
+.mk-change-text { margin: 0; font-size: 15px; line-height: 1.5; }
+.mk-change-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.mk-change { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.mk-change a.mk-ellipsis { display: block; color: var(--accent); }
+.mk-app { display: flex; flex-direction: column; gap: 12px; }

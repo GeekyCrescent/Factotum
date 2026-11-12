@@ -3,8 +3,9 @@
  * board.
  *
  * WHAT `rest` MEANS: `''` the gallery; `new` the form; `<id>` a mockup at its current stage;
- * `<id>/<stage>` a mockup open at that stage — the path a gate's push opens (D6). An id is a UUIDv7,
- * so it is never `new`.
+ * `<id>/<stage>` a mockup open at that stage — the path a gate's push opens (D6); `<id>/changes` its
+ * changes after delivery, where a change's push lands (criterion 36). An id is a UUIDv7, so it is
+ * never `new`.
  */
 
 import './mockups.css'
@@ -29,7 +30,7 @@ function MockupsView(props: ViewProps) {
   const [first = '', second] = rest.split('/')
   const id = decoded(first)
   if (id === undefined) return <Gallery props={props} />
-  const stage = STAGE_IDS.find((s) => s === second) as StageId | undefined
+  const stage = second === 'changes' ? 'changes' : (STAGE_IDS.find((s) => s === second) as StageId | undefined)
   return <Pipeline key={id} props={props} id={id} open={stage} />
 }
 

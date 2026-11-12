@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Mockup, StageId, Step } from '../types.ts'
-import { afterDecision, safeUrl, crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
+import type { Change, Mockup, StageId, Step } from '../types.ts'
+import { afterDecision, changeActions, changeLine, openChange, requestChangeBlocked, safeUrl, crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
 
 const NOW = new Date('2026-11-12T10:00:00.000Z')
 const SESSION = '0192f3a4-5b6c-7d8e-9f01-23456789abcd'
@@ -57,9 +57,12 @@ test('crit. 19: another run alive in the mockup blocks a start, with its stage n
   assert.match(launchBlocked(m, 'plan', { sessions: true }) ?? '', /concepts is running/)
 })
 
-test('a stage of a later block is shown and cannot start (E4); concepts now can', () => {
-  const m = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' }, build: { status: 'ready' } }, { buildSiteId: 'acme' })
-  assert.equal(stageActions(m, 'build', { sessions: true, now: NOW }).start?.disabled, 'next cut')
+test('cut 3: every stage can start, build and deliver included (E4 is over)', () => {
+  const done = { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' } } as const
+  const m = mockup('a', { ...done, build: { status: 'done' }, deliver: { status: 'ready' } }, { buildSiteId: 'acme' })
+  assert.equal(stageActions(m, 'deliver', { sessions: true, now: NOW }).start?.disabled, undefined)
+  const b = mockup('a', { ...done, build: { status: 'ready' } }, { buildSiteId: 'acme' })
+  assert.equal(stageActions(b, 'build', { sessions: true, now: NOW }).start?.disabled, undefined)
   const p = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'ready' } })
   assert.equal(stageActions(p, 'plan', { sessions: true, now: NOW }).start?.disabled, undefined)
   const c = mockup('a', { brief: { status: 'done' }, concepts: { status: 'ready' } })
@@ -81,7 +84,8 @@ test('crit. 28: a choosing gate offers choose, not approve; an approving gate th
 test('crit. 27, 28: after approving or choosing, the screen launches the next stage only if this cut launches it', () => {
   assert.equal(afterDecision('brief'), 'concepts')
   assert.equal(afterDecision('concepts'), 'plan')
-  assert.equal(afterDecision('plan'), undefined)
+  assert.equal(afterDecision('plan'), 'build')
+  assert.equal(afterDecision('build'), 'deliver', 'crit. 20: approving the build launches deliver')
   assert.equal(afterDecision('deliver'), undefined)
 })
 
@@ -131,4 +135,51 @@ test('an option url becomes a link only if it is https (the server checks too; t
   assert.equal(safeUrl('http://example.com'), undefined)
   assert.equal(safeUrl('not a url'), undefined)
   assert.equal(safeUrl(undefined), undefined)
+})
+
+// ── The changes track (criterion 36) ──
+
+const ALL_DONE = { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' }, build: { status: 'done' }, deliver: { status: 'done' } } as const
+const change = (over: Partial<Change> = {}): Change => ({ id: 'c1', text: 'logo', phase: 'change', status: 'ready', version: 0, history: [], ...over })
+const delivered = (changes: readonly Change[] = [], over: Partial<Mockup> = {}) => mockup('d', ALL_DONE, { buildSiteId: 'acme', status: changes.length === 0 ? 'delivered' : 'changing', changes, ...over })
+const CTX = { sessions: true, now: NOW }
+
+test('crit. 36: «Request a change» is offered once delivered, one change at a time, with the reason when it is off', () => {
+  assert.equal(requestChangeBlocked(mockup('a'), CTX), 'a change is asked of a delivered mockup')
+  assert.equal(requestChangeBlocked(delivered(), CTX), undefined)
+  assert.equal(requestChangeBlocked(delivered([change()]), CTX), 'one change at a time: finish the open one first')
+  assert.equal(requestChangeBlocked(delivered([change({ status: 'done', phase: 'redeploy' })]), CTX), undefined)
+  assert.match(requestChangeBlocked(delivered(), { ...CTX, sessions: false }) ?? '', /sessions is not running/)
+  assert.equal(openChange(delivered([change({ status: 'done' }), change({ id: 'c2' })]))?.id, 'c2')
+})
+
+test('crit. 36: a change offers Start change, then its gate, then Start redeploy — never the change again', () => {
+  assert.equal(changeActions(delivered([change()]), change(), CTX).start?.kind, 'change')
+  const waiting = changeActions(delivered([change({ status: 'waiting', version: 1 })]), change({ status: 'waiting', version: 1 }), CTX)
+  assert.equal(waiting.approve, true)
+  assert.equal(waiting.redo.disabled, undefined)
+  assert.equal(waiting.start, undefined)
+  const approved = change({ phase: 'approved', status: 'ready', version: 1 })
+  assert.equal(changeActions(delivered([approved]), approved, CTX).start?.kind, 'redeploy')
+  const stalled = change({ phase: 'redeploy', status: 'stalled', run: { ...run(30, SESSION), kind: 'redeploy' } })
+  const actions = changeActions(delivered([stalled]), stalled, CTX)
+  assert.equal(actions.retry?.disabled, undefined)
+  assert.equal(actions.openSession, SESSION)
+})
+
+test('crit. 36: the line of a change says where it is', () => {
+  assert.equal(changeLine(change()), 'ready to start')
+  assert.equal(changeLine(change({ status: 'running' })), 'running')
+  assert.equal(changeLine(change({ status: 'waiting', version: 2 })), 'waiting on you · v2')
+  assert.equal(changeLine(change({ phase: 'approved', status: 'ready', version: 2 })), 'approved · not in production yet')
+  assert.equal(changeLine(change({ phase: 'redeploy', status: 'running' })), 'going to production')
+  assert.equal(changeLine(change({ phase: 'redeploy', status: 'done', version: 2 })), 'in production · v2')
+})
+
+test('crit. 19, 38: a change’s run counts as the live run, and a change waiting on you puts the mockup first', () => {
+  const running = delivered([change({ status: 'running', run: { ...run(1), kind: 'change' } })])
+  assert.match(launchBlocked(running, 'deliver', { sessions: true }) ?? '', /change is running/)
+  assert.match(inputsBlocked(running) ?? '', /change is running/)
+  const waiting = delivered([change({ status: 'waiting', version: 1 })], { id: 'w', updatedAt: '2026-01-01T00:00:00Z' })
+  assert.deepEqual(galleryOrder([mockup('rest'), waiting]).map((m) => m.id), ['w', 'rest'])
 })

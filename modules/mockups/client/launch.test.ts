@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Api } from './contract.ts'
-import { freePromptEntry, redoStage, startStage } from './launch.ts'
+import { freePromptEntry, redoStage, requestChange, startStage } from './launch.ts'
 
 const SESSION = '0192f3a4-5b6c-7d8e-9f01-23456789abcd'
 const TICKET = { runId: 'r1', siteId: 'personal', text: 'the prompt', title: 'Mockup · brief · Alta GMM', model: 'opus[1m]' }
@@ -119,4 +119,28 @@ test('crit. 15: the notice of a busy launch carries the session in the way, to o
   assert.equal(noticeOf({ ok: true, sessionId: SESSION, titled: true }), undefined)
   assert.deepEqual(noticeOf({ ok: true, sessionId: SESSION, titled: false }), { text: 'The session started, but its title could not be set.' })
   assert.deepEqual(noticeOf({ ok: false, problem: { kind: 'rejected', message: 'no model' } }), { text: 'no model' })
+})
+
+test('crit. 36: a change is asked and launched in one go; a redeploy names its change; a change redo goes through its gate', async () => {
+  const calls: string[] = []
+  const sessions = fakeApi(calls, 'sessions', {
+    'GET setup': () => SETUP,
+    'POST sessions': () => ({ sessionId: SESSION }),
+    [`POST sessions/${SESSION}/title`]: () => ({}),
+  })
+  const mockups = fakeApi(calls, 'mockups', {
+    'POST mockups/m1/changes': () => ({ mockup: {}, run: TICKET }),
+    'POST mockups/m1/runs': () => TICKET,
+    'POST mockups/m1/decision': () => ({ mockup: {}, run: TICKET }),
+    'POST runs/r1/session': () => ({}),
+  })
+  assert.equal((await requestChange({ mockups, sessions }, 'm1', 'logo más grande')).ok, true)
+  assert.equal((await startStage({ mockups, sessions }, 'm1', 'redeploy', 'c1')).ok, true)
+  assert.equal((await redoStage({ mockups, sessions }, 'm1', { changeId: 'c1' }, 'más')).ok, true)
+  const posts = calls.filter((call) => call.startsWith('mockups POST mockups/'))
+  assert.deepEqual(posts, [
+    'mockups POST mockups/m1/changes {"text":"logo más grande"}',
+    'mockups POST mockups/m1/runs {"kind":"redeploy","changeId":"c1"}',
+    'mockups POST mockups/m1/decision {"step":{"changeId":"c1"},"action":"redo","comment":"más"}',
+  ])
 })

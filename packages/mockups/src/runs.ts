@@ -10,10 +10,10 @@
  */
 
 import type { Logger } from '@factotum/core'
-import { stallRun } from './ops.ts'
+import { findRun, runsOf, stallRun } from './ops.ts'
 import { STARTING_ABANDON_MS } from './shape.ts'
 import type { MockupsStore } from './store/store.ts'
-import { STAGE_IDS, type MockupsFile } from './types.ts'
+import type { MockupsFile } from './types.ts'
 
 export interface StaleRun {
   readonly mockupId: string
@@ -23,10 +23,8 @@ export interface StaleRun {
 export function staleRuns(file: MockupsFile, now: Date): readonly StaleRun[] {
   const stale: StaleRun[] = []
   for (const m of file.mockups) {
-    for (const stage of STAGE_IDS) {
-      const step = m.stages[stage]
-      const run = step.run
-      if (run === undefined || run.sessionId !== undefined || step.status !== 'running') continue
+    for (const { step, run } of runsOf(m)) {
+      if (run.sessionId !== undefined || step.status !== 'running') continue
       if (now.getTime() - Date.parse(run.startedAt) >= STARTING_ABANDON_MS) stale.push({ mockupId: m.id, runId: run.id })
     }
   }
@@ -41,8 +39,8 @@ export async function sweep(store: MockupsStore, now: Date, log: Logger): Promis
       const m = file.mockups.find((one) => one.id === stale.mockupId)
       if (m === undefined) return { ok: false, error: { code: 'not-found', reason: 'gone' } }
       // On the file OF THIS CHANGE: a session linked since the snapshot is alive, and stays running.
-      const step = STAGE_IDS.map((id) => m.stages[id]).find((one) => one.run?.id === stale.runId)
-      if (step?.run === undefined || step.run.sessionId !== undefined || step.status !== 'running') {
+      const found = findRun(m, stale.runId)
+      if (found === undefined || found.run.sessionId !== undefined || found.step.status !== 'running') {
         return { ok: false, error: { code: 'conflict', reason: 'linked since' } }
       }
       const stalled = stallRun(m, stale.runId, now)
@@ -55,8 +53,8 @@ export async function sweep(store: MockupsStore, now: Date, log: Logger): Promis
       continue
     }
     count++
-    const stage = STAGE_IDS.find((id) => result.value.mockup.stages[id].run?.id === stale.runId) ?? 'unknown'
-    log.info(`mockup ${stale.mockupId}: ${stage} run ${stale.runId} had no session after ${STARTING_ABANDON_MS / 60_000} min; stalled`)
+    const kind = findRun(result.value.mockup, stale.runId)?.run.kind ?? 'unknown'
+    log.info(`mockup ${stale.mockupId}: ${kind} run ${stale.runId} had no session after ${STARTING_ABANDON_MS / 60_000} min; stalled`)
   }
   return count
 }

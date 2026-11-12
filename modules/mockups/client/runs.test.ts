@@ -64,3 +64,10 @@ test('crit. 17: the check gives up on a session after 5 s', async () => {
   assert.equal(await checkLiveRuns(apis('hang', calls), mockupWith({ status: 'running', run: RUN }), 50), 0)
   assert.ok(Date.now() - started < 1000)
 })
+
+test('crit. 17, 36: a change’s linked run whose session ended is stalled too', async () => {
+  const calls: string[] = []
+  const m = { ...mockupWith({}), changes: [{ id: 'c1', text: 't', phase: 'change' as const, status: 'running' as const, version: 0, history: [], run: { ...RUN, id: 'x1', kind: 'change' as const } }] }
+  assert.equal(await checkLiveRuns(apis('finished', calls), m), 1)
+  assert.ok(calls.includes('POST runs/x1/stall'))
+})

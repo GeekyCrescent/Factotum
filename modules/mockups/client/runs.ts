@@ -1,5 +1,5 @@
 /**
- * Live runs, checked when a mockup opens (design D5; criterion 17): for each run linked to a session,
+ * Live runs — a stage's or a change's — checked when a mockup opens (design D5; criterion 17): for each run linked to a session,
  * `GET sessions/:id` within 5 s, in parallel; a session that `finished`, `failed`, was `cancelled` or
  * is gone → `POST runs/:runId/stall`. The run is not removed: its late `submit_stage` is still taken.
  * A session that could not be read is left as it is — not knowing is not ending.
@@ -34,7 +34,7 @@ async function readSession(sessions: Api, sessionId: string, timeoutMs: number):
 export async function checkLiveRuns(apis: { readonly mockups: Api; readonly sessions: Api | undefined }, m: Mockup, timeoutMs = CHECK_TIMEOUT_MS): Promise<number> {
   const sessions = apis.sessions
   if (sessions === undefined) return 0
-  const running = STAGE_IDS.map((id) => m.stages[id]).filter((step) => step.status === 'running' && step.run?.sessionId !== undefined)
+  const running = [...STAGE_IDS.map((id) => m.stages[id]), ...m.changes].filter((step) => step.status === 'running' && step.run?.sessionId !== undefined)
   const stalled = await Promise.all(
     running.map(async (step) => {
       const run = step.run

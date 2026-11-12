@@ -94,6 +94,7 @@ function routeTable(holder: Holder): RouteTable {
 
     'POST /mockups/:id/runs': withMockups(async (mockups, req) => answer(await mockups.startRun(id(req), req.body))),
     'POST /mockups/:id/decision': withMockups(async (mockups, req) => answer(await mockups.decide(id(req), req.body))),
+    'POST /mockups/:id/changes': withMockups(async (mockups, req) => answer(await mockups.requestChange(id(req), req.body))),
     'POST /mockups/:id/archive': withMockups(async (mockups, req) => answer(await mockups.archive(id(req)))),
 
     'POST /runs/:runId/session': withMockups(async (mockups, req) => answer(await mockups.linkRun(runId(req), req.body))),

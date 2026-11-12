@@ -9,15 +9,17 @@
  */
 
 import { useCallback, useEffect, useState } from 'preact/hooks'
-import { STAGE_IDS, type Mockup, type StageId } from '../types.ts'
+import { STAGE_IDS, type Change, type Mockup, type StageId } from '../types.ts'
+import { Changes } from './changes.tsx'
 import type { ViewProps } from './contract.ts'
 import { DocView } from './doc-view.tsx'
 import { Gate } from './gate.tsx'
 import { Glyph } from './glyph.tsx'
 import { Icon } from './icon.tsx'
 import { Inputs } from './inputs.tsx'
+import { Deployments, OpenUrl } from './links.tsx'
 import { messageOf, noticeOf, redoStage, startStage, type LaunchOutcome, type Notice } from './launch.ts'
-import { afterDecision, nowStage, stageActions, statusLine } from './model.ts'
+import { afterDecision, changeLine, nowStage, openChange, stageActions, statusLine } from './model.ts'
 import { pollRequest, reconcileProject, requestProject, type ProjectState } from './project.ts'
 import { checkLiveRuns } from './runs.ts'
 import { StagePanel } from './stage.tsx'
@@ -27,7 +29,8 @@ const REFRESH_MS = 5_000
 
 type Loaded = { readonly kind: 'loading' } | { readonly kind: 'ok'; readonly mockup: Mockup } | { readonly kind: 'failed'; readonly message: string }
 
-export function Pipeline({ props, id, open }: { readonly props: ViewProps; readonly id: string; readonly open: StageId | undefined }) {
+/** `open`: a stage, or `changes` — the track after delivery (criterion 36). */
+export function Pipeline({ props, id, open }: { readonly props: ViewProps; readonly id: string; readonly open: StageId | 'changes' | undefined }) {
   const { api, host } = props
   const sessions = props.peerModule('sessions', host)
   const [loaded, setLoaded] = useState<Loaded>({ kind: 'loading' })
@@ -68,7 +71,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
   }, [api, sessions, reload])
 
   const mockup = loaded.kind === 'ok' ? loaded.mockup : undefined
-  const running = mockup !== undefined && STAGE_IDS.some((s) => mockup.stages[s].status === 'running')
+  const running = mockup !== undefined && [...STAGE_IDS.map((s) => mockup.stages[s]), ...mockup.changes].some((step) => step.status === 'running')
   const waitingRequest = project?.kind === 'waiting' ? project.requestId : undefined
 
   useEffect(() => {
@@ -88,18 +91,20 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
   if (loaded.kind === 'loading') return <div class="mk-skeleton mk-pad" aria-busy="true" />
   if (loaded.kind === 'failed' || mockup === undefined) return <p class="mk-notice mk-err mk-pad">{loaded.kind === 'failed' ? loaded.message : 'Not found.'}</p>
 
-  const stage = open ?? nowStage(mockup)
+  const onChanges = open === 'changes'
+  const stage = open === undefined || open === 'changes' ? nowStage(mockup) : open
   const step = mockup.stages[stage]
   const actions = stageActions(mockup, stage, { sessions: sessions !== undefined, now: new Date() })
   const apis = { mockups: api, sessions, host }
 
-  const run = async (act: () => Promise<LaunchOutcome>): Promise<void> => {
+  const run = async (act: () => Promise<LaunchOutcome>): Promise<LaunchOutcome> => {
     setBusy(true)
     setNotice(undefined)
     const outcome = await act()
     setNotice(noticeOf(outcome))
     await reload()
     setBusy(false)
+    return outcome
   }
   // Approve or choose; then, with a 200, the next stage's launch from here (D5; criteria 27, 28).
   const decide = async (decision: { readonly action: 'approve' } | { readonly action: 'choose'; readonly optionId: string }): Promise<void> => {
@@ -122,10 +127,36 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
     await reload()
     setBusy(false)
   }
-  const abandon = async (): Promise<void> => {
-    if (step.run === undefined) return
+  /** `false` when the abandon failed: a retry must not launch on top of it (its notice says why). */
+  const abandonRun = async (runId: string): Promise<boolean> => {
     setBusy(true)
-    await api.post(`runs/${encodeURIComponent(step.run.id)}/abandon`, { reason: 'abandoned by the owner' }).catch((cause: unknown) => setNotice({ text: messageOf(cause) }))
+    const done = await api
+      .post(`runs/${encodeURIComponent(runId)}/abandon`, { reason: 'abandoned by the owner' })
+      .then(() => true)
+      .catch((cause: unknown) => {
+        setNotice({ text: messageOf(cause) })
+        return false
+      })
+    await reload()
+    setBusy(false)
+    return done
+  }
+  const abandon = async (): Promise<void> => {
+    if (step.run !== undefined) await abandonRun(step.run.id)
+  }
+  // A change's gate (criterion 36): approve, then — with a 200 — its redeploy, from here.
+  const approveChange = async (change: Change): Promise<void> => {
+    setBusy(true)
+    setNotice(undefined)
+    try {
+      await api.post(`${path}/decision`, { step: { changeId: change.id }, action: 'approve' })
+    } catch (cause) {
+      setNotice({ text: messageOf(cause) })
+      await reload()
+      setBusy(false)
+      return
+    }
+    setNotice(noticeOf(await startStage(apis, mockup.id, 'redeploy', change.id)))
     await reload()
     setBusy(false)
   }
@@ -152,6 +183,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
         step={step}
         actions={actions}
         busy={busy}
+        previewUrl={stage === 'build' ? mockup.urls.preview : undefined}
         dictationApi={sessions}
         onApprove={() => void decide({ action: 'approve' })}
         onChoose={(optionId) => void decide({ action: 'choose', optionId })}
@@ -159,7 +191,6 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
       />
     ) : (
       <StagePanel
-        stage={stage}
         label={LABEL[stage]}
         step={step}
         actions={actions}
@@ -189,8 +220,8 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
 
       <ol class="mk-track" aria-label="Stages">
         {STAGE_IDS.map((id) => (
-          <li key={id} class={`mk-st mk-st-${mockup.stages[id].status}${id === stage ? ' mk-open' : ''}${id === moved ? ' mk-moved' : ''}`}>
-            <button type="button" class="mk-st-btn" aria-current={id === stage ? 'step' : undefined} onClick={() => props.navigate(`${mockup.id}/${id}`, { replace: true })}>
+          <li key={id} class={`mk-st mk-st-${mockup.stages[id].status}${id === stage && !onChanges ? ' mk-open' : ''}${id === moved ? ' mk-moved' : ''}`}>
+            <button type="button" class="mk-st-btn" aria-current={id === stage && !onChanges ? 'step' : undefined} onClick={() => props.navigate(`${mockup.id}/${id}`, { replace: true })}>
               <span class="mk-seg" aria-hidden="true" />
               <span class="mk-lab">
                 <Glyph status={mockup.stages[id].status} />
@@ -201,6 +232,14 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
           </li>
         ))}
       </ol>
+
+      {mockup.stages.deliver.status === 'done' ? (
+        <div class="mk-pad-x mk-tabs">
+          <button type="button" class={`btn sm${onChanges ? ' primary' : ''}`} aria-current={onChanges ? 'page' : undefined} onClick={() => props.navigate(`${mockup.id}/changes`, { replace: true })}>
+            Changes{openChange(mockup) === undefined ? ` (${mockup.changes.length})` : ` · ${changeLine(openChange(mockup) as Change)}`}
+          </button>
+        </div>
+      ) : null}
 
       {notice === undefined ? null : (
         <p class="mk-notice mk-pad-x">
@@ -216,17 +255,29 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
       <div class="mk-body">
         <div class="mk-page">
           <div class="mk-inner">
-            {step.version > 0 ? <DocView api={api} mockupId={mockup.id} stage={stage} version={step.version} /> : <p class="mk-empty">{LABEL[stage]} has no document yet.</p>}
+            {onChanges ? (
+              <Changes mockup={mockup} apis={apis} busy={busy} dictationApi={sessions} run={run} approve={approveChange} abandon={abandonRun} openSession={openSession} />
+            ) : stage === 'build' && step.version > 0 ? (
+              <div class="mk-app">
+                <p class="mk-small">The build writes no document: the app is in {mockup.workDir}/mockup-app, and its preview is deployed.</p>
+                <OpenUrl label="Open the preview" url={mockup.urls.preview} primary />
+              </div>
+            ) : step.version > 0 ? (
+              <DocView api={api} mockupId={mockup.id} stage={stage} version={step.version} />
+            ) : (
+              <p class="mk-empty">{LABEL[stage]} has no document yet.</p>
+            )}
           </div>
         </div>
         <aside class="mk-margin">
-          {margin}
+          {onChanges ? null : margin}
+          <Deployments urls={mockup.urls} />
           <Inputs api={api} dictationApi={sessions} mockup={mockup} onChanged={(m) => setLoaded({ kind: 'ok', mockup: m })} />
           <BuildProject state={project} mockup={mockup} onRequest={() => void requestProject({ mockups: api, sessions }, mockup).then(setProject)} />
         </aside>
       </div>
 
-      {step.status === 'waiting' ? (
+      {step.status === 'waiting' && !onChanges ? (
         <div class="mk-thumb">
           <a class="btn primary mk-big" href="#mk-gate">
             Decide

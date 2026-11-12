@@ -19,27 +19,28 @@
 import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Logger, Notifier } from '@factotum/core'
-import { guard, GUARD_LIMITS, type GuardLimits } from './guard.ts'
-import { acceptSubmit, findRun, linkSession } from './ops.ts'
+import { GUARD_LIMITS, publishCheck, type GuardLimits } from './guard.ts'
+import { acceptSubmit, findRun, linkSession, type FoundRun } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
 import { RUN_SPECS, vercelProjectOf } from './stages.ts'
 import { codeOf, type MockupsStore } from './store/store.ts'
-import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, StageId } from './types.ts'
+import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, Step } from './types.ts'
 
 export const SUBMIT_STAGE = 'submit_stage'
 /** The guard BEFORE publishing (crit. 35): the session asks it after a protected deploy, before opening it. */
 export const CHECK_REAL_DATA = 'check_real_data'
 
 const TAKE_DOWN =
-  'Do not turn the protection off. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
+  'Do not turn the protection off, and do not deploy to production. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
   'replace the copy with invented data of the same shape, and deploy again.'
 
 const CHECK_TOOL: AgentTool = {
   name: CHECK_REAL_DATA,
   description:
-    'Before a deploy is opened to the public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
-    'Call it with the runId from your instructions after deploying (still protected) and before turning the protection off.',
+    'Before anything is public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
+    'Call it with the runId from your instructions: for a preview, after deploying (still protected) and before turning the protection off; ' +
+    'for production, before `vercel deploy --prod`.',
   inputSchema: {
     type: 'object',
     properties: { runId: { type: 'string', description: 'The runId from your instructions.' } },
@@ -92,16 +93,23 @@ const refuse = (body: string): AgentToolResult => text(body, true)
 
 interface Live {
   readonly mockup: Mockup
-  readonly stage: StageId
+  readonly found: FoundRun
   readonly run: Run
+  /** What the run is called in the log and the push: its stage, or `change` / `redeploy`. */
+  readonly kind: RunKind
 }
 
 function findLive(mockups: readonly Mockup[], runId: string): Live | undefined {
   for (const m of mockups) {
     const found = findRun(m, runId)
-    if (found !== undefined && (found.step.status === 'running' || found.step.status === 'stalled')) return { mockup: m, stage: found.stage, run: found.run }
+    if (found !== undefined && (found.step.status === 'running' || found.step.status === 'stalled')) return { mockup: m, found, run: found.run, kind: found.run.kind }
   }
   return undefined
+}
+
+/** The step `live`'s run was in, as it is in `m` now. */
+function stepNow(m: Mockup, live: Live): Step | undefined {
+  return live.found.change === undefined ? m.stages[live.found.stage] : m.changes.find((one) => one.id === live.found.change?.id)
 }
 
 /** Checks 1–2: the live run this session may speak for, or why not. */
@@ -119,27 +127,30 @@ async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string
   if (typeof runId !== 'string' || runId === '') return refuse('Not checked: runId must be the runId from your instructions.')
   const live = ownRun(deps, sessionId, siteId, runId)
   if (typeof live === 'string') return refuse(live)
-  if (!RUN_SPECS[live.stage].guard) return refuse(`The ${live.stage} stage publishes nothing: there is nothing to check.`)
-  const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+  if (!RUN_SPECS[live.kind].guard) return refuse(`The ${live.kind} stage publishes nothing: there is nothing to check.`)
+  const guarded = await publishCheck(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
   if (!guarded.ok) {
-    deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check refused`)
+    deps.log.warn(`mockup ${live.mockup.id}: ${live.kind} run ${runId}: the real-data check refused`)
     return refuse(`Not clear: ${guarded.reason} ${TAKE_DOWN}`)
   }
-  deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check is clear`)
-  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may turn the protection off.', false)
+  deps.log.info(`mockup ${live.mockup.id}: ${live.kind} run ${runId}: the real-data check is clear`)
+  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may go on: turn the protection off, or deploy to production.', false)
 }
 
 /** Check 3. `undefined`: every file is there, inside, and not empty. */
 async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boolean): Promise<string | undefined> {
   const { vaultDir, workDir } = live.mockup
-  for (const required of RUN_SPECS[live.stage].files) {
-    if (!input.files.includes(required)) return `files must include ${required}, the document this stage writes.`
+  const spec = RUN_SPECS[live.kind]
+  const required = spec.files
+  const built = spec.workFiles ?? []
+  for (const file of [...required, ...built]) {
+    if (!input.files.includes(file)) return `files must include ${file}, which this stage writes.`
   }
-  const required = RUN_SPECS[live.stage].files
   for (const file of input.files) {
-    // A document the stage requires is read from the mockup folder, so it must be THERE; anything else
-    // may be in either folder.
-    const candidates = isAbsolute(file) ? [file] : required.includes(file) ? [join(vaultDir, file)] : [join(vaultDir, file), join(workDir, file)]
+    // A document the stage requires is read from the mockup folder, so it must be THERE; what it builds,
+    // from the work folder; anything else may be in either.
+    const home = required.includes(file) ? [vaultDir] : built.includes(file) ? [workDir] : [vaultDir, workDir]
+    const candidates = isAbsolute(file) ? [file] : home.map((dir) => join(dir, file))
     let found: string | undefined
     for (const candidate of candidates) {
       try {
@@ -151,11 +162,7 @@ async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boole
         // Not there; the next folder, or "does not exist".
       }
     }
-    if (found === undefined) {
-      return required.includes(file)
-        ? `${file} does not exist in ${vaultDir}. Write it there and call again.`
-        : `${file} does not exist in ${vaultDir} nor in ${workDir}. Write it there and call again.`
-    }
+    if (found === undefined) return `${file} does not exist in ${home.join(' nor in ')}. Write it there and call again.`
     const realPath = await real(found)
     if (!inside(vaultDir, realPath, caseInsensitive) && !inside(workDir, realPath, caseInsensitive)) {
       return `${file} is outside the mockup folders (${vaultDir}, ${workDir}). Write it inside them.`
@@ -209,8 +216,16 @@ export function isVercelUrl(raw: string, vercelProject: string | null = null): b
   return vercelProject.length <= PROJECT_PREFIX_CHARS ? label.startsWith(`${vercelProject}-`) : label.startsWith(vercelProject.slice(0, PROJECT_PREFIX_CHARS))
 }
 
-/** Check 5. `undefined`: every URL handed in is a deployment of the stage's own Vercel project. */
-export function checkUrls(input: SubmitInput, vercelProject: string | null = null): string | undefined {
+/**
+ * Check 5. `undefined`: the run handed the URL it must (a preview, or production) and no other, and
+ * every URL is a deployment of the stage's own Vercel project.
+ */
+export function checkUrls(input: SubmitInput, kind: RunKind, vercelProject: string | null = null): string | undefined {
+  const hands = RUN_SPECS[kind].hands
+  for (const key of ['previewUrl', 'prodUrl'] as const) {
+    if (key === hands && input[key] === undefined) return `the ${kind} stage needs ${key}, the URL its deploy printed, answering 200.`
+    if (key !== hands && input[key] !== undefined) return `the ${kind} stage takes no ${key}; call again without it.`
+  }
   const urls: readonly [string, string | undefined][] = [
     ...(input.options ?? []).map((option): [string, string | undefined] => [`option ${option.id}'s url`, option.url]),
     ['previewUrl', input.previewUrl],
@@ -219,6 +234,10 @@ export function checkUrls(input: SubmitInput, vercelProject: string | null = nul
   const shape = vercelProject === null ? 'https://<something>.vercel.app' : `https://<something>.vercel.app of the Vercel project ${vercelProject}`
   for (const [what, url] of urls) {
     if (url !== undefined && !isVercelUrl(url, vercelProject)) return `${what} must be ${shape}, the URL vercel deploy printed.`
+  }
+  // A preview is a deployment's own URL: the alias is production, and the gate would show it as a preview.
+  if (vercelProject !== null && input.previewUrl !== undefined && new URL(input.previewUrl).hostname === `${vercelProject}.vercel.app`) {
+    return `previewUrl is the production URL of ${vercelProject}; hand in the preview deployment's own URL.`
   }
   return undefined
 }
@@ -231,12 +250,13 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   const live = ownRun(deps, sessionId, siteId, input.runId)
   if (typeof live === 'string') return refuse(live)
 
-  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input, vercelProjectOf(live.mockup.project, live.stage))
+  const kind = live.kind
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(kind, input.options) ?? checkUrls(input, kind, vercelProjectOf(live.mockup.project, kind))
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
-  if (RUN_SPECS[live.stage].guard) {
-    const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+  if (RUN_SPECS[kind].guard) {
+    const guarded = await publishCheck(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
     if (!guarded.ok) {
-      deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} refused by the real-data guard`)
+      deps.log.warn(`mockup ${live.mockup.id}: ${kind} run ${input.runId} refused by the real-data guard`)
       return refuse(`Not submitted: ${guarded.reason} ${TAKE_DOWN}`)
     }
   }
@@ -247,37 +267,51 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
     if (current === undefined) return { ok: false, error: { code: 'not-found', reason: 'the mockup is gone' } }
     const linked = linkSession(current, input.runId, sessionId, now)
     if (!linked.ok) return linked
-    const accepted = acceptSubmit(linked.value, input.runId, { sessionId, summary: input.summary, ...(input.options === undefined ? {} : { options: input.options }) }, now)
+    const accepted = acceptSubmit(
+      linked.value,
+      input.runId,
+      {
+        sessionId,
+        summary: input.summary,
+        ...(input.options === undefined ? {} : { options: input.options }),
+        ...(input.previewUrl === undefined ? {} : { previewUrl: input.previewUrl }),
+        ...(input.prodUrl === undefined ? {} : { prodUrl: input.prodUrl }),
+      },
+      now,
+    )
     if (!accepted.ok) return accepted
     const mockups = file.mockups.map((m) => (m.id === current.id ? accepted.value : m))
     return { ok: true, value: { file: { ...file, mockups }, mockup: accepted.value } }
   })
   if (!result.ok) {
-    deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} could not be accepted (${result.error.code})`)
+    deps.log.warn(`mockup ${live.mockup.id}: ${kind} run ${input.runId} could not be accepted (${result.error.code})`)
     return refuse(`Not submitted: ${result.error.reason}.`)
   }
-  const step = result.value.mockup.stages[live.stage]
-  deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} submitted, version ${step.version}, ${step.status}`)
-  if (step.status === 'waiting') await pushGate(deps, live)
-  return text(step.status === 'waiting' ? 'Submitted. The owner will review it. End your turn now.' : 'Submitted. End your turn now.', false)
+  const step = stepNow(result.value.mockup, live)
+  deps.log.info(`mockup ${live.mockup.id}: ${kind} run ${input.runId} submitted, version ${step?.version ?? 0}, ${step?.status ?? 'gone'}`)
+  if (step?.status === 'waiting') await pushGate(deps, live)
+  return text(step?.status === 'waiting' ? 'Submitted. The owner will review it. End your turn now.' : 'Submitted. End your turn now.', false)
 }
 
 /**
  * One push per accepted submission with a gate (D6). The name is the owner's choice (requirements
- * §5); the body is FIXED, and nothing else goes. Its own `try`: the submission is accepted already,
- * and a push that fails must not tell the agent otherwise.
+ * §5); the body is FIXED, and nothing else goes — never a change's request. A change's push opens the
+ * changes (`<stage>` = `change`, D6). Its own `try`: the submission is accepted already, and a push
+ * that fails must not tell the agent otherwise.
  */
 async function pushGate(deps: SubmitDeps, live: Live): Promise<void> {
   if (!deps.notify.canReach()) {
-    deps.log.info(`mockup ${live.mockup.id}: ${live.stage} is waiting; no device to push to`)
+    deps.log.info(`mockup ${live.mockup.id}: ${live.kind} is waiting; no device to push to`)
     return
   }
+  const id = live.mockup.id
+  const label = live.found.change === undefined ? live.found.stage : 'change'
   try {
     await deps.notify.send({
-      title: `${live.mockup.name}: ${live.stage} ready`,
+      title: `${live.mockup.name}: ${label} ready`,
       body: 'Tap to review.',
-      path: `/m/mockups/${live.mockup.id}/${live.stage}`,
-      tag: `mockups-gate-${live.mockup.id}-${live.stage}`,
+      path: `/m/mockups/${id}/${live.found.change === undefined ? label : 'changes'}`,
+      tag: `mockups-gate-${id}-${label}`,
     })
   } catch (error) {
     deps.log.warn(`mockup ${live.mockup.id}: the gate push failed (${error instanceof Error ? error.name : 'unknown'})`)

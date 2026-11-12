@@ -15,7 +15,7 @@
  */
 
 import { conflictOf, describe, freshnessOf, launchUnanswered } from '../../shared/launch-errors/launch-errors.ts'
-import type { RunTicket, StageId } from '../types.ts'
+import type { RunKind, RunTicket, StageId } from '../types.ts'
 import type { Api } from './contract.ts'
 
 export interface CatalogEntry {
@@ -108,29 +108,35 @@ export async function launchTicket(apis: LaunchApis, ticket: RunTicket): Promise
   return { ok: true, sessionId, titled }
 }
 
-/** «Start» (and «Retry» after an abandon): create the run, then launch it. */
-export async function startStage(apis: LaunchApis, mockupId: string, kind: StageId): Promise<LaunchOutcome> {
-  if (apis.sessions === undefined) return NO_SESSIONS
-  let ticket: RunTicket
-  try {
-    ticket = await apis.mockups.post<RunTicket>(`mockups/${encodeURIComponent(mockupId)}/runs`, { kind })
-  } catch (cause) {
-    return { ok: false, problem: { kind: 'rejected', message: messageOf(cause) } }
-  }
-  return await launchTicket(apis, ticket)
-}
-
-/** «Redo»: the decision with its comment creates the run (D6), then the same launch. */
-export async function redoStage(apis: LaunchApis, mockupId: string, step: StageId, comment: string): Promise<LaunchOutcome> {
+/** Asks the module for a run with `post` (it answers the ticket, or `{ run }`), then launches it. */
+async function ticketThenLaunch(apis: LaunchApis, post: () => Promise<RunTicket | undefined>, missing: string): Promise<LaunchOutcome> {
   if (apis.sessions === undefined) return NO_SESSIONS
   let ticket: RunTicket | undefined
   try {
-    ticket = (await apis.mockups.post<{ run?: RunTicket }>(`mockups/${encodeURIComponent(mockupId)}/decision`, { step, action: 'redo', comment })).run
+    ticket = await post()
   } catch (cause) {
     return { ok: false, problem: { kind: 'rejected', message: messageOf(cause) } }
   }
-  if (ticket === undefined) return { ok: false, problem: { kind: 'rejected', message: 'the redo did not start a run' } }
+  if (ticket === undefined) return { ok: false, problem: { kind: 'rejected', message: missing } }
   return await launchTicket(apis, ticket)
+}
+
+/** «Start» (and «Retry» after an abandon): create the run, then launch it. A change's run names its change. */
+export async function startStage(apis: LaunchApis, mockupId: string, kind: RunKind, changeId?: string): Promise<LaunchOutcome> {
+  const body = { kind, ...(changeId === undefined ? {} : { changeId }) }
+  return await ticketThenLaunch(apis, () => apis.mockups.post<RunTicket>(`mockups/${encodeURIComponent(mockupId)}/runs`, body), 'the module started no run')
+}
+
+/** «Redo»: the decision with its comment creates the run (D6), then the same launch — at a stage's gate or a change's. */
+export async function redoStage(apis: LaunchApis, mockupId: string, step: StageId | { readonly changeId: string }, comment: string): Promise<LaunchOutcome> {
+  const path = `mockups/${encodeURIComponent(mockupId)}/decision`
+  return await ticketThenLaunch(apis, async () => (await apis.mockups.post<{ run?: RunTicket }>(path, { step, action: 'redo', comment })).run, 'the redo did not start a run')
+}
+
+/** «Request a change» (criterion 36): the change and its run in one call, then the launch. */
+export async function requestChange(apis: LaunchApis, mockupId: string, text: string): Promise<LaunchOutcome> {
+  const path = `mockups/${encodeURIComponent(mockupId)}/changes`
+  return await ticketThenLaunch(apis, async () => (await apis.mockups.post<{ run?: RunTicket }>(path, { text })).run, 'the change did not start a run')
 }
 
 export interface Notice {

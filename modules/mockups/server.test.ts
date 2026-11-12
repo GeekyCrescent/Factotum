@@ -29,6 +29,7 @@ function fakeMockups(log: string[], over: Partial<Mockups> = {}): Mockups {
     docs: answer('docs', ok({ files: [] })),
     startRun: answer('startRun', ok({ runId: 'r', siteId: 'personal', text: 't', title: 'T' })),
     decide: answer('decide', ok({ mockup: MOCKUP })),
+    requestChange: answer('requestChange', ok({ mockup: MOCKUP })),
     archive: answer('archive', ok(MOCKUP)),
     linkRun: answer('linkRun', ok(MOCKUP)),
     stallRun: answer('stallRun', ok(MOCKUP)),
@@ -126,7 +127,7 @@ test('crit. 2: a failed factory throws with its reason, logs it, and never fills
   assert.deepEqual(events, [])
 })
 
-test('the D8 routes of the first cut, GET and POST only, and no changes route yet', async () => {
+test('the D8 routes, GET and POST only, the changes route included (crit. 36)', async () => {
   const { routes } = await started()
   assert.deepEqual(Object.keys(routes).sort(), [
     'GET /mockups',
@@ -135,6 +136,7 @@ test('the D8 routes of the first cut, GET and POST only, and no changes route ye
     'GET /projects',
     'POST /mockups',
     'POST /mockups/:id/archive',
+    'POST /mockups/:id/changes',
     'POST /mockups/:id/decision',
     'POST /mockups/:id/inputs',
     'POST /mockups/:id/notes',
@@ -177,6 +179,7 @@ test('every body goes over as it came, with the id from the path', async () => {
   await call(routes, 'POST /mockups/:id/runs', { params: { id: 'm1' }, body: { kind: 'brief' } })
   await call(routes, 'POST /mockups/:id/decision', { params: { id: 'm1' }, body: { step: 'brief', action: 'approve' } })
   await call(routes, 'POST /mockups/:id/archive', { params: { id: 'm1' } })
+  await call(routes, 'POST /mockups/:id/changes', { params: { id: 'm1' }, body: { text: 'logo' } })
   await call(routes, 'POST /runs/:runId/session', { params: { runId: 'r' }, body: { sessionId: 's' } })
   await call(routes, 'POST /runs/:runId/stall', { params: { runId: 'r' } })
   await call(routes, 'POST /runs/:runId/abandon', { params: { runId: 'r' }, body: { reason: 'x' } })
@@ -189,6 +192,7 @@ test('every body goes over as it came, with the id from the path', async () => {
     'startRun ["m1",{"kind":"brief"}]',
     'decide ["m1",{"step":"brief","action":"approve"}]',
     'archive ["m1"]',
+    'requestChange ["m1",{"text":"logo"}]',
     'linkRun ["r",{"sessionId":"s"}]',
     'stallRun ["r"]',
     'abandonRun ["r",{"reason":"x"}]',

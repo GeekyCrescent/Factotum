@@ -3,11 +3,11 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { linkSession, startRun, stallRun } from './ops.ts'
+import { linkSession, requestChange, startRun, stallRun } from './ops.ts'
 import { openStore, type MockupsStore } from './store/store.ts'
 import { CHECK_REAL_DATA, createSubmitTool, SUBMIT_STAGE } from './submit.ts'
 import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, withStep, type CapturedLog, type CapturedNotify } from './test-support.ts'
-import type { AgentToolResult, Mockup, Result } from './types.ts'
+import { STAGE_IDS, type AgentToolResult, type Mockup, type Result } from './types.ts'
 
 let root: string
 let vaultDir: string
@@ -368,4 +368,180 @@ test('review, check 5: a vercel.app url of ANOTHER project than the stage’s is
 test('review: check_real_data answers only a stage that publishes', async () => {
   await seedConcepts()
   assert.match(textOf(await check({ runId: 'c1' })), /publishes nothing/)
+})
+
+/** A build run on the work-dir's project, with the plan chosen behind it and the app's package.json written. */
+async function seedBuild(): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme' })
+    for (const id of ['brief', 'concepts', 'plan'] as const) m = withStep(m, id, { status: 'done', version: 1 })
+    m = withStep(m, 'build', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind: 'build', runId: 'b1', siteId: 'acme' }, NOW))] } } }
+  })
+  await mkdir(join(workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'package.json'), '{"name":"acme"}\n')
+}
+const built = () => store.current().mockups[0]
+const PREVIEW = 'https://acme-mockup-abc123-team.vercel.app'
+const APP = ['mockup-app/package.json']
+const callBuild = (raw: Record<string, unknown>) => call({ runId: 'b1', files: APP, summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 32: a build without its previewUrl is refused, and nothing changes', async () => {
+  await seedBuild()
+  const result = await callBuild({})
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /needs previewUrl/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16, check 3: a build must name the app it built, and the app must be in the work-dir', async () => {
+  await seedBuild()
+  assert.match(textOf(await callBuild({ files: ['notes.md'], previewUrl: PREVIEW })), /must include mockup-app\/package\.json/)
+  await rm(join(workDir, 'mockup-app', 'package.json'))
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/package\.json does not exist in .*Acme/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('check 5, pinned: a build preview of the directions project, or any other, is refused', async () => {
+  await seedBuild()
+  for (const url of ['https://acme-directions-abc-team.vercel.app', 'https://evil.vercel.app', 'http://acme-mockup-abc-team.vercel.app']) {
+    assert.match(textOf(await callBuild({ previewUrl: url })), /acme-mockup/, url)
+  }
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16: a build that also hands a prodUrl is refused — it deploys a preview, never production', async () => {
+  await seedBuild()
+  const result = await callBuild({ previewUrl: PREVIEW, prodUrl: 'https://acme-mockup.vercel.app' })
+  assert.match(textOf(result), /takes no prodUrl/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 32: a build is accepted with its preview: waiting, the URL kept on the mockup, one push', async () => {
+  await seedBuild()
+  const result = await callBuild({ previewUrl: PREVIEW })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(built()?.stages.build.status, 'waiting')
+  assert.equal(built()?.urls.preview, PREVIEW)
+  assert.deepEqual(notify.sent, [{ title: 'MTC app: build ready', body: 'Tap to review.', path: '/m/mockups/m1/build', tag: 'mockups-gate-m1-build' }])
+})
+
+test('crit. 35: a build whose app carries a copy of a private input is refused, at the check and at submit', async () => {
+  await seedBuild()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await mkdir(join(workDir, 'mockup-app', 'data'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'data', 'seed.csv'), 'real,rows\n1,2\n')
+  assert.match(textOf(await check({ runId: 'b1' }, { siteId: 'acme' })), /mockup-app\/data\/seed\.csv is a copy/)
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/data\/seed\.csv is a copy/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16: a stage that deploys nothing refuses a previewUrl it was handed', async () => {
+  await seed()
+  await writeFile(join(vaultDir, '01-brief.md'), '# Brief')
+  const result = await call({ runId: 'r1', files: ['01-brief.md'], summary: 's', previewUrl: PREVIEW })
+  assert.match(textOf(result), /takes no previewUrl/)
+  assert.equal(brief()?.status, 'running')
+})
+
+/** A deliver run, the build approved behind it, and the presenter guide written. */
+async function seedDeliver(): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme', urls: { preview: PREVIEW } })
+    for (const id of ['brief', 'concepts', 'plan', 'build'] as const) m = withStep(m, id, { status: 'done', version: 1 })
+    m = withStep(m, 'deliver', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind: 'deliver', runId: 'd1', siteId: 'acme' }, NOW))] } } }
+  })
+  await writeFile(join(vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía del presentador\n')
+}
+const PROD = 'https://acme-mockup.vercel.app'
+const callDeliver = (raw: Record<string, unknown>) => call({ runId: 'd1', files: ['06-presenter-guide.md'], summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 33: a deliver without its prodUrl, or with a preview instead, is refused', async () => {
+  await seedDeliver()
+  assert.match(textOf(await callDeliver({})), /needs prodUrl/)
+  assert.match(textOf(await callDeliver({ previewUrl: PREVIEW, prodUrl: PROD })), /takes no previewUrl/)
+  assert.match(textOf(await callDeliver({ prodUrl: 'https://acme-directions.vercel.app' })), /acme-mockup/)
+  assert.equal(built()?.stages.deliver.status, 'running')
+})
+
+test('crit. 16, check 3: a deliver must write 06-presenter-guide.md in the mockup folder', async () => {
+  await seedDeliver()
+  await rm(join(vaultDir, '06-presenter-guide.md'))
+  assert.match(textOf(await callDeliver({ prodUrl: PROD })), /06-presenter-guide\.md does not exist/)
+})
+
+test('crit. 33: a deliver is accepted: done, the mockup delivered with both URLs, and no push — it has no gate', async () => {
+  await seedDeliver()
+  const result = await callDeliver({ prodUrl: PROD })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(textOf(result), 'Submitted. End your turn now.')
+  assert.equal(built()?.stages.deliver.status, 'done')
+  assert.equal(built()?.status, 'delivered')
+  assert.deepEqual(built()?.urls, { preview: PREVIEW, prod: PROD })
+  assert.deepEqual(notify.sent, [])
+})
+
+// ── The changes track (criterion 36) ──
+
+/** A delivered mockup with change c1 asked and its run x1 (kind `kind`) started. */
+async function seedChange(kind: 'change' | 'redeploy' = 'change'): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme', status: 'delivered', urls: { preview: PREVIEW, prod: PROD } })
+    for (const id of STAGE_IDS) m = withStep(m, id, { status: 'done', version: 1 })
+    m = value(requestChange(m, { changeId: 'c1', text: 'El logo confidencial más grande' }, NOW))
+    if (kind === 'redeploy') m = { ...m, changes: m.changes.map((c) => ({ ...c, phase: 'approved' as const, version: 1 })) }
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind, changeId: 'c1', runId: 'x1', siteId: 'acme' }, NOW))] } } }
+  })
+  await mkdir(join(workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'package.json'), '{"name":"acme"}\n')
+}
+const theChange = () => store.current().mockups[0]?.changes[0]
+const CHANGE_PREVIEW = 'https://acme-mockup-chg-team.vercel.app'
+const callChange = (raw: Record<string, unknown>) => call({ runId: 'x1', files: APP, summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 36: a change without its preview is refused; with it, it waits at its own gate with one push to the changes', async () => {
+  await seedChange()
+  assert.match(textOf(await callChange({})), /needs previewUrl/)
+  const result = await callChange({ previewUrl: CHANGE_PREVIEW })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(theChange()?.status, 'waiting')
+  assert.equal(theChange()?.previewUrl, CHANGE_PREVIEW)
+  assert.deepEqual(notify.sent, [{ title: 'MTC app: change ready', body: 'Tap to review.', path: '/m/mockups/m1/changes', tag: 'mockups-gate-m1-change' }])
+  assert.ok(log.lines.includes('info mockup m1: change run x1 submitted, version 1, waiting'))
+  assert.ok(!JSON.stringify([notify.sent, log.lines]).includes('confidencial'), 'crit. 42: the request is never logged nor pushed')
+})
+
+test('crit. 35: check_real_data answers a change run — it publishes', async () => {
+  await seedChange()
+  assert.match(textOf(await check({ runId: 'x1' }, { siteId: 'acme' })), /^Clear:/)
+})
+
+test('crit. 36: a redeploy must write changes.md and hand in production; accepted, the change is done and the mockup delivered', async () => {
+  await seedChange('redeploy')
+  assert.match(textOf(await call({ runId: 'x1', files: ['changes.md'], summary: 's', prodUrl: PROD }, { siteId: 'acme' })), /changes\.md does not exist/)
+  await writeFile(join(vaultDir, 'changes.md'), '---\ntitle: Cambios\n---\n- 2026-11-13 — logo — https://acme-mockup.vercel.app\n')
+  assert.match(textOf(await call({ runId: 'x1', files: ['changes.md'], summary: 's' }, { siteId: 'acme' })), /needs prodUrl/)
+  const result = await call({ runId: 'x1', files: ['changes.md'], summary: 's', prodUrl: PROD }, { siteId: 'acme' })
+  assert.equal(textOf(result), 'Submitted. End your turn now.')
+  assert.equal(theChange()?.status, 'done')
+  assert.equal(built()?.status, 'delivered')
+  assert.deepEqual(notify.sent, [])
+})
+
+test('review (security H1): check_real_data and submit refuse a build whose token file would be uploaded', async () => {
+  await seedBuild()
+  await writeFile(join(workDir, 'mockup-app', '.env.local'), 'VERCEL_OIDC_TOKEN=x\n')
+  assert.match(textOf(await check({ runId: 'b1' }, { siteId: 'acme' })), /^Not clear: mockup-app\/\.env\.local/)
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/\.env\.local/)
+  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.env*\n.vercel\n')
+  assert.equal((await callBuild({ previewUrl: PREVIEW })).isError, undefined)
+})
+
+test('review (code M2): a change cannot hand the production alias in as its preview', async () => {
+  await seedChange()
+  const result = await callChange({ previewUrl: PROD })
+  assert.match(textOf(result), /previewUrl is the production URL/)
+  assert.equal(theChange()?.status, 'running')
 })
