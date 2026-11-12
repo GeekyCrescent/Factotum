@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { openDb } from '../store/db.ts'
 import { applicationBySeedKey, companyByNameKey, eventsOf, getArtifacts, opportunityIdByDedupeKey } from '../store/repo.ts'
 import { tempBase } from '../test-support.ts'
+import { ok } from '../types.ts'
 import { importSeed, type ImportReport } from './import.ts'
 import { ADS, context, count, COUNTS, fixture, HOLD, NOW, readerWith, seedProfile, storeWith, vaultOf, WAVE1, WAVE2 } from './test-seed.ts'
 
@@ -39,7 +40,8 @@ test('the dry run gives the report and writes nothing', async () => {
 test('the real import: one draft per entry, version 1 from the seed, no lint, its seed key, holdUntil and one imported event', async () => {
   using base = tempBase()
   const db = await storeWith(base)
-  const report = reportOf(await importSeed(db, context(), { dryRun: false }))
+  // The queue (S6) is a no-op here: what is checked is what the import's tx wrote.
+  const report = reportOf(await importSeed(db, context({ enqueueCv: () => ok(undefined) }), { dryRun: false }))
   assert.equal(report.dryRun, false)
   assert.equal(count(db, 'applications'), TOTAL)
   db.read((q) => {

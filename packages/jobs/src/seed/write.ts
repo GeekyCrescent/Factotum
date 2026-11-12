@@ -8,7 +8,7 @@
  */
 
 import { uuidv7 } from '@factotum/sessions'
-import { addressTransition, newApplication } from '../state.ts'
+import { addressTransition, isStaleCheck, newApplication } from '../state.ts'
 import type { Queries } from '../store/db.ts'
 import {
   companyByNameKey,
@@ -31,8 +31,8 @@ import type { PlannedCompany, PlannedEntry } from './plan.ts'
 export interface CreatedApplication {
   readonly planned: PlannedEntry
   readonly app: Application
-  /** The contacts of the entry's addresses that are `unverified` (for the address checks, N4). */
-  readonly unverifiedContactIds: readonly string[]
+  /** The contacts of the entry's addresses never checked (or checked long ago): for the checks of N4. */
+  readonly checkContactIds: readonly string[]
 }
 
 const IMPORTED = { kind: 'imported' } as const
@@ -110,7 +110,8 @@ const blankContact = (companyId: string, from: Partial<Contact> = {}): Contact =
 /** T-D1: an address enters `unverified`, or `verified` with the website when the package saw it with a date. */
 function withAddress(contact: Contact, email: string, seenAt: string | null, now: Date): Contact {
   const created = addressTransition(contact, { type: 'create', email, seen: seenAt === null ? null : { url: seenAt } }, now)
-  return created.ok ? created.value : contact
+  // An address the rule of `to` refuses keeps its text, without a state: approving it is `no-address`.
+  return created.ok ? created.value : { ...contact, email }
 }
 
 function insertSeedContact(q: Queries, companyId: string, seed: SeedContact, now: Date): void {
@@ -215,6 +216,6 @@ export function writeCompanies(q: Queries, companies: readonly PlannedCompany[],
 export function writeDraft(q: Queries, planned: PlannedEntry, profileVersion: number, now: Date): CreatedApplication {
   const { app, contacts } = draftOf(q, planned, now)
   insertImported(q, planned, app, profileVersion, now)
-  const unverifiedContactIds = contacts.filter((c) => c.address?.status === 'unverified').map((c) => c.id)
-  return { planned, app, unverifiedContactIds }
+  const checkContactIds = contacts.filter((c) => c.address !== null && c.address.status !== 'checking' && isStaleCheck(c.address, now)).map((c) => c.id)
+  return { planned, app, checkContactIds }
 }

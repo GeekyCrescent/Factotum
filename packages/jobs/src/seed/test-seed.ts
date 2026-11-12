@@ -7,10 +7,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { loadProfileSeed } from '../profile.ts'
-import { openDb, type Db } from '../store/db.ts'
-import { insertProfileVersion } from '../store/repo.ts'
+import { appTransition } from '../state.ts'
+import { openDb, type Db, type Queries } from '../store/db.ts'
+import { getApplication, insertProfileVersion, saveApplication } from '../store/repo.ts'
 import type { TempBase } from '../test-support.ts'
-import { ok, type Profile } from '../types.ts'
+import { fail, ok, type Profile, type Result } from '../types.ts'
 import type { ImportContext, SeedPackage, SeedVault } from './import.ts'
 
 export const NOW = new Date('2026-11-14T00:00:00.000Z')
@@ -49,11 +50,42 @@ export async function storeWith(base: TempBase, profile: Profile = seedProfile()
   return db
 }
 
+/** The double of G2a's enqueue: writes `gen_requests(id, 'cv')` and moves the application (T-A1). */
+export interface QueueDouble {
+  readonly enqueueCv: ImportContext['enqueueCv']
+  readonly cv: string[]
+}
+
+export function queueDouble(refuse: (applicationId: string) => boolean = () => false): QueueDouble {
+  const cv: string[] = []
+  return {
+    cv,
+    enqueueCv: (q: Queries, applicationId: string): Result<void> => {
+      if (refuse(applicationId)) return fail('module-error', 'the queue refused')
+      const app = getApplication(q, applicationId)
+      if (app === undefined) return fail('not-found', 'no such application')
+      const moved = appTransition(app, { type: 'enqueue' }, NOW)
+      if (!moved.ok) return moved
+      q.run("INSERT INTO gen_requests (entity_id, kind, work_id) VALUES (?, 'cv', ?)", applicationId, `work-${applicationId}`)
+      saveApplication(q, moved.value, { kind: 'prepared', data: { queued: 'cv' } }, NOW)
+      cv.push(applicationId)
+      return ok(undefined)
+    },
+  }
+}
+
+/** A spy for N4's hook: every call, in order. */
+export function checksSpy(): { readonly enqueueSeedChecks: (contactIds: readonly string[]) => void; readonly calls: (readonly string[])[] } {
+  const calls: (readonly string[])[] = []
+  return { calls, enqueueSeedChecks: (contactIds) => void calls.push(contactIds) }
+}
+
 export function context(overrides: Partial<ImportContext> = {}): ImportContext {
   return {
     now: () => NOW,
     timeZone: 'Australia/Sydney',
     vault: vaultOf(),
+    enqueueCv: queueDouble().enqueueCv,
     ...overrides,
   }
 }

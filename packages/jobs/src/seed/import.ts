@@ -8,7 +8,8 @@
  *   nothing, and it runs without a phone, saying `missing-phone` on top.
  * - The real import refuses without `identity.phone` BEFORE reading or writing anything (v4, A1).
  *   Otherwise it plans and writes in ONE `tx`: a `draft` per new entry with version 1 of its
- *   artifacts, an `imported` event each, no lint.
+ *   artifacts, an `imported` event each, no lint. After the `tx`, the CVs and the address checks of
+ *   what the module sends are queued (`queue.ts`, S6).
  */
 
 import type { Db } from '../store/db.ts'
@@ -17,12 +18,14 @@ import { fail, ok, type Result } from '../types.ts'
 import { planImport, type Plan } from './plan.ts'
 import { buildReport, type ImportReport } from './report.ts'
 import { readSeed, type Seed, type SeedSource } from './source.ts'
+import { plannedQueue, queueAfterImport, type QueueSeams } from './queue.ts'
 import { writeCompanies, writeDraft, type CreatedApplication } from './write.ts'
 
 export type { ImportReport } from './report.ts'
 export type { SeedPackage, SeedVault } from './source.ts'
 
-export interface ImportContext extends SeedSource {
+/** The two injected seams (`enqueueCv` → G2a, `enqueueSeedChecks` → N4) are declared in `queue.ts`. */
+export interface ImportContext extends SeedSource, QueueSeams {
   readonly now: () => Date
   /** `jobs.timeZone` (design D13). */
   readonly timeZone: string
@@ -53,9 +56,11 @@ export async function importSeed(db: Db, ctx: ImportContext, input: { readonly d
   if (!seed.ok) return seed
   if (input.dryRun) {
     const plan = db.read((q) => planImport(q, seed.value))
-    return ok(buildReport(seed.value, plan, { dryRun: true, blocked: phone.ok ? null : 'missing-phone' }))
+    const flags = { dryRun: true, blocked: phone.ok ? null : 'missing-phone' } as const
+    return ok(buildReport(seed.value, plan, flags, { queued: plannedQueue(plan), warnings: [] }))
   }
   const written = write(db, seed.value, phone.version, ctx.now())
   if (!written.ok) return written
-  return ok(buildReport(seed.value, written.value.plan, { dryRun: false, blocked: null }))
+  const outcome = queueAfterImport(db, written.value.written.created, ctx)
+  return ok(buildReport(seed.value, written.value.plan, { dryRun: false, blocked: null }, outcome))
 }

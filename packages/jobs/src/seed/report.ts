@@ -8,6 +8,7 @@ import type { KitLeftover } from './kit.ts'
 import { bracketTokens } from './markdown.ts'
 import type { PackageEntry, Skills } from './package.ts'
 import type { Plan, PlannedEntry } from './plan.ts'
+import type { Queued, QueueOutcome } from './queue.ts'
 import type { Seed } from './source.ts'
 
 export interface FileReport {
@@ -49,6 +50,10 @@ export interface ImportReport {
   /** Addresses that enter `verified`, and the `Send via` clause that says so. */
   readonly verified: readonly (EntryRef & { readonly email: string; readonly evidence: string })[]
   readonly kit: { readonly leftovers: readonly KitLeftover[]; readonly templateWarnings: readonly string[] }
+  /** CVs and address checks queued after the `tx` (that it would queue, in a dry run). */
+  readonly queued: Queued
+  /** What did not go as planned after the `tx` (a CV the queue refused…). */
+  readonly warnings: readonly string[]
 }
 
 const ref = (planned: PlannedEntry): EntryRef => ({ file: planned.file, n: planned.entry.n })
@@ -83,10 +88,16 @@ function fileReports(seed: Seed, plan: Plan): readonly FileReport[] {
   })
 }
 
-export function buildReport(seed: Seed, plan: Plan, flags: { readonly dryRun: boolean; readonly blocked: ImportReport['blocked'] }): ImportReport {
+export function buildReport(
+  seed: Seed,
+  plan: Plan,
+  flags: { readonly dryRun: boolean; readonly blocked: ImportReport['blocked'] },
+  outcome: QueueOutcome,
+): ImportReport {
   const entries = plan.entries
   return {
     ...flags,
+    ...outcome,
     companies: {
       read: seed.companies.length,
       created: plan.companies.filter((c) => !c.exists).length,
