@@ -1,0 +1,134 @@
+/*
+ * The mockups screen — direction B, «Documento» (K2, maquetas/opcion-b.html), on the app's tokens.
+ * Prefix `mk-`. Grafito: flat, 1 px lines, amber only for «waiting on you», red only for a failure,
+ * 44 px targets; the one animation of its own is the segment that fills on Approve (D9).
+ */
+
+.mk-screen { container-type: inline-size; min-height: 100%; display: flex; flex-direction: column; }
+.mk-bar { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.mk-title { font-size: 16px; font-weight: 600; margin: 0; }
+.mk-sub { color: var(--text-3); font-size: 14px; }
+.mk-grow { flex: 1; }
+.mk-icon-btn { width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+.mk-pad { padding: 16px; }
+.mk-pad-x { margin: 12px 16px 0; }
+.mk-cap { font-size: 12px; color: var(--text-3); margin: 0; }
+.mk-small { font-size: 14px; color: var(--text-2); margin: 0; }
+.mk-mono { font-family: 'Geist Mono', ui-monospace, monospace; font-variant-ligatures: none; font-size: 13px; }
+.mk-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mk-row { display: flex; align-items: center; gap: 8px; }
+.mk-wrap { flex-wrap: wrap; }
+.mk-h3 { font-size: 13px; font-weight: 500; color: var(--text-3); margin: 0 0 6px; }
+.mk-big { min-height: 52px; font-size: 17px; width: 100%; justify-content: center; }
+.mk-notice { display: flex; gap: 8px; align-items: flex-start; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: var(--ask-bg); color: var(--text); margin: 0; }
+.mk-notice .icon { color: var(--ask); flex: none; margin-top: 2px; }
+.mk-notice.mk-err { background: var(--err-bg); }
+.mk-empty { color: var(--text-3); font-size: 14px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.mk-skeleton { min-height: 160px; border-radius: 10px; background: var(--surface-2); }
+@media (prefers-reduced-motion: no-preference) { .mk-skeleton { animation: mk-breathe 1.6s ease-in-out infinite; } }
+@keyframes mk-breathe { 50% { opacity: .55; } }
+
+/* Glyphs: colour AND shape (criterion 38). */
+.mk-g { flex: none; overflow: visible; }
+.mk-g-locked { color: var(--line-strong); }
+.mk-g-ready { color: var(--text-2); }
+.mk-g-running { color: var(--accent-text); }
+.mk-g-waiting { color: var(--ask); }
+.mk-g-stalled { color: var(--err); }
+.mk-g-done { color: var(--ok); }
+.mk-spin { transform-origin: 8px 8px; }
+@media (prefers-reduced-motion: no-preference) { .mk-spin { animation: mk-spin 1.6s linear infinite; } }
+@keyframes mk-spin { to { transform: rotate(360deg); } }
+
+/* Segments: the tiles' and the track's. */
+.mk-seg { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); transform-origin: left; }
+.mk-seg-done, .mk-st-done .mk-seg { background: var(--ok); }
+.mk-seg-waiting, .mk-st-waiting .mk-seg { background: var(--ask); }
+.mk-seg-running, .mk-st-running .mk-seg { background: var(--accent-text); }
+.mk-seg-stalled, .mk-st-stalled .mk-seg { background: repeating-linear-gradient(135deg, var(--err) 0 4px, transparent 4px 7px); }
+.mk-seg-ready, .mk-st-ready .mk-seg { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-2); }
+
+/* Gallery. */
+.mk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 16px; }
+.mk-tile { font: inherit; text-align: left; color: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); min-height: 150px; transition: transform 140ms var(--ease-out); }
+.mk-tile:active { transform: scale(.98); }
+.mk-tile:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px oklch(0.52 0.17 268 / 0.24); }
+.mk-tile.mk-need { border-color: var(--ask); background: var(--ask-bg); }
+.mk-tile.mk-bad { border-color: var(--err); background: var(--err-bg); }
+.mk-tile-name { font-weight: 600; font-size: 16px; }
+.mk-segs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.mk-tile-state { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--text-2); }
+
+/* The track: five segments, horizontal from 641 px, a list below (criterion 39). */
+.mk-track { list-style: none; margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.mk-st-btn { font: inherit; color: inherit; background: none; border: 0; padding: 4px 2px; width: 100%; display: flex; flex-direction: column; gap: 6px; min-height: 44px; cursor: pointer; border-radius: 6px; text-align: left; }
+.mk-st-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mk-lab { display: flex; gap: 6px; align-items: center; font-size: 13px; min-width: 0; }
+.mk-st-name { font-weight: 500; }
+.mk-st-text { color: var(--text-3); font-size: 12px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk-st-waiting .mk-st-text { color: var(--ask); }
+.mk-st-stalled .mk-st-text { color: var(--err); }
+.mk-open .mk-st-name { text-decoration: underline; text-underline-offset: 4px; }
+@media (prefers-reduced-motion: no-preference) { .mk-moved .mk-seg { animation: mk-grow 240ms var(--ease-out); } }
+@media (prefers-reduced-motion: reduce) { .mk-moved .mk-seg { animation: mk-fade 150ms linear; } }
+@keyframes mk-grow { from { transform: scaleX(.2); } }
+@keyframes mk-fade { from { opacity: .3; } }
+
+/* The document and its margin. */
+.mk-body { display: grid; grid-template-columns: 1fr 340px; flex: 1; }
+.mk-page { padding: 24px 32px 48px; min-width: 0; }
+.mk-inner { max-width: 72ch; margin: 0 auto; }
+.mk-doc + .mk-doc { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 24px; }
+.mk-keys { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.mk-keys dt { color: var(--text-3); font-size: 13px; }
+.mk-keys dd { margin: 0; font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.mk-margin { border-left: 1px solid var(--line); background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 22px; }
+
+/* Gate and stage panel. */
+.mk-gate, .mk-stage { display: flex; flex-direction: column; gap: 10px; }
+.mk-gate-head, .mk-stage-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.mk-gate-head { color: var(--ask); }
+.mk-stage-head .mk-cap { margin-left: auto; }
+.mk-summary { margin: 0; font-size: 14px; color: var(--text-2); }
+.mk-redo-field { display: flex; gap: 8px; align-items: flex-start; }
+.mk-redo-field textarea, .mk-field textarea { font: inherit; font-size: 17px; width: 100%; min-height: 84px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--text); }
+.mk-dictate { display: flex; flex-direction: column; gap: 4px; }
+
+/* Inputs. */
+.mk-in-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.mk-in-row { display: flex; gap: 8px; align-items: center; min-height: 36px; font-size: 14px; border-bottom: 1px solid var(--line); }
+.mk-in-kind { color: var(--text-3); width: 38px; flex: none; font-family: 'Geist Mono', ui-monospace, monospace; font-size: 12px; }
+.mk-in-size { margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.chip.mk-private { color: var(--err); border-color: currentColor; }
+.mk-note { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+
+/* The form. */
+.mk-form { display: flex; flex-direction: column; gap: 14px; padding: 16px; max-width: 560px; }
+.mk-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.mk-field input, .mk-field select { font: inherit; font-size: 17px; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--text); }
+.mk-field input:focus-visible, .mk-field select:focus-visible, .mk-field textarea:focus-visible, .mk-redo-field textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px oklch(0.52 0.17 268 / 0.24); }
+
+/* The thumb bar: only on the phone, only at a gate. */
+.mk-thumb { display: none; }
+.btn.mk-burger { display: none; }
+
+@container (max-width: 640px) {
+  .btn.mk-burger { display: inline-flex; }
+  .mk-grid { grid-template-columns: 1fr; padding: 12px; }
+  .mk-track { grid-template-columns: 1fr; gap: 2px; padding: 8px 16px; }
+  .mk-st-btn { flex-direction: row-reverse; align-items: center; gap: 10px; }
+  .mk-seg { width: 6px; height: 28px; }
+  .mk-lab { flex: 1; }
+  .mk-body { grid-template-columns: 1fr; }
+  .mk-page { padding: 16px; }
+  .mk-margin { border-left: 0; border-top: 1px solid var(--line); padding-bottom: 96px; }
+  .mk-thumb { display: block; position: sticky; bottom: 0; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; }
+  .mk-thumb .btn { text-decoration: none; }
+}
+
+/* The shared Markdown is tuned for chat; a document to read wants air between its sections. */
+.mk-doc .s-md { font-size: 15px; line-height: 1.55; }
+.mk-doc .s-md :is(h3, h4, h5, h6) { margin-top: 20px; }
+.mk-doc .s-md > :first-child { margin-top: 0; }
+.mk-doc .s-md :is(ul, ol) { margin: 6px 0; }
+.chip.mk-private { font-size: 12px; padding: 2px 8px; border-radius: 6px; min-height: 0; line-height: 1.4; }
