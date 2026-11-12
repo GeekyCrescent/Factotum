@@ -109,3 +109,14 @@ test('crit. 29: a redo is the decision with its comment, then the same launch', 
   assert.equal(outcome.ok, true)
   assert.equal(calls[0], 'mockups POST mockups/m1/decision {"step":"brief","action":"redo","comment":"más detalle"}')
 })
+
+test('crit. 15: the notice of a busy launch carries the session in the way, to open it', async () => {
+  const { noticeOf } = await import('./launch.ts')
+  assert.deepEqual(noticeOf({ ok: false, problem: { kind: 'busy', sessionId: SESSION } }), {
+    text: 'The project already has a session running, so the stage is back where it was.',
+    sessionId: SESSION,
+  })
+  assert.equal(noticeOf({ ok: true, sessionId: SESSION, titled: true }), undefined)
+  assert.deepEqual(noticeOf({ ok: true, sessionId: SESSION, titled: false }), { text: 'The session started, but its title could not be set.' })
+  assert.deepEqual(noticeOf({ ok: false, problem: { kind: 'rejected', message: 'no model' } }), { text: 'no model' })
+})

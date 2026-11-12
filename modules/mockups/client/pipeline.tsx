@@ -16,7 +16,7 @@ import { Gate } from './gate.tsx'
 import { Glyph } from './glyph.tsx'
 import { Icon } from './icon.tsx'
 import { Inputs } from './inputs.tsx'
-import { messageOf, redoStage, startStage, type LaunchOutcome } from './launch.ts'
+import { messageOf, noticeOf, redoStage, startStage, type LaunchOutcome, type Notice } from './launch.ts'
 import { nowStage, stageActions, statusLine } from './model.ts'
 import { pollRequest, reconcileProject, requestProject, type ProjectState } from './project.ts'
 import { checkLiveRuns } from './runs.ts'
@@ -27,21 +27,12 @@ const REFRESH_MS = 5_000
 
 type Loaded = { readonly kind: 'loading' } | { readonly kind: 'ok'; readonly mockup: Mockup } | { readonly kind: 'failed'; readonly message: string }
 
-function outcomeText(outcome: LaunchOutcome): string | undefined {
-  if (outcome.ok) return outcome.titled ? undefined : 'The session started, but its title could not be set.'
-  const p = outcome.problem
-  if (p.kind === 'busy') return 'The project already has a session running. The stage is back where it was.'
-  if (p.kind === 'stale') return `The project changed under the launch: ${p.detail}.`
-  if (p.kind === 'unanswered') return 'That host did not answer in time. The session may have started; the stage will show it.'
-  return p.message
-}
-
 export function Pipeline({ props, id, open }: { readonly props: ViewProps; readonly id: string; readonly open: StageId | undefined }) {
   const { api, host } = props
   const sessions = props.peerModule('sessions', host)
   const [loaded, setLoaded] = useState<Loaded>({ kind: 'loading' })
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<Notice | undefined>(undefined)
   const [project, setProject] = useState<ProjectState | undefined>(undefined)
   const [moved, setMoved] = useState<StageId | undefined>(undefined)
   const path = `mockups/${encodeURIComponent(id)}`
@@ -106,7 +97,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
     setBusy(true)
     setNotice(undefined)
     const outcome = await act()
-    setNotice(outcomeText(outcome))
+    setNotice(noticeOf(outcome))
     await reload()
     setBusy(false)
   }
@@ -117,7 +108,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
       await api.post(`${path}/decision`, { step: stage, action: 'approve' })
       setMoved(stage)
     } catch (cause) {
-      setNotice(messageOf(cause))
+      setNotice({ text: messageOf(cause) })
     }
     await reload()
     setBusy(false)
@@ -125,7 +116,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
   const abandon = async (): Promise<void> => {
     if (step.run === undefined) return
     setBusy(true)
-    await api.post(`runs/${encodeURIComponent(step.run.id)}/abandon`, { reason: 'abandoned by the owner' }).catch((cause: unknown) => setNotice(messageOf(cause)))
+    await api.post(`runs/${encodeURIComponent(step.run.id)}/abandon`, { reason: 'abandoned by the owner' }).catch((cause: unknown) => setNotice({ text: messageOf(cause) }))
     await reload()
     setBusy(false)
   }
@@ -136,7 +127,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
     try {
       await api.post(`runs/${encodeURIComponent(current.id)}/abandon`, { reason: 'retried by the owner' })
     } catch (cause) {
-      setNotice(messageOf(cause))
+      setNotice({ text: messageOf(cause) })
       setBusy(false)
       return
     }
@@ -201,7 +192,16 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
         ))}
       </ol>
 
-      {notice === undefined ? null : <p class="mk-notice mk-pad-x">{notice}</p>}
+      {notice === undefined ? null : (
+        <p class="mk-notice mk-pad-x">
+          <span>{notice.text}</span>
+          {notice.sessionId === undefined ? null : (
+            <button type="button" class="btn sm" onClick={() => openSession(notice.sessionId ?? '')}>
+              <Icon name="terminal-window" size={14} /> Open that session
+            </button>
+          )}
+        </p>
+      )}
 
       <div class="mk-body">
         <div class="mk-page">

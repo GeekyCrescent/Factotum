@@ -132,3 +132,25 @@ export async function redoStage(apis: LaunchApis, mockupId: string, step: StageI
   if (ticket === undefined) return { ok: false, problem: { kind: 'rejected', message: 'the redo did not start a run' } }
   return await launchTicket(apis, ticket)
 }
+
+export interface Notice {
+  readonly text: string
+  /** The session in the way of a busy launch, to open it (criterion 15). */
+  readonly sessionId?: string
+}
+
+/** What the screen says after a launch; `undefined` when there is nothing to say. */
+export function noticeOf(outcome: LaunchOutcome): Notice | undefined {
+  if (outcome.ok) return outcome.titled ? undefined : { text: 'The session started, but its title could not be set.' }
+  const p = outcome.problem
+  switch (p.kind) {
+    case 'busy':
+      return { text: 'The project already has a session running, so the stage is back where it was.', sessionId: p.sessionId }
+    case 'stale':
+      return { text: `The project changed under the launch: ${p.detail}.` }
+    case 'unanswered':
+      return { text: 'That host did not answer in time. The session may have started; the stage will show it.' }
+    case 'rejected':
+      return { text: p.message }
+  }
+}
