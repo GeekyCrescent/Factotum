@@ -39,7 +39,7 @@ export interface QueueOutcome {
   readonly warnings: readonly string[]
 }
 
-/** The module sends it: not a `byHand` file (and, S6b, not already sent). */
+/** The module sends it: not a `byHand` file (and not already `sent`, S6b: callers check the state). */
 const sendsIt = (config: SeedPackage): boolean => config.byHand !== true
 /** Its CV is queued at import: sent by the module and not held back (wave 2). */
 const queuesCvNow = (config: SeedPackage): boolean => sendsIt(config) && config.holdUntil === undefined
@@ -69,7 +69,7 @@ export function queueAfterImport(db: Db, created: readonly CreatedApplication[],
 
 /** What a dry run would queue: the new entries the module sends, and their distinct addresses. */
 export function plannedQueue(plan: Plan): Queued {
-  const fresh = plan.entries.filter((p) => p.existing === undefined && sendsIt(p.config))
+  const fresh = plan.entries.filter((p) => p.existing === undefined && p.byHand === null && sendsIt(p.config))
   const addresses = (p: PlannedEntry): readonly string[] => p.entry.addresses.map((a) => `${p.companyKey}|${a.email.toLowerCase()}`)
   return { cv: fresh.filter((p) => queuesCvNow(p.config)).length, checks: unique(fresh.flatMap(addresses)).length }
 }

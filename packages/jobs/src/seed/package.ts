@@ -66,6 +66,11 @@ export interface PackageEntry {
   readonly notes: string
   readonly addresses: readonly SeedAddress[]
   readonly kitRefs: readonly PackageKitRef[]
+  /**
+   * `**Sent by hand:** YYYY-MM-DD` (the fallback line, design D8 step 8), as written: the import
+   * validates it. Null when the entry does not carry it.
+   */
+  readonly sentByHand: string | null
   /** The fields the entry lacks, for the report (`{ file, n, missing }`). */
   readonly missing: readonly string[]
 }
@@ -254,6 +259,17 @@ function notesOf(lines: readonly string[]): string {
   return (blockAfter(lines, /^\*\*Owner notes\b/i) ?? []).join('\n').trim()
 }
 
+const SENT_BY_HAND = /^(?:-\s+)?\*\*Sent by hand:\*\*\s*(\S+)/i
+
+/** Anywhere in the entry, as a bullet or as a line of its own; the first one counts. */
+function sentByHandOf(lines: readonly string[]): string | null {
+  for (const line of lines) {
+    const match = SENT_BY_HAND.exec(line.trim())
+    if (match) return match[1] ?? null
+  }
+  return null
+}
+
 function cvBaseOf(value: string | undefined): 'A' | 'B' | null {
   const letter = /^([AB])\b/.exec(value?.trim() ?? '')?.[1]
   return letter === 'A' || letter === 'B' ? letter : null
@@ -304,6 +320,7 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit,
     notes: notesOf(lines),
     addresses: addressesOf(parts, target.to),
     kitRefs: refs,
+    sentByHand: sentByHandOf(lines),
     missing,
   }
 }

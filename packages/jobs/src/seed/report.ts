@@ -4,6 +4,7 @@
  */
 
 import type { Channel } from '../types.ts'
+import type { ByHandResult } from './by-hand.ts'
 import type { KitLeftover } from './kit.ts'
 import { bracketTokens } from './markdown.ts'
 import type { PackageEntry, Skills } from './package.ts'
@@ -50,6 +51,10 @@ export interface ImportReport {
   /** Addresses that enter `verified`, and the `Send via` clause that says so. */
   readonly verified: readonly (EntryRef & { readonly email: string; readonly evidence: string })[]
   readonly kit: { readonly leftovers: readonly KitLeftover[]; readonly templateWarnings: readonly string[] }
+  /** Per entry with «Sent by hand» (S6b): its instant (null when the day is not valid) and what it did. */
+  readonly byHand: readonly (EntryRef & { readonly at: string | null; readonly result: ByHandResult })[]
+  /** Entries of a `byHand` file that do not carry the mark yet: what the owner has still to send. */
+  readonly byHandPending: readonly (EntryRef & { readonly company: string })[]
   /** CVs and address checks queued after the `tx` (that it would queue, in a dry run). */
   readonly queued: Queued
   /** What did not go as planned after the `tx` (a CV the queue refused…). */
@@ -113,5 +118,7 @@ export function buildReport(
       p.entry.addresses.flatMap((a) => (a.status === 'verified' && a.evidence !== null ? [{ ...ref(p), email: a.email, evidence: a.evidence }] : [])),
     ),
     kit: { leftovers: seed.kit.leftovers, templateWarnings: seed.templateWarnings },
+    byHand: entries.flatMap((p) => (p.byHand === null ? [] : [{ ...ref(p), at: p.byHand.at, result: p.byHand.result }])),
+    byHandPending: entries.filter((p) => p.config.byHand === true && p.byHand === null).map((p) => ({ ...ref(p), company: p.entry.company })),
   }
 }

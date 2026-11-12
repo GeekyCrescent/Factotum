@@ -9,6 +9,7 @@
 import type { Queries } from '../store/db.ts'
 import { applicationBySeedKey, companyByNameKey } from '../store/repo.ts'
 import type { Application } from '../types.ts'
+import { byHandAt, resultFor, type ByHandResult } from './by-hand.ts'
 import { nameKey, type SeedCompany, type SeedOpportunity } from './companies.ts'
 import type { PackageEntry } from './package.ts'
 import type { ReadPackage, Seed, SeedPackage } from './source.ts'
@@ -31,6 +32,18 @@ export interface PlannedEntry {
   readonly matched: boolean
   /** Imported before (same `seed_key`). */
   readonly existing: Application | undefined
+  /** `**Sent by hand:**` (S6b): its instant (null when the day is not valid) and what it will do. */
+  readonly byHand: PlannedByHand | null
+}
+
+export interface PlannedByHand {
+  readonly at: string | null
+  readonly result: ByHandResult
+}
+
+export interface PlanClock {
+  readonly now: Date
+  readonly timeZone: string
 }
 
 export interface Plan {
@@ -63,23 +76,31 @@ function companyFromEntry(entry: PackageEntry): SeedCompany {
   }
 }
 
-function plannedEntries(q: Queries, packages: readonly ReadPackage[], known: ReadonlySet<string>): readonly PlannedEntry[] {
+function byHandOf(raw: string | null, existing: Application | undefined, clock: PlanClock): PlannedByHand | null {
+  if (raw === null) return null
+  const at = byHandAt(raw, clock.timeZone, clock.now)
+  if (at === null) return { at, result: 'invalid' }
+  return { at, result: existing === undefined ? 'sent' : resultFor(existing, clock.now) }
+}
+
+function plannedEntries(q: Queries, packages: readonly ReadPackage[], known: ReadonlySet<string>, clock: PlanClock): readonly PlannedEntry[] {
   return packages.flatMap(({ config, name, parsed }) =>
     parsed.entries.map((entry) => {
       const seedKey = seedKeyOf(name, entry.n)
       const companyKey = nameKey(entry.company)
-      return { file: name, seedKey, config, entry, companyKey, matched: known.has(companyKey), existing: applicationBySeedKey(q, seedKey) }
+      const existing = applicationBySeedKey(q, seedKey)
+      return { file: name, seedKey, config, entry, companyKey, matched: known.has(companyKey), existing, byHand: byHandOf(entry.sentByHand, existing, clock) }
     }),
   )
 }
 
-export function planImport(q: Queries, seed: Seed): Plan {
+export function planImport(q: Queries, seed: Seed, clock: PlanClock): Plan {
   const byKey = new Map<string, PlannedCompany>()
   for (const { company, opportunity } of seed.companies) {
     // A second entry of the companies file with the same key is the same company: the first wins.
     if (!byKey.has(company.nameKey)) byKey.set(company.nameKey, { key: company.nameKey, seed: company, opportunity, exists: companyByNameKey(q, company.nameKey) !== undefined })
   }
-  const entries = plannedEntries(q, seed.packages, new Set(byKey.keys()))
+  const entries = plannedEntries(q, seed.packages, new Set(byKey.keys()), clock)
   for (const planned of entries) {
     if (byKey.has(planned.companyKey)) continue
     const made = companyFromEntry(planned.entry)

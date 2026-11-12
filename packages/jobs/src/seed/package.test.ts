@@ -294,3 +294,21 @@ test('the LinkedIn note inline (wave 2) or in a blockquote after «— to X:» (
 test('other placeholders stay in the body for the linter to block', () => {
   assert.ok(entry(wave2.entries, 2).letter?.body.includes('[Why climate: one honest sentence in your own words. TODO]'))
 })
+
+// ── S6b: «Sent by hand» (the fallback line) ───────────────────────────────────────────────────────
+
+test('«**Sent by hand:** YYYY-MM-DD» is read in the three shapes, as a bullet or as a line of its own', async () => {
+  const marked = (markdown: string, after: string, line: string): string => {
+    assert.ok(markdown.includes(after), after)
+    return markdown.replace(after, `${after}\n${line}`)
+  }
+  const adsMarked = parsePackage('02.md', marked(await fixture('package-ads.md'), '- **Ad status (2026-11-10):** live, posted 20 days ago. Apply today.', '- **Sent by hand:** 2026-11-12'), kit)
+  const wave1Marked = parsePackage('03.md', marked(await fixture('package-wave1.md'), '> Could we have a 15-minute call?\n>\n> Alex Example · alex.example@example.com · [phone] · linkedin.com/in/alex-example\n', '**Sent by hand:** 2026-11-11'), kit)
+  const wave2Marked = parsePackage('04.md', marked(await fixture('package-wave2.md'), '- **Send via:** careers@galah.example · **Contact:** none verified', '- **Sent by hand:** 2026-1-3'), kit)
+  assert.equal(entry(adsMarked.entries, 1).sentByHand, '2026-11-12')
+  assert.equal(entry(wave1Marked.entries, 1).sentByHand, '2026-11-11')
+  assert.equal(entry(wave2Marked.entries, 2).sentByHand, '2026-1-3', 'read as written; the import validates it')
+  assert.equal(entry(adsMarked.entries, 2).sentByHand, null)
+  assert.equal(entry(wave2Marked.entries, 2).target.to, 'careers@galah.example', 'the bullet does not disturb the other fields')
+  assert.ok([...ads.entries, ...wave1.entries, ...wave2.entries].every((e) => e.sentByHand === null))
+})

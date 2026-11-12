@@ -22,7 +22,8 @@ import {
   type NewCompany,
 } from '../store/repo.ts'
 import { MAX_REQUIREMENTS_CHARS } from '../shape.ts'
-import type { Application, Artifacts, Contact, Opportunity } from '../types.ts'
+import type { Application, Artifacts, Contact, Opportunity, Result } from '../types.ts'
+import { recordSent, sentByHand } from './by-hand.ts'
 import type { SeedCompany, SeedContact } from './companies.ts'
 import { bracketTokens } from './markdown.ts'
 import type { PackageEntry, SeedAddress } from './package.ts'
@@ -213,9 +214,19 @@ export function writeCompanies(q: Queries, companies: readonly PlannedCompany[],
   return companies.filter((planned) => ensureCompany(q, planned, profileVersion, now)).length
 }
 
-export function writeDraft(q: Queries, planned: PlannedEntry, profileVersion: number, now: Date): CreatedApplication {
-  const { app, contacts } = draftOf(q, planned, now)
+/** A new entry: `draft`, or `sent` when it carries a valid «Sent by hand» (S6b, T-A19). */
+export function writeEntry(q: Queries, planned: PlannedEntry, profileVersion: number, now: Date): CreatedApplication {
+  const { app: draft, contacts } = draftOf(q, planned, now)
+  const at = planned.byHand?.at ?? null
+  const app = at === null ? draft : valueOrThrow(sentByHand(draft, at, now))
   insertImported(q, planned, app, profileVersion, now)
+  if (at !== null) recordSent(q, app, at, now)
   const checkContactIds = contacts.filter((c) => c.address !== null && c.address.status !== 'checking' && isStaleCheck(c.address, now)).map((c) => c.id)
   return { planned, app, checkContactIds }
+}
+
+/** A draft always takes T-A19; if it did not, the table changed under this file: abort the tx. */
+function valueOrThrow<T>(result: Result<T>): T {
+  if (!result.ok) throw new Error(`seed: ${result.error.reason}`)
+  return result.value
 }
