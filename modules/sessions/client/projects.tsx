@@ -379,8 +379,6 @@ export function ProjectsScreen({ view }: { readonly view: ViewProps }) {
       )}
       {open?.kind === 'new' && page !== undefined ? (
         <NewProjectDialog
-          canRequest={page.canRequest}
-          file={page.file}
           onClose={close}
           onCreate={(p: NewProject) => ask('projects', p, p.name ?? p.id ?? p.path.split('/').filter(Boolean).pop() ?? p.path)}
         />
