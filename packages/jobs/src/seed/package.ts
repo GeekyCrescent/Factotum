@@ -7,6 +7,7 @@
  * can move into `types.ts` later.
  */
 
+import type { EntryIssue } from './issues.ts'
 import { resolveFormAnswer, type Kit, type KitRefResult } from './kit.ts'
 import { blockquoteAt, emailsIn, firstEmail, slotSignature, splitSections, type UnparsedHeading } from './markdown.ts'
 
@@ -73,6 +74,8 @@ export interface PackageEntry {
   readonly sentByHand: string | null
   /** The fields the entry lacks, for the report (`{ file, n, missing }`). */
   readonly missing: readonly string[]
+  /** What the parser could not take as written (a form line, an empty answer), for the report. */
+  readonly issues: readonly EntryIssue[]
 }
 
 export interface PackageFile {
@@ -232,18 +235,28 @@ function linkedinOf(lines: readonly string[]): string | null {
   return blockquoteAt(lines, index + 1)?.text ?? null
 }
 
-function formOf(lines: readonly string[], kit: Kit): { readonly form: readonly FormAnswer[]; readonly refs: readonly PackageKitRef[] } {
-  const block = blockAfter(lines, /^\*\*Likely form questions\b/i) ?? []
-  const items = block
-    .map((line) => /^-\s+\*(.+?)\*\s*(?:[—–-]\s*(.*))?$/.exec(line))
-    .filter((match) => match !== null)
+const FORM_ITEM = /^-\s+\*(.+?)\*\s*(?:[—–-]\s*(.*))?$/
+
+interface Form {
+  readonly form: readonly FormAnswer[]
+  readonly refs: readonly PackageKitRef[]
+  /** Lines that are not a `- *Question?* — answer`, and questions left without an answer. */
+  readonly issues: readonly EntryIssue[]
+}
+
+function formOf(lines: readonly string[], kit: Kit): Form {
+  const block = (blockAfter(lines, /^\*\*Likely form questions\b/i) ?? []).filter((line) => line.trim() !== '')
+  const unparsed = block.filter((line) => !FORM_ITEM.test(line)).map((line): EntryIssue => ({ kind: 'unparsed-form-line', detail: line.trim() }))
+  const items = block.map((line) => FORM_ITEM.exec(line)).filter((match) => match !== null)
   const resolved = items.map((match) => {
     const question = (match[1] ?? '').trim()
     return { question, ...resolveFormAnswer(question, match[2] ?? '', kit) }
   })
+  const empty = resolved.filter(({ answer }) => answer.trim() === '').map(({ question }): EntryIssue => ({ kind: 'empty-answer', detail: question }))
   return {
     form: resolved.map(({ question, answer, hint }) => ({ question, answer: slotPortfolio(answer), hint })),
     refs: resolved.flatMap(({ question, ref }) => (ref === null ? [] : [{ question, ...ref }])),
+    issues: [...unparsed, ...empty],
   }
 }
 
@@ -296,7 +309,7 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit,
   const subject = fields.get('subject') ?? null
   const role = fields.get('role') ?? null
   const cvBase = cvBaseOf(fields.get('cv version'))
-  const { form, refs } = formOf(lines, kit)
+  const { form, refs, issues } = formOf(lines, kit)
   const linkedin = linkedinOf(lines)
   const missing = [
     ...(sendVia === null ? ['sendVia'] : []),
@@ -324,6 +337,7 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit,
     kitRefs: refs,
     sentByHand: sentByHandOf(lines),
     missing,
+    issues,
   }
 }
 

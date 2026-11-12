@@ -163,7 +163,7 @@ function artifactsOf(entry: PackageEntry, profileVersion: number): Artifacts {
     png: null,
     contactHash: null,
     letter: entry.letter,
-    form: entry.form.map((f) => ({ ...f, ok: bracketTokens(f.answer).length === 0 })),
+    form: entry.form.map((f) => ({ ...f, ok: f.answer.trim() !== '' && bracketTokens(f.answer).length === 0 })),
     skills: entry.skills,
     linkedin: entry.linkedin,
     profileVersion,

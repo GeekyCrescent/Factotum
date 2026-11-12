@@ -5,6 +5,7 @@
 
 import type { Channel } from '../types.ts'
 import type { ByHandResult } from './by-hand.ts'
+import type { SeedIssue } from './issues.ts'
 import type { KitLeftover } from './kit.ts'
 import { bracketTokens } from './markdown.ts'
 import type { PackageEntry, Skills } from './package.ts'
@@ -50,6 +51,8 @@ export interface ImportReport {
   readonly kitRefs: readonly (EntryRef & { readonly question: string; readonly section: number; readonly matched: string | null; readonly ambiguous: boolean })[]
   /** Addresses that enter `verified`, and the `Send via` clause that says so. */
   readonly verified: readonly (EntryRef & { readonly email: string; readonly evidence: string })[]
+  /** What the parsers could not take as written (`issues.ts`): the owner fixes the vault or knows. */
+  readonly issues: readonly SeedIssue[]
   /** `## ` headings that are not `## N. Title`: they and their lines were not read. */
   readonly unparsed: Seed['unparsed']
   readonly kit: { readonly leftovers: readonly KitLeftover[]; readonly templateWarnings: readonly string[] }
@@ -119,6 +122,7 @@ export function buildReport(
     verified: entries.flatMap((p) =>
       p.entry.addresses.flatMap((a) => (a.status === 'verified' && a.evidence !== null ? [{ ...ref(p), email: a.email, evidence: a.evidence }] : [])),
     ),
+    issues: entries.flatMap((p) => p.entry.issues.map((issue) => ({ kind: issue.kind, file: p.file, n: p.entry.n, detail: issue.detail }))),
     unparsed: seed.unparsed,
     kit: { leftovers: seed.kit.leftovers, templateWarnings: seed.templateWarnings },
     byHand: entries.flatMap((p) => (p.byHand === null ? [] : [{ ...ref(p), at: p.byHand.at, result: p.byHand.result }])),

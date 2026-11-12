@@ -351,3 +351,32 @@ test('a --- inside an entry does not cut it: a Sent by hand mark and the notes a
   assert.equal(first.letter?.body, 'Hi.')
   assert.equal(entry(parsed.entries, 2).notes, '- the last one')
 })
+
+// ── Review fix: form lines that do not parse, and questions without an answer, are issues ──────────
+
+test('a form line that does not parse and a question with no answer are issues of the entry', () => {
+  const markdown = [
+    '## 1. Kestrel Freight',
+    '',
+    '- **Send via:** https://kestrel.example/apply',
+    '',
+    '**Likely form questions**',
+    '',
+    '- *Why us?* — Because.',
+    '- Plain question without italics — an answer',
+    '- *Anything else?*',
+    '- *Blank after the dash?* — ',
+    '',
+  ].join('\n')
+  const parsed = entry(parsePackage('x.md', markdown, kit).entries, 1)
+  assert.deepEqual(
+    parsed.form.map((f) => f.question),
+    ['Why us?', 'Anything else?', 'Blank after the dash?'],
+  )
+  assert.deepEqual(parsed.issues, [
+    { kind: 'unparsed-form-line', detail: '- Plain question without italics — an answer' },
+    { kind: 'empty-answer', detail: 'Anything else?' },
+    { kind: 'empty-answer', detail: 'Blank after the dash?' },
+  ])
+  assert.deepEqual(entry(ads.entries, 1).issues, [])
+})
