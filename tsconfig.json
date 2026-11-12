@@ -11,10 +11,16 @@
       "path": "packages/sessions"
     },
     {
+      "path": "packages/mail"
+    },
+    {
       "path": "packages/inbox"
     },
     {
       "path": "packages/tasks"
+    },
+    {
+      "path": "packages/jobs"
     },
     {
       "path": "packages/mockups"

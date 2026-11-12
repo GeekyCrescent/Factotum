@@ -98,6 +98,21 @@ importers:
         specifier: ^4.1.12
         version: 4.6.3
 
+  packages/jobs:
+    dependencies:
+      '@factotum/core':
+        specifier: workspace:*
+        version: link:../core
+      '@factotum/mail':
+        specifier: workspace:*
+        version: link:../mail
+      '@factotum/sessions':
+        specifier: workspace:*
+        version: link:../sessions
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.3
+
   packages/kernel:
     dependencies:
       '@factotum/core':
@@ -113,6 +128,15 @@ importers:
       '@types/web-push':
         specifier: ^3.6.4
         version: 3.6.4
+
+  packages/mail:
+    dependencies:
+      '@factotum/core':
+        specifier: workspace:*
+        version: link:../core
+      imapflow:
+        specifier: 2.2.5
+        version: 2.2.5
 
   packages/mockups:
     dependencies:
