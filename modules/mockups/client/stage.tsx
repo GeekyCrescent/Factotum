@@ -4,7 +4,7 @@
  * the reason when launching is off.
  */
 
-import type { StageId, Step } from '../types.ts'
+import type { Step } from '../types.ts'
 import { Glyph } from './glyph.tsx'
 import { Icon } from './icon.tsx'
 import { statusLine, type StageActions } from './model.ts'
@@ -19,7 +19,6 @@ export function StagePanel({
   onAbandon,
   onOpenSession,
 }: {
-  readonly stage: StageId
   readonly label: string
   readonly step: Step
   readonly actions: StageActions

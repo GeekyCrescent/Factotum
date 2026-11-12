@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod'
-import { STAGE_IDS, type StageId } from './types.ts'
+import { STAGE_IDS, type RunKind, type StageId } from './types.ts'
 
 export const NAME_MAX_CHARS = 80
 export const COMMENT_MAX_CHARS = 4_000
@@ -64,6 +64,15 @@ export interface DecisionInput {
   readonly comment?: string
 }
 
+/** A decision as the route takes it: at a stage's gate, or at a change's (`{ changeId }`, crit. 36). */
+export type GateDecisionInput = Omit<DecisionInput, 'step'> & { readonly step: StageId | { readonly changeId: string } }
+
+export interface RunInput {
+  readonly kind: RunKind
+  /** A run of the changes track names its change; a stage's never does. */
+  readonly changeId?: string
+}
+
 export interface SubmitInput {
   readonly runId: string
   readonly files: readonly string[]
@@ -101,16 +110,25 @@ const createSchema = z.strictObject({
   ]),
 })
 
-const runSchema = z.strictObject({ kind: z.enum(STAGE_IDS, { error: 'kind is a stage' }) })
+const CHANGE_KINDS: readonly RunKind[] = ['change', 'redeploy']
+const changeId = z.string().min(1).max(64)
+
+const runSchema = z
+  .strictObject({ kind: z.enum([...STAGE_IDS, 'change', 'redeploy'], { error: 'kind is a stage, change or redeploy' }), changeId: changeId.optional() })
+  .refine((run) => CHANGE_KINDS.includes(run.kind) === (run.changeId !== undefined), {
+    path: ['changeId'],
+    message: 'a change or redeploy names its changeId, and a stage does not',
+  })
 
 const decisionSchema = z.strictObject({
-  step: z.enum(STAGE_IDS, { error: 'step is a stage' }),
+  step: z.union([z.enum(STAGE_IDS), z.strictObject({ changeId })], { error: 'step is a stage, or { changeId }' }),
   action: z.enum(['approve', 'choose', 'redo'], { error: 'action is approve, choose or redo' }),
   optionId: z.string().min(1).max(64).optional(),
   comment: text(COMMENT_MAX_CHARS).optional(),
 })
 
 const noteSchema = z.strictObject({ text: text(NOTE_MAX_CHARS) })
+const changeSchema = z.strictObject({ text: text(COMMENT_MAX_CHARS) })
 
 const siteMatchSchema = z.strictObject({
   projects: z.array(z.strictObject({ id: siteId, path: z.string().min(1).max(MAX_PATH_CHARS) })).max(MAX_PROJECTS),
@@ -173,8 +191,9 @@ function deepPresent(value: unknown): unknown {
 }
 
 export const parseCreate = (raw: unknown): Shaped<CreateInput> => shape(createSchema, raw)
-export const parseRun = (raw: unknown): Shaped<{ readonly kind: StageId }> => shape(runSchema, raw)
-export const parseDecision = (raw: unknown): Shaped<DecisionInput> => shape(decisionSchema, raw)
+export const parseRun = (raw: unknown): Shaped<RunInput> => shape(runSchema, raw)
+export const parseDecision = (raw: unknown): Shaped<GateDecisionInput> => shape(decisionSchema, raw)
+export const parseChange = (raw: unknown): Shaped<{ readonly text: string }> => shape(changeSchema, raw)
 export const parseNote = (raw: unknown): Shaped<{ readonly text: string }> => shape(noteSchema, raw)
 export const parseSiteMatch = (raw: unknown): Shaped<{ readonly projects: readonly { readonly id: string; readonly path: string }[] }> =>
   shape(siteMatchSchema, raw)

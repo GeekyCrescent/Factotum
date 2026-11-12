@@ -4,7 +4,7 @@
  * criterion 2b.
  */
 
-import { STAGE_IDS, type Mockup, type MockupsSetup, type Run, type StageId, type Step } from '../types.ts'
+import { STAGE_IDS, type Change, type Mockup, type MockupsSetup, type Run, type StageId, type Step } from '../types.ts'
 
 /** A COPY of the package's `STARTING_OFFER_MS` (criterion 18): «Abandon» after this without a session. */
 export const STARTING_OFFER_MS = 2 * 60_000
@@ -23,8 +23,13 @@ export function afterDecision(stage: StageId): StageId | undefined {
 
 const RANK = { waiting: 0, stalled: 1, running: 2 } as const
 
+/** Every step of the mockup that can wait on you or run: the five stages, then the changes. */
+function steps(m: Mockup): readonly Step[] {
+  return [...STAGE_IDS.map((id) => m.stages[id]), ...m.changes]
+}
+
 function rankOf(m: Mockup): number {
-  const statuses = STAGE_IDS.map((id) => m.stages[id].status)
+  const statuses = steps(m).map((step) => step.status)
   for (const [status, rank] of Object.entries(RANK)) if (statuses.includes(status as keyof typeof RANK)) return rank
   return 3
 }
@@ -57,17 +62,24 @@ export interface LaunchContext {
   readonly sessions: boolean
 }
 
-/** The live run of the mockup, if any (criterion 19: one at a time). */
+/** The live run of the mockup, a stage's or a change's, if any (criterion 19: one at a time). */
 function liveRun(m: Mockup): Run | undefined {
-  return STAGE_IDS.map((id) => m.stages[id].run).find((r) => r !== undefined)
+  return steps(m)
+    .map((step) => step.run)
+    .find((r) => r !== undefined)
 }
 
 /** Why a run of `stage` cannot be launched now, or `undefined`. */
 export function launchBlocked(m: Mockup, stage: StageId, ctx: LaunchContext): string | undefined {
+  return blocked(m, (run) => run.kind === stage, stage === 'build' || stage === 'deliver', ctx)
+}
+
+/** `own`: the step's own run (a stalled one it retries) does not block it; `work`: it runs on the work-dir. */
+function blocked(m: Mockup, own: (run: Run) => boolean, work: boolean, ctx: LaunchContext): string | undefined {
   if (!ctx.sessions) return 'sessions is not running on this host, so stages cannot be launched'
   const live = liveRun(m)
-  if (live !== undefined && live.kind !== stage) return `${live.kind} is running; one stage at a time`
-  if ((stage === 'build' || stage === 'deliver') && m.buildSiteId === null) {
+  if (live !== undefined && !own(live)) return `${live.kind} is running; one stage at a time`
+  if (work && m.buildSiteId === null) {
     return m.buildRefused === undefined ? 'the work folder is not a sessions project yet' : `no build project: ${m.buildRefused}`
   }
   return undefined
@@ -111,6 +123,47 @@ export function stageActions(m: Mockup, stage: StageId, ctx: LaunchContext & { r
     abandon: run !== undefined && step.status === 'running' && offersAbandon(run, ctx.now),
     ...(run?.sessionId === undefined ? {} : { openSession: run.sessionId }),
   }
+}
+
+/** The change still open (criterion 36: one at a time), if any. */
+export function openChange(m: Mockup): Change | undefined {
+  return m.changes.find((change) => change.status !== 'done')
+}
+
+/** Why «Request a change» is off, or `undefined` (criterion 36). */
+export function requestChangeBlocked(m: Mockup, ctx: LaunchContext): string | undefined {
+  if (m.stages.deliver.status !== 'done') return 'a change is asked of a delivered mockup'
+  if (openChange(m) !== undefined) return 'one change at a time: finish the open one first'
+  return blocked(m, () => false, true, ctx)
+}
+
+export interface ChangeActions extends StageActions {
+  /** A change starts as `change`; once approved, only as `redeploy` (crit. 36). */
+  readonly start?: Action & { readonly kind: 'change' | 'redeploy' }
+}
+
+/** What an open change offers: the stage's actions, on the changes track (criterion 36). */
+export function changeActions(m: Mockup, change: Change, ctx: LaunchContext & { readonly now: Date }): ChangeActions {
+  const run = change.run
+  const off = blocked(m, (live) => live.id === run?.id, true, ctx)
+  return {
+    ...(change.status === 'ready' ? { start: { disabled: off, kind: change.phase === 'approved' ? 'redeploy' : 'change' } } : {}),
+    ...(change.status === 'stalled' ? { retry: { disabled: off } } : {}),
+    redo: { disabled: change.status === 'waiting' ? off : 'only a change waiting on you can be redone' },
+    gate: change.phase === 'change' ? 'approve' : null,
+    approve: change.status === 'waiting',
+    choose: false,
+    abandon: run !== undefined && change.status === 'running' && offersAbandon(run, ctx.now),
+    ...(run?.sessionId === undefined ? {} : { openSession: run.sessionId }),
+  }
+}
+
+export function changeLine(change: Change): string {
+  if (change.status === 'waiting') return `waiting on you · v${change.version}`
+  if (change.status === 'stalled') return 'stalled: the session ended without submitting'
+  if (change.phase === 'change') return change.status === 'ready' ? 'ready to start' : change.status
+  if (change.phase === 'approved') return 'approved · not in production yet'
+  return change.status === 'done' ? `in production · v${change.version}` : 'going to production'
 }
 
 /** Criterion 12: inputs are closed while a stage runs. */

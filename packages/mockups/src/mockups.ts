@@ -22,9 +22,11 @@ import {
   archive,
   canAddInput,
   decide,
+  decideChange,
   findRun,
   linkSession,
   newMockup,
+  requestChange,
   setBuildSite,
   stallRun,
   startRun,
@@ -33,7 +35,7 @@ import {
 import { inside, real } from './paths.ts'
 import { contextFor, promptFor } from './prompts/index.ts'
 import { sweep } from './runs.ts'
-import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRun, parseSite, parseSiteMatch, SWEEP_EVERY_MS, uploadName, type DecisionInput, type Shaped } from './shape.ts'
+import { parseAbandon, parseChange, parseCreate, parseDecision, parseLink, parseNote, parseRun, parseSite, parseSiteMatch, SWEEP_EVERY_MS, uploadName, type DecisionInput, type Shaped } from './shape.ts'
 import { isLaunchable, RUN_SPECS, STAGES } from './stages.ts'
 import { codeOf, openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool } from './submit.ts'
@@ -46,11 +48,14 @@ import {
   type MockupsDeps,
   type MockupsFile,
   type ProjectEntry,
+  type Decided,
   type Result,
   type RunKind,
   type RunTicket,
   type StageId,
 } from './types.ts'
+
+type Redo = { readonly comment: string; readonly previous: readonly string[] }
 
 const TITLE_MAX_CHARS = 80
 
@@ -108,31 +113,78 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     return { ok: true, value: m.buildSiteId }
   }
 
-  const ticketOf = (m: Mockup, kind: StageId, runId: string, siteId: string, redo?: { readonly comment: string; readonly previous: readonly string[] }): RunTicket | null => {
-    const text = promptFor(contextFor(m, kind, runId, redo))
-    if (text === null) return null
+  const ticketOf = (m: Mockup, kind: RunKind, runId: string, siteId: string, redo?: Redo, changeId?: string): RunTicket => {
+    const text = promptFor(contextFor(m, kind, runId, redo, changeId))
     return { runId, siteId, text, title: titleFor(kind, m.name), ...(config.model === undefined ? {} : { model: config.model }) }
   }
 
-  /** Starts a run (and, for a redo, records the decision first) in ONE change. */
-  const launch = async (id: string, kind: StageId, redo?: { readonly comment: string; readonly previous: readonly string[] }): Promise<Result<{ readonly mockup: Mockup; readonly run: RunTicket }>> => {
+  /**
+   * Starts a run in ONE change: for a redo, the decision first; for a new change, the change first
+   * (`before`, run on the mockup of that moment). The ticket is written from the mockup as `before`
+   * leaves it, so a change's prompt carries its request.
+   */
+  const launch = async (
+    id: string,
+    kind: RunKind,
+    opts: { readonly redo?: Redo; readonly changeId?: string; readonly before?: (m: Mockup) => Result<Mockup> } = {},
+  ): Promise<Result<Decided & { readonly run: RunTicket }>> => {
     const m = store.current().mockups.find((one) => one.id === id)
     if (m === undefined) return notFound()
     const site = siteFor(m, kind)
     if (!site.ok) return site
-    const runId = uuidv7(deps.now().getTime())
     const now = deps.now()
-    const ticket = ticketOf(m, kind, runId, site.value, redo)
-    if (ticket === null) return { ok: false, error: { code: 'not-yet', reason: `${kind} has no prompt in this cut` } }
-    const input: StartInput = { kind, runId, siteId: site.value, ...(redo === undefined ? {} : { redo: { comment: redo.comment } }) }
+    const runId = uuidv7(now.getTime())
+    const { redo, changeId, before = (current: Mockup): Result<Mockup> => ({ ok: true, value: current }) } = opts
+    const dry = before(m)
+    if (!dry.ok) return dry
+    const ticket = ticketOf(dry.value, kind, runId, site.value, redo, changeId)
+    const input: StartInput = { kind, runId, siteId: site.value, ...(changeId === undefined ? {} : { changeId }), ...(redo === undefined ? {} : { redo: { comment: redo.comment } }) }
     const result = await change(id, (current) => {
-      if (redo === undefined) return startRun(current, input, now)
-      const decided = decide(current, { step: kind, action: 'redo', comment: redo.comment }, now)
-      return decided.ok ? startRun(decided.value, input, now) : decided
+      const ready = before(current)
+      return ready.ok ? startRun(ready.value, input, now) : ready
     })
     if (!result.ok) return result
     log.info(`mockup ${id}: ${kind} run ${runId} started${redo === undefined ? '' : ' (redo)'}`)
     return { ok: true, value: { mockup: result.value, run: ticket } }
+  }
+
+  /** A redo (D6): the current version copied aside FIRST — copied, never moved (criterion 29) — then the run. */
+  const redoStage = async (id: string, step: StageId, comment: string): Promise<Result<Decided>> => {
+    const m = mockups.get(id)
+    if (m === undefined) return notFound()
+    const current = m.stages[step]
+    if (current.status !== 'waiting') return conflict(`${step} is ${current.status}, not waiting on you`)
+    let previous: readonly string[]
+    try {
+      const docs = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+      const dirs: string[] = []
+      for (const dir of STAGES[step].versionedDirs ?? []) {
+        const kept = await versionDirections(m.workDir, current.version, dir)
+        if (kept !== null) dirs.push(kept)
+      }
+      previous = [...docs, ...dirs]
+    } catch (error) {
+      log.warn(`mockup ${id}: the ${step} version could not be kept (${codeOf(error)})`)
+      return { ok: false, error: { code: 'module-error', reason: `the current version could not be copied aside, so nothing was redone (${error instanceof Error ? error.message : codeOf(error)})` } }
+    }
+    return await launch(id, step, { redo: { comment, previous }, before: (now) => decide(now, { step, action: 'redo', comment }, deps.now()) })
+  }
+
+  /**
+   * A change's gate (criterion 36). A redo edits the app in place: its previous preview stays live at
+   * its URL, and the prompt names it. Approving leaves the redeploy ready; the screen launches it.
+   */
+  const decideOnChange = async (id: string, input: { readonly changeId: string; readonly action: DecisionInput['action']; readonly comment?: string }): Promise<Result<Decided>> => {
+    if (input.action === 'redo') {
+      if (input.comment === undefined) return { ok: false, error: { code: 'invalid', field: 'comment', reason: 'a redo needs a comment' } }
+      const comment = input.comment
+      return await launch(id, 'change', { changeId: input.changeId, redo: { comment, previous: [] }, before: (m) => decideChange(m, { ...input, comment }, deps.now()) })
+    }
+    const result = await change(id, (m) => decideChange(m, input, deps.now()))
+    if (!result.ok) return result
+    const decided = result.value.changes.find((one) => one.id === input.changeId)
+    log.info(`mockup ${id}: change ${input.changeId} approved, version ${decided?.version ?? 0}`)
+    return { ok: true, value: { mockup: result.value } }
   }
 
   /**
@@ -317,43 +369,36 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     startRun: async (id, raw) => {
       const input = parseRun(raw)
       if (!input.ok) return invalid(input)
-      if (!isLaunchable(input.value.kind)) return { ok: false, error: { code: 'not-yet', reason: `${input.value.kind} arrives in the next cut` } }
-      const launched = await launch(id, input.value.kind)
+      const { kind, changeId } = input.value
+      if (!isLaunchable(kind)) return { ok: false, error: { code: 'not-yet', reason: `${kind} arrives in the next cut` } }
+      const launched = await launch(id, kind, changeId === undefined ? {} : { changeId })
       return launched.ok ? { ok: true, value: launched.value.run } : launched
     },
 
     decide: async (id, raw) => {
       const input = parseDecision(raw)
       if (!input.ok) return invalid(input)
-      const { step, action } = input.value
+      const { step, ...answer } = input.value
+      if (typeof step === 'object') return await decideOnChange(id, { changeId: step.changeId, ...answer })
+      const { action } = answer
       if (action === 'redo') {
-        if (input.value.comment === undefined) return { ok: false, error: { code: 'invalid', field: 'comment', reason: 'a redo needs a comment' } }
-        if (!isLaunchable(step)) return { ok: false, error: { code: 'not-yet', reason: `${step} arrives in the next cut` } }
-        const m = mockups.get(id)
-        if (m === undefined) return notFound()
-        const current = m.stages[step]
-        if (current.status !== 'waiting') return conflict(`${step} is ${current.status}, not waiting on you`)
-        // COPIED, never moved: if the launch fails, the document is still where it was (criterion 29).
-        let previous: readonly string[]
-        try {
-          const docs = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
-          const dirs: string[] = []
-          for (const dir of STAGES[step].versionedDirs ?? []) {
-            const kept = await versionDirections(m.workDir, current.version, dir)
-            if (kept !== null) dirs.push(kept)
-          }
-          previous = [...docs, ...dirs]
-        } catch (error) {
-          log.warn(`mockup ${id}: the ${step} version could not be kept (${codeOf(error)})`)
-          return { ok: false, error: { code: 'module-error', reason: `the current version could not be copied aside, so nothing was redone (${error instanceof Error ? error.message : codeOf(error)})` } }
-        }
-        const launched = await launch(id, step, { comment: input.value.comment, previous })
-        return launched.ok ? { ok: true, value: launched.value } : launched
+        if (answer.comment === undefined) return { ok: false, error: { code: 'invalid', field: 'comment', reason: 'a redo needs a comment' } }
+        return await redoStage(id, step, answer.comment)
       }
-      const result = action === 'choose' ? await oneChoiceAtATime(id, () => choose(id, input.value)) : await change(id, (m) => decide(m, input.value, deps.now()))
+      const decision: DecisionInput = { step, ...answer }
+      const result = action === 'choose' ? await oneChoiceAtATime(id, () => choose(id, decision)) : await change(id, (m) => decide(m, decision, deps.now()))
       if (!result.ok) return result
       log.info(`mockup ${id}: ${step} ${action === 'choose' ? 'chosen' : 'approved'}, version ${result.value.stages[step].version}`)
       return { ok: true, value: { mockup: result.value } }
+    },
+
+    requestChange: async (id, raw) => {
+      const input = parseChange(raw)
+      if (!input.ok) return invalid(input)
+      const changeId = uuidv7(deps.now().getTime())
+      const asked = await launch(id, 'change', { changeId, before: (m) => requestChange(m, { changeId, text: input.value.text }, deps.now()) })
+      if (asked.ok) log.info(`mockup ${id}: change ${changeId} asked`)
+      return asked
     },
 
     archive: async (id) => {

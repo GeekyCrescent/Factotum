@@ -26,6 +26,8 @@ export interface PromptContext {
   readonly chosen?: { readonly stage: StageId; readonly file: string; readonly option: StageOption }
   /** The mockup's deployments so far: a redo of the app names the preview it replaces. */
   readonly urls?: { readonly preview?: string; readonly prod?: string }
+  /** A run of the changes track: the owner's request, literal, and the change's own preview (crit. 36). */
+  readonly change?: { readonly text: string; readonly previewUrl?: string }
 }
 
 /** The absolute path of a document of the mockup folder. */
@@ -129,7 +131,7 @@ export function choiceSection(ctx: PromptContext): string {
  * then protection OFF — so a copy of real client data is never public, not even for a moment. The URL
  * must answer 200 before it is handed in. A failed `vercel` ends the turn without submitting (crit. 37).
  */
-export function deploySection(dir: string, vercelProject: string): string {
+export function deploySection(dir: string, vercelProject: string, isApp = false): string {
   return [
     '',
     '## Publishing',
@@ -138,14 +140,27 @@ export function deploySection(dir: string, vercelProject: string): string {
     '',
     `1. \`vercel project add ${vercelProject}\` — an answer that it already exists is fine.`,
     `2. \`vercel link --yes --project ${vercelProject}\``,
-    `3. \`vercel project protection enable ${vercelProject} --sso\` — so nothing is public before it is checked.`,
-    '4. `vercel deploy --yes` — a preview, never `--prod`. It prints the deployment URL (https://….vercel.app).',
-    '5. Call the tool `check_real_data` with your runId. If it is not clear, do what it says: `vercel remove <url> --yes`, fix, and start again at step 4. Never skip it.',
-    `6. Only once it is clear: \`vercel project protection disable ${vercelProject} --sso\` — the owner opens the previews on the phone without logging in.`,
-    '7. `curl -s -o /dev/null -w "%{http_code}" <url>` on every URL you will hand in, until each answers 200. It takes a few seconds after step 6; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
+    `3. ${uploadRules(dir, isApp)}`,
+    `4. \`vercel project protection enable ${vercelProject} --sso\` — so nothing is public before it is checked.`,
+    '5. `vercel deploy --yes` — a preview, never `--prod`. It prints the deployment URL (https://….vercel.app).',
+    '6. Call the tool `check_real_data` with your runId. If it is not clear, do what it says: `vercel remove <url> --yes`, fix, and start again at step 5. Never skip it.',
+    `7. Only once it is clear: \`vercel project protection disable ${vercelProject} --sso\` — the owner opens the previews on the phone without logging in.`,
+    '8. `curl -s -o /dev/null -w "%{http_code}" <url>` on every URL you will hand in, until each answers 200. It takes a few seconds after step 7; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
     '',
     'If `vercel` fails (not logged in, no network, a quota) or a URL never answers 200, do NOT call `submit_stage`: say in your reply what failed, with the command and its error, and end your turn. The owner retries the stage.',
   ].join('\n')
+}
+
+/**
+ * What must never be uploaded, and — for the app — its framework, both measured in H2: `vercel link`
+ * writes a `.env.local` with a token into the folder it links, and a project made by `vercel project
+ * add` has no framework, so a Next.js deploy fails looking for a static `public/` folder.
+ */
+function uploadRules(dir: string, isApp: boolean): string {
+  const ignored = isApp ? '`.env*`, `.vercel`, `.next` and `node_modules`' : '`.env*` and `.vercel`'
+  const ignore = `Make sure ${dir}/.vercelignore lists ${ignored}: \`vercel link\` writes a \`.env.local\` with a token, and it must never be uploaded.`
+  if (!isApp) return ignore
+  return `${ignore} And make sure ${dir}/vercel.json says \`{ "framework": "nextjs" }\` (or the framework the app uses): a project made by \`vercel project add\` has none, and the deploy would look for a static \`public/\` folder.`
 }
 
 /** The absolute path of the app in the work folder (crit. 32). */
@@ -169,10 +184,11 @@ export function productionSection(dir: string, vercelProject: string): string {
     `Publish ${dir} to production, from inside that folder, in this order:`,
     '',
     `1. \`vercel link --yes --project ${vercelProject}\``,
-    '2. Call the tool `check_real_data` with your runId. Production is public the moment it deploys, so it must be clear BEFORE you deploy. If it is not clear, fix what it says and call it again; never deploy without a clear answer.',
-    '3. `vercel deploy --prod --yes` — it prints the deployment URL and the production alias.',
-    `4. The production alias is the URL to hand in: the \`*.vercel.app\` domain without a hash, normally https://${vercelProject}.vercel.app (\`vercel inspect <deployment url>\` lists it under Aliases).`,
-    '5. `curl -s -o /dev/null -w "%{http_code}" <alias>` until it answers 200; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
+    `2. ${uploadRules(dir, true)}`,
+    '3. Call the tool `check_real_data` with your runId. Production is public the moment it deploys, so it must be clear BEFORE you deploy. If it is not clear, fix what it says and call it again; never deploy without a clear answer.',
+    '4. `vercel deploy --prod --yes` — it prints the deployment URL and the production alias.',
+    `5. The production alias is the URL to hand in: the \`*.vercel.app\` domain without a hash, normally https://${vercelProject}.vercel.app (\`vercel inspect <deployment url>\` lists it under Aliases).`,
+    '6. `curl -s -o /dev/null -w "%{http_code}" <alias>` until it answers 200; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
     '',
     'If `vercel` fails (not logged in, no network, a quota) or the alias never answers 200, do NOT call `submit_stage`: say in your reply what failed, with the command and its error, and end your turn. The owner retries the stage.',
   ].join('\n')

@@ -5,7 +5,9 @@ import { briefPrompt } from './brief.ts'
 import { choiceSection, type PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
 import { buildPrompt } from './build.ts'
+import { changePrompt } from './change.ts'
 import { deliverPrompt } from './deliver.ts'
+import { redeployPrompt } from './redeploy.ts'
 import { planPrompt } from './plan.ts'
 import { contextFor, promptFor } from './index.ts'
 
@@ -55,13 +57,14 @@ test('Word through textutil, PDF through the read tool, and a PDF without text r
   assert.match(prompt, /no text layer.*as an image/s)
 })
 
-test('promptFor answers every stage, and null for a kind of a later block', () => {
+test('promptFor answers every kind of run', () => {
   assert.equal(promptFor(CTX), briefPrompt(CTX))
   assert.equal(promptFor({ ...CTX, stage: 'concepts' }), conceptsPrompt({ ...CTX, stage: 'concepts' }))
   assert.equal(promptFor({ ...CTX, stage: 'plan' }), planPrompt({ ...CTX, stage: 'plan' }))
   assert.equal(promptFor({ ...CTX, stage: 'build' }), buildPrompt({ ...CTX, stage: 'build' }))
   assert.equal(promptFor({ ...CTX, stage: 'deliver' }), deliverPrompt({ ...CTX, stage: 'deliver' }))
-  assert.equal(promptFor({ ...CTX, stage: 'change' }), null)
+  assert.equal(promptFor({ ...CTX, stage: 'change' }), changePrompt({ ...CTX, stage: 'change' }))
+  assert.equal(promptFor({ ...CTX, stage: 'redeploy' }), redeployPrompt({ ...CTX, stage: 'redeploy' }))
 })
 
 test('no inputs yet: the prompt says so instead of an empty list', () => {
@@ -313,4 +316,63 @@ test('crit. 33: the presenter guide has the shape of the guides made by hand, in
   }
   assert.match(prompt, /language of the inputs/)
   assert.match(prompt, /the step that sells it/i)
+})
+
+const CHANGE: PromptContext = { ...CTX, stage: 'change', urls: { prod: 'https://medical-trust-center-mockup.vercel.app' }, change: { text: 'Que el logo del cliente sea más grande.\nY el botón en verde.' } }
+
+test('the change prompt', (t) => {
+  t.assert.snapshot(changePrompt(CHANGE))
+})
+
+test('crit. 36: a change carries the request literal, edits mockup-app/ and deploys a PREVIEW with the protection dance', () => {
+  const prompt = changePrompt(CHANGE)
+  assert.match(prompt, /> Que el logo del cliente sea más grande\.\n> Y el botón en verde\./)
+  assert.ok(prompt.includes(`${CTX.workDir}/mockup-app`))
+  assert.match(prompt, /npm run build/)
+  assert.match(prompt, /a preview, never `--prod`/)
+  const enable = prompt.indexOf('vercel project protection enable medical-trust-center-mockup --sso')
+  const checked = prompt.indexOf('check_real_data')
+  const disable = prompt.indexOf('vercel project protection disable medical-trust-center-mockup --sso')
+  assert.ok(enable !== -1 && enable < checked && checked < disable)
+  assert.match(prompt, /previewUrl/)
+  assert.ok(prompt.includes('files ["mockup-app/package.json"]'))
+  assert.match(prompt, /Do NOT open anything in .*inputs\/private/)
+})
+
+test('crit. 29, 36: a change redo carries the comment and the preview it replaces', () => {
+  const prompt = changePrompt({ ...CHANGE, change: { ...CHANGE.change!, previewUrl: 'https://medical-trust-center-mockup-c1-team.vercel.app' }, redo: { comment: 'Más verde.', previous: [] } })
+  assert.match(prompt, /> Más verde\./)
+  assert.ok(prompt.includes('https://medical-trust-center-mockup-c1-team.vercel.app'))
+})
+
+const REDEPLOY: PromptContext = { ...CHANGE, stage: 'redeploy', change: { ...CHANGE.change!, previewUrl: 'https://medical-trust-center-mockup-c1-team.vercel.app' } }
+
+test('the redeploy prompt', (t) => {
+  t.assert.snapshot(redeployPrompt(REDEPLOY))
+})
+
+test('crit. 36: redeploy checks, deploys to production, and adds the date, the request and the URL to changes.md', () => {
+  const prompt = redeployPrompt(REDEPLOY)
+  assert.ok(prompt.indexOf('check_real_data') < prompt.indexOf('vercel deploy --prod --yes'))
+  assert.ok(prompt.includes(`${CTX.vaultDir}/changes.md`))
+  assert.match(prompt, /YYYY-MM-DD/)
+  assert.match(prompt, /06-presenter-guide\.md.*only if/s)
+  assert.match(prompt, /Do not change the app/)
+  assert.match(prompt, /prodUrl/)
+  assert.ok(prompt.includes('files ["changes.md"]'))
+})
+
+test('H2: every deploy keeps vercel link’s token file and the link out of the upload, before the first deploy', () => {
+  for (const prompt of [planPrompt(PLAN), buildPrompt(BUILD), changePrompt(CHANGE), deliverPrompt(DELIVER), redeployPrompt(REDEPLOY)]) {
+    const ignore = prompt.indexOf('.vercelignore')
+    assert.ok(ignore !== -1 && ignore < prompt.indexOf('vercel deploy'), 'the ignore file comes before the deploy')
+    assert.match(prompt, /`\.env\*`/)
+  }
+})
+
+test('H2: the app pins its framework, or a project made by `vercel project add` looks for a static public/ folder', () => {
+  for (const prompt of [buildPrompt(BUILD), changePrompt(CHANGE), deliverPrompt(DELIVER), redeployPrompt(REDEPLOY)]) {
+    assert.ok(prompt.indexOf('"framework"') !== -1 && prompt.indexOf('"framework"') < prompt.indexOf('vercel deploy'))
+  }
+  assert.doesNotMatch(planPrompt(PLAN), /"framework"/, 'the directions are plain static files')
 })

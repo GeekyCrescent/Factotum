@@ -59,7 +59,7 @@ export function buildPrompt(ctx: PromptContext): string {
     '- it works on a phone (390 px wide) and on a laptop, and respects `prefers-reduced-motion`.',
     '',
     `Then \`npm install\` and \`npm run build\` in ${app}: it must build clean, with no errors. Do not touch ${join(ctx.workDir, 'directions')}.`,
-    deploySection(app, vercelProjectOf(ctx.project, 'build') ?? `${ctx.project}-mockup`),
+    deploySection(app, vercelProjectOf(ctx.project, 'build') ?? `${ctx.project}-mockup`, true),
     '',
     '## Handing it in',
     '',

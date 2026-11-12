@@ -147,3 +147,13 @@
 .mk-option-open { margin: 0 14px 12px; align-self: flex-start; }
 .mk-option:has(.mk-option-open) { display: flex; flex-direction: column; }
 .mk-project a.mk-ellipsis { display: block; color: var(--accent); }
+
+/* The changes after delivery (criterion 36). */
+.mk-tabs { display: flex; gap: 8px; padding-top: 8px; }
+.mk-changes { display: flex; flex-direction: column; gap: 20px; }
+.mk-change-open { display: flex; flex-direction: column; gap: 10px; }
+.mk-change-text { margin: 0; font-size: 15px; line-height: 1.5; }
+.mk-change-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.mk-change { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.mk-change a.mk-ellipsis { display: block; color: var(--accent); }
+.mk-app { display: flex; flex-direction: column; gap: 12px; }

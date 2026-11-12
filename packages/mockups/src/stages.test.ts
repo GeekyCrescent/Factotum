@@ -43,10 +43,10 @@ test('changes are not a stage: change has a gate on the work-dir, redeploy has n
   assert.equal(RUN_SPECS.brief, STAGES.brief)
 })
 
-test('cut 3, block J: build and deliver launch too; the changes arrive with L', () => {
-  assert.deepEqual(CUT_KINDS, ['brief', 'concepts', 'plan', 'build', 'deliver'])
-  assert.equal(isLaunchable('deliver'), true)
-  assert.equal(isLaunchable('change'), false)
+test('cut 3, block L: every kind of run launches — the five stages, change and redeploy', () => {
+  assert.deepEqual(CUT_KINDS, ['brief', 'concepts', 'plan', 'build', 'deliver', 'change', 'redeploy'])
+  assert.equal(isLaunchable('change'), true)
+  assert.equal(isLaunchable('redeploy'), true)
 })
 
 test('crit. 16, 32, 33, 36: what each publishing run hands in — a preview from build and change, production from deliver and redeploy', () => {

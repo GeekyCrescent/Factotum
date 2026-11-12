@@ -3,11 +3,11 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { linkSession, startRun, stallRun } from './ops.ts'
+import { linkSession, requestChange, startRun, stallRun } from './ops.ts'
 import { openStore, type MockupsStore } from './store/store.ts'
 import { CHECK_REAL_DATA, createSubmitTool, SUBMIT_STAGE } from './submit.ts'
 import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, withStep, type CapturedLog, type CapturedNotify } from './test-support.ts'
-import type { AgentToolResult, Mockup, Result } from './types.ts'
+import { STAGE_IDS, type AgentToolResult, type Mockup, type Result } from './types.ts'
 
 let root: string
 let vaultDir: string
@@ -480,5 +480,52 @@ test('crit. 33: a deliver is accepted: done, the mockup delivered with both URLs
   assert.equal(built()?.stages.deliver.status, 'done')
   assert.equal(built()?.status, 'delivered')
   assert.deepEqual(built()?.urls, { preview: PREVIEW, prod: PROD })
+  assert.deepEqual(notify.sent, [])
+})
+
+// ── The changes track (criterion 36) ──
+
+/** A delivered mockup with change c1 asked and its run x1 (kind `kind`) started. */
+async function seedChange(kind: 'change' | 'redeploy' = 'change'): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme', status: 'delivered', urls: { preview: PREVIEW, prod: PROD } })
+    for (const id of STAGE_IDS) m = withStep(m, id, { status: 'done', version: 1 })
+    m = value(requestChange(m, { changeId: 'c1', text: 'El logo confidencial más grande' }, NOW))
+    if (kind === 'redeploy') m = { ...m, changes: m.changes.map((c) => ({ ...c, phase: 'approved' as const, version: 1 })) }
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind, changeId: 'c1', runId: 'x1', siteId: 'acme' }, NOW))] } } }
+  })
+  await mkdir(join(workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'package.json'), '{"name":"acme"}\n')
+}
+const theChange = () => store.current().mockups[0]?.changes[0]
+const CHANGE_PREVIEW = 'https://acme-mockup-chg-team.vercel.app'
+const callChange = (raw: Record<string, unknown>) => call({ runId: 'x1', files: APP, summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 36: a change without its preview is refused; with it, it waits at its own gate with one push to the changes', async () => {
+  await seedChange()
+  assert.match(textOf(await callChange({})), /needs previewUrl/)
+  const result = await callChange({ previewUrl: CHANGE_PREVIEW })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(theChange()?.status, 'waiting')
+  assert.equal(theChange()?.previewUrl, CHANGE_PREVIEW)
+  assert.deepEqual(notify.sent, [{ title: 'MTC app: change ready', body: 'Tap to review.', path: '/m/mockups/m1/changes', tag: 'mockups-gate-m1-change' }])
+  assert.ok(log.lines.includes('info mockup m1: change run x1 submitted, version 1, waiting'))
+  assert.ok(!JSON.stringify([notify.sent, log.lines]).includes('confidencial'), 'crit. 42: the request is never logged nor pushed')
+})
+
+test('crit. 35: check_real_data answers a change run — it publishes', async () => {
+  await seedChange()
+  assert.match(textOf(await check({ runId: 'x1' }, { siteId: 'acme' })), /^Clear:/)
+})
+
+test('crit. 36: a redeploy must write changes.md and hand in production; accepted, the change is done and the mockup delivered', async () => {
+  await seedChange('redeploy')
+  assert.match(textOf(await call({ runId: 'x1', files: ['changes.md'], summary: 's', prodUrl: PROD }, { siteId: 'acme' })), /changes\.md does not exist/)
+  await writeFile(join(vaultDir, 'changes.md'), '---\ntitle: Cambios\n---\n- 2026-11-13 — logo — https://acme-mockup.vercel.app\n')
+  assert.match(textOf(await call({ runId: 'x1', files: ['changes.md'], summary: 's' }, { siteId: 'acme' })), /needs prodUrl/)
+  const result = await call({ runId: 'x1', files: ['changes.md'], summary: 's', prodUrl: PROD }, { siteId: 'acme' })
+  assert.equal(textOf(result), 'Submitted. End your turn now.')
+  assert.equal(theChange()?.status, 'done')
+  assert.equal(built()?.status, 'delivered')
   assert.deepEqual(notify.sent, [])
 })

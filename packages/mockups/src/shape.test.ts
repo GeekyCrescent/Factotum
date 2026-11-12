@@ -5,6 +5,7 @@ import {
   NAME_MAX_CHARS,
   NOTE_MAX_CHARS,
   parseAbandon,
+  parseChange,
   parseCreate,
   parseDecision,
   parseLink,
@@ -100,4 +101,14 @@ test('an upload name is a plain file name: no folder, no leading dot, nothing a 
   assert.equal(uploadName('.env').ok, false)
   assert.equal(uploadName('x'.repeat(201)).ok, false)
   assert.equal(uploadName('a\nb.pdf').ok, false)
+})
+
+test('crit. 36: a run of the changes track names its change; a stage run does not; a decision may be a change’s', () => {
+  assert.deepEqual(parseRun({ kind: 'redeploy', changeId: 'c1' }), { ok: true, value: { kind: 'redeploy', changeId: 'c1' } })
+  assert.deepEqual(parseRun({ kind: 'change' }), { ok: false, field: 'changeId', reason: 'a change or redeploy names its changeId, and a stage does not' })
+  assert.equal(parseRun({ kind: 'build', changeId: 'c1' }).ok, false)
+  assert.deepEqual(parseDecision({ step: { changeId: 'c1' }, action: 'approve' }), { ok: true, value: { step: { changeId: 'c1' }, action: 'approve' } })
+  assert.equal(parseDecision({ step: { changeId: '' }, action: 'approve' }).ok, false)
+  assert.deepEqual(parseChange({ text: '  logo  ' }), { ok: true, value: { text: 'logo' } })
+  assert.equal(parseChange({ text: '' }).ok, false)
 })

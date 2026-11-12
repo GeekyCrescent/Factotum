@@ -482,3 +482,75 @@ test('crit. 20, 33: approving the build leaves deliver ready on the work-dir pro
   assert.equal(after?.urls.prod, 'https://acme-mockup.vercel.app')
   assert.equal(value(await mockups.docs(m.id, 'deliver')).files[0]?.name, '06-presenter-guide.md')
 })
+
+// ── The changes track (criterion 36) ──
+
+/** The build approved and deliver submitted: delivered. */
+async function deliveredMockup(): Promise<Mockup> {
+  const m = await waitingBuild()
+  value(await mockups.decide(m.id, { step: 'build', action: 'approve' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'deliver' }))
+  await writeFile(join(m.vaultDir, '06-presenter-guide.md'), '---\ntitle: Guía\n---\n# Guía\n')
+  const raw = { runId: ticket.runId, files: ['06-presenter-guide.md'], summary: 's', prodUrl: 'https://acme-mockup.vercel.app' }
+  const result = await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(result.isError, undefined, result.content[0]?.text)
+  return mockups.get(m.id) ?? assert.fail('gone')
+}
+
+const submitAs = async (runId: string, raw: Record<string, unknown>) =>
+  await mockups.agent.call({ sessionId: SESSION, siteId: 'acme', toolUseId: 't', name: SUBMIT_STAGE, raw: { runId, summary: 's', ...raw } })
+
+test('crit. 36: a change is asked only of a delivered mockup, with a text', async () => {
+  const m = await created()
+  assert.equal(code(await mockups.requestChange(m.id, { text: 'logo' })), 'conflict')
+  value(await mockups.archive(m.id))
+  const d = await deliveredMockup()
+  assert.equal(code(await mockups.requestChange(d.id, {})), 'invalid')
+  assert.equal(code(await mockups.requestChange('nope', { text: 'logo' })), 'not-found')
+})
+
+test('crit. 14, 36: asking a change starts its run on the work-dir project, with the request literal; one change at a time', async () => {
+  const m = await deliveredMockup()
+  const asked = value(await mockups.requestChange(m.id, { text: 'El logo secreto más grande' }))
+  assert.ok(asked.run !== undefined)
+  assert.equal(asked.run.siteId, 'acme')
+  assert.equal(asked.run.title, 'Mockup · change · Acme app')
+  assert.match(asked.run.text, /> El logo secreto más grande/)
+  assert.equal(asked.mockup.status, 'changing')
+  assert.equal(asked.mockup.changes[0]?.status, 'running')
+  assert.equal(code(await mockups.requestChange(m.id, { text: 'otro' })), 'conflict')
+  assert.ok(!log.lines.join('\n').includes('secreto'), 'crit. 42')
+})
+
+test('crit. 36, end to end: change → redo → approve → redeploy abandoned → «Start redeploy» → done, and a line in changes.md', async () => {
+  const m = await deliveredMockup()
+  const asked = value(await mockups.requestChange(m.id, { text: 'logo más grande' }))
+  const changeId = asked.mockup.changes[0]?.id ?? assert.fail('no change')
+  assert.equal((await submitAs(asked.run?.runId ?? '', { files: ['mockup-app/package.json'], previewUrl: 'https://acme-mockup-c1-team.vercel.app' })).isError, undefined)
+
+  const redo = value(await mockups.decide(m.id, { step: { changeId }, action: 'redo', comment: 'aún más' }))
+  assert.ok(redo.run !== undefined)
+  assert.match(redo.run.text, /> aún más/)
+  assert.ok(redo.run.text.includes('https://acme-mockup-c1-team.vercel.app'), 'the redo names the preview it replaces')
+  assert.equal((await submitAs(redo.run.runId, { files: ['mockup-app/package.json'], previewUrl: 'https://acme-mockup-c2-team.vercel.app' })).isError, undefined)
+  assert.equal(mockups.get(m.id)?.changes[0]?.version, 2)
+
+  const approvedChange = value(await mockups.decide(m.id, { step: { changeId }, action: 'approve' }))
+  assert.equal(approvedChange.mockup.changes[0]?.phase, 'approved')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'redeploy' })), 'invalid', 'a redeploy names its change')
+
+  const first = value(await mockups.startRun(m.id, { kind: 'redeploy', changeId }))
+  assert.equal(first.title, 'Mockup · redeploy · Acme app')
+  assert.match(first.text, /vercel deploy --prod --yes/)
+  const back = value(await mockups.abandonRun(first.runId, { reason: 'busy' }))
+  assert.equal(back.changes[0]?.phase, 'approved')
+  assert.equal(back.changes[0]?.status, 'ready')
+
+  const second = value(await mockups.startRun(m.id, { kind: 'redeploy', changeId }))
+  await writeFile(join(m.vaultDir, 'changes.md'), '---\ntitle: Cambios\n---\n- 2026-11-13 — logo más grande — https://acme-mockup.vercel.app\n')
+  assert.equal((await submitAs(second.runId, { files: ['changes.md'], prodUrl: 'https://acme-mockup.vercel.app' })).isError, undefined)
+  const after = mockups.get(m.id)
+  assert.equal(after?.changes[0]?.status, 'done')
+  assert.equal(after?.status, 'delivered')
+  assert.ok(log.lines.includes(`info mockup ${m.id}: change ${changeId} approved, version 2`))
+})

@@ -180,6 +180,8 @@ export interface Mockups {
   readonly docs: (id: string, stage: string) => Promise<Result<{ readonly files: readonly DocFile[] }>>
   readonly startRun: (id: string, input: unknown) => Promise<Result<RunTicket>>
   readonly decide: (id: string, input: unknown) => Promise<Result<Decided>>
+  /** «Request a change» on a delivered mockup: the change and its run, in one go (crit. 36). */
+  readonly requestChange: (id: string, input: unknown) => Promise<Result<Decided>>
   readonly archive: (id: string) => Promise<Result<Mockup>>
   readonly linkRun: (runId: string, input: unknown) => Promise<Result<Mockup>>
   readonly stallRun: (runId: string) => Promise<Result<Mockup>>
