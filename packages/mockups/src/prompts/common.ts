@@ -38,7 +38,7 @@ export function preamble(ctx: PromptContext, role: string): string {
       ? `There are no inputs listed yet; look in ${inputsDir(ctx)} anyway, and if it is empty, say so in the document.`
       : open.map((input) => `- ${input.name}${input.kind === 'note' ? ' (the owner’s note)' : ''}`).join('\n')
   return [
-    `You are working on a mockup for a client of BWR: «${ctx.name}», for ${ctx.client}. ${role}`,
+    `You are working on a mockup: «${ctx.name}», for ${ctx.client}. ${role}`,
     '',
     '## Where things are',
     '',
