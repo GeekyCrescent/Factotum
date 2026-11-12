@@ -2,9 +2,11 @@
  * The real-data guard (design D3; criterion 35): before a stage that publishes is accepted, no file
  * of `directions/` or `mockup-app/` may carry the same bytes as one of `inputs/private/`.
  *
- * SHA-256 of each private file against each candidate, skipping `node_modules`, `.next` and
- * `.vercel`; only a candidate whose size matches a private file is hashed. More than `maxFiles` or
- * `maxMs` REFUSES ("cannot verify"): it fails closed, and so does a folder it cannot read. Without
+ * SHA-256 (streamed) of each private file against each candidate, skipping `node_modules`, `.next`
+ * and `.vercel` at the TOP of each guarded folder only — a nested one may be uploaded; only a
+ * candidate whose size matches a private file is hashed. More than `maxFiles`, or more than `maxMs`
+ * counting the hashing, REFUSES ("cannot verify"): it fails closed, and so does a folder it cannot
+ * read and a link to a folder (what `vercel deploy` makes of it is not ours to guess). Without
  * `inputs/private/`, there is nothing to guard.
  *
  * It catches a COPY, not a value retyped into a page (`docs/mockups.md` says so). The reason names
@@ -12,7 +14,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { lstat, readdir, readFile, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { lstat, readdir, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { INPUTS_DIR, PRIVATE_DIR } from './inputs.ts'
 import { GUARD_MAX_FILES, GUARD_MAX_MS } from './shape.ts'
@@ -35,30 +38,39 @@ export type GuardResult = { readonly ok: true } | { readonly ok: false; readonly
 class CannotVerify extends Error {}
 
 interface Walk {
+  readonly workDir: string
   readonly limits: GuardLimits
   readonly started: number
   readonly clock: () => number
   count: number
 }
 
-function tick(walk: Walk): void {
-  walk.count++
-  if (walk.count > walk.limits.maxFiles) throw new CannotVerify(`more than ${walk.limits.maxFiles} files`)
+function inTime(walk: Walk): void {
   if (walk.clock() - walk.started > walk.limits.maxMs) throw new CannotVerify(`it took more than ${walk.limits.maxMs} ms`)
 }
 
-/** Every plain file under `dir` (a link to a file counts; a link to a folder is not followed). */
-async function files(dir: string, walk: Walk, skip: ReadonlySet<string>): Promise<readonly string[]> {
+function tick(walk: Walk): void {
+  walk.count++
+  if (walk.count > walk.limits.maxFiles) throw new CannotVerify(`more than ${walk.limits.maxFiles} files`)
+  inTime(walk)
+}
+
+/**
+ * Every plain file under `dir` (a link to a file counts). `skip` applies to the top of `dir` only. A
+ * link to a folder REFUSES: it may be published through.
+ */
+async function files(dir: string, walk: Walk, skip: ReadonlySet<string>, root = dir): Promise<readonly string[]> {
   const found: string[] = []
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (skip.has(entry.name)) continue
+    if (dir === root && skip.has(entry.name)) continue
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      found.push(...(await files(path, walk, skip)))
+      found.push(...(await files(path, walk, skip, root)))
       continue
     }
     if (entry.isSymbolicLink()) {
       const target = await stat(path).catch(() => undefined)
+      if (target?.isDirectory() === true) throw new CannotVerify(`${relative(walk.workDir, path)} is a link to a folder`)
       if (target === undefined || !target.isFile()) continue
     } else if (!entry.isFile()) {
       continue
@@ -69,7 +81,13 @@ async function files(dir: string, walk: Walk, skip: ReadonlySet<string>): Promis
   return found
 }
 
-const sha256 = async (path: string): Promise<string> => createHash('sha256').update(await readFile(path)).digest('hex')
+/** Streamed, and only within the time cap. */
+async function sha256(path: string, walk: Walk): Promise<string> {
+  inTime(walk)
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+  return hash.digest('hex')
+}
 
 /** A folder that is not there is nothing to walk; anything else that is not a folder cannot be verified. */
 async function folder(path: string): Promise<boolean> {
@@ -84,7 +102,7 @@ async function folder(path: string): Promise<boolean> {
 
 export async function guard(workDir: string, limits: GuardLimits = GUARD_LIMITS): Promise<GuardResult> {
   const clock = limits.clock ?? Date.now
-  const walk: Walk = { limits, started: clock(), clock, count: 0 }
+  const walk: Walk = { workDir, limits, started: clock(), clock, count: 0 }
   try {
     const privateDir = join(workDir, INPUTS_DIR, PRIVATE_DIR)
     if (!(await folder(privateDir))) return { ok: true }
@@ -93,7 +111,7 @@ export async function guard(workDir: string, limits: GuardLimits = GUARD_LIMITS)
       const { size } = await stat(path)
       if (size === 0) continue
       const hashes = secrets.get(size) ?? new Set<string>()
-      hashes.add(await sha256(path))
+      hashes.add(await sha256(path, walk))
       secrets.set(size, hashes)
     }
     if (secrets.size === 0) return { ok: true }
@@ -102,7 +120,7 @@ export async function guard(workDir: string, limits: GuardLimits = GUARD_LIMITS)
       if (!(await folder(dir))) continue
       for (const path of await files(dir, walk, SKIPPED)) {
         const hashes = secrets.get((await stat(path)).size)
-        if (hashes !== undefined && hashes.has(await sha256(path))) {
+        if (hashes !== undefined && hashes.has(await sha256(path, walk))) {
           return { ok: false, reason: `${relative(workDir, path)} is a copy of a real-data input. Real client data never goes into what is published: replace it with invented data of the same shape.` }
         }
       }

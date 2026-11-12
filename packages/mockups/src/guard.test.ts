@@ -84,3 +84,25 @@ test('an unreadable folder fails closed: cannot verify', async () => {
   assert.equal(odd.ok, false)
   assert.match(odd.ok ? '' : odd.reason, /^cannot verify/)
 })
+
+test('review: the time cap covers the hashing, not only the walk (a clock that ticks once per call)', async () => {
+  await writeFile(join(workDir, 'directions', 'same-size.csv'), 'x'.repeat('nombre,curp\nAna,XXXX010101\n'.length))
+  let t = 0
+  const result = await guard(workDir, { ...LIMITS, maxMs: 3, clock: () => ++t })
+  assert.equal(result.ok, false)
+  assert.match(result.ok ? '' : result.reason, /^cannot verify: it took more than 3 ms/)
+})
+
+test('review: a link to a FOLDER inside directions/ fails closed — it may be published through', async () => {
+  await symlink(join(workDir, 'inputs', 'private'), join(workDir, 'directions', 'data'))
+  const result = await guard(workDir, LIMITS)
+  assert.equal(result.ok, false)
+  assert.match(result.ok ? '' : result.reason, /^cannot verify: directions\/data is a link to a folder/)
+})
+
+test('review: node_modules, .next and .vercel are skipped only at the top of a guarded folder', async () => {
+  await mkdir(join(workDir, 'directions', 'assets', '.next'), { recursive: true })
+  await writeFile(join(workDir, 'directions', 'assets', '.next', 'x.csv'), 'nombre,curp\nAna,XXXX010101\n')
+  const result = await guard(workDir, LIMITS)
+  assert.match(result.ok ? '' : result.reason, /directions\/assets\/\.next\/x\.csv is a copy/)
+})

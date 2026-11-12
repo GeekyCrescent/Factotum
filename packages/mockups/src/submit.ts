@@ -23,7 +23,7 @@ import { guard, GUARD_LIMITS, type GuardLimits } from './guard.ts'
 import { acceptSubmit, findRun, linkSession } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
-import { RUN_SPECS } from './stages.ts'
+import { RUN_SPECS, vercelProjectOf } from './stages.ts'
 import { codeOf, type MockupsStore } from './store/store.ts'
 import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, StageId } from './types.ts'
 
@@ -119,6 +119,7 @@ async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string
   if (typeof runId !== 'string' || runId === '') return refuse('Not checked: runId must be the runId from your instructions.')
   const live = ownRun(deps, sessionId, siteId, runId)
   if (typeof live === 'string') return refuse(live)
+  if (!RUN_SPECS[live.stage].guard) return refuse(`The ${live.stage} stage publishes nothing: there is nothing to check.`)
   const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
   if (!guarded.ok) {
     deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check refused`)
@@ -184,8 +185,15 @@ export function checkOptions(kind: RunKind, options: SubmitInput['options']): st
   return undefined
 }
 
-/** Check 5: `https://<something>.vercel.app`, nothing else (no port, no user, no other host). */
-export function isVercelUrl(raw: string): boolean {
+/** How much of a long project name Vercel keeps at the start of a deployment's host (it shortens long ones). */
+const PROJECT_PREFIX_CHARS = 20
+
+/**
+ * Check 5: `https://<host>.vercel.app`, nothing else (no port, no user), and — when the stage deploys —
+ * a host of ITS project: the alias `<project>.vercel.app` or a deployment `<project>-<hash>-<team>`
+ * (measured in A3). Any other `*.vercel.app` is someone else's site.
+ */
+export function isVercelUrl(raw: string, vercelProject: string | null = null): boolean {
   let url: URL
   try {
     url = new URL(raw)
@@ -193,18 +201,24 @@ export function isVercelUrl(raw: string): boolean {
     return false
   }
   const host = url.hostname
-  return url.protocol === 'https:' && url.port === '' && url.username === '' && url.password === '' && host.endsWith('.vercel.app') && host.length > '.vercel.app'.length
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') return false
+  if (!host.endsWith('.vercel.app') || host.length <= '.vercel.app'.length) return false
+  if (vercelProject === null) return true
+  const label = host.slice(0, -'.vercel.app'.length)
+  if (label === vercelProject) return true
+  return vercelProject.length <= PROJECT_PREFIX_CHARS ? label.startsWith(`${vercelProject}-`) : label.startsWith(vercelProject.slice(0, PROJECT_PREFIX_CHARS))
 }
 
-/** Check 5. `undefined`: every URL handed in is a Vercel deployment. */
-export function checkUrls(input: SubmitInput): string | undefined {
+/** Check 5. `undefined`: every URL handed in is a deployment of the stage's own Vercel project. */
+export function checkUrls(input: SubmitInput, vercelProject: string | null = null): string | undefined {
   const urls: readonly [string, string | undefined][] = [
     ...(input.options ?? []).map((option): [string, string | undefined] => [`option ${option.id}'s url`, option.url]),
     ['previewUrl', input.previewUrl],
     ['prodUrl', input.prodUrl],
   ]
+  const shape = vercelProject === null ? 'https://<something>.vercel.app' : `https://<something>.vercel.app of the Vercel project ${vercelProject}`
   for (const [what, url] of urls) {
-    if (url !== undefined && !isVercelUrl(url)) return `${what} must be https://<something>.vercel.app, the URL vercel deploy printed.`
+    if (url !== undefined && !isVercelUrl(url, vercelProject)) return `${what} must be ${shape}, the URL vercel deploy printed.`
   }
   return undefined
 }
@@ -217,7 +231,7 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   const live = ownRun(deps, sessionId, siteId, input.runId)
   if (typeof live === 'string') return refuse(live)
 
-  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input)
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input, vercelProjectOf(live.mockup.project, live.stage))
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
   if (RUN_SPECS[live.stage].guard) {
     const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)

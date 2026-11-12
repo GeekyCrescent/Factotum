@@ -388,3 +388,14 @@ test('crit. 29: a plan redo copies the documents AND directions/ before it start
   assert.ok(decided.run.text.includes(join(m.workDir, 'directions', '_versions', 'v1')))
   assert.ok(decided.run.text.includes(join(m.vaultDir, '_versions', '05-visual-direction-v1.md')))
 })
+
+test('review: two choices at once — one wins, and the document says what the state says', async () => {
+  const m = await waitingConcepts()
+  const [x, y] = await Promise.all([
+    mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'a' }),
+    mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'b' }),
+  ])
+  assert.deepEqual([code(x), code(y)].sort(), ['conflict', 'ok'])
+  const chosen = mockups.get(m.id)?.stages.concepts.chosen
+  assert.match(await readFile(join(m.vaultDir, '02-concepts.md'), 'utf8'), new RegExp(`\\nchosen: ${chosen}\\n`))
+})

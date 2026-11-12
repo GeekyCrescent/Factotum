@@ -25,6 +25,8 @@ export interface RunSpec {
   readonly guard: boolean
   /** Folders of the work-dir the stage writes, copied to `<dir>/_versions/v<k>/` before a redo (D7). */
   readonly versionedDirs?: readonly string[]
+  /** The Vercel project it deploys to, `<project>-<deploysTo>` (D4); its URLs must be that project's (check 5). */
+  readonly deploysTo?: 'directions' | 'mockup'
 }
 
 export interface StageSpec extends RunSpec {
@@ -45,18 +47,25 @@ export const STAGES: Readonly<Record<StageId, StageSpec>> = {
     gate: 'choose',
     guard: true,
     versionedDirs: ['directions'],
+    deploysTo: 'directions',
     next: 'build',
     chosenIn: '05-visual-direction.md',
   },
-  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', guard: true, next: 'deliver' },
-  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, guard: true, next: null },
+  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', guard: true, deploysTo: 'mockup', next: 'deliver' },
+  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, guard: true, deploysTo: 'mockup', next: null },
 }
 
 /** Every kind of run: the stages, and the two of the changes track (not stages, D2). */
 export const RUN_SPECS: Readonly<Record<RunKind, RunSpec>> = {
   ...STAGES,
-  change: { site: 'work', files: [], options: null, gate: 'approve', guard: true },
-  redeploy: { site: 'work', files: [], options: null, gate: null, guard: true },
+  change: { site: 'work', files: [], options: null, gate: 'approve', guard: true, deploysTo: 'mockup' },
+  redeploy: { site: 'work', files: [], options: null, gate: null, guard: true, deploysTo: 'mockup' },
+}
+
+/** The Vercel project a run of `kind` deploys to, from the vault project's slug; `null` if it deploys nothing. */
+export function vercelProjectOf(project: string, kind: RunKind): string | null {
+  const to = RUN_SPECS[kind].deploysTo
+  return to === undefined ? null : `${project}-${to}`
 }
 
 export function nextStage(id: StageId): StageId | null {

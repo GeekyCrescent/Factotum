@@ -372,8 +372,8 @@ const DIR_SKIP = new Set([VERSIONS, '.vercel', 'node_modules', '.next'])
  * not copied again (a retried redo); a different one is never overwritten: `v<k>-2`. Returns the
  * absolute folder that holds the version, or `null` when there is no `directions/` to keep.
  */
-export async function versionDirections(workDir: string, k: number): Promise<string | null> {
-  const dir = join(workDir, 'directions')
+export async function versionDirections(workDir: string, k: number, folder = 'directions'): Promise<string | null> {
+  const dir = join(workDir, folder)
   try {
     if (!(await stat(dir)).isDirectory()) return null
   } catch (error) {

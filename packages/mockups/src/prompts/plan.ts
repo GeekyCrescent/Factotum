@@ -7,6 +7,7 @@
  */
 
 import { join } from 'node:path'
+import { vercelProjectOf } from '../stages.ts'
 import { choiceSection, closing, deploySection, docPath, preamble, redoSection, type PromptContext } from './common.ts'
 
 export function directionsDir(ctx: PromptContext): string {
@@ -47,7 +48,7 @@ export function planPrompt(ctx: PromptContext): string {
     '- one page per direction, `<id>.html`, that shows THE STEP THAT SELLS IT in that direction, with its animations running. It must work on a phone (390 px wide) and respect `prefers-reduced-motion`.',
     '',
     'The data on the pages comes from 04-data.md. Do not touch `_versions/` in that folder.',
-    deploySection(site, `${ctx.project}-directions`),
+    deploySection(site, vercelProjectOf(ctx.project, 'plan') ?? `${ctx.project}-directions`),
     '',
     '## Handing it in',
     '',
