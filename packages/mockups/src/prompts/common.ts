@@ -118,23 +118,25 @@ export function choiceSection(ctx: PromptContext): string {
 }
 
 /**
- * Publishing a folder to a Vercel PREVIEW and opening it (D4, measured in A3): a new project is born
- * protected and its previews ask for a login, so the protection is turned off after deploying — every
- * time, it is harmless when already off — and the URL must answer 200 before it is handed in
- * (criterion 34). A failed `vercel` ends the turn without submitting (criterion 37).
+ * Publishing a folder to a Vercel PREVIEW, and opening it only once it is clear (D4, measured in A3;
+ * criteria 34, 35): protection ON before deploying, `check_real_data` on what was deployed, and only
+ * then protection OFF — so a copy of real client data is never public, not even for a moment. The URL
+ * must answer 200 before it is handed in. A failed `vercel` ends the turn without submitting (crit. 37).
  */
 export function deploySection(dir: string, vercelProject: string): string {
   return [
     '',
     '## Publishing',
     '',
-    `Publish ${dir} to a Vercel preview, from inside that folder:`,
+    `Publish ${dir} to a Vercel preview, from inside that folder, in this order:`,
     '',
     `1. \`vercel project add ${vercelProject}\` — an answer that it already exists is fine.`,
     `2. \`vercel link --yes --project ${vercelProject}\``,
-    '3. `vercel deploy --yes` — a preview, never `--prod`. It prints the deployment URL (https://….vercel.app).',
-    `4. \`vercel project protection disable ${vercelProject} --sso\` — a new Vercel project is born protected and its previews ask for a login; the owner opens them on the phone without one.`,
-    '5. `curl -s -o /dev/null -w "%{http_code}" <url>` on every URL you will hand in, until each answers 200. It takes a few seconds after step 4; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
+    `3. \`vercel project protection enable ${vercelProject} --sso\` — so nothing is public before it is checked.`,
+    '4. `vercel deploy --yes` — a preview, never `--prod`. It prints the deployment URL (https://….vercel.app).',
+    '5. Call the tool `check_real_data` with your runId. If it is not clear, do what it says: `vercel remove <url> --yes`, fix, and start again at step 4. Never skip it.',
+    `6. Only once it is clear: \`vercel project protection disable ${vercelProject} --sso\` — the owner opens the previews on the phone without logging in.`,
+    '7. `curl -s -o /dev/null -w "%{http_code}" <url>` on every URL you will hand in, until each answers 200. It takes a few seconds after step 6; keep trying for up to two minutes. Never hand in a URL that does not answer 200.',
     '',
     'If `vercel` fails (not logged in, no network, a quota) or a URL never answers 200, do NOT call `submit_stage`: say in your reply what failed, with the command and its error, and end your turn. The owner retries the stage.',
   ].join('\n')

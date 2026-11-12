@@ -195,3 +195,13 @@ test('crit. 29: a plan redo names the previous documents and the previous direct
   assert.ok(prompt.includes(`- ${CTX.workDir}/directions/_versions/v1`))
   assert.ok(!prompt.includes(`${CTX.vaultDir}${CTX.workDir}`))
 })
+
+test('crit. 35: the deploy stays protected until check_real_data clears it; a refusal takes it down', () => {
+  const prompt = planPrompt(PLAN)
+  const enable = prompt.indexOf('vercel project protection enable medical-trust-center-directions --sso')
+  const deploy = prompt.indexOf('vercel deploy --yes')
+  const checked = prompt.indexOf('check_real_data')
+  const disable = prompt.indexOf('vercel project protection disable')
+  assert.ok(enable !== -1 && enable < deploy && deploy < checked && checked < disable, 'enable → deploy → check → disable')
+  assert.match(prompt, /vercel remove <url> --yes/)
+})

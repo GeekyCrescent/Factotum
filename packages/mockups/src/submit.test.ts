@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { linkSession, startRun, stallRun } from './ops.ts'
 import { openStore, type MockupsStore } from './store/store.ts'
-import { createSubmitTool, SUBMIT_STAGE } from './submit.ts'
+import { CHECK_REAL_DATA, createSubmitTool, SUBMIT_STAGE } from './submit.ts'
 import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, withStep, type CapturedLog, type CapturedNotify } from './test-support.ts'
 import type { AgentToolResult, Mockup, Result } from './types.ts'
 
@@ -54,11 +54,11 @@ async function call(raw: unknown, who: { sessionId?: string; siteId?: string } =
 const textOf = (result: AgentToolResult): string => result.content.map((c) => c.text).join('')
 const brief = () => store.current().mockups[0]?.stages.brief
 
-test('the family lists one tool, submit_stage, with its schema', () => {
+test('the family lists submit_stage and check_real_data', () => {
   const tools = tool().tools()
   assert.deepEqual(
     tools.map((t) => t.name),
-    [SUBMIT_STAGE],
+    [SUBMIT_STAGE, CHECK_REAL_DATA],
   )
 })
 
@@ -307,4 +307,50 @@ test('crit. 24: a plan with 2–3 directions, each with its vercel.app url, is a
   assert.equal(plan()?.status, 'waiting')
   assert.equal(plan()?.options?.[1]?.url, 'https://mtc-directions-abc123-team.vercel.app/b.html')
   assert.deepEqual(notify.sent.map((n) => n.title), ['MTC app: plan ready'])
+})
+
+async function check(raw: unknown, who: { sessionId?: string; siteId?: string } = {}): Promise<AgentToolResult> {
+  return await tool().call({ sessionId: who.sessionId ?? SESSION, siteId: who.siteId ?? 'personal', toolUseId: 't', name: CHECK_REAL_DATA, raw })
+}
+
+test('crit. 35, before publishing: check_real_data refuses a copy of a private input, and says to take the deployment down', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await writeFile(join(workDir, 'directions', 'rows.csv'), 'real,rows\n1,2\n')
+  const result = await check({ runId: 'p1' })
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /directions\/rows\.csv is a copy of a real-data input/)
+  assert.match(textOf(result), /vercel remove/)
+  assert.match(textOf(result), /Do not turn the protection off/)
+  assert.equal(plan()?.status, 'running', 'a check changes nothing')
+})
+
+test('check_real_data clears what has no copy, and changes nothing', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'directions', 'index.html'), 'x')
+  const result = await check({ runId: 'p1' })
+  assert.equal(result.isError, undefined)
+  assert.match(textOf(result), /^Clear:/)
+  assert.equal(plan()?.status, 'running')
+  assert.deepEqual(notify.sent, [])
+})
+
+test('check_real_data answers only the run’s own session and site, and only a live run', async () => {
+  await seedPlan()
+  assert.match(textOf(await check({ runId: 'nope' })), /no live run/)
+  assert.match(textOf(await check({ runId: 'p1' }, { siteId: 'other' })), /another project/)
+  assert.match(textOf(await check({ runId: 1 })), /runId/)
+})
+
+test('crit. 35: a guard refusal at submit also says to take the deployment down', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await writeFile(join(workDir, 'directions', 'rows.csv'), 'real,rows\n1,2\n')
+  const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), direction('b')] })
+  assert.match(textOf(result), /vercel remove/)
 })

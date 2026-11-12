@@ -28,6 +28,25 @@ import { codeOf, type MockupsStore } from './store/store.ts'
 import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, StageId } from './types.ts'
 
 export const SUBMIT_STAGE = 'submit_stage'
+/** The guard BEFORE publishing (crit. 35): the session asks it after a protected deploy, before opening it. */
+export const CHECK_REAL_DATA = 'check_real_data'
+
+const TAKE_DOWN =
+  'Do not turn the protection off. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
+  'replace the copy with invented data of the same shape, and deploy again.'
+
+const CHECK_TOOL: AgentTool = {
+  name: CHECK_REAL_DATA,
+  description:
+    'Before a deploy is opened to the public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
+    'Call it with the runId from your instructions after deploying (still protected) and before turning the protection off.',
+  inputSchema: {
+    type: 'object',
+    properties: { runId: { type: 'string', description: 'The runId from your instructions.' } },
+    required: ['runId'],
+    additionalProperties: false,
+  },
+}
 
 const TOOL: AgentTool = {
   name: SUBMIT_STAGE,
@@ -83,6 +102,30 @@ function findLive(mockups: readonly Mockup[], runId: string): Live | undefined {
     if (found !== undefined && (found.step.status === 'running' || found.step.status === 'stalled')) return { mockup: m, stage: found.stage, run: found.run }
   }
   return undefined
+}
+
+/** Checks 1–2: the live run this session may speak for, or why not. */
+function ownRun(deps: SubmitDeps, sessionId: string, siteId: string, runId: string): Live | string {
+  const live = findLive(deps.store.current().mockups, runId)
+  if (live === undefined) return `There is no live run ${runId}. Use the runId from your instructions; if the owner retried the stage, this session is no longer the one doing it.`
+  if (live.run.siteId !== siteId) return 'This session runs in another project than the stage it is submitting. Submit from the session the stage launched.'
+  if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return 'That run belongs to another session. Submit from the session the stage launched.'
+  return live
+}
+
+/** `check_real_data`: the guard on the run's work-dir, changing nothing. */
+async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string, raw: unknown): Promise<AgentToolResult> {
+  const runId = typeof raw === 'object' && raw !== null && 'runId' in raw ? (raw as { runId: unknown }).runId : undefined
+  if (typeof runId !== 'string' || runId === '') return refuse('Not checked: runId must be the runId from your instructions.')
+  const live = ownRun(deps, sessionId, siteId, runId)
+  if (typeof live === 'string') return refuse(live)
+  const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+  if (!guarded.ok) {
+    deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check refused`)
+    return refuse(`Not clear: ${guarded.reason} ${TAKE_DOWN}`)
+  }
+  deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check is clear`)
+  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may turn the protection off.', false)
 }
 
 /** Check 3. `undefined`: every file is there, inside, and not empty. */
@@ -171,10 +214,8 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   if (!shaped.ok) return refuse(`Not submitted: ${shaped.field} ${shaped.reason}. Fix it and call again.`)
   const input = shaped.value
 
-  const live = findLive(deps.store.current().mockups, input.runId)
-  if (live === undefined) return refuse(`There is no live run ${input.runId}. Use the runId from your instructions; if the owner retried the stage, this session is no longer the one doing it.`)
-  if (live.run.siteId !== siteId) return refuse('This session runs in another project than the stage it is submitting. Submit from the session the stage launched.')
-  if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return refuse('That run belongs to another session. Submit from the session the stage launched.')
+  const live = ownRun(deps, sessionId, siteId, input.runId)
+  if (typeof live === 'string') return refuse(live)
 
   const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input)
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
@@ -182,7 +223,7 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
     const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
     if (!guarded.ok) {
       deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} refused by the real-data guard`)
-      return refuse(`Not submitted: ${guarded.reason}`)
+      return refuse(`Not submitted: ${guarded.reason} ${TAKE_DOWN}`)
     }
   }
 
@@ -232,10 +273,11 @@ async function pushGate(deps: SubmitDeps, live: Live): Promise<void> {
 /** The family's implementation: what `mockups` fills the link with, LAST in `start` (D1). */
 export function createSubmitTool(deps: SubmitDeps): AgentToolImpl {
   return {
-    tools: () => [TOOL],
+    tools: () => [TOOL, CHECK_TOOL],
     call: async (input) => {
-      if (input.name !== SUBMIT_STAGE) return refuse(`The mockups module has no tool called ${input.name}.`)
+      if (input.name !== SUBMIT_STAGE && input.name !== CHECK_REAL_DATA) return refuse(`The mockups module has no tool called ${input.name}.`)
       try {
+        if (input.name === CHECK_REAL_DATA) return await checkRealData(deps, input.sessionId, input.siteId, input.raw)
         return await submit(deps, input.sessionId, input.siteId, input.raw)
       } catch (error) {
         deps.log.error(`submit_stage failed unexpectedly (${codeOf(error)}, ${error instanceof Error ? error.name : 'unknown'})`)
