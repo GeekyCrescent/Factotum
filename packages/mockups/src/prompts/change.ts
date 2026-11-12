@@ -6,16 +6,13 @@
 
 import { vercelProjectOf } from '../stages.ts'
 import { appRedoSection } from './build.ts'
-import { appDir, closing, deploySection, docPath, preamble, quote, type PromptContext } from './common.ts'
+import { appDir, closing, deploySection, docPath, preamble, requestSection, type PromptContext } from './common.ts'
 
 export function changePrompt(ctx: PromptContext): string {
   const app = appDir(ctx)
   return [
     preamble(ctx, 'This is a CHANGE to a mockup already delivered: the client asked for it, and the owner wrote it down. Make it in the app and deploy it to a preview the owner reviews from the phone.'),
-    '',
-    '## The request, literal',
-    '',
-    quote(ctx.change?.text ?? ''),
+    requestSection('The request, literal', ctx.change?.text ?? ''),
     appRedoSection(ctx, ctx.change?.previewUrl),
     '',
     '## What to read',

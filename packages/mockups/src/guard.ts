@@ -15,7 +15,7 @@
 
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, readdir, stat } from 'node:fs/promises'
+import { lstat, readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { INPUTS_DIR, PRIVATE_DIR } from './inputs.ts'
 import { GUARD_MAX_FILES, GUARD_MAX_MS } from './shape.ts'
@@ -130,4 +130,33 @@ export async function guard(workDir: string, limits: GuardLimits = GUARD_LIMITS)
     if (error instanceof CannotVerify) return { ok: false, reason: `cannot verify: ${error.message}. Nothing is published until it can.` }
     return { ok: false, reason: `cannot verify: a folder could not be read (${codeOf(error)}).` }
   }
+}
+
+/**
+ * The token file (review of cut 3, security H1; measured in H2): `vercel link` writes a `.env.local`
+ * with a token into the folder it links, and `vercel deploy` uploads what `.vercelignore` does not
+ * list. A `.env*` at the top of a guarded folder must be covered by a line `.env*` or its own name.
+ * The prompt asks for the file; this makes the check refuse without it. Names only, never content.
+ */
+export async function tokenFileCheck(workDir: string): Promise<GuardResult> {
+  for (const dir of GUARDED_DIRS) {
+    const names = await readdir(join(workDir, dir)).catch((error: unknown) => {
+      if (codeOf(error) === 'ENOENT') return [] as string[]
+      throw error
+    })
+    const tokens = names.filter((name) => name.startsWith('.env'))
+    if (tokens.length === 0) continue
+    const ignored = names.includes('.vercelignore') ? (await readFile(join(workDir, dir, '.vercelignore'), 'utf8')).split('\n').map((line) => line.trim()) : []
+    const bare = tokens.find((name) => !ignored.includes('.env*') && !ignored.includes(name))
+    if (bare !== undefined) {
+      return { ok: false, reason: `${dir}/${bare} would be uploaded with its token: list .env* in ${dir}/.vercelignore before deploying.` }
+    }
+  }
+  return { ok: true }
+}
+
+/** Everything checked before something is published: the token file, then the real-data guard. */
+export async function publishCheck(workDir: string, limits: GuardLimits): Promise<GuardResult> {
+  const tokens = await tokenFileCheck(workDir)
+  return tokens.ok ? await guard(workDir, limits) : tokens
 }

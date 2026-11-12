@@ -529,3 +529,19 @@ test('crit. 36: a redeploy must write changes.md and hand in production; accepte
   assert.equal(built()?.status, 'delivered')
   assert.deepEqual(notify.sent, [])
 })
+
+test('review (security H1): check_real_data and submit refuse a build whose token file would be uploaded', async () => {
+  await seedBuild()
+  await writeFile(join(workDir, 'mockup-app', '.env.local'), 'VERCEL_OIDC_TOKEN=x\n')
+  assert.match(textOf(await check({ runId: 'b1' }, { siteId: 'acme' })), /^Not clear: mockup-app\/\.env\.local/)
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/\.env\.local/)
+  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.env*\n.vercel\n')
+  assert.equal((await callBuild({ previewUrl: PREVIEW })).isError, undefined)
+})
+
+test('review (code M2): a change cannot hand the production alias in as its preview', async () => {
+  await seedChange()
+  const result = await callChange({ previewUrl: PROD })
+  assert.match(textOf(result), /previewUrl is the production URL/)
+  assert.equal(theChange()?.status, 'running')
+})

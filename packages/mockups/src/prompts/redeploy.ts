@@ -6,17 +6,14 @@
  */
 
 import { vercelProjectOf } from '../stages.ts'
-import { appDir, closing, docPath, preamble, productionSection, quote, type PromptContext } from './common.ts'
+import { appDir, closing, docPath, preamble, productionSection, requestSection, type PromptContext } from './common.ts'
 
 export function redeployPrompt(ctx: PromptContext): string {
   const app = appDir(ctx)
   const changes = docPath(ctx, 'changes.md')
   return [
     preamble(ctx, 'This is the REDEPLOY of a change the owner approved: put it in production and record it.'),
-    '',
-    '## The change, literal',
-    '',
-    quote(ctx.change?.text ?? ''),
+    requestSection('The change, literal', ctx.change?.text ?? ''),
     ...(ctx.change?.previewUrl === undefined ? [] : ['', `The owner approved it on this preview: ${ctx.change.previewUrl}`]),
     '',
     `Do not change the app: deploy ${app} as it is. If it no longer builds or deploys, say so and end your turn.`,

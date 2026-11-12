@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { guard } from './guard.ts'
+import { guard, tokenFileCheck } from './guard.ts'
 
 let workDir: string
 
@@ -105,4 +105,25 @@ test('review: node_modules, .next and .vercel are skipped only at the top of a g
   await writeFile(join(workDir, 'directions', 'assets', '.next', 'x.csv'), 'nombre,curp\nAna,XXXX010101\n')
   const result = await guard(workDir, LIMITS)
   assert.match(result.ok ? '' : result.reason, /directions\/assets\/\.next\/x\.csv is a copy/)
+})
+
+test('review (security H1): a .env* file in an uploaded folder that its .vercelignore does not cover is refused', async () => {
+  await mkdir(join(workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', '.env.local'), 'VERCEL_OIDC_TOKEN=x\n')
+  const bare = await tokenFileCheck(workDir)
+  assert.equal(bare.ok, false)
+  assert.match(bare.ok ? '' : bare.reason, /mockup-app\/\.env\.local .*\.vercelignore/)
+  assert.doesNotMatch(bare.ok ? '' : bare.reason, /VERCEL_OIDC_TOKEN|=x/, 'never the content')
+  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.vercel\nnode_modules\n')
+  assert.equal((await tokenFileCheck(workDir)).ok, false, 'a .vercelignore without .env* does not cover it')
+  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.vercel\n.env*\n')
+  assert.equal((await tokenFileCheck(workDir)).ok, true)
+  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.env.local\n')
+  assert.equal((await tokenFileCheck(workDir)).ok, true, 'the exact name covers it too')
+})
+
+test('review (security H1): no .env* file, or no guarded folder, is clear', async () => {
+  assert.equal((await tokenFileCheck(workDir)).ok, true)
+  await rm(join(workDir, 'directions'), { recursive: true })
+  assert.equal((await tokenFileCheck(workDir)).ok, true)
 })

@@ -22,10 +22,11 @@ export interface ChangesProps {
   readonly busy: boolean
   readonly dictationApi: DictationApi | undefined
   /** Runs a launch with the screen's busy state and notice (pipeline.tsx). */
-  readonly run: (act: () => Promise<LaunchOutcome>) => Promise<void>
+  readonly run: (act: () => Promise<LaunchOutcome>) => Promise<LaunchOutcome>
   /** Approves the change; with a 200, the redeploy's launch (pipeline.tsx). */
   readonly approve: (change: Change) => Promise<void>
-  readonly abandon: (runId: string) => Promise<void>
+  /** `false` when it failed. */
+  readonly abandon: (runId: string) => Promise<boolean>
   readonly openSession: (sessionId: string) => void
 }
 
@@ -89,8 +90,7 @@ function OpenChange(props: ChangesProps & { readonly change: Change; readonly no
   const current = change.run
   // A redo's retry goes through the change's gate again, with its comment (D6).
   const retry = async (): Promise<void> => {
-    if (current === undefined) return
-    await props.abandon(current.id)
+    if (current === undefined || !(await props.abandon(current.id))) return
     await props.run(() => (current.redo === undefined ? startStage(apis, mockup.id, kind, changeId) : redoStage(apis, mockup.id, { changeId }, current.redo.comment)))
   }
   return (
@@ -114,9 +114,10 @@ function OpenChange(props: ChangesProps & { readonly change: Change; readonly no
 function RequestChange({ mockup, apis, busy, dictationApi, run, blocked }: ChangesProps & { readonly blocked: string | undefined }) {
   const [text, setText] = useState('')
   const box = useRef<HTMLTextAreaElement>(null)
+  // The text stays unless the change was taken: a refused request (no change made) keeps what was dictated.
   const ask = async (): Promise<void> => {
-    await run(() => requestChange(apis, mockup.id, text.trim()))
-    setText('')
+    const outcome = await run(() => requestChange(apis, mockup.id, text.trim()))
+    if (outcome.ok || outcome.problem.kind !== 'rejected') setText('')
   }
   return (
     <section class="mk-gate">

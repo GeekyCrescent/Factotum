@@ -19,7 +19,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Logger, Notifier } from '@factotum/core'
-import { guard, GUARD_LIMITS, type GuardLimits } from './guard.ts'
+import { GUARD_LIMITS, publishCheck, type GuardLimits } from './guard.ts'
 import { acceptSubmit, findRun, linkSession, type FoundRun } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
@@ -128,7 +128,7 @@ async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string
   const live = ownRun(deps, sessionId, siteId, runId)
   if (typeof live === 'string') return refuse(live)
   if (!RUN_SPECS[live.kind].guard) return refuse(`The ${live.kind} stage publishes nothing: there is nothing to check.`)
-  const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+  const guarded = await publishCheck(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
   if (!guarded.ok) {
     deps.log.warn(`mockup ${live.mockup.id}: ${live.kind} run ${runId}: the real-data check refused`)
     return refuse(`Not clear: ${guarded.reason} ${TAKE_DOWN}`)
@@ -235,6 +235,10 @@ export function checkUrls(input: SubmitInput, kind: RunKind, vercelProject: stri
   for (const [what, url] of urls) {
     if (url !== undefined && !isVercelUrl(url, vercelProject)) return `${what} must be ${shape}, the URL vercel deploy printed.`
   }
+  // A preview is a deployment's own URL: the alias is production, and the gate would show it as a preview.
+  if (vercelProject !== null && input.previewUrl !== undefined && new URL(input.previewUrl).hostname === `${vercelProject}.vercel.app`) {
+    return `previewUrl is the production URL of ${vercelProject}; hand in the preview deployment's own URL.`
+  }
   return undefined
 }
 
@@ -250,7 +254,7 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(kind, input.options) ?? checkUrls(input, kind, vercelProjectOf(live.mockup.project, kind))
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
   if (RUN_SPECS[kind].guard) {
-    const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+    const guarded = await publishCheck(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
     if (!guarded.ok) {
       deps.log.warn(`mockup ${live.mockup.id}: ${kind} run ${input.runId} refused by the real-data guard`)
       return refuse(`Not submitted: ${guarded.reason} ${TAKE_DOWN}`)

@@ -97,13 +97,14 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
   const actions = stageActions(mockup, stage, { sessions: sessions !== undefined, now: new Date() })
   const apis = { mockups: api, sessions, host }
 
-  const run = async (act: () => Promise<LaunchOutcome>): Promise<void> => {
+  const run = async (act: () => Promise<LaunchOutcome>): Promise<LaunchOutcome> => {
     setBusy(true)
     setNotice(undefined)
     const outcome = await act()
     setNotice(noticeOf(outcome))
     await reload()
     setBusy(false)
+    return outcome
   }
   // Approve or choose; then, with a 200, the next stage's launch from here (D5; criteria 27, 28).
   const decide = async (decision: { readonly action: 'approve' } | { readonly action: 'choose'; readonly optionId: string }): Promise<void> => {
@@ -126,11 +127,19 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
     await reload()
     setBusy(false)
   }
-  const abandonRun = async (runId: string): Promise<void> => {
+  /** `false` when the abandon failed: a retry must not launch on top of it (its notice says why). */
+  const abandonRun = async (runId: string): Promise<boolean> => {
     setBusy(true)
-    await api.post(`runs/${encodeURIComponent(runId)}/abandon`, { reason: 'abandoned by the owner' }).catch((cause: unknown) => setNotice({ text: messageOf(cause) }))
+    const done = await api
+      .post(`runs/${encodeURIComponent(runId)}/abandon`, { reason: 'abandoned by the owner' })
+      .then(() => true)
+      .catch((cause: unknown) => {
+        setNotice({ text: messageOf(cause) })
+        return false
+      })
     await reload()
     setBusy(false)
+    return done
   }
   const abandon = async (): Promise<void> => {
     if (step.run !== undefined) await abandonRun(step.run.id)

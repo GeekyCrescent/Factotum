@@ -99,6 +99,10 @@ in `inputs/private/` with every file in `directions/` and `mockup-app/` (skippin
 **What it does not catch:** a sample paraphrased, an extract, a value retyped, a copy re-encoded (a CSV
 saved as JSON). The plan's gate is where you catch those — read `04-data.md` before choosing.
 
+**A change request is the easiest way around it.** Its text goes to the stage literally (framed as data,
+not instructions). If you paste a client's email that says «use our real numbers», the session may
+retype them, and the check will not see it. Write the request yourself.
+
 **The order of publishing is in the prompt, not enforced.** A preview deploys with Vercel's protection
 on, is checked, and only then opened; production is checked BEFORE it deploys (the production URL is
 public even with the protection on). The module never runs `vercel` itself: a session that skips the
@@ -113,8 +117,20 @@ production URL to the client yourself; the module sends nothing.
 **Deleting does not unpublish at once.** `vercel project remove <project>` makes the production URL
 answer 404 right away, but a preview URL went on answering 200 from Vercel's edge cache for minutes.
 
-What a stage uploads leaves out `.env*` and `.vercel`: `vercel link` writes a `.env.local` with a token
-into the folder it links, and the prompt has the stage list it in `.vercelignore`.
+**The token file.** `vercel link` writes a `.env.local` with a token into the folder it links. The prompt
+has the stage list `.env*` and `.vercel` in that folder's `.vercelignore`, and the check refuses a `.env*`
+file in `directions/` or `mockup-app/` that the `.vercelignore` does not cover.
+
+**The protection is one switch for the whole project.** A stage turns it on before a preview and off
+after the check; a stage that dies in between leaves it on (previews ask for a login) or, after, off.
+
+**What the module cannot see:**
+- *which folder was deployed.* The checks look at `directions/` and `mockup-app/`; a stage that ran
+  `vercel deploy` from the work folder itself would upload `inputs/`, and nothing would notice;
+- *whose deployment a URL is.* A URL is accepted when its host is `<project>.vercel.app` or starts with
+  `<project>-`, the stage's own project. Any Vercel account can name a project so; and for a project name
+  longer than 20 characters only its first 20 are compared, which can match the other project of the
+  same mockup. Open what the gate shows before you send it to anyone.
 
 ## 5. Using it
 
