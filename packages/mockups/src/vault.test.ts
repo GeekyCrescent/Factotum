@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { DOC_MAX_BYTES } from './shape.ts'
-import { createMockupDir, createProject, listProjects, pascalName, readDocs, splitFrontmatter, updateMap, versionDocs } from './vault.ts'
+import { createMockupDir, createProject, listProjects, pascalName, readDocs, splitFrontmatter, updateMap, versionDocs, withFrontmatterKey, writeChosen } from './vault.ts'
 
 let root: string
 let projectsDir: string
@@ -276,4 +276,29 @@ test('review: a title that ends in a colon is quoted in the hub', async () => {
   const created = await createProject({ projectsDir, workRoot, home, today: '2026-11-12', ...NEW, title: 'Acme fase 2:' })
   assert.ok(created.ok)
   assert.match(await readFile(join(projectsDir, 'acme-portal', 'acme-portal.md'), 'utf8'), /\ntitle: "Acme fase 2:"\n/)
+})
+
+test('crit. 28: withFrontmatterKey replaces the key, or adds it at the end of the frontmatter, or makes one', () => {
+  assert.equal(withFrontmatterKey('---\ntitle: C\nchosen: a\n---\n# C\n', 'chosen', 'b'), '---\ntitle: C\nchosen: b\n---\n# C\n')
+  assert.equal(withFrontmatterKey('---\ntitle: C\n---\n# C\n', 'chosen', 'b'), '---\ntitle: C\nchosen: b\n---\n# C\n')
+  assert.equal(withFrontmatterKey('# C\n', 'chosen', 'b'), '---\nchosen: b\n---\n# C\n')
+})
+
+test('crit. 28: writeChosen writes chosen: <id> into the document, keeping its mode and the rest', async () => {
+  const vaultDir = join(root, 'mockup')
+  await mkdir(vaultDir)
+  await writeFile(join(vaultDir, '02-concepts.md'), '---\ntitle: Conceptos\n---\n# Conceptos\n', { mode: 0o644 })
+  await writeChosen(vaultDir, '02-concepts.md', 'b', false)
+  assert.equal(await readFile(join(vaultDir, '02-concepts.md'), 'utf8'), '---\ntitle: Conceptos\nchosen: b\n---\n# Conceptos\n')
+  assert.equal((await lstat(join(vaultDir, '02-concepts.md'))).mode & 0o777, 0o644)
+})
+
+test('crit. 28: writeChosen refuses a document that is missing or a link out of the folder', async () => {
+  const vaultDir = join(root, 'mockup')
+  await mkdir(vaultDir)
+  await assert.rejects(writeChosen(vaultDir, '02-concepts.md', 'b', false), /does not exist/)
+  await writeFile(join(root, 'secret.md'), 'x')
+  await symlink(join(root, 'secret.md'), join(vaultDir, '02-concepts.md'))
+  await assert.rejects(writeChosen(vaultDir, '02-concepts.md', 'b', false), /outside/)
+  assert.equal(await readFile(join(root, 'secret.md'), 'utf8'), 'x')
 })

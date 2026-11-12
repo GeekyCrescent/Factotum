@@ -26,11 +26,13 @@ export interface RunSpec {
 export interface StageSpec extends RunSpec {
   readonly id: StageId
   readonly next: StageId | null
+  /** A choosing stage: the one of its documents that takes `chosen: <id>` (D6, criterion 28). */
+  readonly chosenIn?: string
 }
 
 export const STAGES: Readonly<Record<StageId, StageSpec>> = {
   brief: { id: 'brief', site: 'docs', files: ['01-brief.md'], options: null, gate: 'approve', next: 'concepts' },
-  concepts: { id: 'concepts', site: 'docs', files: ['02-concepts.md'], options: { min: 2, max: 3, url: false }, gate: 'choose', next: 'plan' },
+  concepts: { id: 'concepts', site: 'docs', files: ['02-concepts.md'], options: { min: 2, max: 3, url: false }, gate: 'choose', next: 'plan', chosenIn: '02-concepts.md' },
   plan: {
     id: 'plan',
     site: 'docs',
@@ -38,6 +40,7 @@ export const STAGES: Readonly<Record<StageId, StageSpec>> = {
     options: { min: 2, max: 3, url: true },
     gate: 'choose',
     next: 'build',
+    chosenIn: '05-visual-direction.md',
   },
   build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', next: 'deliver' },
   deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, next: null },
@@ -54,8 +57,13 @@ export function nextStage(id: StageId): StageId | null {
   return STAGES[id].next
 }
 
-/** What THIS cut launches (tasks.md: cut 1 is brief). The rest answers `not-yet`. */
-export const CUT_KINDS: readonly RunKind[] = ['brief']
+/** The stage whose approval opens `id`, if any. */
+export function previousStage(id: StageId): StageId | null {
+  return (Object.values(STAGES).find((spec) => spec.next === id)?.id ?? null)
+}
+
+/** What THIS cut launches (tasks.md: cut 1 is brief, cut 2 adds concepts and plan). The rest answers `not-yet`. */
+export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts']
 
 export function isLaunchable(kind: RunKind): boolean {
   return CUT_KINDS.includes(kind)

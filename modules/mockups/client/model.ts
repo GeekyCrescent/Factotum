@@ -9,7 +9,17 @@ import { STAGE_IDS, type Mockup, type MockupsSetup, type Run, type StageId, type
 /** A COPY of the package's `STARTING_OFFER_MS` (criterion 18): «Abandon» after this without a session. */
 export const STARTING_OFFER_MS = 2 * 60_000
 /** A COPY of the package's `CUT_KINDS`: what this cut launches. The rest shows, with «next cut». */
-export const CUT_STAGES: readonly StageId[] = ['brief']
+export const CUT_STAGES: readonly StageId[] = ['brief', 'concepts']
+
+/** A COPY of the gates and the order of the package's stage table (D2). */
+const GATES: Readonly<Record<StageId, 'approve' | 'choose' | null>> = { brief: 'approve', concepts: 'choose', plan: 'choose', build: 'approve', deliver: null }
+const NEXT: Readonly<Record<StageId, StageId | null>> = { brief: 'concepts', concepts: 'plan', plan: 'build', build: 'deliver', deliver: null }
+
+/** Criteria 27, 28: the stage the screen launches right after approving or choosing `stage`, if this cut launches it. */
+export function afterDecision(stage: StageId): StageId | undefined {
+  const next = NEXT[stage]
+  return next !== null && CUT_STAGES.includes(next) ? next : undefined
+}
 
 const RANK = { waiting: 0, stalled: 1, running: 2 } as const
 
@@ -75,7 +85,11 @@ export interface StageActions {
   readonly start?: Action
   readonly retry?: Action
   readonly redo: Action
+  /** How this stage's gate is answered (D2). */
+  readonly gate: 'approve' | 'choose' | null
   readonly approve: boolean
+  /** A choosing gate: pick one of the options (criterion 28). */
+  readonly choose: boolean
   readonly abandon: boolean
   /** The linked session, to open it (criterion 17). */
   readonly openSession?: string
@@ -91,7 +105,9 @@ export function stageActions(m: Mockup, stage: StageId, ctx: LaunchContext & { r
     ...(step.status === 'ready' ? { start: { disabled: blocked } } : {}),
     ...(step.status === 'stalled' ? { retry: { disabled: blocked } } : {}),
     redo: { disabled: step.status === 'waiting' ? blocked : 'only a stage waiting on you can be redone' },
-    approve: step.status === 'waiting',
+    gate: GATES[stage],
+    approve: step.status === 'waiting' && GATES[stage] === 'approve',
+    choose: step.status === 'waiting' && GATES[stage] === 'choose',
     abandon: run !== undefined && step.status === 'running' && offersAbandon(run, ctx.now),
     ...(run?.sessionId === undefined ? {} : { openSession: run.sessionId }),
   }
@@ -133,4 +149,14 @@ export function crossWrites(setup: MockupsSetup, sessions: SessionsProjects, cas
     if (!inShared(setup.projectsDir)) problems.push(`${setup.projectsDir} is not a shared folder of sessions`)
   }
   return problems.length === 0 ? undefined : `${CROSS_WRITES_WARNING[0]?.toUpperCase()}${CROSS_WRITES_WARNING.slice(1)}: ${problems.join('; ')}.`
+}
+
+/** Only an `https:` URL becomes a link: the server checks them too (D3, checks 4–5), and the screen does not trust it. */
+export function safeUrl(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined
+  try {
+    return new URL(url).protocol === 'https:' ? url : undefined
+  } catch {
+    return undefined
+  }
 }

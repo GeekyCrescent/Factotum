@@ -43,9 +43,15 @@ test('changes are not a stage: change has a gate on the work-dir, redeploy has n
   assert.equal(RUN_SPECS.brief, STAGES.brief)
 })
 
-test('the first cut launches only brief', () => {
-  assert.deepEqual(CUT_KINDS, ['brief'])
-  assert.equal(isLaunchable('brief'), true)
-  assert.equal(isLaunchable('concepts'), false)
+test('cut 2, block F, launches brief and concepts; plan arrives with block G', () => {
+  assert.deepEqual(CUT_KINDS, ['brief', 'concepts'])
+  assert.equal(isLaunchable('concepts'), true)
+  assert.equal(isLaunchable('plan'), false)
   assert.equal(isLaunchable('change'), false)
+})
+
+test('crit. 28: the choice of a choosing stage is written into ONE of its documents', () => {
+  assert.equal(STAGES.concepts.chosenIn, '02-concepts.md')
+  assert.equal(STAGES.plan.chosenIn, '05-visual-direction.md')
+  assert.equal(STAGES.brief.chosenIn, undefined)
 })

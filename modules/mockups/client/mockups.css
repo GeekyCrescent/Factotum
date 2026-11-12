@@ -132,3 +132,17 @@
 .mk-doc .s-md > :first-child { margin-top: 0; }
 .mk-doc .s-md :is(ul, ol) { margin: 6px 0; }
 .chip.mk-private { font-size: 12px; padding: 2px 8px; border-radius: 6px; min-height: 0; line-height: 1.4; }
+
+/* A choosing gate (F2): the options as bordered cards, picked then confirmed. */
+.mk-options { display: flex; flex-direction: column; gap: 10px; }
+.mk-option-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mk-option { position: relative; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); transition: border-color 140ms var(--ease-out); }
+.mk-option.mk-picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.mk-option-btn { font: inherit; color: inherit; background: none; border: 0; width: 100%; min-height: 44px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer; border-radius: 12px; }
+.mk-option-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mk-option-btn:disabled { cursor: default; }
+.mk-option-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.mk-option-mark { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-2); }
+.mk-picked .mk-option-mark { box-shadow: inset 0 0 0 4px var(--accent); }
+.mk-option-open { margin: 0 14px 12px; align-self: flex-start; }
+.mk-option:has(.mk-option-open) { display: flex; flex-direction: column; }

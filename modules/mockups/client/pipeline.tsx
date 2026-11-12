@@ -17,7 +17,7 @@ import { Glyph } from './glyph.tsx'
 import { Icon } from './icon.tsx'
 import { Inputs } from './inputs.tsx'
 import { messageOf, noticeOf, redoStage, startStage, type LaunchOutcome, type Notice } from './launch.ts'
-import { nowStage, stageActions, statusLine } from './model.ts'
+import { afterDecision, nowStage, stageActions, statusLine } from './model.ts'
 import { pollRequest, reconcileProject, requestProject, type ProjectState } from './project.ts'
 import { checkLiveRuns } from './runs.ts'
 import { StagePanel } from './stage.tsx'
@@ -101,14 +101,23 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
     await reload()
     setBusy(false)
   }
-  const approve = async (): Promise<void> => {
+  // Approve or choose; then, with a 200, the next stage's launch from here (D5; criteria 27, 28).
+  const decide = async (decision: { readonly action: 'approve' } | { readonly action: 'choose'; readonly optionId: string }): Promise<void> => {
     setBusy(true)
     setNotice(undefined)
     try {
-      await api.post(`${path}/decision`, { step: stage, action: 'approve' })
-      setMoved(stage)
+      await api.post(`${path}/decision`, { step: stage, ...decision })
     } catch (cause) {
       setNotice({ text: messageOf(cause) })
+      await reload()
+      setBusy(false)
+      return
+    }
+    setMoved(stage)
+    const next = afterDecision(stage)
+    if (next !== undefined) {
+      props.navigate(`${mockup.id}/${next}`, { replace: true })
+      setNotice(noticeOf(await startStage(apis, mockup.id, next)))
     }
     await reload()
     setBusy(false)
@@ -144,7 +153,8 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
         actions={actions}
         busy={busy}
         dictationApi={sessions}
-        onApprove={() => void approve()}
+        onApprove={() => void decide({ action: 'approve' })}
+        onChoose={(optionId) => void decide({ action: 'choose', optionId })}
         onRedo={(comment) => void run(() => redoStage(apis, mockup.id, stage, comment))}
       />
     ) : (

@@ -7,7 +7,9 @@
  * 2. the site and, once linked, the session are the run's; not linked yet, it links now (crit. 18);
  * 3. the files the stage table requires are named, exist, are not empty, and every file named has
  *    its REAL path inside `vaultDir` or `workDir`.
- * Checks 4–6 (options, URLs, the guard) arrive with the stages that need them (cuts 2 and 3).
+ * 4. a stage with options gets 2 or 3, with distinct ids (and, in plan, each with its `url`); a stage
+ *    without options gets none.
+ * Checks 5–6 (the URLs, the guard) arrive with the stages that need them (block G, cut 3).
  *
  * Accepted: `acceptSubmit` and, with a gate, ONE push with a fixed body — nothing of the summary nor
  * of the documents leaves the private network (criterion 26). NEVER THROWS, and the log carries ids.
@@ -21,7 +23,7 @@ import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
 import { RUN_SPECS } from './stages.ts'
 import { codeOf, type MockupsStore } from './store/store.ts'
-import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, StageId } from './types.ts'
+import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, StageId } from './types.ts'
 
 export const SUBMIT_STAGE = 'submit_stage'
 
@@ -115,6 +117,26 @@ async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boole
   return undefined
 }
 
+/** Check 4. `undefined`: the options are what the stage table asks. */
+export function checkOptions(kind: RunKind, options: SubmitInput['options']): string | undefined {
+  const rule = RUN_SPECS[kind].options
+  if (rule === null) return options === undefined || options.length === 0 ? undefined : `the ${kind} stage takes no options; call again without them.`
+  const count = options?.length ?? 0
+  if (options === undefined || count < rule.min || count > rule.max) {
+    return `the ${kind} stage needs ${rule.min} or ${rule.max} options, one per alternative, and got ${count}.`
+  }
+  if (new Set(options.map((option) => option.id)).size !== count) return 'two options have the same id; give each its own.'
+  if (rule.url) {
+    const bare = options.find((option) => option.url === undefined)
+    if (bare !== undefined) return `option ${bare.id} has no url: each one needs the URL of its deployed page.`
+  } else {
+    // The screen renders an option's url as a link: none where the stage deploys nothing.
+    const linked = options.find((option) => option.url !== undefined)
+    if (linked !== undefined) return `option ${linked.id} has a url, and the ${kind} stage deploys nothing; call again without it.`
+  }
+  return undefined
+}
+
 async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: unknown): Promise<AgentToolResult> {
   const shaped = parseSubmit(raw)
   if (!shaped.ok) return refuse(`Not submitted: ${shaped.field} ${shaped.reason}. Fix it and call again.`)
@@ -125,7 +147,7 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   if (live.run.siteId !== siteId) return refuse('This session runs in another project than the stage it is submitting. Submit from the session the stage launched.')
   if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return refuse('That run belongs to another session. Submit from the session the stage launched.')
 
-  const problem = await checkFiles(live, input, deps.caseInsensitive)
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options)
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
 
   const now = deps.now()

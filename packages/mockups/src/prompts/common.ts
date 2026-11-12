@@ -8,7 +8,7 @@
 import { join } from 'node:path'
 import { INPUTS_DIR, PRIVATE_DIR } from '../inputs.ts'
 import { RUN_SPECS } from '../stages.ts'
-import type { InputRef, RunKind } from '../types.ts'
+import type { InputRef, RunKind, StageId, StageOption } from '../types.ts'
 
 export interface PromptContext {
   readonly runId: string
@@ -20,6 +20,13 @@ export interface PromptContext {
   readonly inputs: readonly InputRef[]
   /** A redo: the owner's comment, literal, and where the previous version was copied (relative to vaultDir). */
   readonly redo?: { readonly comment: string; readonly previous: readonly string[] }
+  /** What the owner chose at the stage before this one, and the document it is in (criterion 28). */
+  readonly chosen?: { readonly stage: StageId; readonly file: string; readonly option: StageOption }
+}
+
+/** The absolute path of a document of the mockup folder. */
+export function docPath(ctx: PromptContext, file: string): string {
+  return join(ctx.vaultDir, file)
 }
 
 export function inputsDir(ctx: PromptContext): string {
@@ -80,6 +87,19 @@ export function redoSection(ctx: PromptContext): string {
     quoted,
     '',
     'Rewrite the document in place, starting from the previous version and doing what the comment asks. Keep what the comment does not touch.',
+  ].join('\n')
+}
+
+/** The choice of the stage before, so this one builds on it and on nothing else (criterion 28). */
+export function choiceSection(ctx: PromptContext): string {
+  if (ctx.chosen === undefined) return ''
+  const { option, file, stage } = ctx.chosen
+  return [
+    '',
+    `## What the owner chose at ${stage}`,
+    '',
+    `The owner chose «${option.title}» (${option.id}): ${option.blurb}`,
+    `It is described in ${docPath(ctx, file)} (its frontmatter says \`chosen: ${option.id}\`). Build on that one; the others were not chosen.`,
   ].join('\n')
 }
 

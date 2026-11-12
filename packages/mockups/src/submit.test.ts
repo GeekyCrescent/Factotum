@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test'
 import { linkSession, startRun, stallRun } from './ops.ts'
 import { openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool, SUBMIT_STAGE } from './submit.ts'
-import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, type CapturedLog, type CapturedNotify } from './test-support.ts'
+import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, withStep, type CapturedLog, type CapturedNotify } from './test-support.ts'
 import type { AgentToolResult, Mockup, Result } from './types.ts'
 
 let root: string
@@ -196,4 +196,55 @@ test('review: a push that throws does not turn an accepted submission into a ref
   assert.equal(result.isError, undefined)
   assert.equal(brief()?.status, 'waiting')
   assert.ok(log.lines.some((line) => line.startsWith('warn mockup m1: the gate push failed')))
+})
+
+/** A concepts run, with the brief approved before it. */
+async function seedConcepts(): Promise<void> {
+  await store.change((file) => {
+    const base = withStep(withStep(mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir }), 'brief', { status: 'done', version: 1 }), 'concepts', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(base, { kind: 'concepts', runId: 'c1', siteId: 'personal' }, NOW))] } } }
+  })
+  await writeFile(join(vaultDir, '02-concepts.md'), '---\ntitle: Conceptos\n---\n# Conceptos\n')
+}
+const concepts = () => store.current().mockups[0]?.stages.concepts
+const option = (id: string, extra: Record<string, string> = {}) => ({ id, title: `Concept ${id}`, blurb: `Blurb ${id}`, ...extra })
+
+test('crit. 16, check 4: a choosing stage with no options, 1 or 4 is refused, and nothing changes', async () => {
+  await seedConcepts()
+  for (const options of [undefined, [option('a')], [option('a'), option('b'), option('c'), option('d')]]) {
+    const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', ...(options === undefined ? {} : { options }) })
+    assert.equal(result.isError, true)
+    assert.match(textOf(result), /2 or 3 options/)
+  }
+  assert.equal(concepts()?.status, 'running')
+})
+
+test('crit. 16, check 4: two options with the same id are refused', async () => {
+  await seedConcepts()
+  const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', options: [option('a'), option('a')] })
+  assert.match(textOf(result), /same id/)
+})
+
+test('crit. 16, check 4: a stage without options that sends some is refused', async () => {
+  await seed()
+  await writeFile(join(vaultDir, '01-brief.md'), '# Brief')
+  const result = await call({ runId: 'r1', files: ['01-brief.md'], summary: 's', options: [option('a'), option('b')] })
+  assert.match(textOf(result), /takes no options/)
+  assert.equal(brief()?.status, 'running')
+})
+
+test('crit. 16, check 4: 2 or 3 options are accepted and kept, with one push', async () => {
+  await seedConcepts()
+  const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', options: [option('a'), option('b'), option('c')] })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(concepts()?.status, 'waiting')
+  assert.deepEqual(concepts()?.options?.map((o) => o.id), ['a', 'b', 'c'])
+  assert.deepEqual(notify.sent.map((n) => n.title), ['MTC app: concepts ready'])
+})
+
+test('crit. 16, check 4: an option with a url where the stage takes none is refused (no link the screen would render)', async () => {
+  await seedConcepts()
+  const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', options: [option('a', { url: 'javascript:alert(1)' }), option('b')] })
+  assert.match(textOf(result), /option a has a url/)
+  assert.equal(concepts()?.status, 'running')
 })

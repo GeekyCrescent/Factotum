@@ -31,13 +31,13 @@ import {
   type StartInput,
 } from './ops.ts'
 import { inside, real } from './paths.ts'
-import { promptFor } from './prompts/index.ts'
+import { contextFor, promptFor } from './prompts/index.ts'
 import { sweep } from './runs.ts'
-import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRun, parseSite, parseSiteMatch, SWEEP_EVERY_MS, uploadName, type Shaped } from './shape.ts'
+import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRun, parseSite, parseSiteMatch, SWEEP_EVERY_MS, uploadName, type DecisionInput, type Shaped } from './shape.ts'
 import { isLaunchable, RUN_SPECS, STAGES } from './stages.ts'
 import { codeOf, openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool } from './submit.ts'
-import { createMockupDir, createProject, listProjects, readDocs, versionDocs } from './vault.ts'
+import { createMockupDir, createProject, listProjects, readDocs, versionDocs, writeChosen } from './vault.ts'
 import {
   STAGE_IDS,
   type CreateMockupsResult,
@@ -109,7 +109,7 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
   }
 
   const ticketOf = (m: Mockup, kind: StageId, runId: string, siteId: string, redo?: { readonly comment: string; readonly previous: readonly string[] }): RunTicket | null => {
-    const text = promptFor({ runId, stage: kind, name: m.name, client: m.client, vaultDir: m.vaultDir, workDir: m.workDir, inputs: m.inputs, ...(redo === undefined ? {} : { redo }) })
+    const text = promptFor(contextFor(m, kind, runId, redo))
     if (text === null) return null
     return { runId, siteId, text, title: titleFor(kind, m.name), ...(config.model === undefined ? {} : { model: config.model }) }
   }
@@ -133,6 +133,27 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     if (!result.ok) return result
     log.info(`mockup ${id}: ${kind} run ${runId} started${redo === undefined ? '' : ' (redo)'}`)
     return { ok: true, value: { mockup: result.value, run: ticket } }
+  }
+
+  /**
+   * Criterion 28: `chosen: <id>` into the stage's document BEFORE the state moves — checked first on
+   * the mockup of now, so a choice the op would refuse never touches the document. If the state then
+   * refuses (a race), the key stays with a choice the owner did make; choosing again rewrites it.
+   */
+  const recordChoice = async (id: string, input: DecisionInput): Promise<Result<Mockup>> => {
+    const m = store.current().mockups.find((one) => one.id === id)
+    if (m === undefined) return notFound()
+    const dry = decide(m, input, deps.now())
+    if (!dry.ok) return dry
+    const file = STAGES[input.step].chosenIn
+    if (file === undefined || input.optionId === undefined) return dry
+    try {
+      await writeChosen(m.vaultDir, file, input.optionId, caseInsensitive)
+    } catch (error) {
+      log.warn(`mockup ${id}: the ${input.step} choice could not be written (${codeOf(error)})`)
+      return { ok: false, error: { code: 'module-error', reason: `the choice could not be written in ${file} (${error instanceof Error ? error.message : codeOf(error)}), so nothing was chosen` } }
+    }
+    return dry
   }
 
   const keepInput = async (id: string, save: () => Promise<SavedInput>, isPrivate: boolean, what: 'upload' | 'note'): Promise<Result<Mockup>> => {
@@ -304,6 +325,10 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         }
         const launched = await launch(id, step, { comment: input.value.comment, previous })
         return launched.ok ? { ok: true, value: launched.value } : launched
+      }
+      if (action === 'choose') {
+        const written = await recordChoice(id, input.value)
+        if (!written.ok) return written
       }
       const result = await change(id, (m) => decide(m, input.value, deps.now()))
       if (!result.ok) return result

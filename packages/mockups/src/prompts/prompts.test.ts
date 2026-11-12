@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { mockup, withStep } from '../test-support.ts'
 import { briefPrompt } from './brief.ts'
-import type { PromptContext } from './common.ts'
-import { promptFor } from './index.ts'
+import { choiceSection, type PromptContext } from './common.ts'
+import { conceptsPrompt } from './concepts.ts'
+import { contextFor, promptFor } from './index.ts'
 
 const CTX: PromptContext = {
   runId: '0192f3a4-5b6c-7d8e-9f01-23456789abcd',
@@ -49,9 +51,10 @@ test('Word through textutil, PDF through the read tool, and a PDF without text r
   assert.match(prompt, /no text layer.*as an image/s)
 })
 
-test('promptFor answers the brief, and null for a stage of a later cut', () => {
+test('promptFor answers brief and concepts, and null for a stage of a later block', () => {
   assert.equal(promptFor(CTX), briefPrompt(CTX))
-  assert.equal(promptFor({ ...CTX, stage: 'concepts' }), null)
+  assert.equal(promptFor({ ...CTX, stage: 'concepts' }), conceptsPrompt({ ...CTX, stage: 'concepts' }))
+  assert.equal(promptFor({ ...CTX, stage: 'plan' }), null)
 })
 
 test('no inputs yet: the prompt says so instead of an empty list', () => {
@@ -69,4 +72,54 @@ test('P1.4: the frame fits an internal project too, not only a client of BWR sol
   assert.doesNotMatch(prompt, /a mockup for a client of BWR/)
   assert.match(prompt, /owner's own project/)
   assert.match(prompt, /prototype to decide the design, not a sales demo/)
+})
+
+const CONCEPTS: PromptContext = { ...CTX, stage: 'concepts' }
+
+test('the concepts prompt, first run', (t) => {
+  t.assert.snapshot(conceptsPrompt(CONCEPTS))
+})
+
+test('the concepts prompt reads the approved brief, writes 02-concepts.md and hands 2 or 3 options', () => {
+  const prompt = conceptsPrompt(CONCEPTS)
+  for (const needle of [`${CTX.vaultDir}/01-brief.md`, `${CTX.vaultDir}/02-concepts.md`, '2 or 3', 'options', CTX.runId, 'submit_stage']) {
+    assert.ok(prompt.includes(needle), needle)
+  }
+  assert.match(prompt, /for whom/i)
+  assert.doesNotMatch(prompt, /in the meeting/, 'P1.4: an internal project has no meeting')
+  assert.match(prompt, /the step that would sell it/i)
+  assert.match(prompt, /risk/i)
+  assert.match(prompt, /Do NOT open anything in .*inputs\/private/)
+})
+
+test('the concepts prompt, a redo: the previous version and the comment, literal', (t) => {
+  const prompt = conceptsPrompt({ ...CONCEPTS, redo: { comment: 'Un tercer ángulo, más sobrio.', previous: ['_versions/02-concepts-v1.md'] } })
+  assert.match(prompt, /_versions\/02-concepts-v1\.md/)
+  assert.match(prompt, /> Un tercer ángulo, más sobrio\./)
+  t.assert.snapshot(prompt)
+})
+
+test('crit. 28: the next stage receives the choice — its id, title and blurb, and the document it is in', () => {
+  const section = choiceSection({
+    ...CTX,
+    stage: 'plan',
+    chosen: { stage: 'concepts', file: '02-concepts.md', option: { id: 'b', title: 'Check-in in one tap', blurb: 'The QR is the product.' } },
+  })
+  assert.match(section, /chose «Check-in in one tap» \(b\)/)
+  assert.match(section, /The QR is the product\./)
+  assert.ok(section.includes(`${CTX.vaultDir}/02-concepts.md`))
+  assert.equal(choiceSection(CTX), '')
+})
+
+test('crit. 28: contextFor hands a stage the choice of the stage before it', () => {
+  const options = [
+    { id: 'a', title: 'A', blurb: 'a' },
+    { id: 'b', title: 'B', blurb: 'b' },
+  ]
+  const m = withStep(withStep(mockup({ id: 'm' }), 'concepts', { status: 'done', version: 1, options, chosen: 'b' }), 'plan', { status: 'ready' })
+  const ctx = contextFor(m, 'plan', 'r1')
+  assert.deepEqual(ctx.chosen, { stage: 'concepts', file: '02-concepts.md', option: options[1] })
+  assert.equal(contextFor(m, 'concepts', 'r1').chosen, undefined)
+  assert.equal(ctx.runId, 'r1')
+  assert.equal(ctx.vaultDir, m.vaultDir)
 })

@@ -1,5 +1,6 @@
 /**
- * A gate (design D6; criteria 27, 29, 30): approve, or redo with a comment written or dictated. A
+ * A gate (design D6; criteria 27, 28, 29, 30): approve — or, at a choosing stage, choose one of its
+ * options (`options.tsx`) — or redo with a comment written or dictated. A
  * redo whose launch failed brings its comment back into the box (`pendingComment`, criterion 15).
  * The gate never expires; it waits here.
  */
@@ -10,6 +11,7 @@ import type { Step } from '../types.ts'
 import { Glyph } from './glyph.tsx'
 import { NoteDictation } from './inputs.tsx'
 import type { StageActions } from './model.ts'
+import { Options } from './options.tsx'
 
 export function Gate({
   label,
@@ -18,6 +20,7 @@ export function Gate({
   busy,
   dictationApi,
   onApprove,
+  onChoose,
   onRedo,
 }: {
   readonly label: string
@@ -26,6 +29,7 @@ export function Gate({
   readonly busy: boolean
   readonly dictationApi: DictationApi | undefined
   readonly onApprove: () => void
+  readonly onChoose: (optionId: string) => void
   readonly onRedo: (comment: string) => void
 }) {
   const [comment, setComment] = useState(step.pendingComment ?? '')
@@ -38,9 +42,13 @@ export function Gate({
         <Glyph status="waiting" /> {label} is waiting on you
       </div>
       {step.summary === undefined ? null : <p class="mk-summary">«{step.summary}»</p>}
-      <button type="button" class="btn primary mk-big" disabled={busy || !actions.approve} onClick={onApprove}>
-        Approve
-      </button>
+      {actions.gate === 'choose' ? (
+        <Options options={step.options ?? []} busy={busy} enabled={actions.choose} onChoose={onChoose} />
+      ) : (
+        <button type="button" class="btn primary mk-big" disabled={busy || !actions.approve} onClick={onApprove}>
+          Approve
+        </button>
+      )}
       <label class="mk-cap" for="mk-comment">
         Redo with a comment
       </label>
