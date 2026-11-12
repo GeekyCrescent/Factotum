@@ -241,3 +241,10 @@ test('crit. 16, check 4: 2 or 3 options are accepted and kept, with one push', a
   assert.deepEqual(concepts()?.options?.map((o) => o.id), ['a', 'b', 'c'])
   assert.deepEqual(notify.sent.map((n) => n.title), ['MTC app: concepts ready'])
 })
+
+test('crit. 16, check 4: an option with a url where the stage takes none is refused (no link the screen would render)', async () => {
+  await seedConcepts()
+  const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', options: [option('a', { url: 'javascript:alert(1)' }), option('b')] })
+  assert.match(textOf(result), /option a has a url/)
+  assert.equal(concepts()?.status, 'running')
+})

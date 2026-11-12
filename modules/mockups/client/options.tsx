@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { StageOption } from '../types.ts'
 import { Icon } from './icon.tsx'
+import { safeUrl } from './model.ts'
 
 export function Options({
   options,
@@ -35,8 +36,8 @@ export function Options({
               </span>
               <span class="mk-small">{option.blurb}</span>
             </button>
-            {option.url === undefined ? null : (
-              <a class="btn sm mk-option-open" href={option.url} target="_blank" rel="noopener noreferrer">
+            {safeUrl(option.url) === undefined ? null : (
+              <a class="btn sm mk-option-open" href={safeUrl(option.url)} target="_blank" rel="noopener noreferrer">
                 <Icon name="arrow-square-out" size={14} /> Open
               </a>
             )}

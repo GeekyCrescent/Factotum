@@ -129,6 +129,10 @@ export function checkOptions(kind: RunKind, options: SubmitInput['options']): st
   if (rule.url) {
     const bare = options.find((option) => option.url === undefined)
     if (bare !== undefined) return `option ${bare.id} has no url: each one needs the URL of its deployed page.`
+  } else {
+    // The screen renders an option's url as a link: none where the stage deploys nothing.
+    const linked = options.find((option) => option.url !== undefined)
+    if (linked !== undefined) return `option ${linked.id} has a url, and the ${kind} stage deploys nothing; call again without it.`
   }
   return undefined
 }

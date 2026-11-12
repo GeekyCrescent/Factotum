@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Mockup, StageId, Step } from '../types.ts'
-import { afterDecision, crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
+import { afterDecision, safeUrl, crossWrites, galleryOrder, inputsBlocked, launchBlocked, nowStage, offersAbandon, stageActions, statusLine, STARTING_OFFER_MS } from './model.ts'
 
 const NOW = new Date('2026-11-12T10:00:00.000Z')
 const SESSION = '0192f3a4-5b6c-7d8e-9f01-23456789abcd'
@@ -120,4 +120,12 @@ test('crit. 2b: the warning when the vault stages cannot write in projectsDir, o
   assert.equal(crossWrites({ ...setup, crossWritesAllowed: true }, { projects, shared: [] }, true), undefined)
   assert.match(crossWrites(setup, { projects: [{ id: 'personal', path: '/elsewhere' }], shared: [{ path: '/Users/me' }] }, true) ?? '', /ask/)
   assert.equal(crossWrites(setup, { projects: [{ id: 'personal', path: '/users/me/VAULT' }], shared: [{ path: '/users/me' }] }, true), undefined)
+})
+
+test('an option url becomes a link only if it is https (the server checks too; the screen does not trust it)', () => {
+  assert.equal(safeUrl('https://acme-directions-abc.vercel.app/a.html'), 'https://acme-directions-abc.vercel.app/a.html')
+  assert.equal(safeUrl('javascript:alert(1)'), undefined)
+  assert.equal(safeUrl('http://example.com'), undefined)
+  assert.equal(safeUrl('not a url'), undefined)
+  assert.equal(safeUrl(undefined), undefined)
 })

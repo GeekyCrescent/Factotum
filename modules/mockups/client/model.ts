@@ -150,3 +150,13 @@ export function crossWrites(setup: MockupsSetup, sessions: SessionsProjects, cas
   }
   return problems.length === 0 ? undefined : `${CROSS_WRITES_WARNING[0]?.toUpperCase()}${CROSS_WRITES_WARNING.slice(1)}: ${problems.join('; ')}.`
 }
+
+/** Only an `https:` URL becomes a link: the server checks them too (D3, checks 4–5), and the screen does not trust it. */
+export function safeUrl(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined
+  try {
+    return new URL(url).protocol === 'https:' ? url : undefined
+  } catch {
+    return undefined
+  }
+}
