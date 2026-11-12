@@ -17,9 +17,11 @@
  *   application: it writes `gen_requests(applicationId, 'cv')` (and its `work` row) and moves the
  *   application `draft → generating` (T-A1), with its event. A `!ok` rolls that one back; the
  *   application stays `draft`, the report and the log say so, and the next import tries again.
- * - `enqueueSeedChecks(contactIds) → void` — N4's «re-search right after importing». Called ONCE,
+ * - `enqueueSeedChecks(contactIds) → number` — N4's «re-search right after importing». Called ONCE,
  *   outside any `tx`, with the contacts in the order they should be checked (sent-now first, wave 2
- *   behind), and not at all when there are none. Optional: a no-op until C1 wires it.
+ *   behind), and not at all when there are none. It answers how many it queued, which the report
+ *   shows. A throw is a warning and a log line: the CVs are queued all the same. Optional: without
+ *   it nothing is queued (0) until C1 wires it.
  */
 
 import type { Logger } from '@factotum/core'
@@ -34,7 +36,8 @@ import type { CreatedApplication } from './write.ts'
 
 export interface QueueSeams {
   readonly enqueueCv: (q: Queries, applicationId: string) => Result<void>
-  readonly enqueueSeedChecks?: ((contactIds: readonly string[]) => void) | undefined
+  /** Answers how many checks it actually queued (a contact already checking is not queued again). */
+  readonly enqueueSeedChecks?: ((contactIds: readonly string[]) => number) | undefined
 }
 
 /** What the queueing needs besides the seams: the files, the clock, and where failures are logged. */
@@ -109,11 +112,25 @@ function queueCvs(db: Db, ctx: QueueContext): { readonly cv: number; readonly wa
   return { cv, warnings }
 }
 
-export function queueAfterImport(db: Db, created: readonly CreatedApplication[], ctx: QueueContext): QueueOutcome {
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/** The hook, guarded: it runs after the `tx` committed, so a throw must not undo the answer. */
+function queueChecks(created: readonly CreatedApplication[], ctx: QueueContext): { readonly checks: number; readonly warnings: readonly string[] } {
   const contactIds = checkOrder(created)
-  if (contactIds.length > 0) ctx.enqueueSeedChecks?.(contactIds)
-  const { cv, warnings } = queueCvs(db, ctx)
-  return { queued: { cv, checks: contactIds.length }, warnings }
+  if (contactIds.length === 0 || ctx.enqueueSeedChecks === undefined) return { checks: 0, warnings: [] }
+  try {
+    return { checks: ctx.enqueueSeedChecks(contactIds), warnings: [] }
+  } catch (error) {
+    const warning = `the address checks were not queued (${messageOf(error)})`
+    ctx.log?.error(`seed: ${warning}`)
+    return { checks: 0, warnings: [warning] }
+  }
+}
+
+export function queueAfterImport(db: Db, created: readonly CreatedApplication[], ctx: QueueContext): QueueOutcome {
+  const checks = queueChecks(created, ctx)
+  const cvs = queueCvs(db, ctx)
+  return { queued: { cv: cvs.cv, checks: checks.checks }, warnings: [...checks.warnings, ...cvs.warnings] }
 }
 
 /**

@@ -158,6 +158,36 @@ test('wave 2 is queued by an import once holdUntil − 7 days has come in jobs.t
   db.close()
 })
 
+test('a checks hook that throws is a warning and a log line: the import still answers and the CVs are still queued', async () => {
+  using base = tempBase()
+  const db = await storeWith(base)
+  const errors: string[] = []
+  const log = { info: () => {}, warn: () => {}, error: (message: string) => void errors.push(message) }
+  const queue = queueDouble()
+  const enqueueSeedChecks = (): number => {
+    throw new Error('the checks queue is down')
+  }
+  const report = reportOf(await importSeed(db, context({ enqueueCv: queue.enqueueCv, enqueueSeedChecks, log }), { dryRun: false }))
+  assert.equal(report.queued.cv, SENT_BY_MODULE)
+  assert.equal(report.queued.checks, 0)
+  assert.deepEqual(report.warnings, ['the address checks were not queued (the checks queue is down)'])
+  assert.deepEqual(errors, ['seed: the address checks were not queued (the checks queue is down)'])
+  db.close()
+})
+
+test('the report counts the checks the hook says it queued, not the contacts it was given', async () => {
+  using base = tempBase()
+  const db = await storeWith(base)
+  const report = reportOf(await importSeed(db, context({ enqueueSeedChecks: () => 3 }), { dryRun: false }))
+  assert.equal(report.queued.checks, 3)
+  db.close()
+  using other = tempBase()
+  const without = await storeWith(other)
+  const none = reportOf(await importSeed(without, context(), { dryRun: false }))
+  assert.equal(none.queued.checks, 0, 'no hook, nothing queued')
+  without.close()
+})
+
 test('the dry run queues nothing and calls no hook, but says what it would queue', async () => {
   using base = tempBase()
   const db = await storeWith(base)

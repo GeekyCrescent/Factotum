@@ -75,9 +75,15 @@ export function queueDouble(refuse: (applicationId: string) => boolean = () => f
 }
 
 /** A spy for N4's hook: every call, in order. */
-export function checksSpy(): { readonly enqueueSeedChecks: (contactIds: readonly string[]) => void; readonly calls: (readonly string[])[] } {
+export function checksSpy(): { readonly enqueueSeedChecks: (contactIds: readonly string[]) => number; readonly calls: (readonly string[])[] } {
   const calls: (readonly string[])[] = []
-  return { calls, enqueueSeedChecks: (contactIds) => void calls.push(contactIds) }
+  return {
+    calls,
+    enqueueSeedChecks: (contactIds) => {
+      calls.push(contactIds)
+      return contactIds.length
+    },
+  }
 }
 
 export function context(overrides: Partial<ImportContext> = {}): ImportContext {
