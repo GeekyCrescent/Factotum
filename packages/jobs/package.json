@@ -1,0 +1,29 @@
+{
+  "name": "@factotum/jobs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Job applications: the store, the CV builder, sending, replies, follow-ups and the scout. Knows nothing about HTTP.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-exclude=\"src/test-*.ts\" --test-coverage-exclude=\"test/**\" --test-coverage-lines=80 --test-coverage-branches=80 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@factotum/core": "workspace:*",
+    "@factotum/mail": "workspace:*",
+    "@factotum/sessions": "workspace:*",
+    "zod": "^4.1.12"
+  }
+}
