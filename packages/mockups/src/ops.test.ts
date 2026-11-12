@@ -298,6 +298,7 @@ test('crit. 36: a redeploy abandoned — stalled first or not — goes back to a
 test('crit. 36: an accepted redeploy closes the change, updates production, and the mockup is delivered again', () => {
   const m = value(acceptSubmit(value(startRun(approved(), REDEPLOY, NOW)), 'y1', { sessionId: SESSION, summary: 's', prodUrl: PROD_URL }, LATER))
   assert.equal(change(m).status, 'done')
+  assert.equal(change(m).version, 1, 'L3: production is the version the owner approved, not a new one')
   assert.equal(change(m).run, undefined)
   assert.equal(m.status, 'delivered')
   assert.equal(m.urls.prod, PROD_URL)

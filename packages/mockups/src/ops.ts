@@ -201,9 +201,12 @@ export function acceptSubmit(m: Mockup, runId: string, input: AcceptInput, now: 
     const handed = withUrls(m, input)
     return ok(update(STAGES[found.stage].next === null ? { ...handed, status: 'delivered' } : handed, found, accepted, now))
   }
-  // A change keeps its own preview (the build's stays); a redeploy updates production and closes it.
+  // A change keeps its own preview (the build's stays); a redeploy updates production and closes it —
+  // with the version the owner approved: putting it in production makes no new one.
   const change = accepted(found.change)
-  if (found.run.kind === 'redeploy') return ok(putChange({ ...withUrls(m, { ...input, previewUrl: undefined }), status: 'delivered' }, change, now))
+  if (found.run.kind === 'redeploy') {
+    return ok(putChange({ ...withUrls(m, { ...input, previewUrl: undefined }), status: 'delivered' }, { ...change, version: found.change.version }, now))
+  }
   return ok(putChange(m, { ...change, ...(input.previewUrl === undefined ? {} : { previewUrl: input.previewUrl }) }, now))
 }
 
