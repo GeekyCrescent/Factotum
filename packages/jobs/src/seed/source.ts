@@ -11,6 +11,7 @@ import { basename, join } from 'node:path'
 import { fail, ok, type Result } from '../types.ts'
 import { parseCompanies, parseHealthEmployers, type SeededCompany } from './companies.ts'
 import { parseCvs, parseKit, seedFollowupTemplates, type BaseCvs, type Kit } from './kit.ts'
+import type { UnparsedHeading } from './markdown.ts'
 import { parsePackage, type PackageFile } from './package.ts'
 
 /** One entry of `vault.seed.packages` (design D13). */
@@ -52,6 +53,8 @@ export interface Seed {
   readonly cvs: BaseCvs
   readonly templateWarnings: readonly string[]
   readonly packages: readonly ReadPackage[]
+  /** Every `## ` heading of the kit and the packages that is not `## N. Title`, with its file. */
+  readonly unparsed: readonly (UnparsedHeading & { readonly file: string })[]
 }
 
 const HEALTH_FILE = new URL('../../assets/health-employers.json', import.meta.url)
@@ -128,5 +131,9 @@ export async function readSeed(source: SeedSource): Promise<Result<Seed>> {
   const packages = await readPackages(source, kit)
   if (!packages.ok) return packages
   const { warnings } = seedFollowupTemplates(kitText.value)
-  return ok({ companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value })
+  const unparsed = [
+    ...kit.unparsed.map((u) => ({ file: basename(seed.kit), ...u })),
+    ...packages.value.flatMap(({ name, parsed }) => parsed.unparsed.map((u) => ({ file: name, ...u }))),
+  ]
+  return ok({ companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
 }

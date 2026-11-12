@@ -8,7 +8,7 @@
  */
 
 import { resolveFormAnswer, type Kit, type KitRefResult } from './kit.ts'
-import { blockquoteAt, emailsIn, firstEmail, sectionsOf, slotSignature } from './markdown.ts'
+import { blockquoteAt, emailsIn, firstEmail, slotSignature, splitSections, type UnparsedHeading } from './markdown.ts'
 
 export type Channel = 'email' | 'form' | 'platform' | 'linkedin'
 
@@ -78,6 +78,8 @@ export interface PackageEntry {
 export interface PackageFile {
   readonly file: string
   readonly entries: readonly PackageEntry[]
+  /** `## ` headings that are not `## N. Company`: not read, reported. */
+  readonly unparsed: readonly UnparsedHeading[]
 }
 
 const URL_IN_TEXT = /https?:\/\/[^\s()<>"'`*]+/i
@@ -329,10 +331,11 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit,
 export function parsePackage(file: string, markdown: string, kit: Kit): PackageFile {
   const preamble = markdown.split(/^##\s+\d+\./m)[0] ?? ''
   const signedAtTop = /^\*\*Signature\b/im.test(preamble)
-  const entries = sectionsOf(markdown).map((section) => {
+  const { sections, unparsed } = splitSections(markdown)
+  const entries = sections.map((section) => {
     const end = section.lines.findIndex((line) => line.trim() === '---')
     const lines = end === -1 ? section.lines : section.lines.slice(0, end)
     return entryOf(section.n, section.title, lines, kit, signedAtTop)
   })
-  return { file, entries }
+  return { file, entries, unparsed }
 }

@@ -16,22 +16,44 @@ export interface Section {
   readonly lines: readonly string[]
 }
 
-/** Splits a document into its `## N. Title` sections; each runs to the next `## ` heading. */
-export function sectionsOf(markdown: string): readonly Section[] {
-  const sections: Section[] = []
-  let current: { n: number; title: string; lines: string[] } | null = null
+/** A `## ` heading that is not `## N. Title`: it and its lines are not read, so the report says so. */
+export interface UnparsedHeading {
+  readonly heading: string
+  /** Its non-blank lines, without the `---` separators. */
+  readonly lines: number
+}
+
+export interface Sections {
+  readonly sections: readonly Section[]
+  readonly unparsed: readonly UnparsedHeading[]
+}
+
+const isContentLine = (line: string): boolean => line.trim() !== '' && line.trim() !== '---'
+
+/**
+ * Splits a document into its `## N. Title` sections; each runs to the next `## ` heading. Any other
+ * `## ` heading ends the section before it and is skipped with its lines, and listed in `unparsed`.
+ */
+export function splitSections(markdown: string): Sections {
+  type Open = { readonly kind: 'section'; readonly section: Section & { lines: string[] } } | { readonly kind: 'unparsed'; readonly heading: string; readonly lines: string[] }
+  const blocks: Open[] = []
   for (const line of markdown.split(/\r?\n/)) {
     const heading = SECTION_HEADING.exec(line)
-    if (heading || line.startsWith('## ')) {
-      if (current) sections.push(current)
-      current = heading ? { n: Number(heading[1]), title: (heading[2] ?? '').trim(), lines: [] } : null
-      continue
+    if (heading) blocks.push({ kind: 'section', section: { n: Number(heading[1]), title: (heading[2] ?? '').trim(), lines: [] } })
+    else if (line.startsWith('## ')) blocks.push({ kind: 'unparsed', heading: line.slice(3).trim(), lines: [] })
+    else {
+      const open = blocks.at(-1)
+      if (open?.kind === 'section') open.section.lines.push(line)
+      else open?.lines.push(line)
     }
-    current?.lines.push(line)
   }
-  if (current) sections.push(current)
-  return sections
+  return {
+    sections: blocks.flatMap((b) => (b.kind === 'section' ? [b.section] : [])),
+    unparsed: blocks.flatMap((b) => (b.kind === 'unparsed' ? [{ heading: b.heading, lines: b.lines.filter(isContentLine).length }] : [])),
+  }
 }
+
+export const sectionsOf = (markdown: string): readonly Section[] => splitSections(markdown).sections
 
 export const isCallout = (line: string): boolean => /^>\s*\[!/.test(line)
 

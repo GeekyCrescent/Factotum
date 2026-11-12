@@ -5,7 +5,7 @@
  * carry brackets the linter would block; only the blockquote under each bold question is an answer.
  */
 
-import { blockquoteAt, bracketTokens, sectionsOf, slotSignature, type Section } from './markdown.ts'
+import { blockquoteAt, bracketTokens, sectionsOf, slotSignature, splitSections, type Section, type UnparsedHeading } from './markdown.ts'
 
 export interface KitQuestion {
   readonly label: string
@@ -22,6 +22,8 @@ export interface KitLeftover {
 export interface Kit {
   readonly sections: ReadonlyMap<number, readonly KitQuestion[]>
   readonly leftovers: readonly KitLeftover[]
+  /** `## ` headings that are not `## N. Title`: not read, reported. */
+  readonly unparsed: readonly UnparsedHeading[]
 }
 
 /** `§N` plus the words of the «see …» phrase before the link (e.g. «the 100-word bio in»). */
@@ -99,11 +101,12 @@ function questionsOf(section: Section): readonly KitQuestion[] {
 
 /** `00-kit-base.md` → `§N → { label, answer }[]`, with the kit's TODOs translated into slots. */
 export function parseKit(markdown: string): Kit {
-  const entries = sectionsOf(markdown).map((section) => [section.n, questionsOf(section)] as const)
+  const { sections, unparsed } = splitSections(markdown)
+  const entries = sections.map((section) => [section.n, questionsOf(section)] as const)
   const leftovers = entries.flatMap(([section, questions]) =>
     questions.flatMap((question) => bracketTokens(question.answer).map((token) => ({ section, label: question.label, token }))),
   )
-  return { sections: new Map(entries), leftovers }
+  return { sections: new Map(entries), leftovers, unparsed }
 }
 
 function wordsOf(text: string): ReadonlySet<string> {

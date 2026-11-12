@@ -50,6 +50,8 @@ export interface ImportReport {
   readonly kitRefs: readonly (EntryRef & { readonly question: string; readonly section: number; readonly matched: string | null; readonly ambiguous: boolean })[]
   /** Addresses that enter `verified`, and the `Send via` clause that says so. */
   readonly verified: readonly (EntryRef & { readonly email: string; readonly evidence: string })[]
+  /** `## ` headings that are not `## N. Title`: they and their lines were not read. */
+  readonly unparsed: Seed['unparsed']
   readonly kit: { readonly leftovers: readonly KitLeftover[]; readonly templateWarnings: readonly string[] }
   /** Per entry with «Sent by hand» (S6b): its instant (null when the day is not valid) and what it did. */
   readonly byHand: readonly (EntryRef & { readonly at: string | null; readonly result: ByHandResult })[]
@@ -117,6 +119,7 @@ export function buildReport(
     verified: entries.flatMap((p) =>
       p.entry.addresses.flatMap((a) => (a.status === 'verified' && a.evidence !== null ? [{ ...ref(p), email: a.email, evidence: a.evidence }] : [])),
     ),
+    unparsed: seed.unparsed,
     kit: { leftovers: seed.kit.leftovers, templateWarnings: seed.templateWarnings },
     byHand: entries.flatMap((p) => (p.byHand === null ? [] : [{ ...ref(p), at: p.byHand.at, result: p.byHand.result }])),
     byHandPending: entries.filter((p) => p.config.byHand === true && p.byHand === null).map((p) => ({ ...ref(p), company: p.entry.company })),
