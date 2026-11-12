@@ -312,3 +312,42 @@ test('«**Sent by hand:** YYYY-MM-DD» is read in the three shapes, as a bullet 
   assert.equal(entry(wave2Marked.entries, 2).target.to, 'careers@galah.example', 'the bullet does not disturb the other fields')
   assert.ok([...ads.entries, ...wave1.entries, ...wave2.entries].every((e) => e.sentByHand === null))
 })
+
+// ── Review fix: a `---` inside an entry does not end it ────────────────────────────────────────────
+
+test('a --- inside an entry does not cut it: a Sent by hand mark and the notes after it are kept', () => {
+  const markdown = [
+    '## 1. Kestrel Freight',
+    '',
+    '- **Send via:** hr@kestrel.example · **Contact:** none',
+    '- **Role:** Analyst · **CV version:** A',
+    '- **Subject:** Hello',
+    '',
+    '> Hi.',
+    '',
+    '---',
+    '',
+    '**Sent by hand:** 2026-11-10',
+    '',
+    '**Owner notes**',
+    '- after the rule',
+    '',
+    '---',
+    '',
+    '## 2. Bluegum Analytics',
+    '',
+    '- **Send via:** hi@bluegum.example',
+    '',
+    '**Owner notes**',
+    '- the last one',
+    '',
+    '---',
+    '',
+  ].join('\n')
+  const parsed = parsePackage('x.md', markdown, kit)
+  const first = entry(parsed.entries, 1)
+  assert.equal(first.sentByHand, '2026-11-10')
+  assert.equal(first.notes, '- after the rule')
+  assert.equal(first.letter?.body, 'Hi.')
+  assert.equal(entry(parsed.entries, 2).notes, '- the last one')
+})

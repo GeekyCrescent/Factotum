@@ -327,15 +327,20 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit,
   }
 }
 
-/** A package file → its entries: each `## N. Company` up to the next `---`. */
+const isRule = (line: string): boolean => line.trim() === '---'
+
+/**
+ * An entry's lines without its `---` rules. The package puts one between entries (always before the
+ * next `## N.` heading, or at the end); a rule INSIDE an entry ends nothing: what follows it, a
+ * `**Sent by hand:**` mark above all, belongs to the entry.
+ */
+const withoutRules = (lines: readonly string[]): readonly string[] => lines.filter((line) => !isRule(line))
+
+/** A package file → its entries: each `## N. Company` up to the next `## ` heading. */
 export function parsePackage(file: string, markdown: string, kit: Kit): PackageFile {
   const preamble = markdown.split(/^##\s+\d+\./m)[0] ?? ''
   const signedAtTop = /^\*\*Signature\b/im.test(preamble)
   const { sections, unparsed } = splitSections(markdown)
-  const entries = sections.map((section) => {
-    const end = section.lines.findIndex((line) => line.trim() === '---')
-    const lines = end === -1 ? section.lines : section.lines.slice(0, end)
-    return entryOf(section.n, section.title, lines, kit, signedAtTop)
-  })
+  const entries = sections.map((section) => entryOf(section.n, section.title, withoutRules(section.lines), kit, signedAtTop))
   return { file, entries, unparsed }
 }
