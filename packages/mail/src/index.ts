@@ -14,3 +14,16 @@ export { countAttachments, decodePart, MAX_BODY_CHARS, pickPart, plainText, type
 export { addressesIn, parseHeaderBlock } from './imap/headers.ts'
 export { closeQuietly, IMAP_PORT, imapOptions, reasonOf, untilAborted } from './imap/session.ts'
 export { readPassword, type PasswordResult } from './secrets.ts'
+export {
+  connectNodemailer,
+  SEND_DEADLINE_MS,
+  sendMail,
+  SMTP_PORT,
+  smtpOptions,
+  type ConnectSmtp,
+  type SendInput,
+  type SendResult,
+  type SmtpMessage,
+  type SmtpOptions,
+  type SmtpTransport,
+} from './smtp.ts'

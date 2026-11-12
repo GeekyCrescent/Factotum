@@ -23,6 +23,10 @@
   },
   "dependencies": {
     "@factotum/core": "workspace:*",
-    "imapflow": "2.2.5"
+    "imapflow": "2.2.5",
+    "nodemailer": "10.5.0"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "8.0.2"
   }
 }
