@@ -147,6 +147,10 @@ export async function tokenFileCheck(workDir: string): Promise<GuardResult> {
     const tokens = names.filter((name) => name.startsWith('.env'))
     if (tokens.length === 0) continue
     const ignored = names.includes('.vercelignore') ? (await readFile(join(workDir, dir, '.vercelignore'), 'utf8')).split('\n').map((line) => line.trim()) : []
+    // Vercel reads it with gitignore rules: a `!` line can bring a file back, so none may name `.env`.
+    if (ignored.some((line) => line.startsWith('!') && line.includes('.env'))) {
+      return { ok: false, reason: `${dir}/.vercelignore brings .env back with a «!» line: remove it before deploying.` }
+    }
     const bare = tokens.find((name) => !ignored.includes('.env*') && !ignored.includes(name))
     if (bare !== undefined) {
       return { ok: false, reason: `${dir}/${bare} would be uploaded with its token: list .env* in ${dir}/.vercelignore before deploying.` }
