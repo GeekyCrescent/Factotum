@@ -94,7 +94,21 @@ test('batchCandidateContacts: email follow-ups, then ready, then in-review by sc
   db.close()
 })
 
-test('restartedContacts: the contacts the startup write moved checking → unverified that no check has touched since', async () => {
+test('saveOpportunityCheck writes checkedAt and the status of an opportunity, with its event', async () => {
+  using base = tempBase()
+  const db = await emptyStore(base)
+  write(db, (q) => repo.insertOpportunity(q, opportunity('o-1', 50), 'k-1', note, NOW))
+  const opp = db.read((q) => repo.getOpportunity(q, 'o-1'))
+  assert.ok(opp !== undefined)
+  write(db, (q) => repo.saveOpportunityCheck(q, { ...opp, status: 'closed', checkedAt: NOW.toISOString() }, { kind: 'ad-checked', data: { closed: true } }, NOW))
+  const after = db.read((q) => repo.getOpportunity(q, 'o-1'))
+  assert.deepEqual([after?.status, after?.checkedAt, after?.score], ['closed', NOW.toISOString(), 50])
+  const event = db.read((q) => q.get<{ company_id: string; data: string }>("SELECT company_id, data FROM events WHERE kind = 'ad-checked'"))
+  assert.deepEqual([event?.company_id, JSON.parse(event?.data ?? '{}')], ['company-1', { closed: true, opportunityId: 'o-1' }])
+  db.close()
+})
+
+test('restartedContacts:the contacts the startup write moved checking → unverified that no check has touched since', async () => {
   using base = tempBase()
   const db = await emptyStore(base)
   write(db, (q) => {

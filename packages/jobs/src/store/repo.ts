@@ -306,6 +306,12 @@ export const opportunityIdByDedupeKey = (q: Queries, dedupeKey: string): string 
   return row === undefined ? undefined : text(row, 'id')
 }
 
+/** The live-ad check (N3): only `checked_at` and `status` change. */
+export function saveOpportunityCheck(q: Queries, opportunity: Opportunity, event: EventSpec, now: Date): void {
+  q.run('UPDATE opportunities SET checked_at = ?, status = ? WHERE id = ?', opportunity.checkedAt, opportunity.status, opportunity.id)
+  appendEvent(q, { ...withData(event, { opportunityId: opportunity.id }), applicationId: null, companyId: opportunity.companyId }, now)
+}
+
 // ── Sends ────────────────────────────────────────────────────────────────────────────────────────
 
 const toSend = (row: Row): Send => ({
