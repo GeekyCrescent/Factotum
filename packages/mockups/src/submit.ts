@@ -9,7 +9,8 @@
  *    its REAL path inside `vaultDir` or `workDir`.
  * 4. a stage with options gets 2 or 3, with distinct ids (and, in plan, each with its `url`); a stage
  *    without options gets none.
- * Checks 5–6 (the URLs, the guard) arrive with the stages that need them (block G, cut 3).
+ * 5. every URL (an option's, `previewUrl`, `prodUrl`) is `https://<something>.vercel.app` (A3);
+ * 6. a stage that publishes passes the real-data guard (`guard.ts`, criterion 35), which fails closed.
  *
  * Accepted: `acceptSubmit` and, with a gate, ONE push with a fixed body — nothing of the summary nor
  * of the documents leaves the private network (criterion 26). NEVER THROWS, and the log carries ids.
@@ -18,14 +19,34 @@
 import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { Logger, Notifier } from '@factotum/core'
+import { guard, GUARD_LIMITS, type GuardLimits } from './guard.ts'
 import { acceptSubmit, findRun, linkSession } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
-import { RUN_SPECS } from './stages.ts'
+import { RUN_SPECS, vercelProjectOf } from './stages.ts'
 import { codeOf, type MockupsStore } from './store/store.ts'
 import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, RunKind, StageId } from './types.ts'
 
 export const SUBMIT_STAGE = 'submit_stage'
+/** The guard BEFORE publishing (crit. 35): the session asks it after a protected deploy, before opening it. */
+export const CHECK_REAL_DATA = 'check_real_data'
+
+const TAKE_DOWN =
+  'Do not turn the protection off. If you already deployed, take that deployment down now with `vercel remove <url> --yes`, ' +
+  'replace the copy with invented data of the same shape, and deploy again.'
+
+const CHECK_TOOL: AgentTool = {
+  name: CHECK_REAL_DATA,
+  description:
+    'Before a deploy is opened to the public: checks that nothing in directions/ or mockup-app/ is a copy of a real-data input. ' +
+    'Call it with the runId from your instructions after deploying (still protected) and before turning the protection off.',
+  inputSchema: {
+    type: 'object',
+    properties: { runId: { type: 'string', description: 'The runId from your instructions.' } },
+    required: ['runId'],
+    additionalProperties: false,
+  },
+}
 
 const TOOL: AgentTool = {
   name: SUBMIT_STAGE,
@@ -62,6 +83,8 @@ export interface SubmitDeps {
   readonly log: Logger
   readonly notify: Notifier
   readonly caseInsensitive: boolean
+  /** The seam for the tests of the guard's caps. */
+  readonly guardLimits?: GuardLimits
 }
 
 const text = (body: string, isError: boolean): AgentToolResult => ({ content: [{ type: 'text', text: body }], ...(isError ? { isError: true as const } : {}) })
@@ -79,6 +102,31 @@ function findLive(mockups: readonly Mockup[], runId: string): Live | undefined {
     if (found !== undefined && (found.step.status === 'running' || found.step.status === 'stalled')) return { mockup: m, stage: found.stage, run: found.run }
   }
   return undefined
+}
+
+/** Checks 1–2: the live run this session may speak for, or why not. */
+function ownRun(deps: SubmitDeps, sessionId: string, siteId: string, runId: string): Live | string {
+  const live = findLive(deps.store.current().mockups, runId)
+  if (live === undefined) return `There is no live run ${runId}. Use the runId from your instructions; if the owner retried the stage, this session is no longer the one doing it.`
+  if (live.run.siteId !== siteId) return 'This session runs in another project than the stage it is submitting. Submit from the session the stage launched.'
+  if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return 'That run belongs to another session. Submit from the session the stage launched.'
+  return live
+}
+
+/** `check_real_data`: the guard on the run's work-dir, changing nothing. */
+async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string, raw: unknown): Promise<AgentToolResult> {
+  const runId = typeof raw === 'object' && raw !== null && 'runId' in raw ? (raw as { runId: unknown }).runId : undefined
+  if (typeof runId !== 'string' || runId === '') return refuse('Not checked: runId must be the runId from your instructions.')
+  const live = ownRun(deps, sessionId, siteId, runId)
+  if (typeof live === 'string') return refuse(live)
+  if (!RUN_SPECS[live.stage].guard) return refuse(`The ${live.stage} stage publishes nothing: there is nothing to check.`)
+  const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+  if (!guarded.ok) {
+    deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check refused`)
+    return refuse(`Not clear: ${guarded.reason} ${TAKE_DOWN}`)
+  }
+  deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${runId}: the real-data check is clear`)
+  return text('Clear: nothing in directions/ or mockup-app/ is a copy of a real-data input. You may turn the protection off.', false)
 }
 
 /** Check 3. `undefined`: every file is there, inside, and not empty. */
@@ -137,18 +185,61 @@ export function checkOptions(kind: RunKind, options: SubmitInput['options']): st
   return undefined
 }
 
+/** How much of a long project name Vercel keeps at the start of a deployment's host (it shortens long ones). */
+const PROJECT_PREFIX_CHARS = 20
+
+/**
+ * Check 5: `https://<host>.vercel.app`, nothing else (no port, no user), and — when the stage deploys —
+ * a host of ITS project: the alias `<project>.vercel.app` or a deployment `<project>-<hash>-<team>`
+ * (measured in A3). Any other `*.vercel.app` is someone else's site.
+ */
+export function isVercelUrl(raw: string, vercelProject: string | null = null): boolean {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  const host = url.hostname
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') return false
+  if (!host.endsWith('.vercel.app') || host.length <= '.vercel.app'.length) return false
+  if (vercelProject === null) return true
+  const label = host.slice(0, -'.vercel.app'.length)
+  if (label === vercelProject) return true
+  return vercelProject.length <= PROJECT_PREFIX_CHARS ? label.startsWith(`${vercelProject}-`) : label.startsWith(vercelProject.slice(0, PROJECT_PREFIX_CHARS))
+}
+
+/** Check 5. `undefined`: every URL handed in is a deployment of the stage's own Vercel project. */
+export function checkUrls(input: SubmitInput, vercelProject: string | null = null): string | undefined {
+  const urls: readonly [string, string | undefined][] = [
+    ...(input.options ?? []).map((option): [string, string | undefined] => [`option ${option.id}'s url`, option.url]),
+    ['previewUrl', input.previewUrl],
+    ['prodUrl', input.prodUrl],
+  ]
+  const shape = vercelProject === null ? 'https://<something>.vercel.app' : `https://<something>.vercel.app of the Vercel project ${vercelProject}`
+  for (const [what, url] of urls) {
+    if (url !== undefined && !isVercelUrl(url, vercelProject)) return `${what} must be ${shape}, the URL vercel deploy printed.`
+  }
+  return undefined
+}
+
 async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: unknown): Promise<AgentToolResult> {
   const shaped = parseSubmit(raw)
   if (!shaped.ok) return refuse(`Not submitted: ${shaped.field} ${shaped.reason}. Fix it and call again.`)
   const input = shaped.value
 
-  const live = findLive(deps.store.current().mockups, input.runId)
-  if (live === undefined) return refuse(`There is no live run ${input.runId}. Use the runId from your instructions; if the owner retried the stage, this session is no longer the one doing it.`)
-  if (live.run.siteId !== siteId) return refuse('This session runs in another project than the stage it is submitting. Submit from the session the stage launched.')
-  if (live.run.sessionId !== undefined && live.run.sessionId !== sessionId) return refuse('That run belongs to another session. Submit from the session the stage launched.')
+  const live = ownRun(deps, sessionId, siteId, input.runId)
+  if (typeof live === 'string') return refuse(live)
 
-  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options)
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input, vercelProjectOf(live.mockup.project, live.stage))
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
+  if (RUN_SPECS[live.stage].guard) {
+    const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
+    if (!guarded.ok) {
+      deps.log.warn(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} refused by the real-data guard`)
+      return refuse(`Not submitted: ${guarded.reason} ${TAKE_DOWN}`)
+    }
+  }
 
   const now = deps.now()
   const result = await deps.store.change((file) => {
@@ -196,10 +287,11 @@ async function pushGate(deps: SubmitDeps, live: Live): Promise<void> {
 /** The family's implementation: what `mockups` fills the link with, LAST in `start` (D1). */
 export function createSubmitTool(deps: SubmitDeps): AgentToolImpl {
   return {
-    tools: () => [TOOL],
+    tools: () => [TOOL, CHECK_TOOL],
     call: async (input) => {
-      if (input.name !== SUBMIT_STAGE) return refuse(`The mockups module has no tool called ${input.name}.`)
+      if (input.name !== SUBMIT_STAGE && input.name !== CHECK_REAL_DATA) return refuse(`The mockups module has no tool called ${input.name}.`)
       try {
+        if (input.name === CHECK_REAL_DATA) return await checkRealData(deps, input.sessionId, input.siteId, input.raw)
         return await submit(deps, input.sessionId, input.siteId, input.raw)
       } catch (error) {
         deps.log.error(`submit_stage failed unexpectedly (${codeOf(error)}, ${error instanceof Error ? error.name : 'unknown'})`)

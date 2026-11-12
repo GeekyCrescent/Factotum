@@ -203,7 +203,7 @@ test('crit. 19: a second start is a conflict; a stage of the next cut is not-yet
   const m = await created()
   value(await mockups.startRun(m.id, { kind: 'brief' }))
   assert.equal(code(await mockups.startRun(m.id, { kind: 'brief' })), 'conflict')
-  assert.equal(code(await mockups.startRun(m.id, { kind: 'plan' })), 'not-yet')
+  assert.equal(code(await mockups.startRun(m.id, { kind: 'build' })), 'not-yet')
   assert.equal(code(await mockups.startRun('nope', { kind: 'brief' })), 'not-found')
 })
 
@@ -359,4 +359,43 @@ test('crit. 29: a redo of concepts copies 02-concepts.md to _versions/ and start
   assert.ok(decided.run !== undefined)
   assert.match(decided.run.text, /_versions\/02-concepts-v1\.md/)
   assert.equal(decided.mockup.stages.concepts.status, 'running')
+})
+
+test('crit. 28: plan starts with the chosen concept in its prompt, and the directions project named after the vault project', async () => {
+  const m = await waitingConcepts()
+  value(await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'b' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'plan' }))
+  assert.equal(ticket.siteId, 'personal')
+  assert.match(ticket.text, /chose «Concept b» \(b\): Blurb b/)
+  assert.ok(ticket.text.includes('acme-directions'))
+})
+
+test('crit. 29: a plan redo copies the documents AND directions/ before it starts, and names both', async () => {
+  const m = await waitingConcepts()
+  value(await mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'a' }))
+  const ticket = value(await mockups.startRun(m.id, { kind: 'plan' }))
+  value(await mockups.linkRun(ticket.runId, { sessionId: SESSION }))
+  for (const doc of ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md']) await writeFile(join(m.vaultDir, doc), `# ${doc}\n`)
+  await mkdir(join(m.workDir, 'directions'), { recursive: true })
+  await writeFile(join(m.workDir, 'directions', 'index.html'), 'v1')
+  const options = ['a', 'b'].map((id) => ({ id, title: id, blurb: id, url: `https://acme-directions-x.vercel.app/${id}.html` }))
+  const raw = { runId: ticket.runId, files: ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md'], summary: 's', options }
+  const submitted = await mockups.agent.call({ sessionId: SESSION, siteId: 'personal', toolUseId: 't', name: SUBMIT_STAGE, raw })
+  assert.equal(submitted.isError, undefined, submitted.content[0]?.text)
+  const decided = value(await mockups.decide(m.id, { step: 'plan', action: 'redo', comment: 'menos azul' }))
+  assert.ok(decided.run !== undefined)
+  assert.equal(await readFile(join(m.workDir, 'directions', '_versions', 'v1', 'index.html'), 'utf8'), 'v1')
+  assert.ok(decided.run.text.includes(join(m.workDir, 'directions', '_versions', 'v1')))
+  assert.ok(decided.run.text.includes(join(m.vaultDir, '_versions', '05-visual-direction-v1.md')))
+})
+
+test('review: two choices at once — one wins, and the document says what the state says', async () => {
+  const m = await waitingConcepts()
+  const [x, y] = await Promise.all([
+    mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'a' }),
+    mockups.decide(m.id, { step: 'concepts', action: 'choose', optionId: 'b' }),
+  ])
+  assert.deepEqual([code(x), code(y)].sort(), ['conflict', 'ok'])
+  const chosen = mockups.get(m.id)?.stages.concepts.chosen
+  assert.match(await readFile(join(m.vaultDir, '02-concepts.md'), 'utf8'), new RegExp(`\\nchosen: ${chosen}\\n`))
 })

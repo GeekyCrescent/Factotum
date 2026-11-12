@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { linkSession, startRun, stallRun } from './ops.ts'
 import { openStore, type MockupsStore } from './store/store.ts'
-import { createSubmitTool, SUBMIT_STAGE } from './submit.ts'
+import { CHECK_REAL_DATA, createSubmitTool, SUBMIT_STAGE } from './submit.ts'
 import { captureLog, captureNotify, mockup, NOW, OTHER_SESSION, SESSION, withStep, type CapturedLog, type CapturedNotify } from './test-support.ts'
 import type { AgentToolResult, Mockup, Result } from './types.ts'
 
@@ -54,11 +54,11 @@ async function call(raw: unknown, who: { sessionId?: string; siteId?: string } =
 const textOf = (result: AgentToolResult): string => result.content.map((c) => c.text).join('')
 const brief = () => store.current().mockups[0]?.stages.brief
 
-test('the family lists one tool, submit_stage, with its schema', () => {
+test('the family lists submit_stage and check_real_data', () => {
   const tools = tool().tools()
   assert.deepEqual(
     tools.map((t) => t.name),
-    [SUBMIT_STAGE],
+    [SUBMIT_STAGE, CHECK_REAL_DATA],
   )
 })
 
@@ -247,4 +247,125 @@ test('crit. 16, check 4: an option with a url where the stage takes none is refu
   const result = await call({ runId: 'c1', files: ['02-concepts.md'], summary: 's', options: [option('a', { url: 'javascript:alert(1)' }), option('b')] })
   assert.match(textOf(result), /option a has a url/)
   assert.equal(concepts()?.status, 'running')
+})
+
+/** A plan run, with brief and concepts behind it, and its three documents written. */
+async function seedPlan(): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir })
+    m = withStep(withStep(m, 'brief', { status: 'done', version: 1 }), 'concepts', { status: 'done', version: 1, chosen: 'a' })
+    m = withStep(m, 'plan', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind: 'plan', runId: 'p1', siteId: 'personal' }, NOW))] } } }
+  })
+  for (const doc of ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md']) await writeFile(join(vaultDir, doc), `---\ntitle: ${doc}\n---\n# ${doc}\n`)
+}
+const plan = () => store.current().mockups[0]?.stages.plan
+const PLAN_FILES = ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md']
+const direction = (id: string, url = `https://acme-directions-abc123-team.vercel.app/${id}.html`) => option(id, { url })
+
+test('crit. 16, check 3: plan needs its three documents', async () => {
+  await seedPlan()
+  const result = await call({ runId: 'p1', files: ['03-story-and-pages.md', '04-data.md'], summary: 's', options: [direction('a'), direction('b')] })
+  assert.match(textOf(result), /must include 05-visual-direction\.md/)
+})
+
+test('crit. 16, check 4: a direction without its url is refused', async () => {
+  await seedPlan()
+  const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), option('b')] })
+  assert.match(textOf(result), /option b has no url/)
+  assert.equal(plan()?.status, 'running')
+})
+
+test('crit. 16, check 5: a url that is not https://*.vercel.app is refused', async () => {
+  await seedPlan()
+  for (const url of ['http://acme-directions.vercel.app/a.html', 'https://evil.example.com/a.html', 'https://vercel.app.evil.com/a.html', 'javascript:alert(1)', 'https://vercel.app/a.html']) {
+    const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a', url), direction('b')] })
+    assert.equal(result.isError, true, url)
+    assert.match(textOf(result), /https:\/\/<something>\.vercel\.app/, url)
+  }
+  const preview = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), direction('b')], previewUrl: 'https://example.com' })
+  assert.match(textOf(preview), /previewUrl/)
+  assert.equal(plan()?.status, 'running')
+})
+
+test('crit. 35: a direction that carries a copy of a private input is refused, and nothing changes', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await writeFile(join(workDir, 'directions', 'rows.csv'), 'real,rows\n1,2\n')
+  const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), direction('b')] })
+  assert.match(textOf(result), /directions\/rows\.csv is a copy of a real-data input/)
+  assert.equal(plan()?.status, 'running')
+  assert.deepEqual(notify.sent, [])
+})
+
+test('crit. 24: a plan with 2–3 directions, each with its vercel.app url, is accepted and the urls kept', async () => {
+  await seedPlan()
+  const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), direction('b'), direction('c')] })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(plan()?.status, 'waiting')
+  assert.equal(plan()?.options?.[1]?.url, 'https://acme-directions-abc123-team.vercel.app/b.html')
+  assert.deepEqual(notify.sent.map((n) => n.title), ['MTC app: plan ready'])
+})
+
+async function check(raw: unknown, who: { sessionId?: string; siteId?: string } = {}): Promise<AgentToolResult> {
+  return await tool().call({ sessionId: who.sessionId ?? SESSION, siteId: who.siteId ?? 'personal', toolUseId: 't', name: CHECK_REAL_DATA, raw })
+}
+
+test('crit. 35, before publishing: check_real_data refuses a copy of a private input, and says to take the deployment down', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await writeFile(join(workDir, 'directions', 'rows.csv'), 'real,rows\n1,2\n')
+  const result = await check({ runId: 'p1' })
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /directions\/rows\.csv is a copy of a real-data input/)
+  assert.match(textOf(result), /vercel remove/)
+  assert.match(textOf(result), /Do not turn the protection off/)
+  assert.equal(plan()?.status, 'running', 'a check changes nothing')
+})
+
+test('check_real_data clears what has no copy, and changes nothing', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'directions', 'index.html'), 'x')
+  const result = await check({ runId: 'p1' })
+  assert.equal(result.isError, undefined)
+  assert.match(textOf(result), /^Clear:/)
+  assert.equal(plan()?.status, 'running')
+  assert.deepEqual(notify.sent, [])
+})
+
+test('check_real_data answers only the run’s own session and site, and only a live run', async () => {
+  await seedPlan()
+  assert.match(textOf(await check({ runId: 'nope' })), /no live run/)
+  assert.match(textOf(await check({ runId: 'p1' }, { siteId: 'other' })), /another project/)
+  assert.match(textOf(await check({ runId: 1 })), /runId/)
+})
+
+test('crit. 35: a guard refusal at submit also says to take the deployment down', async () => {
+  await seedPlan()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await writeFile(join(workDir, 'directions', 'rows.csv'), 'real,rows\n1,2\n')
+  const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a'), direction('b')] })
+  assert.match(textOf(result), /vercel remove/)
+})
+
+test('review, check 5: a vercel.app url of ANOTHER project than the stage’s is refused', async () => {
+  await seedPlan()
+  for (const url of ['https://login-factotum.vercel.app/a.html', 'https://acme-mockup-abc-team.vercel.app/a.html', 'https://acme-directionsx.vercel.app/a.html']) {
+    const result = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a', url), direction('b')] })
+    assert.match(textOf(result), /acme-directions/, url)
+  }
+  const alias = await call({ runId: 'p1', files: PLAN_FILES, summary: 's', options: [direction('a', 'https://acme-directions.vercel.app/a.html'), direction('b')] })
+  assert.equal(alias.isError, undefined, textOf(alias))
+})
+
+test('review: check_real_data answers only a stage that publishes', async () => {
+  await seedConcepts()
+  assert.match(textOf(await check({ runId: 'c1' })), /publishes nothing/)
 })

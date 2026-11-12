@@ -8,6 +8,7 @@ import type { Mockup, StageId } from '../types.ts'
 import { briefPrompt } from './brief.ts'
 import type { PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
+import { planPrompt } from './plan.ts'
 
 export type { PromptContext } from './common.ts'
 
@@ -20,6 +21,7 @@ export function contextFor(m: Mockup, kind: StageId, runId: string, redo?: Promp
   return {
     runId,
     stage: kind,
+    project: m.project,
     name: m.name,
     client: m.client,
     vaultDir: m.vaultDir,
@@ -36,6 +38,8 @@ export function promptFor(ctx: PromptContext): string | null {
       return briefPrompt(ctx)
     case 'concepts':
       return conceptsPrompt(ctx)
+    case 'plan':
+      return planPrompt(ctx)
     default:
       return null
   }

@@ -43,11 +43,18 @@ test('changes are not a stage: change has a gate on the work-dir, redeploy has n
   assert.equal(RUN_SPECS.brief, STAGES.brief)
 })
 
-test('cut 2, block F, launches brief and concepts; plan arrives with block G', () => {
-  assert.deepEqual(CUT_KINDS, ['brief', 'concepts'])
-  assert.equal(isLaunchable('concepts'), true)
-  assert.equal(isLaunchable('plan'), false)
+test('cut 2 launches brief, concepts and plan; build and the rest arrive with cut 3', () => {
+  assert.deepEqual(CUT_KINDS, ['brief', 'concepts', 'plan'])
+  assert.equal(isLaunchable('plan'), true)
+  assert.equal(isLaunchable('build'), false)
   assert.equal(isLaunchable('change'), false)
+})
+
+test('crit. 35: the guard runs on what publishes — plan, build, deliver, change, redeploy — and not on brief nor concepts', () => {
+  assert.deepEqual(
+    Object.entries(RUN_SPECS).filter(([, spec]) => spec.guard).map(([kind]) => kind).sort(),
+    ['build', 'change', 'deliver', 'plan', 'redeploy'],
+  )
 })
 
 test('crit. 28: the choice of a choosing stage is written into ONE of its documents', () => {

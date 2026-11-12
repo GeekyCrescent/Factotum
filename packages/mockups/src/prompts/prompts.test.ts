@@ -4,11 +4,13 @@ import { mockup, withStep } from '../test-support.ts'
 import { briefPrompt } from './brief.ts'
 import { choiceSection, type PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
+import { planPrompt } from './plan.ts'
 import { contextFor, promptFor } from './index.ts'
 
 const CTX: PromptContext = {
   runId: '0192f3a4-5b6c-7d8e-9f01-23456789abcd',
   stage: 'brief',
+  project: 'medical-trust-center',
   name: 'MTC app',
   client: 'Medical Trust Center',
   vaultDir: '/Users/me/Obsidian/01-projects/medical-trust-center/mockup',
@@ -51,10 +53,11 @@ test('Word through textutil, PDF through the read tool, and a PDF without text r
   assert.match(prompt, /no text layer.*as an image/s)
 })
 
-test('promptFor answers brief and concepts, and null for a stage of a later block', () => {
+test('promptFor answers brief, concepts and plan, and null for a stage of a later cut', () => {
   assert.equal(promptFor(CTX), briefPrompt(CTX))
   assert.equal(promptFor({ ...CTX, stage: 'concepts' }), conceptsPrompt({ ...CTX, stage: 'concepts' }))
-  assert.equal(promptFor({ ...CTX, stage: 'plan' }), null)
+  assert.equal(promptFor({ ...CTX, stage: 'plan' }), planPrompt({ ...CTX, stage: 'plan' }))
+  assert.equal(promptFor({ ...CTX, stage: 'build' }), null)
 })
 
 test('no inputs yet: the prompt says so instead of an empty list', () => {
@@ -118,8 +121,87 @@ test('crit. 28: contextFor hands a stage the choice of the stage before it', () 
   ]
   const m = withStep(withStep(mockup({ id: 'm' }), 'concepts', { status: 'done', version: 1, options, chosen: 'b' }), 'plan', { status: 'ready' })
   const ctx = contextFor(m, 'plan', 'r1')
+  assert.equal(ctx.project, m.project)
   assert.deepEqual(ctx.chosen, { stage: 'concepts', file: '02-concepts.md', option: options[1] })
   assert.equal(contextFor(m, 'concepts', 'r1').chosen, undefined)
   assert.equal(ctx.runId, 'r1')
   assert.equal(ctx.vaultDir, m.vaultDir)
+})
+
+const PLAN: PromptContext = {
+  ...CTX,
+  stage: 'plan',
+  chosen: { stage: 'concepts', file: '02-concepts.md', option: { id: 'b', title: 'Check-in in one tap', blurb: 'The QR is the product.' } },
+}
+
+test('the plan prompt, first run', (t) => {
+  t.assert.snapshot(planPrompt(PLAN))
+})
+
+test('crit. 23: the plan asks for the story in one sentence, 6 to 12 steps with ONE that sells, pages, cast and scenario', () => {
+  const prompt = planPrompt(PLAN)
+  for (const needle of ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md', 'one sentence', '6 to 12', 'exactly ONE', 'cast', 'scenario', 'Next.js']) {
+    assert.ok(prompt.includes(needle), needle)
+  }
+})
+
+test('crit. 23: every animation names the step it serves, in a step → animation → what it causes table', () => {
+  const prompt = planPrompt(PLAN)
+  assert.match(prompt, /\| Step \| Animation \| What it causes \|/)
+  assert.match(prompt, /Every row names a step of 03-story-and-pages\.md/)
+})
+
+test('crit. 24: the directions are a static site in <workDir>/directions/, one page per direction, deployed to a preview', () => {
+  const prompt = planPrompt(PLAN)
+  assert.ok(prompt.includes(`${CTX.workDir}/directions`))
+  assert.match(prompt, /index\.html/)
+  assert.match(prompt, /<id>\.html/)
+  assert.match(prompt, /vercel deploy --yes/)
+  assert.doesNotMatch(prompt, /vercel deploy (--yes )?--prod/)
+  assert.match(prompt, /a preview, never `--prod`/)
+  assert.match(prompt, /url.*<id>\.html/s)
+})
+
+test('crit. 34, D4 (A3): the deploy is opened — protection off after deploying, and the URL answers 200 before it is handed', () => {
+  const prompt = planPrompt(PLAN)
+  assert.ok(prompt.includes('vercel project protection disable medical-trust-center-directions --sso'))
+  assert.ok(prompt.includes('vercel link --yes --project medical-trust-center-directions'))
+  assert.match(prompt, /200/)
+  assert.match(prompt, /curl/)
+})
+
+test('crit. 37: if vercel fails, the session does not submit; it says so and ends', () => {
+  assert.match(planPrompt(PLAN), /If `vercel` fails.*do NOT call `submit_stage`/s)
+})
+
+test('only plan may look at the private inputs, for their shape, never to copy (D4; crit. 35)', () => {
+  const prompt = planPrompt(PLAN)
+  assert.doesNotMatch(prompt, /Do NOT open anything in/)
+  assert.match(prompt, /only to learn the SHAPE/)
+  assert.match(prompt, /Never copy a file or a value/)
+  assert.ok(!prompt.includes('pacientes.xlsx'), 'the private names are never listed')
+})
+
+test('crit. 28: the plan builds on the concept the owner chose', () => {
+  const prompt = planPrompt(PLAN)
+  assert.match(prompt, /chose «Check-in in one tap» \(b\)/)
+  assert.ok(prompt.includes(`${CTX.vaultDir}/02-concepts.md`))
+})
+
+test('crit. 29: a plan redo names the previous documents and the previous directions, absolute', () => {
+  const previous = ['_versions/03-story-and-pages-v1.md', `${CTX.workDir}/directions/_versions/v1`]
+  const prompt = planPrompt({ ...PLAN, redo: { comment: 'Menos azul.', previous } })
+  assert.ok(prompt.includes(`${CTX.vaultDir}/_versions/03-story-and-pages-v1.md`))
+  assert.ok(prompt.includes(`- ${CTX.workDir}/directions/_versions/v1`))
+  assert.ok(!prompt.includes(`${CTX.vaultDir}${CTX.workDir}`))
+})
+
+test('crit. 35: the deploy stays protected until check_real_data clears it; a refusal takes it down', () => {
+  const prompt = planPrompt(PLAN)
+  const enable = prompt.indexOf('vercel project protection enable medical-trust-center-directions --sso')
+  const deploy = prompt.indexOf('vercel deploy --yes')
+  const checked = prompt.indexOf('check_real_data')
+  const disable = prompt.indexOf('vercel project protection disable')
+  assert.ok(enable !== -1 && enable < deploy && deploy < checked && checked < disable, 'enable → deploy → check → disable')
+  assert.match(prompt, /vercel remove <url> --yes/)
 })

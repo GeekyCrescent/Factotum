@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { DOC_MAX_BYTES } from './shape.ts'
-import { createMockupDir, createProject, listProjects, pascalName, readDocs, splitFrontmatter, updateMap, versionDocs, withFrontmatterKey, writeChosen } from './vault.ts'
+import { createMockupDir, createProject, listProjects, pascalName, readDocs, splitFrontmatter, updateMap, versionDirections, versionDocs, withFrontmatterKey, writeChosen } from './vault.ts'
 
 let root: string
 let projectsDir: string
@@ -301,4 +301,35 @@ test('crit. 28: writeChosen refuses a document that is missing or a link out of 
   await symlink(join(root, 'secret.md'), join(vaultDir, '02-concepts.md'))
   await assert.rejects(writeChosen(vaultDir, '02-concepts.md', 'b', false), /outside/)
   assert.equal(await readFile(join(root, 'secret.md'), 'utf8'), 'x')
+})
+
+test('crit. 29: before a plan redo, directions/ is COPIED to directions/_versions/v<k>/, without its own _versions nor .vercel', async () => {
+  const workDir = join(root, 'Work')
+  await mkdir(join(workDir, 'directions', 'a'), { recursive: true })
+  await mkdir(join(workDir, 'directions', '.vercel'), { recursive: true })
+  await writeFile(join(workDir, 'directions', 'index.html'), 'index v1')
+  await writeFile(join(workDir, 'directions', 'a', 'page.html'), 'a v1')
+  await writeFile(join(workDir, 'directions', '.vercel', 'project.json'), '{}')
+  assert.equal(await versionDirections(workDir, 1), join(workDir, 'directions', '_versions', 'v1'))
+  assert.equal(await readFile(join(workDir, 'directions', '_versions', 'v1', 'a', 'page.html'), 'utf8'), 'a v1')
+  assert.equal(await readFile(join(workDir, 'directions', 'index.html'), 'utf8'), 'index v1', 'copied, never moved')
+  await assert.rejects(readFile(join(workDir, 'directions', '_versions', 'v1', '.vercel', 'project.json')))
+  await writeFile(join(workDir, 'directions', 'index.html'), 'index v2')
+  assert.equal(await versionDirections(workDir, 2), join(workDir, 'directions', '_versions', 'v2'))
+  assert.deepEqual((await readdir(join(workDir, 'directions', '_versions', 'v2'))).sort(), ['a', 'index.html'])
+})
+
+test('versioning directions: none there is nothing to copy; the same v<k> again is not copied; a different one is never overwritten', async () => {
+  const workDir = join(root, 'Work')
+  await mkdir(workDir, { recursive: true })
+  assert.equal(await versionDirections(workDir, 1), null)
+  await mkdir(join(workDir, 'directions'), { recursive: true })
+  await writeFile(join(workDir, 'directions', 'index.html'), 'same')
+  assert.equal(await versionDirections(workDir, 1), join(workDir, 'directions', '_versions', 'v1'))
+  assert.equal(await versionDirections(workDir, 1), join(workDir, 'directions', '_versions', 'v1'), 'a retried redo copies nothing new')
+  assert.deepEqual(await readdir(join(workDir, 'directions', '_versions')), ['v1'])
+  await writeFile(join(workDir, 'directions', 'index.html'), 'newer')
+  assert.equal(await versionDirections(workDir, 1), join(workDir, 'directions', '_versions', 'v1-2'))
+  assert.equal(await readFile(join(workDir, 'directions', '_versions', 'v1', 'index.html'), 'utf8'), 'same')
+  assert.equal(await readFile(join(workDir, 'directions', '_versions', 'v1-2', 'index.html'), 'utf8'), 'newer')
 })

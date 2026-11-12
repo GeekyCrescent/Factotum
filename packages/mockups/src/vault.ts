@@ -4,7 +4,8 @@
  *
  * WHAT THIS WRITES, and nothing else (requirements §5, «Rutas declaradas»): a new project's folder and
  * hub under `projectsDir`, its work-dir under `workRoot`, one line and one link in `mapFile`, the
- * mockup folder, the copies in `_versions/`, and `chosen:` in a document's frontmatter (D6). Nothing
+ * mockup folder, the copies in `_versions/` (and in the work-dir's `directions/_versions/`), and
+ * `chosen:` in a document's frontmatter (D6). Nothing
  * else of a document is written here: the sessions write them.
  *
  * THE MAP IS THE OWNER'S, not ours: if it does not have the shape this expects, it is left exactly as
@@ -12,7 +13,7 @@
  * its mode.
  */
 
-import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { expandHome, inside, real, underHome } from './paths.ts'
 import { DOC_MAX_BYTES } from './shape.ts'
@@ -342,6 +343,63 @@ export async function writeChosen(vaultDir: string, file: string, optionId: stri
   if (doc.kind === 'outside') throw new Error(`${file} is outside the mockup folder or not a file`)
   const mode = (await stat(doc.path)).mode & 0o777
   await writeAtomically(doc.path, withFrontmatterKey(await readFile(doc.path, 'utf8'), 'chosen', optionId), mode)
+}
+
+/** Every file under `dir`, relative, sorted, without `skip` at its top: what two trees are compared on. */
+async function tree(dir: string, skip: ReadonlySet<string>): Promise<readonly string[]> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name).slice(dir.length + 1))
+    .filter((path) => !skip.has(path.split('/')[0] ?? ''))
+    .sort()
+}
+
+async function sameTree(a: string, b: string, skip: ReadonlySet<string>): Promise<boolean> {
+  const [left, right] = [await tree(a, skip), await tree(b, new Set())]
+  if (left.length !== right.length || left.some((path, i) => path !== right[i])) return false
+  for (const path of left) {
+    if (!(await readFile(join(a, path))).equals(await readFile(join(b, path)))) return false
+  }
+  return true
+}
+
+const DIR_SKIP = new Set([VERSIONS, '.vercel', 'node_modules', '.next'])
+
+/**
+ * Before a plan redo (D7; criterion 29): COPY `<workDir>/directions/` to `directions/_versions/v<k>/`,
+ * without its own `_versions`, `.vercel`, `node_modules` and `.next`. The same tree already there is
+ * not copied again (a retried redo); a different one is never overwritten: `v<k>-2`. Returns the
+ * absolute folder that holds the version, or `null` when there is no `directions/` to keep.
+ */
+export async function versionDirections(workDir: string, k: number, folder = 'directions'): Promise<string | null> {
+  const dir = join(workDir, folder)
+  try {
+    if (!(await stat(dir)).isDirectory()) return null
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return null
+    throw error
+  }
+  for (let n = 1; ; n++) {
+    const target = join(dir, VERSIONS, `v${k}${n === 1 ? '' : `-${n}`}`)
+    let there = true
+    try {
+      await stat(target)
+    } catch (error) {
+      if (codeOf(error) !== 'ENOENT') throw error
+      there = false
+    }
+    if (there) {
+      if (await sameTree(dir, target, DIR_SKIP)) return target
+      continue
+    }
+    await mkdir(target, { recursive: true })
+    for (const entry of await readdir(dir)) {
+      if (DIR_SKIP.has(entry)) continue
+      await cp(join(dir, entry), join(target, entry), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true })
+    }
+    return target
+  }
 }
 
 /** The documents of a stage that exist, read now (criterion 25). Over `DOC_MAX_BYTES` together: `too-large`. */

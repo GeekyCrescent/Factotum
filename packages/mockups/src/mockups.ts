@@ -37,7 +37,7 @@ import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRu
 import { isLaunchable, RUN_SPECS, STAGES } from './stages.ts'
 import { codeOf, openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool } from './submit.ts'
-import { createMockupDir, createProject, listProjects, readDocs, versionDocs, writeChosen } from './vault.ts'
+import { createMockupDir, createProject, listProjects, readDocs, versionDirections, versionDocs, writeChosen } from './vault.ts'
 import {
   STAGE_IDS,
   type CreateMockupsResult,
@@ -136,9 +136,27 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
   }
 
   /**
+   * Choices on one mockup go ONE AT A TIME (the phone and the Mac may both show the gate): the second
+   * sees the first one done and is a conflict before it writes, so the document and the state never
+   * disagree.
+   */
+  const choosing = new Map<string, Promise<unknown>>()
+  const oneChoiceAtATime = async (id: string, run: () => Promise<Result<Mockup>>): Promise<Result<Mockup>> => {
+    const next = (choosing.get(id) ?? Promise.resolve()).then(run)
+    choosing.set(id, next.catch(() => undefined))
+    return await next
+  }
+
+  /** Criterion 28: the document first (`recordChoice`), then the state. */
+  const choose = async (id: string, input: DecisionInput): Promise<Result<Mockup>> => {
+    const written = await recordChoice(id, input)
+    if (!written.ok) return written
+    return await change(id, (m) => decide(m, input, deps.now()))
+  }
+
+  /**
    * Criterion 28: `chosen: <id>` into the stage's document BEFORE the state moves — checked first on
-   * the mockup of now, so a choice the op would refuse never touches the document. If the state then
-   * refuses (a race), the key stays with a choice the owner did make; choosing again rewrites it.
+   * the mockup of now, so a choice the op would refuse never touches the document.
    */
   const recordChoice = async (id: string, input: DecisionInput): Promise<Result<Mockup>> => {
     const m = store.current().mockups.find((one) => one.id === id)
@@ -318,7 +336,13 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         // COPIED, never moved: if the launch fails, the document is still where it was (criterion 29).
         let previous: readonly string[]
         try {
-          previous = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+          const docs = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+          const dirs: string[] = []
+          for (const dir of STAGES[step].versionedDirs ?? []) {
+            const kept = await versionDirections(m.workDir, current.version, dir)
+            if (kept !== null) dirs.push(kept)
+          }
+          previous = [...docs, ...dirs]
         } catch (error) {
           log.warn(`mockup ${id}: the ${step} version could not be kept (${codeOf(error)})`)
           return { ok: false, error: { code: 'module-error', reason: `the current version could not be copied aside, so nothing was redone (${error instanceof Error ? error.message : codeOf(error)})` } }
@@ -326,11 +350,7 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         const launched = await launch(id, step, { comment: input.value.comment, previous })
         return launched.ok ? { ok: true, value: launched.value } : launched
       }
-      if (action === 'choose') {
-        const written = await recordChoice(id, input.value)
-        if (!written.ok) return written
-      }
-      const result = await change(id, (m) => decide(m, input.value, deps.now()))
+      const result = action === 'choose' ? await oneChoiceAtATime(id, () => choose(id, input.value)) : await change(id, (m) => decide(m, input.value, deps.now()))
       if (!result.ok) return result
       log.info(`mockup ${id}: ${step} ${action === 'choose' ? 'chosen' : 'approved'}, version ${result.value.stages[step].version}`)
       return { ok: true, value: { mockup: result.value } }
