@@ -10,11 +10,12 @@
  * document (criterion 42).
  */
 
+import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { uuidv7 } from '@factotum/sessions'
 import { parseMockupsConfig } from './config.ts'
-import { saveNote, saveUpload, type SavedInput } from './inputs.ts'
+import { INPUTS_DIR, PRIVATE_DIR, saveNote, saveUpload, type SavedInput } from './inputs.ts'
 import {
   abandonRun,
   addInput,
@@ -34,7 +35,7 @@ import { promptFor } from './prompts/index.ts'
 import { sweep } from './runs.ts'
 import { parseAbandon, parseCreate, parseDecision, parseLink, parseNote, parseRun, parseSite, parseSiteMatch, SWEEP_EVERY_MS, uploadName, type Shaped } from './shape.ts'
 import { isLaunchable, RUN_SPECS, STAGES } from './stages.ts'
-import { openStore, type MockupsStore } from './store/store.ts'
+import { codeOf, openStore, type MockupsStore } from './store/store.ts'
 import { createSubmitTool } from './submit.ts'
 import { createMockupDir, createProject, listProjects, readDocs, versionDocs } from './vault.ts'
 import {
@@ -44,6 +45,7 @@ import {
   type Mockups,
   type MockupsDeps,
   type MockupsFile,
+  type ProjectEntry,
   type Result,
   type RunKind,
   type RunTicket,
@@ -98,15 +100,18 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     return owner === undefined ? notFound('there is no such run') : await change(owner.id, op)
   }
 
+  const sameFolder = (a: string, b: string): boolean => inside(a, b, caseInsensitive) && inside(b, a, caseInsensitive)
+
   const siteFor = (m: Mockup, kind: RunKind): Result<string> => {
     if (RUN_SPECS[kind].site === 'docs') return { ok: true, value: config.docsSiteId }
     if (m.buildSiteId === null) return conflict(m.buildRefused === undefined ? 'the work folder is not a sessions project yet' : `no build project: ${m.buildRefused}`)
     return { ok: true, value: m.buildSiteId }
   }
 
-  const ticketOf = (m: Mockup, kind: StageId, runId: string, siteId: string, redo?: { readonly comment: string; readonly previous: readonly string[] }): RunTicket => {
+  const ticketOf = (m: Mockup, kind: StageId, runId: string, siteId: string, redo?: { readonly comment: string; readonly previous: readonly string[] }): RunTicket | null => {
     const text = promptFor({ runId, stage: kind, name: m.name, client: m.client, vaultDir: m.vaultDir, workDir: m.workDir, inputs: m.inputs, ...(redo === undefined ? {} : { redo }) })
-    return { runId, siteId, text: text ?? '', title: titleFor(kind, m.name), ...(config.model === undefined ? {} : { model: config.model }) }
+    if (text === null) return null
+    return { runId, siteId, text, title: titleFor(kind, m.name), ...(config.model === undefined ? {} : { model: config.model }) }
   }
 
   /** Starts a run (and, for a redo, records the decision first) in ONE change. */
@@ -117,6 +122,8 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     if (!site.ok) return site
     const runId = uuidv7(deps.now().getTime())
     const now = deps.now()
+    const ticket = ticketOf(m, kind, runId, site.value, redo)
+    if (ticket === null) return { ok: false, error: { code: 'not-yet', reason: `${kind} has no prompt in this cut` } }
     const input: StartInput = { kind, runId, siteId: site.value, ...(redo === undefined ? {} : { redo: { comment: redo.comment } }) }
     const result = await change(id, (current) => {
       if (redo === undefined) return startRun(current, input, now)
@@ -125,10 +132,10 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     })
     if (!result.ok) return result
     log.info(`mockup ${id}: ${kind} run ${runId} started${redo === undefined ? '' : ' (redo)'}`)
-    return { ok: true, value: { mockup: result.value, run: ticketOf(result.value, kind, runId, site.value, redo) } }
+    return { ok: true, value: { mockup: result.value, run: ticket } }
   }
 
-  const keepInput = async (id: string, save: () => Promise<SavedInput>, isPrivate: boolean): Promise<Result<Mockup>> => {
+  const keepInput = async (id: string, save: () => Promise<SavedInput>, isPrivate: boolean, what: 'upload' | 'note'): Promise<Result<Mockup>> => {
     const m = store.current().mockups.find((one) => one.id === id)
     if (m === undefined) return notFound()
     const allowed = canAddInput(m)
@@ -137,13 +144,28 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     try {
       saved = await save()
     } catch (error) {
-      log.error(`mockup ${id}: an input could not be saved (${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'})`)
+      log.error(`mockup ${id}: an ${what} could not be saved (${codeOf(error)})`)
       return { ok: false, error: { code: 'module-error', reason: 'the input could not be saved in the work folder' } }
     }
     const now = deps.now()
     const result = await change(id, (current) => addInput(current, { ...saved, private: isPrivate, at: now.toISOString() }, now))
-    if (result.ok) log.info(`mockup ${id}: input added (${saved.kind}${isPrivate ? ', private' : ''})`)
+    if (result.ok) {
+      // Never the name, nor its extension: a name can say what the client is (criterion 42).
+      log.info(`mockup ${id}: ${what} added${isPrivate ? ' (private)' : ''}`)
+      return result
+    }
+    // A stage started while it uploaded (criterion 12): the file must not sit there unlisted.
+    await unlink(join(m.workDir, INPUTS_DIR, ...(isPrivate ? [PRIVATE_DIR] : []), saved.name)).catch(() => log.warn(`mockup ${id}: a refused ${what} could not be removed`))
     return result
+  }
+
+  const projects = async (): Promise<Result<readonly ProjectEntry[]>> => {
+    try {
+      return { ok: true, value: await listProjects(config.vault.projectsDir, home) }
+    } catch (error) {
+      log.warn(`the projects folder could not be listed (${codeOf(error)})`)
+      return { ok: false, error: { code: 'module-error', reason: `the projects folder could not be listed (${codeOf(error)})` } }
+    }
   }
 
   const sweeper = deps.timers.setInterval(() => {
@@ -155,14 +177,7 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
     list: () => store.current().mockups.filter((m) => m.status !== 'archived').sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)),
     get: (id) => store.current().mockups.find((m) => m.id === id),
 
-    projects: async () => {
-      try {
-        return await listProjects(config.vault.projectsDir, home)
-      } catch (error) {
-        log.warn(`the projects folder could not be listed (${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'})`)
-        return []
-      }
-    },
+    projects: async () => await projects(),
 
     create: async (raw) => {
       const input = parseCreate(raw)
@@ -172,7 +187,9 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
       let workDir: string
       let mapWarning: string | undefined
       if (project.kind === 'existing') {
-        const found = (await mockups.projects()).find((p) => p.slug === project.slug)
+        const listed = await projects()
+        if (!listed.ok) return listed
+        const found = listed.value.find((p) => p.slug === project.slug)
         if (found === undefined) return notFound('there is no such project in the vault')
         if (found.workDir === null) return { ok: false, error: { code: 'invalid', field: 'project.slug', reason: 'that project has no work-dir' } }
         workDir = found.workDir
@@ -191,12 +208,17 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         workDir = await real(made.value.workDir)
         mapWarning = made.value.mapWarning
       }
-      const busy = store.current().mockups.find((m) => m.status !== 'archived' && inside(m.workDir, workDir, caseInsensitive) && inside(workDir, m.workDir, caseInsensitive))
+      const busy = store.current().mockups.find((m) => m.status !== 'archived' && sameFolder(m.workDir, workDir))
       if (busy !== undefined) return conflict(`the work folder already has the open mockup «${busy.name}»`)
       const vaultDir = await real(await createMockupDir(projectDir))
       const id = uuidv7(deps.now().getTime())
       const m = newMockup({ id, name, client, project: project.slug, vaultDir, workDir, buildSiteId: null }, deps.now())
-      const result = await store.change((file) => ({ ok: true, value: { file: { ...file, mockups: [...file.mockups, m] } } }))
+      // Checked again ON THE FILE OF THE CHANGE: two creates at once must not both pass (criterion 8).
+      const result = await store.change((file) => {
+        const twin = file.mockups.find((one) => one.status !== 'archived' && sameFolder(one.workDir, workDir))
+        if (twin !== undefined) return conflict<{ readonly file: MockupsFile }>(`the work folder already has the open mockup «${twin.name}»`)
+        return { ok: true, value: { file: { ...file, mockups: [...file.mockups, m] } } }
+      })
       if (!result.ok) return result
       log.info(`mockup ${id} created (${project.kind} project)${mapWarning === undefined ? '' : '; the map was not updated'}`)
       return { ok: true, value: { mockup: m, ...(mapWarning === undefined ? {} : { mapWarning }) } }
@@ -229,7 +251,7 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
       const isPrivate = query['private'] === '1'
       const m = mockups.get(id)
       if (m === undefined) return notFound()
-      return await keepInput(id, () => saveUpload({ workDir: m.workDir, file, name: name.value, isPrivate }), isPrivate)
+      return await keepInput(id, () => saveUpload({ workDir: m.workDir, file, name: name.value, isPrivate }), isPrivate, 'upload')
     },
 
     addNote: async (id, raw) => {
@@ -237,15 +259,20 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
       if (!input.ok) return invalid(input)
       const m = mockups.get(id)
       if (m === undefined) return notFound()
-      return await keepInput(id, () => saveNote({ workDir: m.workDir, text: input.value.text }), false)
+      return await keepInput(id, () => saveNote({ workDir: m.workDir, text: input.value.text }), false, 'note')
     },
 
     docs: async (id, stage) => {
       if (!(STAGE_IDS as readonly string[]).includes(stage)) return { ok: false, error: { code: 'invalid', field: 'stage', reason: 'that is not a stage' } }
       const m = mockups.get(id)
       if (m === undefined) return notFound()
-      const read = await readDocs(m.vaultDir, STAGES[stage as StageId].files)
-      return read.ok ? { ok: true, value: { files: read.value } } : read
+      try {
+        const read = await readDocs(m.vaultDir, STAGES[stage as StageId].files, caseInsensitive)
+        return read.ok ? { ok: true, value: { files: read.value } } : read
+      } catch (error) {
+        log.warn(`mockup ${id}: the ${stage} documents could not be read (${codeOf(error)})`)
+        return { ok: false, error: { code: 'module-error', reason: `the documents could not be read (${codeOf(error)})` } }
+      }
     },
 
     startRun: async (id, raw) => {
@@ -268,7 +295,13 @@ export async function createMockups(deps: MockupsDeps): Promise<CreateMockupsRes
         const current = m.stages[step]
         if (current.status !== 'waiting') return conflict(`${step} is ${current.status}, not waiting on you`)
         // COPIED, never moved: if the launch fails, the document is still where it was (criterion 29).
-        const previous = await versionDocs(m.vaultDir, STAGES[step].files, current.version)
+        let previous: readonly string[]
+        try {
+          previous = await versionDocs(m.vaultDir, STAGES[step].files, current.version, caseInsensitive)
+        } catch (error) {
+          log.warn(`mockup ${id}: the ${step} version could not be kept (${codeOf(error)})`)
+          return { ok: false, error: { code: 'module-error', reason: `the current version could not be copied aside, so nothing was redone (${error instanceof Error ? error.message : codeOf(error)})` } }
+        }
         const launched = await launch(id, step, { comment: input.value.comment, previous })
         return launched.ok ? { ok: true, value: launched.value } : launched
       }

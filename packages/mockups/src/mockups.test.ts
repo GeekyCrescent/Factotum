@@ -88,7 +88,7 @@ test('setup carries what the screen needs for the cross-writes warning (crit. 2b
 })
 
 test('crit. 6: projects are listed with their work-dir expanded', async () => {
-  assert.deepEqual(await mockups.projects(), [{ slug: 'acme', title: 'Acme', workDir: join(workRoot, 'Acme') }])
+  assert.deepEqual(value(await mockups.projects()), [{ slug: 'acme', title: 'Acme', workDir: join(workRoot, 'Acme') }])
 })
 
 test('crit. 6: a mockup over an existing project: its folder in the vault, brief ready, no build project yet', async () => {
@@ -286,4 +286,17 @@ test('stop disarms the sweep', async () => {
   await mockups.stop()
   assert.deepEqual(timers.pending(), [])
   mockups = await make()
+})
+
+test('review: two creates at once on the same work-dir — one of them is a conflict', async () => {
+  const [a, b] = await Promise.all([mockups.create(EXISTING), mockups.create({ ...EXISTING, name: 'Twin' })])
+  assert.deepEqual([code(a), code(b)].sort(), ['conflict', 'ok'])
+  assert.equal(mockups.list().length, 1)
+})
+
+test('review: projects() is a result, and an unreadable projects folder is a module-error, not an empty list', async () => {
+  await mockups.stop()
+  mockups = await make({ ...config(), vault: { projectsDir: join(root, 'missing') } })
+  assert.equal(code(await mockups.projects()), 'module-error')
+  assert.equal(code(await mockups.create(EXISTING)), 'module-error')
 })

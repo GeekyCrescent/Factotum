@@ -20,7 +20,7 @@ function fakeMockups(log: string[], over: Partial<Mockups> = {}): Mockups {
     setup: () => ({ docsSiteId: 'personal', projectsDir: '/p', workRoot: '/w', crossWritesAllowed: false }),
     list: () => [MOCKUP],
     get: (id) => (id === 'm1' ? MOCKUP : undefined),
-    projects: async () => [{ slug: 'acme', title: 'Acme', workDir: '/w/Acme' }],
+    projects: async () => ok([{ slug: 'acme', title: 'Acme', workDir: '/w/Acme' }]),
     create: answer('create', ok({ mockup: MOCKUP, mapWarning: 'map not updated: no mapFile in the config' })),
     siteMatch: answer('siteMatch', ok({ siteId: null })),
     setSite: answer('setSite', ok(MOCKUP)),

@@ -56,3 +56,14 @@ test('crit. 18: the sweep marks it stalled — never abandons it — and a later
   assert.equal(accepted.stages.brief.status, 'waiting')
   assert.equal(await sweep(opened.store, at(STARTING_ABANDON_MS * 3), log), 0)
 })
+
+test('review: a run linked between the snapshot and the change is not stalled', async () => {
+  const opened = await openStore({ dir, now: NOW, log: captureLog() })
+  assert.ok(opened.ok)
+  await opened.store.change((file) => ({ ok: true, value: { file: { ...file, mockups: [started('a')] } } }))
+  const linking = opened.store.change((file) => ({ ok: true, value: { file: { ...file, mockups: file.mockups.map((m) => value(linkSession(m, 'r-a', SESSION, NOW))) } } }))
+  const swept = sweep(opened.store, at(STARTING_ABANDON_MS), captureLog())
+  await linking
+  assert.equal(await swept, 0)
+  assert.equal(opened.store.current().mockups[0]?.stages.brief.status, 'running')
+})

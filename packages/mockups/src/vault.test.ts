@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile, chmod } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
@@ -44,6 +44,7 @@ related: ["[[home]]", "[[alpha]]", "[[beta]]"]
 - [[course]] — something
 `
 
+const ACTIVE = '## Active projects'
 const NEW = { slug: 'acme-portal', title: 'Acme Portal', client: 'Acme Salud', summary: 'Un portal de resultados.', difficulty: 'medium' as const }
 
 async function hub(slug: string, frontmatter: string): Promise<void> {
@@ -204,13 +205,13 @@ test('crit. 29: versioning copies each document to _versions/<name>-v<k>.md, onc
   const vaultDir = join(root, 'mockup')
   await mkdir(vaultDir)
   await writeFile(join(vaultDir, '01-brief.md'), 'first')
-  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md', 'absent.md'], 1), ['_versions/01-brief-v1.md'])
+  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md', 'absent.md'], 1, false), ['_versions/01-brief-v1.md'])
   assert.equal(await readFile(join(vaultDir, '_versions', '01-brief-v1.md'), 'utf8'), 'first')
   assert.equal(await readFile(join(vaultDir, '01-brief.md'), 'utf8'), 'first')
-  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md'], 1), ['_versions/01-brief-v1.md'])
+  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md'], 1, false), ['_versions/01-brief-v1.md'])
   assert.deepEqual(await readdir(join(vaultDir, '_versions')), ['01-brief-v1.md'])
   await writeFile(join(vaultDir, '01-brief.md'), 'second')
-  await versionDocs(vaultDir, ['01-brief.md'], 2)
+  await versionDocs(vaultDir, ['01-brief.md'], 2, false)
   assert.deepEqual((await readdir(join(vaultDir, '_versions'))).sort(), ['01-brief-v1.md', '01-brief-v2.md'])
 })
 
@@ -219,7 +220,7 @@ test('versioning never overwrites a different version of the same number', async
   await mkdir(join(vaultDir, '_versions'), { recursive: true })
   await writeFile(join(vaultDir, '_versions', '01-brief-v1.md'), 'older')
   await writeFile(join(vaultDir, '01-brief.md'), 'newer')
-  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md'], 1), ['_versions/01-brief-v1-2.md'])
+  assert.deepEqual(await versionDocs(vaultDir, ['01-brief.md'], 1, false), ['_versions/01-brief-v1-2.md'])
   assert.equal(await readFile(join(vaultDir, '_versions', '01-brief-v1.md'), 'utf8'), 'older')
 })
 
@@ -227,7 +228,7 @@ test('crit. 25: reading the documents of a stage: frontmatter as keys, markdown,
   const vaultDir = join(root, 'mockup')
   await mkdir(vaultDir)
   await writeFile(join(vaultDir, '01-brief.md'), '---\nstage: brief\n---\n# Brief\n')
-  const read = await readDocs(vaultDir, ['01-brief.md', '02-concepts.md'])
+  const read = await readDocs(vaultDir, ['01-brief.md', '02-concepts.md'], false)
   assert.ok(read.ok)
   assert.equal(read.value.length, 1)
   assert.equal(read.value[0]?.name, '01-brief.md')
@@ -240,6 +241,39 @@ test('documents over DOC_MAX_BYTES are a too-large with the name of the file', a
   const vaultDir = join(root, 'mockup')
   await mkdir(vaultDir)
   await writeFile(join(vaultDir, '01-brief.md'), 'x'.repeat(DOC_MAX_BYTES + 1))
-  const read = await readDocs(vaultDir, ['01-brief.md'])
+  const read = await readDocs(vaultDir, ['01-brief.md'], false)
   assert.deepEqual(read.ok ? null : read.error, { code: 'too-large', reason: '01-brief.md is over 1 MiB' })
+})
+
+test('review: a document that is a symlink out of the mockup folder is never read nor versioned', async () => {
+  const vaultDir = join(root, 'mockup')
+  await mkdir(vaultDir)
+  await writeFile(join(root, 'secret.env'), 'TOKEN=1')
+  await symlink(join(root, 'secret.env'), join(vaultDir, '01-brief.md'))
+  const read = await readDocs(vaultDir, ['01-brief.md'], false)
+  assert.equal(read.ok ? 'ok' : read.error.code, 'conflict')
+  await assert.rejects(versionDocs(vaultDir, ['01-brief.md'], 1, false), /outside/)
+  await assert.rejects(readdir(join(vaultDir, '_versions')))
+})
+
+test('review: a map without a frontmatter fence on its first line is not touched', () => {
+  const updated = updateMap(`# day-job\nrelated: []\n---\n\n${ACTIVE}\n- [[a]] — a\n`, 'x', 'X.', undefined)
+  assert.equal(updated.ok, false)
+})
+
+test('review: a map that is a symlink keeps being one', async () => {
+  const target = join(root, 'real-map.md')
+  await writeFile(target, MAP)
+  await symlink(target, join(root, 'day-job.md'))
+  const created = await createProject({ projectsDir, workRoot, mapFile: join(root, 'day-job.md'), home, today: '2026-11-12', ...NEW })
+  assert.ok(created.ok)
+  assert.equal(created.value.mapWarning, undefined)
+  assert.ok((await lstat(join(root, 'day-job.md'))).isSymbolicLink())
+  assert.match(await readFile(target, 'utf8'), /\[\[acme-portal\]\]/)
+})
+
+test('review: a title that ends in a colon is quoted in the hub', async () => {
+  const created = await createProject({ projectsDir, workRoot, home, today: '2026-11-12', ...NEW, title: 'Acme fase 2:' })
+  assert.ok(created.ok)
+  assert.match(await readFile(join(projectsDir, 'acme-portal', 'acme-portal.md'), 'utf8'), /\ntitle: "Acme fase 2:"\n/)
 })

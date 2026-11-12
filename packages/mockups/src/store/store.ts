@@ -8,7 +8,8 @@
  *   store refuses to open, which switches off `mockups` alone.
  */
 
-import { chmod, copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { chmod, copyFile, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Logger } from '@factotum/core'
 import type { MockupsFile, Result } from '../types.ts'
@@ -38,15 +39,21 @@ export function codeOf(error: unknown): string {
 
 /** Temp, fsync, rename, fsync the folder: a power cut never leaves the only copy empty. */
 export async function writeAtomically(file: string, content: string, mode = 0o600): Promise<void> {
-  const temp = `${file}.tmp`
-  const handle = await open(temp, 'w', mode)
+  // A name of its own, created exclusively: two writers never share (and truncate) one temporary file.
+  const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  const handle = await open(temp, 'wx', mode)
   try {
-    await handle.writeFile(content, 'utf8')
-    await handle.sync()
-  } finally {
-    await handle.close()
+    try {
+      await handle.writeFile(content, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, file)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
   }
-  await rename(temp, file)
   const folder = await open(dirname(file), 'r')
   try {
     await folder.sync()

@@ -11,9 +11,9 @@
  * its mode.
  */
 
-import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
-import { expandHome, real, underHome } from './paths.ts'
+import { expandHome, inside, real, underHome } from './paths.ts'
 import { DOC_MAX_BYTES } from './shape.ts'
 import { codeOf, writeAtomically } from './store/store.ts'
 import type { DocFile, ProjectEntry, Result } from './types.ts'
@@ -66,8 +66,10 @@ export async function listProjects(projectsDir: string, home: string): Promise<r
     let text: string
     try {
       text = await readFile(join(projectsDir, entry.name, `${entry.name}.md`), 'utf8')
-    } catch {
-      continue
+    } catch (error) {
+      // A folder without a hub is not a project. A hub that cannot be read is a problem to say.
+      if (codeOf(error) === 'ENOENT') continue
+      throw error
     }
     const { frontmatter } = splitFrontmatter(text)
     const declared = frontmatter['work-dir']
@@ -99,7 +101,7 @@ const tagOf = (value: string): string =>
 /** One line, and quoted only if YAML would read it as something else. */
 function scalar(value: string): string {
   const line = value.replace(/\s+/g, ' ').trim()
-  return /^[\s\-?:,[\]{}#&*!|>'"%@`]|: | #/.test(line) ? JSON.stringify(line) : line
+  return /^[\s\-?:,[\]{}#&*!|>'"%@`]|: | #|:$/.test(line) ? JSON.stringify(line) : line
 }
 
 const oneLine = (value: string): string => value.replace(/\s+/g, ' ').trim()
@@ -165,10 +167,11 @@ export type MapUpdate = { readonly ok: true; readonly text: string } | { readonl
  */
 export function updateMap(text: string, slug: string, summary: string, due: string | undefined): MapUpdate {
   const lines = text.split('\n')
-  const fence = lines.findIndex((line, i) => i > 0 && line.trim() === '---')
+  const fence = lines[0]?.trim() === '---' ? lines.findIndex((line, i) => i > 0 && line.trim() === '---') : -1
   const relatedAt = lines.findIndex((line, i) => i > 0 && i < fence && /^related:/.test(line))
   const related = relatedAt === -1 ? null : /^related:\s*\[(.*)\]\s*$/.exec(lines[relatedAt] ?? '')
-  if (fence === -1 || related === null || related[1] === undefined) return { ok: false, reason: 'its related: is not an array on one line' }
+  if (fence === -1) return { ok: false, reason: 'it has no frontmatter' }
+  if (related === null || related[1] === undefined) return { ok: false, reason: 'its related: is not an array on one line' }
   const start = lines.findIndex((line) => line.trim() === ACTIVE_SECTION)
   if (start === -1) return { ok: false, reason: `it has no ${ACTIVE_SECTION} section` }
   const next = lines.findIndex((line, i) => i > start && /^#{1,2} /.test(line))
@@ -185,24 +188,36 @@ export function updateMap(text: string, slug: string, summary: string, due: stri
   return { ok: true, text: updated.join('\n') }
 }
 
+/** One map write at a time in this process: two new projects never both start from the same map. */
+let mapQueue: Promise<unknown> = Promise.resolve()
+
 async function touchMap(input: NewProjectInput): Promise<string | undefined> {
-  if (input.mapFile === undefined) return 'map not updated: no mapFile in the config'
-  let text: string
-  let mode: number
-  try {
-    text = await readFile(input.mapFile, 'utf8')
-    mode = (await stat(input.mapFile)).mode & 0o777
-  } catch (error) {
-    return `map not updated: it could not be read (${codeOf(error)})`
+  const mapFile = input.mapFile
+  if (mapFile === undefined) return 'map not updated: no mapFile in the config'
+  const write = async (): Promise<string | undefined> => {
+    let target: string
+    let text: string
+    let mode: number
+    try {
+      // Through a link to the file it points at: the link stays a link.
+      target = await realpath(mapFile)
+      text = await readFile(target, 'utf8')
+      mode = (await stat(target)).mode & 0o777
+    } catch (error) {
+      return `map not updated: it could not be read (${codeOf(error)})`
+    }
+    const updated = updateMap(text, input.slug, input.summary, input.due)
+    if (!updated.ok) return `map not updated: ${updated.reason}`
+    try {
+      await writeAtomically(target, updated.text, mode)
+    } catch (error) {
+      return `map not updated: it could not be written (${codeOf(error)})`
+    }
+    return undefined
   }
-  const updated = updateMap(text, input.slug, input.summary, input.due)
-  if (!updated.ok) return `map not updated: ${updated.reason}`
-  try {
-    await writeAtomically(input.mapFile, updated.text, mode)
-  } catch (error) {
-    return `map not updated: it could not be written (${codeOf(error)})`
-  }
-  return undefined
+  const next = mapQueue.then(write)
+  mapQueue = next.catch(() => undefined)
+  return await next
 }
 
 export interface NewProject {
@@ -223,6 +238,9 @@ export async function createProject(input: NewProjectInput): Promise<Result<NewP
     await mkdir(projectDir)
     await writeFile(join(projectDir, `${input.slug}.md`), hubText(input, workDir), { flag: 'wx' })
   } catch (error) {
+    // Undone, so a retry is not refused for a half-made project. Both were checked absent above.
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined)
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined)
     return { ok: false, error: { code: 'module-error', reason: `the project could not be created (${codeOf(error)})` } }
   }
   const mapWarning = await touchMap(input)
@@ -242,20 +260,38 @@ export async function createMockupDir(projectDir: string): Promise<string> {
   }
 }
 
+type Doc = { readonly kind: 'missing' } | { readonly kind: 'outside' } | { readonly kind: 'ok'; readonly path: string }
+
+/**
+ * A document of the mockup folder, by its REAL path: a link that leads out of the folder, or anything
+ * that is not a plain file, is `outside` — read nor copied (a session can put a link there after its
+ * submission was checked). Only "not there" is `missing`; any other error is thrown.
+ */
+async function docOf(vaultDir: string, name: string, caseInsensitive: boolean): Promise<Doc> {
+  let path: string
+  try {
+    path = await realpath(join(vaultDir, name))
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return { kind: 'missing' }
+    throw error
+  }
+  if (!inside(await realpath(vaultDir), path, caseInsensitive) || !(await stat(path)).isFile()) return { kind: 'outside' }
+  return { kind: 'ok', path }
+}
+
 /**
  * Before a redo (criterion 29): COPY each document of the stage to `_versions/<name>-v<k>.md`. The
  * same content already there is not copied again; a different one is never overwritten. Returns the
- * versions, relative to `vaultDir`, that hold the documents now.
+ * versions, relative to `vaultDir`, that hold the documents now. A document that cannot be read
+ * THROWS: a redo without its copy would let the new session overwrite the only one.
  */
-export async function versionDocs(vaultDir: string, files: readonly string[], k: number): Promise<readonly string[]> {
+export async function versionDocs(vaultDir: string, files: readonly string[], k: number, caseInsensitive: boolean): Promise<readonly string[]> {
   const kept: string[] = []
   for (const file of files) {
-    let content: string
-    try {
-      content = await readFile(join(vaultDir, file), 'utf8')
-    } catch {
-      continue
-    }
+    const doc = await docOf(vaultDir, file, caseInsensitive)
+    if (doc.kind === 'missing') continue
+    if (doc.kind === 'outside') throw new Error(`${file} is outside the mockup folder or not a file`)
+    const content = await readFile(doc.path, 'utf8')
     await mkdir(join(vaultDir, VERSIONS), { recursive: true })
     const stem = basename(file, extname(file))
     for (let n = 1; ; n++) {
@@ -264,10 +300,11 @@ export async function versionDocs(vaultDir: string, files: readonly string[], k:
       let there: string | undefined
       try {
         there = await readFile(target, 'utf8')
-      } catch {
+      } catch (error) {
+        if (codeOf(error) !== 'ENOENT') throw error
         there = undefined
       }
-      if (there === undefined) await copyFile(join(vaultDir, file), target)
+      if (there === undefined) await copyFile(doc.path, target)
       if (there === undefined || there === content) {
         kept.push(`${VERSIONS}/${name}`)
         break
@@ -278,20 +315,17 @@ export async function versionDocs(vaultDir: string, files: readonly string[], k:
 }
 
 /** The documents of a stage that exist, read now (criterion 25). Over `DOC_MAX_BYTES` together: `too-large`. */
-export async function readDocs(vaultDir: string, files: readonly string[]): Promise<Result<readonly DocFile[]>> {
+export async function readDocs(vaultDir: string, files: readonly string[], caseInsensitive: boolean): Promise<Result<readonly DocFile[]>> {
   const docs: DocFile[] = []
   let total = 0
   for (const name of files) {
-    const path = join(vaultDir, name)
-    let info
-    try {
-      info = await stat(path)
-    } catch {
-      continue
-    }
+    const doc = await docOf(vaultDir, name, caseInsensitive)
+    if (doc.kind === 'missing') continue
+    if (doc.kind === 'outside') return { ok: false, error: { code: 'conflict', reason: `${name} is outside the mockup folder or not a file` } }
+    const info = await stat(doc.path)
     total += info.size
     if (total > DOC_MAX_BYTES) return { ok: false, error: { code: 'too-large', reason: `${name} is over 1 MiB` } }
-    const { frontmatter, markdown } = splitFrontmatter(await readFile(path, 'utf8'))
+    const { frontmatter, markdown } = splitFrontmatter(await readFile(doc.path, 'utf8'))
     docs.push({ name, frontmatter, markdown, mtime: info.mtime.toISOString() })
   }
   return { ok: true, value: docs }

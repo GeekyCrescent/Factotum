@@ -40,12 +40,20 @@ export async function sweep(store: MockupsStore, now: Date, log: Logger): Promis
     const result = await store.change((file) => {
       const m = file.mockups.find((one) => one.id === stale.mockupId)
       if (m === undefined) return { ok: false, error: { code: 'not-found', reason: 'gone' } }
+      // On the file OF THIS CHANGE: a session linked since the snapshot is alive, and stays running.
+      const step = STAGE_IDS.map((id) => m.stages[id]).find((one) => one.run?.id === stale.runId)
+      if (step?.run === undefined || step.run.sessionId !== undefined || step.status !== 'running') {
+        return { ok: false, error: { code: 'conflict', reason: 'linked since' } }
+      }
       const stalled = stallRun(m, stale.runId, now)
       if (!stalled.ok) return stalled
       const mockups = file.mockups.map((one) => (one.id === m.id ? stalled.value : one))
       return { ok: true, value: { file: { ...file, mockups }, mockup: stalled.value } }
     })
-    if (!result.ok) continue
+    if (!result.ok) {
+      if (result.error.code === 'module-error') log.warn(`mockup ${stale.mockupId}: run ${stale.runId} could not be stalled (${result.error.reason})`)
+      continue
+    }
     count++
     const stage = STAGE_IDS.find((id) => result.value.mockup.stages[id].run?.id === stale.runId) ?? 'unknown'
     log.info(`mockup ${stale.mockupId}: ${stage} run ${stale.runId} had no session after ${STARTING_ABANDON_MS / 60_000} min; stalled`)

@@ -20,7 +20,7 @@ import { acceptSubmit, findRun, linkSession } from './ops.ts'
 import { inside, real } from './paths.ts'
 import { parseSubmit, SUMMARY_MAX_CHARS, type SubmitInput } from './shape.ts'
 import { RUN_SPECS } from './stages.ts'
-import type { MockupsStore } from './store/store.ts'
+import { codeOf, type MockupsStore } from './store/store.ts'
 import type { AgentTool, AgentToolImpl, AgentToolResult, Mockup, Run, StageId } from './types.ts'
 
 export const SUBMIT_STAGE = 'submit_stage'
@@ -85,8 +85,11 @@ async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boole
   for (const required of RUN_SPECS[live.stage].files) {
     if (!input.files.includes(required)) return `files must include ${required}, the document this stage writes.`
   }
+  const required = RUN_SPECS[live.stage].files
   for (const file of input.files) {
-    const candidates = isAbsolute(file) ? [file] : [join(vaultDir, file), join(workDir, file)]
+    // A document the stage requires is read from the mockup folder, so it must be THERE; anything else
+    // may be in either folder.
+    const candidates = isAbsolute(file) ? [file] : required.includes(file) ? [join(vaultDir, file)] : [join(vaultDir, file), join(workDir, file)]
     let found: string | undefined
     for (const candidate of candidates) {
       try {
@@ -98,7 +101,11 @@ async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boole
         // Not there; the next folder, or "does not exist".
       }
     }
-    if (found === undefined) return `${file} does not exist in ${vaultDir} nor in ${workDir}. Write it there and call again.`
+    if (found === undefined) {
+      return required.includes(file)
+        ? `${file} does not exist in ${vaultDir}. Write it there and call again.`
+        : `${file} does not exist in ${vaultDir} nor in ${workDir}. Write it there and call again.`
+    }
     const realPath = await real(found)
     if (!inside(vaultDir, realPath, caseInsensitive) && !inside(workDir, realPath, caseInsensitive)) {
       return `${file} is outside the mockup folders (${vaultDir}, ${workDir}). Write it inside them.`
@@ -138,16 +145,30 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   }
   const step = result.value.mockup.stages[live.stage]
   deps.log.info(`mockup ${live.mockup.id}: ${live.stage} run ${input.runId} submitted, version ${step.version}, ${step.status}`)
-  if (step.status === 'waiting' && deps.notify.canReach()) {
-    // The name is the owner's choice (requirements §5); the body is FIXED, and nothing else goes.
+  if (step.status === 'waiting') await pushGate(deps, live)
+  return text(step.status === 'waiting' ? 'Submitted. The owner will review it. End your turn now.' : 'Submitted. End your turn now.', false)
+}
+
+/**
+ * One push per accepted submission with a gate (D6). The name is the owner's choice (requirements
+ * §5); the body is FIXED, and nothing else goes. Its own `try`: the submission is accepted already,
+ * and a push that fails must not tell the agent otherwise.
+ */
+async function pushGate(deps: SubmitDeps, live: Live): Promise<void> {
+  if (!deps.notify.canReach()) {
+    deps.log.info(`mockup ${live.mockup.id}: ${live.stage} is waiting; no device to push to`)
+    return
+  }
+  try {
     await deps.notify.send({
       title: `${live.mockup.name}: ${live.stage} ready`,
       body: 'Tap to review.',
       path: `/m/mockups/${live.mockup.id}/${live.stage}`,
       tag: `mockups-gate-${live.mockup.id}-${live.stage}`,
     })
+  } catch (error) {
+    deps.log.warn(`mockup ${live.mockup.id}: the gate push failed (${error instanceof Error ? error.name : 'unknown'})`)
   }
-  return text(step.status === 'waiting' ? 'Submitted. The owner will review it. End your turn now.' : 'Submitted. End your turn now.', false)
 }
 
 /** The family's implementation: what `mockups` fills the link with, LAST in `start` (D1). */
@@ -158,8 +179,8 @@ export function createSubmitTool(deps: SubmitDeps): AgentToolImpl {
       if (input.name !== SUBMIT_STAGE) return refuse(`The mockups module has no tool called ${input.name}.`)
       try {
         return await submit(deps, input.sessionId, input.siteId, input.raw)
-      } catch {
-        deps.log.error('submit_stage failed unexpectedly')
+      } catch (error) {
+        deps.log.error(`submit_stage failed unexpectedly (${codeOf(error)}, ${error instanceof Error ? error.name : 'unknown'})`)
         return refuse('The mockups module could not take the submission right now. Tell the owner in your reply.')
       }
     },

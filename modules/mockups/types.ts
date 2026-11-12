@@ -171,7 +171,7 @@ export interface Mockups {
   readonly setup: () => MockupsSetup
   readonly list: () => readonly Mockup[]
   readonly get: (id: string) => Mockup | undefined
-  readonly projects: () => Promise<readonly ProjectEntry[]>
+  readonly projects: () => Promise<Result<readonly ProjectEntry[]>>
   readonly create: (input: unknown) => Promise<Result<Created>>
   readonly siteMatch: (id: string, input: unknown) => Promise<Result<{ readonly siteId: string | null }>>
   readonly setSite: (id: string, input: unknown) => Promise<Result<Mockup>>

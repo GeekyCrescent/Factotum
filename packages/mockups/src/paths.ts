@@ -27,7 +27,11 @@ export function underHome(path: string, home: string): string {
 export async function real(path: string): Promise<string> {
   try {
     return await realpath(path)
-  } catch {
+  } catch (error) {
+    // Only a path that is not there yet: a link loop or a folder we may not read must not pass
+    // for a path that could be anything.
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+    if (code !== 'ENOENT') throw error
     const parent = dirname(path)
     if (parent === path) return path
     return join(await real(parent), basename(path))

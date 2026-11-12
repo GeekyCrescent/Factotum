@@ -66,7 +66,10 @@ function routeTable(holder: Holder): RouteTable {
 
   return {
     'GET /mockups': withMockups((mockups) => ok({ mockups: mockups.list(), setup: mockups.setup() })),
-    'GET /projects': withMockups(async (mockups) => ok({ projects: await mockups.projects() })),
+    'GET /projects': withMockups(async (mockups) => {
+      const listed = await mockups.projects()
+      return listed.ok ? ok({ projects: listed.value }) : failure(listed.error)
+    }),
     'POST /mockups': withMockups(async (mockups, req) => answer(await mockups.create(req.body))),
     'GET /mockups/:id': withMockups((mockups, req) => {
       const found = mockups.get(id(req))

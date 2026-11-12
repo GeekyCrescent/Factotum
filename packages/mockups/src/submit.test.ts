@@ -179,3 +179,21 @@ test('a second submission of the same run is refused: it is no longer live', asy
   assert.match(textOf(again), /no live run/)
   assert.equal(notify.sent.length, 1)
 })
+
+test('review: a required document written in the work-dir instead of the mockup folder is refused', async () => {
+  await seed()
+  await writeFile(join(workDir, '01-brief.md'), '# Brief in the wrong place')
+  const result = await call({ runId: 'r1', files: ['01-brief.md'], summary: 's' })
+  assert.match(textOf(result), /01-brief\.md does not exist in .*mockup/)
+  assert.equal(brief()?.status, 'running')
+})
+
+test('review: a push that throws does not turn an accepted submission into a refusal', async () => {
+  notify = { sent: [], canReach: () => true, send: async () => { throw new Error('push down') } } as unknown as CapturedNotify
+  await seed()
+  await writeFile(join(vaultDir, '01-brief.md'), '# Brief')
+  const result = await call({ runId: 'r1', files: ['01-brief.md'], summary: 's' })
+  assert.equal(result.isError, undefined)
+  assert.equal(brief()?.status, 'waiting')
+  assert.ok(log.lines.some((line) => line.startsWith('warn mockup m1: the gate push failed')))
+})
