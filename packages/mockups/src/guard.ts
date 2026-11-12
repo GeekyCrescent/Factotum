@@ -147,9 +147,10 @@ export async function tokenFileCheck(workDir: string): Promise<GuardResult> {
     const tokens = names.filter((name) => name.startsWith('.env'))
     if (tokens.length === 0) continue
     const ignored = names.includes('.vercelignore') ? (await readFile(join(workDir, dir, '.vercelignore'), 'utf8')).split('\n').map((line) => line.trim()) : []
-    // Vercel reads it with gitignore rules: a `!` line can bring a file back, so none may name `.env`.
-    if (ignored.some((line) => line.startsWith('!') && line.includes('.env'))) {
-      return { ok: false, reason: `${dir}/.vercelignore brings .env back with a «!» line: remove it before deploying.` }
+    // Vercel reads it with gitignore rules, where a `!` line can bring a file back under any pattern.
+    // Next to a token file, no `!` line at all: fail closed rather than match patterns.
+    if (ignored.some((line) => line.startsWith('!'))) {
+      return { ok: false, reason: `${dir}/.vercelignore has a «!» line next to ${dir}/${tokens[0] ?? '.env'}: remove it before deploying.` }
     }
     const bare = tokens.find((name) => !ignored.includes('.env*') && !ignored.includes(name))
     if (bare !== undefined) {

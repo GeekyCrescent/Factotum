@@ -131,8 +131,10 @@ test('review (security H1): no .env* file, or no guarded folder, is clear', asyn
 test('review (security H1): a negation that brings a .env* file back into the upload is refused', async () => {
   await mkdir(join(workDir, 'mockup-app'), { recursive: true })
   await writeFile(join(workDir, 'mockup-app', '.env.local'), 'T=x\n')
-  await writeFile(join(workDir, 'mockup-app', '.vercelignore'), '.env*\n!.env.local\n')
-  const result = await tokenFileCheck(workDir)
-  assert.equal(result.ok, false)
-  assert.match(result.ok ? '' : result.reason, /mockup-app\/\.vercelignore brings .env back/)
+  for (const negation of ['!.env.local', '!*.local', '!.e*']) {
+    await writeFile(join(workDir, 'mockup-app', '.vercelignore'), `.env*\n${negation}\n`)
+    const result = await tokenFileCheck(workDir)
+    assert.equal(result.ok, false, negation)
+    assert.match(result.ok ? '' : result.reason, /mockup-app\/\.vercelignore has a «!» line/, negation)
+  }
 })
