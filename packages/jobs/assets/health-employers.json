@@ -1,0 +1,4 @@
+{
+  "$comment": "Curated health employers (design D8 step 1; tasks O7, owner-approved). Matched by nameKey. Only this list turns isHealthEmployer on; the industry text only suggests.",
+  "names": ["Dokotela", "Care GP", "Carebotics.ai"]
+}
