@@ -109,3 +109,29 @@ test('artifacts round-trip by application and version, frozen, and carry no even
   assert.equal(db.read((q) => q.all('SELECT id FROM events').length), before)
   db.close()
 })
+
+test('seedDraftsWithoutCv: the draft applications of the given files with no CV request, by file then row', async () => {
+  using base = tempBase()
+  const db = await opened(base)
+  const target = { contactId: null, to: null, url: null, contactName: null, instruction: null }
+  const add = (q: Parameters<typeof repo.insertApplication>[0], id: string, seedKey: string, state: 'draft' | 'generating' = 'draft'): void =>
+    repo.insertApplication(q, application({ id, opportunityId: 'opp-1', target, state }), { seedKey }, note, NOW)
+  valueOf(
+    db.tx((q) => {
+      add(q, 'w1', 'wave1.md#1')
+      add(q, 'a1', '02.md#1')
+      add(q, 'a2', '02.md#2', 'generating')
+      add(q, 'a4', '02.md#4')
+      q.run("INSERT INTO gen_requests (entity_id, kind, work_id) VALUES ('a4', 'cv', 'work-a4')")
+      add(q, 'x1', '02.md.bak#1')
+      return ok(undefined)
+    }),
+  )
+  // app-1 (02.md#3) is `ready`, a2 `generating`, a4 has its request, x1 is of another file.
+  assert.deepEqual(db.read((q) => repo.seedDraftsWithoutCv(q, ['02.md', 'wave1.md'])), [
+    { id: 'a1', seedKey: '02.md#1' },
+    { id: 'w1', seedKey: 'wave1.md#1' },
+  ])
+  assert.deepEqual(db.read((q) => repo.seedDraftsWithoutCv(q, [])), [])
+  db.close()
+})

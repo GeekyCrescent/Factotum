@@ -12,6 +12,7 @@
  *   what the module sends are queued (`queue.ts`, S6).
  */
 
+import type { Logger } from '@factotum/core'
 import type { Db } from '../store/db.ts'
 import { latestProfileVersion } from '../store/repo.ts'
 import { fail, ok, type Result } from '../types.ts'
@@ -30,6 +31,8 @@ export interface ImportContext extends SeedSource, QueueSeams {
   readonly now: () => Date
   /** `jobs.timeZone` (design D13). */
   readonly timeZone: string
+  /** Where what failed after the `tx` is logged, besides `report.warnings`. */
+  readonly log?: Logger | undefined
 }
 
 const hasPhone = (db: Db): { readonly ok: boolean; readonly version: number } => {
@@ -69,12 +72,14 @@ export async function importSeed(db: Db, ctx: ImportContext, input: { readonly d
   if (input.dryRun) {
     const plan = db.read((q) => planImport(q, seed.value, clock))
     const flags = { dryRun: true, blocked: phone.ok ? null : 'missing-phone' } as const
-    return ok(buildReport(seed.value, plan, flags, { queued: plannedQueue(plan), warnings: [] }))
+    const queued = plannedQueue(db, plan, seed.value.packages, clock.now, clock.timeZone)
+    return ok(buildReport(seed.value, plan, flags, { queued, warnings: [] }))
   }
   const written = write(db, seed.value, clock, phone.version)
   if (!written.ok) return written
   const markWarnings = markExisting(db, written.value.plan, clock.now)
-  const outcome = queueAfterImport(db, written.value.created, ctx)
+  for (const warning of markWarnings) ctx.log?.error(`seed: ${warning}`)
+  const outcome = queueAfterImport(db, written.value.created, { ...ctx, packages: seed.value.packages, now: clock.now })
   const warnings = [...markWarnings, ...outcome.warnings]
   return ok(buildReport(seed.value, written.value.plan, { dryRun: false, blocked: null }, { ...outcome, warnings }))
 }

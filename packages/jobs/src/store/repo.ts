@@ -812,3 +812,25 @@ export function restartedContacts(q: Queries): readonly string[] {
   )
   return uniqueIds(rows)
 }
+
+// ── Seed import: drafts whose CV was never queued (review fix of S6) ──────────────────────────────
+
+/**
+ * The `draft` applications imported from the given seed files (`seed_key = '<file>#<N>'`, D8) that have
+ * no `gen_requests(id, 'cv')` row, in the order of the files and then of the rows. What the import
+ * queues: a CV the queue refused, or one lost to a crash after the import's `tx`, is queued again.
+ */
+export function seedDraftsWithoutCv(q: Queries, files: readonly string[]): readonly { readonly id: string; readonly seedKey: string }[] {
+  return files.flatMap((file) =>
+    q
+      .all<Row>(
+        `SELECT a.id, a.seed_key FROM applications a
+         WHERE a.state = 'draft' AND substr(a.seed_key, 1, ?) = ?
+           AND NOT EXISTS (SELECT 1 FROM gen_requests g WHERE g.entity_id = a.id AND g.kind = 'cv')
+         ORDER BY a.rowid`,
+        file.length + 1,
+        `${file}#`,
+      )
+      .map((row) => ({ id: text(row, 'id'), seedKey: text(row, 'seed_key') })),
+  )
+}

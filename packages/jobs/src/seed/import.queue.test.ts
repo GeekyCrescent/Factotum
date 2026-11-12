@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import type { Db } from '../store/db.ts'
 import { applicationBySeedKey, eventsOf, getContact } from '../store/repo.ts'
 import { tempBase } from '../test-support.ts'
+import { ok } from '../types.ts'
 import { importSeed, type ImportReport } from './import.ts'
 import { ADS, checksSpy, context, COUNTS, HOLD, queueDouble, storeWith, vaultOf, WAVE1, WAVE2 } from './test-seed.ts'
 
@@ -106,6 +107,54 @@ test('a CV the queue refuses leaves its application draft, says so in the report
   assert.equal(report.queued.cv, SENT_BY_MODULE - 1)
   assert.equal(stateOf(db, `${ADS}#1`), 'draft')
   assert.deepEqual(report.warnings, [`${ADS}#1: the CV was not queued (module-error: the queue refused)`])
+  db.close()
+})
+
+// ── Review fix: what to queue comes from the state, so a re-import repairs a lost CV ─────────────────
+
+test('a CV the queue refused is queued by the next import, and the failure is logged', async () => {
+  using base = tempBase()
+  const db = await storeWith(base)
+  const errors: string[] = []
+  const log = { info: () => {}, warn: () => {}, error: (message: string) => void errors.push(message) }
+  const first = reportOf(await importSeed(db, context({ enqueueCv: queueDouble((id) => id === db.read((q) => applicationBySeedKey(q, `${ADS}#1`)?.id)).enqueueCv, log }), { dryRun: false }))
+  assert.equal(first.queued.cv, SENT_BY_MODULE - 1)
+  assert.deepEqual(errors, [`seed: ${ADS}#1: the CV was not queued (module-error: the queue refused)`])
+  const queue = queueDouble()
+  const second = reportOf(await importSeed(db, context({ enqueueCv: queue.enqueueCv }), { dryRun: false }))
+  assert.equal(second.queued.cv, 1)
+  assert.deepEqual(queue.cv, [db.read((q) => applicationBySeedKey(q, `${ADS}#1`)?.id)])
+  assert.equal(stateOf(db, `${ADS}#1`), 'generating')
+  db.close()
+})
+
+test('a draft left with no CV request (a crash after the tx) is queued by the next import; the dry run counts it', async () => {
+  using base = tempBase()
+  const db = await storeWith(base)
+  reportOf(await importSeed(db, context({ enqueueCv: () => ok(undefined) }), { dryRun: false }))
+  assert.equal(genRequests(db).length, 0)
+  const dry = reportOf(await importSeed(db, context(), { dryRun: true }))
+  assert.equal(dry.queued.cv, SENT_BY_MODULE)
+  const queue = queueDouble()
+  const report = reportOf(await importSeed(db, context({ enqueueCv: queue.enqueueCv }), { dryRun: false }))
+  assert.equal(report.queued.cv, SENT_BY_MODULE)
+  assert.deepEqual(genRequests(db), queue.cv)
+  db.close()
+})
+
+test('wave 2 is queued by an import once holdUntil − 7 days has come in jobs.timeZone, not the day before', async () => {
+  using base = tempBase()
+  const db = await storeWith(base)
+  const dayBefore = new Date('2027-01-04T12:00:00.000Z') // 4 Jan, 23:00 in Sydney
+  const early = reportOf(await importSeed(db, context({ now: () => dayBefore }), { dryRun: false }))
+  assert.equal(early.queued.cv, SENT_BY_MODULE)
+  const due = new Date('2027-01-04T13:00:00.000Z') // 5 Jan, 00:00 in Sydney = 12 Jan − 7 d
+  const dry = reportOf(await importSeed(db, context({ now: () => due }), { dryRun: true }))
+  assert.equal(dry.queued.cv, COUNTS[WAVE2])
+  const queue = queueDouble()
+  const report = reportOf(await importSeed(db, context({ now: () => due, enqueueCv: queue.enqueueCv }), { dryRun: false }))
+  assert.equal(report.queued.cv, COUNTS[WAVE2])
+  for (let n = 1; n <= COUNTS[WAVE2]; n += 1) assert.equal(stateOf(db, `${WAVE2}#${n}`), 'generating')
   db.close()
 })
 

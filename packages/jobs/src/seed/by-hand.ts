@@ -48,7 +48,7 @@ export function noonIn(day: string, timeZone: string): Date {
 }
 
 /** Today, YYYY-MM-DD, on the wall clock of `timeZone`. */
-const todayIn = (now: Date, timeZone: string): string => new Intl.DateTimeFormat('en-CA', { timeZone }).format(now)
+export const todayIn = (now: Date, timeZone: string): string => new Intl.DateTimeFormat('en-CA', { timeZone }).format(now)
 
 /** The instant of a mark, or null when it is not a real day up to today in the zone. */
 export function byHandAt(raw: string, timeZone: string, now: Date): string | null {
