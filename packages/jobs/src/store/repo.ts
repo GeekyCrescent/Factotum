@@ -1,0 +1,612 @@
+/**
+ * Typed queries over `jobs.db` (design D2): plain functions that take the query handle `q`.
+ *
+ * ROWS COME BACK FROZEN, all the way down, as the domain shapes of `types.ts`; nothing is changed in
+ * place. A change is a new object from `state.ts`, written back here.
+ *
+ * EVERY FUNCTION THAT WRITES STATE APPENDS ITS EVENT, through `appendEvent`, on the same `q` — and so
+ * in the same `tx` (requirements crit. 6). The event is an ARGUMENT, never optional: a writer cannot
+ * forget it. Two writes are not entity state and carry none: `meta` (clocks such as `lastReplyPoll`)
+ * and the requeue of `work` at startup.
+ *
+ * THE TRANSITION IS NOT DECIDED HERE: `state.ts` decides, this file stores. The one exception is the
+ * startup write (`recoverOnStart`), which applies T-S4/T-A16/T-F8 and T-D6 itself because nothing
+ * else runs at that moment.
+ */
+
+import { uuidv7 } from '@factotum/sessions'
+import { addressTransition, appTransition, followupTransition, sendTransition } from '../state.ts'
+import type {
+  Application,
+  Company,
+  Contact,
+  EventKind,
+  Followup,
+  JobEvent,
+  Opportunity,
+  ProfileVersion,
+  Rule,
+  Send,
+} from '../types.ts'
+import type { Queries, SqlValue } from './db.ts'
+
+type Row = Readonly<Record<string, SqlValue>>
+
+/** What a writer is told to log; it fills in the ids of the entity it wrote. */
+export interface EventSpec {
+  readonly kind: EventKind
+  readonly data?: Readonly<Record<string, unknown>>
+  /** When it happened; `now` by default. */
+  readonly at?: string
+}
+
+export interface EventInput extends EventSpec {
+  readonly applicationId: string | null
+  readonly companyId: string | null
+}
+
+// ── Freezing and columns ─────────────────────────────────────────────────────────────────────────
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    for (const inner of Object.values(value)) deepFreeze(inner)
+    Object.freeze(value)
+  }
+  return value
+}
+
+const text = (row: Row, key: string): string => String(row[key] ?? '')
+const textOrNull = (row: Row, key: string): string | null => (row[key] === null || row[key] === undefined ? null : String(row[key]))
+const numberOrNull = (row: Row, key: string): number | null => (row[key] === null || row[key] === undefined ? null : Number(row[key]))
+const json = <T>(row: Row, key: string, fallback: T): T => (row[key] === null || row[key] === undefined ? fallback : (JSON.parse(String(row[key])) as T))
+const flag = (value: boolean): number => (value ? 1 : 0)
+
+// ── Events ───────────────────────────────────────────────────────────────────────────────────────
+
+export function appendEvent(q: Queries, input: EventInput, now: Date): JobEvent {
+  const event: JobEvent = {
+    id: uuidv7(now.getTime()),
+    at: input.at ?? now.toISOString(),
+    recordedAt: now.toISOString(),
+    applicationId: input.applicationId,
+    companyId: input.companyId,
+    kind: input.kind,
+    data: input.data ?? {},
+  }
+  q.run(
+    'INSERT INTO events (id, at, recorded_at, application_id, company_id, kind, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    event.id,
+    event.at,
+    event.recordedAt,
+    event.applicationId,
+    event.companyId,
+    event.kind,
+    JSON.stringify(event.data),
+  )
+  return deepFreeze(event)
+}
+
+const toEvent = (row: Row): JobEvent =>
+  deepFreeze({
+    id: text(row, 'id'),
+    at: text(row, 'at'),
+    recordedAt: text(row, 'recorded_at'),
+    applicationId: textOrNull(row, 'application_id'),
+    companyId: textOrNull(row, 'company_id'),
+    kind: text(row, 'kind') as EventKind,
+    data: json(row, 'data', {}),
+  })
+
+/** In the order they were written. */
+export const eventsOf = (q: Queries, applicationId: string): readonly JobEvent[] =>
+  q.all<Row>('SELECT * FROM events WHERE application_id = ? ORDER BY rowid', applicationId).map(toEvent)
+
+const withData = (spec: EventSpec, extra: Readonly<Record<string, unknown>>): EventSpec => ({ ...spec, data: { ...spec.data, ...extra } })
+
+// ── Companies and contacts ──────────────────────────────────────────────────────────────────────
+
+/** A company as the seed or the scout creates it, without contacts (they have their own rows). */
+export type NewCompany = Omit<Company, 'contacts'> & {
+  readonly nameKey: string
+  /** The text of the seeded fields, for `unknown-number` (design D6). */
+  readonly record: string
+}
+
+export function insertCompany(q: Queries, company: NewCompany, event: EventSpec, now: Date): void {
+  const at = now.toISOString()
+  const data = { linkedin: company.linkedin, sector: company.sector, size: company.size, location: company.location, record: company.record }
+  q.run(
+    `INSERT INTO companies (id, name, name_key, domain, website, careers_url, ats_kind, ats_ref, is_health_employer, health_source, data, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    company.id,
+    company.name,
+    company.nameKey,
+    company.domain,
+    company.website,
+    company.careersUrl,
+    company.ats?.kind ?? null,
+    company.ats?.ref ?? null,
+    flag(company.isHealthEmployer),
+    company.healthSource,
+    JSON.stringify(data),
+    at,
+    at,
+  )
+  appendEvent(q, { ...event, applicationId: null, companyId: company.id }, now)
+}
+
+const toContact = (row: Row): Contact => {
+  const status = textOrNull(row, 'address_status')
+  const overrideAt = textOrNull(row, 'override_at')
+  return deepFreeze({
+    id: text(row, 'id'),
+    companyId: text(row, 'company_id'),
+    name: textOrNull(row, 'name'),
+    role: textOrNull(row, 'role'),
+    email: textOrNull(row, 'email'),
+    sourceUrl: textOrNull(row, 'source_url'),
+    address:
+      status === null
+        ? null
+        : {
+            status: status as NonNullable<Contact['address']>['status'],
+            verifiedUrl: textOrNull(row, 'verified_url'),
+            checkedAt: textOrNull(row, 'checked_at'),
+            override: overrideAt === null ? null : { at: overrideAt },
+          },
+  })
+}
+
+export const getContact = (q: Queries, id: string): Contact | undefined => {
+  const row = q.get<Row>('SELECT * FROM contacts WHERE id = ?', id)
+  return row === undefined ? undefined : toContact(row)
+}
+
+export const contactsOfCompany = (q: Queries, companyId: string): readonly Contact[] =>
+  q.all<Row>('SELECT * FROM contacts WHERE company_id = ? ORDER BY rowid', companyId).map(toContact)
+
+const contactColumns = (contact: Contact): SqlValue[] => [
+  contact.name,
+  contact.role,
+  contact.email,
+  contact.sourceUrl,
+  contact.address?.status ?? null,
+  contact.address?.verifiedUrl ?? null,
+  contact.address?.checkedAt ?? null,
+  contact.address?.override?.at ?? null,
+]
+
+export function insertContact(q: Queries, contact: Contact, event: EventSpec, now: Date): void {
+  q.run(
+    `INSERT INTO contacts (company_id, name, role, email, source_url, address_status, verified_url, checked_at, override_at, id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    contact.companyId,
+    ...contactColumns(contact),
+    contact.id,
+  )
+  appendEvent(q, { ...withData(event, { contactId: contact.id }), applicationId: null, companyId: contact.companyId }, now)
+}
+
+/** Writes a contact moved by `addressTransition`, with its event. */
+export function saveContact(q: Queries, contact: Contact, event: EventSpec, now: Date): void {
+  q.run(
+    `UPDATE contacts SET name = ?, role = ?, email = ?, source_url = ?, address_status = ?, verified_url = ?, checked_at = ?, override_at = ?
+     WHERE id = ?`,
+    ...contactColumns(contact),
+    contact.id,
+  )
+  appendEvent(q, { ...withData(event, { contactId: contact.id }), applicationId: null, companyId: contact.companyId }, now)
+}
+
+export function getCompany(q: Queries, id: string): Company | undefined {
+  const row = q.get<Row>('SELECT * FROM companies WHERE id = ?', id)
+  if (row === undefined) return undefined
+  const data = json<{ linkedin: string | null; sector: string | null; size: Company['size']; location: string | null }>(row, 'data', {
+    linkedin: null,
+    sector: null,
+    size: null,
+    location: null,
+  })
+  const atsKind = textOrNull(row, 'ats_kind')
+  return deepFreeze({
+    id: text(row, 'id'),
+    name: text(row, 'name'),
+    domain: textOrNull(row, 'domain'),
+    website: textOrNull(row, 'website'),
+    careersUrl: textOrNull(row, 'careers_url'),
+    linkedin: data.linkedin,
+    sector: data.sector,
+    size: data.size,
+    location: data.location,
+    isHealthEmployer: row.is_health_employer === 1,
+    healthSource: textOrNull(row, 'health_source') as Company['healthSource'],
+    ats: atsKind === null ? null : { kind: atsKind as NonNullable<Company['ats']>['kind'], ref: text(row, 'ats_ref') },
+    contacts: contactsOfCompany(q, id),
+  })
+}
+
+/** `company.record` of design D6: the text of the seeded fields. */
+export const companyRecord = (q: Queries, id: string): string | undefined => {
+  const row = q.get<Row>('SELECT data FROM companies WHERE id = ?', id)
+  return row === undefined ? undefined : json<{ record?: string }>(row, 'data', {}).record ?? ''
+}
+
+// ── Opportunities ────────────────────────────────────────────────────────────────────────────────
+
+export function insertOpportunity(q: Queries, opportunity: Opportunity, dedupeKey: string, event: EventSpec, now: Date): void {
+  const o = opportunity
+  const data = { startsAt: o.startsAt, duration: o.duration, hours: o.hours, salary: o.salary, requirements: o.requirements, remote: o.remote }
+  q.run(
+    `INSERT INTO opportunities (id, company_id, kind, title, goal_id, url, dedupe_key, source, source_ref, posted_at, closes_at, score,
+       breakdown, profile_version, status, discard_reason, checked_at, data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    o.id,
+    o.companyId,
+    o.kind,
+    o.title,
+    o.goalId,
+    o.url,
+    dedupeKey,
+    o.source,
+    o.sourceRef,
+    o.postedAt,
+    o.closesAt,
+    o.score,
+    o.breakdown === null ? null : JSON.stringify(o.breakdown),
+    o.profileVersion,
+    o.status,
+    o.discardReason,
+    o.checkedAt,
+    JSON.stringify(data),
+  )
+  appendEvent(q, { ...withData(event, { opportunityId: o.id }), applicationId: null, companyId: o.companyId }, now)
+}
+
+export function getOpportunity(q: Queries, id: string): Opportunity | undefined {
+  const row = q.get<Row>('SELECT * FROM opportunities WHERE id = ?', id)
+  if (row === undefined) return undefined
+  const data = json<Pick<Opportunity, 'startsAt' | 'duration' | 'hours' | 'salary' | 'requirements' | 'remote'>>(row, 'data', {
+    startsAt: null,
+    duration: null,
+    hours: null,
+    salary: null,
+    requirements: '',
+    remote: null,
+  })
+  return deepFreeze({
+    id: text(row, 'id'),
+    companyId: text(row, 'company_id'),
+    kind: text(row, 'kind') as Opportunity['kind'],
+    title: text(row, 'title'),
+    goalId: textOrNull(row, 'goal_id'),
+    url: textOrNull(row, 'url'),
+    postedAt: textOrNull(row, 'posted_at'),
+    closesAt: textOrNull(row, 'closes_at'),
+    ...data,
+    score: numberOrNull(row, 'score'),
+    breakdown: json(row, 'breakdown', null),
+    profileVersion: numberOrNull(row, 'profile_version'),
+    source: text(row, 'source') as Opportunity['source'],
+    sourceRef: textOrNull(row, 'source_ref'),
+    status: text(row, 'status') as Opportunity['status'],
+    discardReason: textOrNull(row, 'discard_reason'),
+    checkedAt: textOrNull(row, 'checked_at'),
+  })
+}
+
+// ── Sends ────────────────────────────────────────────────────────────────────────────────────────
+
+const toSend = (row: Row): Send => ({
+  kind: text(row, 'kind') as Send['kind'],
+  followupId: textOrNull(row, 'followup_id'),
+  channel: text(row, 'channel') as Send['channel'],
+  messageId: textOrNull(row, 'message_id'),
+  state: text(row, 'state') as Send['state'],
+  at: text(row, 'at'),
+  response: textOrNull(row, 'response'),
+  reason: textOrNull(row, 'reason'),
+  addressOverride: row.address_override === 1,
+  profileVersion: numberOrNull(row, 'profile_version'),
+  attempts: json(row, 'attempts', []),
+})
+
+const sendsOf = (q: Queries, applicationId: string): readonly Send[] =>
+  q
+    .all<Row>(
+      "SELECT * FROM sends WHERE application_id = ? ORDER BY CASE kind WHEN 'initial' THEN 0 WHEN 'followup-1' THEN 1 ELSE 2 END",
+      applicationId,
+    )
+    .map(toSend)
+
+/** One row per `(application_id, kind)` (v5, X6): «Retry» UPDATEs it, never a second INSERT. */
+function upsertSend(q: Queries, applicationId: string, send: Send): void {
+  q.run(
+    `INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, response, reason, address_override, profile_version, attempts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (application_id, kind) DO UPDATE SET
+       followup_id = excluded.followup_id, channel = excluded.channel, message_id = excluded.message_id, state = excluded.state,
+       at = excluded.at, response = excluded.response, reason = excluded.reason, address_override = excluded.address_override,
+       profile_version = excluded.profile_version, attempts = excluded.attempts`,
+    applicationId,
+    send.kind,
+    send.followupId,
+    send.channel,
+    send.messageId,
+    send.state,
+    send.at,
+    send.response,
+    send.reason,
+    flag(send.addressOverride),
+    send.profileVersion,
+    JSON.stringify(send.attempts),
+  )
+}
+
+// ── Applications ─────────────────────────────────────────────────────────────────────────────────
+
+function toApplication(q: Queries, row: Row): Application {
+  const target = json<Omit<Application['target'], 'contactId'>>(row, 'target', { to: null, url: null, contactName: null, instruction: null })
+  const id = text(row, 'id')
+  return deepFreeze({
+    id,
+    opportunityId: text(row, 'opportunity_id'),
+    companyId: text(row, 'company_id'),
+    channel: text(row, 'channel') as Application['channel'],
+    target: { contactId: textOrNull(row, 'contact_id'), ...target },
+    cvBase: textOrNull(row, 'cv_base') as Application['cvBase'],
+    state: text(row, 'state') as Application['state'],
+    outcome: textOrNull(row, 'outcome') as Application['outcome'],
+    rewriteFrom: textOrNull(row, 'rewrite_from') as Application['rewriteFrom'],
+    holdUntil: textOrNull(row, 'hold_until'),
+    version: Number(row.version),
+    sends: sendsOf(q, id),
+    notes: text(row, 'notes'),
+    test: row.test === 1,
+    warnings: json(row, 'warnings', []),
+    createdAt: text(row, 'created_at'),
+    updatedAt: text(row, 'updated_at'),
+  })
+}
+
+export const getApplication = (q: Queries, id: string): Application | undefined => {
+  const row = q.get<Row>('SELECT * FROM applications WHERE id = ?', id)
+  return row === undefined ? undefined : toApplication(q, row)
+}
+
+export function applicationsByState(q: Queries, states: readonly Application['state'][]): readonly Application[] {
+  const marks = states.map(() => '?').join(', ')
+  return q.all<Row>(`SELECT * FROM applications WHERE state IN (${marks}) ORDER BY rowid`, ...states).map((row) => toApplication(q, row))
+}
+
+const targetJson = (app: Application): string =>
+  JSON.stringify({ to: app.target.to, url: app.target.url, contactName: app.target.contactName, instruction: app.target.instruction })
+
+export function insertApplication(q: Queries, app: Application, extra: { readonly seedKey: string | null }, event: EventSpec, now: Date): void {
+  q.run(
+    `INSERT INTO applications (id, opportunity_id, company_id, contact_id, seed_key, channel, target, cv_base, state, outcome, rewrite_from,
+       hold_until, version, notes, warnings, test, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    app.id,
+    app.opportunityId,
+    app.companyId,
+    app.target.contactId,
+    extra.seedKey,
+    app.channel,
+    targetJson(app),
+    app.cvBase,
+    app.state,
+    app.outcome,
+    app.rewriteFrom,
+    app.holdUntil,
+    app.version,
+    app.notes,
+    JSON.stringify(app.warnings),
+    flag(app.test),
+    app.createdAt,
+    app.updatedAt,
+  )
+  for (const send of app.sends) upsertSend(q, app.id, send)
+  appendEvent(q, { ...event, applicationId: app.id, companyId: app.companyId }, now)
+}
+
+/** Writes an application moved by `appTransition` — its row and every one of its sends — with its event. */
+export function saveApplication(q: Queries, app: Application, event: EventSpec, now: Date): void {
+  q.run(
+    `UPDATE applications SET contact_id = ?, channel = ?, target = ?, cv_base = ?, state = ?, outcome = ?, rewrite_from = ?, hold_until = ?,
+       version = ?, notes = ?, warnings = ?, updated_at = ? WHERE id = ?`,
+    app.target.contactId,
+    app.channel,
+    targetJson(app),
+    app.cvBase,
+    app.state,
+    app.outcome,
+    app.rewriteFrom,
+    app.holdUntil,
+    app.version,
+    app.notes,
+    JSON.stringify(app.warnings),
+    app.updatedAt,
+    app.id,
+  )
+  for (const send of app.sends) upsertSend(q, app.id, send)
+  appendEvent(q, { ...event, applicationId: app.id, companyId: app.companyId }, now)
+}
+
+const companyOf = (q: Queries, applicationId: string): string | null =>
+  textOrNull(q.get<Row>('SELECT company_id FROM applications WHERE id = ?', applicationId) ?? {}, 'company_id')
+
+// ── Follow-ups ───────────────────────────────────────────────────────────────────────────────────
+
+const toFollowup = (row: Row): Followup => {
+  const data = json<{ to: string | null; versions: Followup['versions'] }>(row, 'data', { to: null, versions: [] })
+  return deepFreeze({
+    id: text(row, 'id'),
+    applicationId: text(row, 'application_id'),
+    n: Number(row.n) as Followup['n'],
+    channel: text(row, 'channel') as Followup['channel'],
+    contactId: textOrNull(row, 'contact_id'),
+    to: data.to,
+    state: text(row, 'state') as Followup['state'],
+    rewriteFrom: textOrNull(row, 'rewrite_from') as Followup['rewriteFrom'],
+    version: Number(row.version),
+    versions: data.versions,
+    warnings: json(row, 'warnings', []),
+    createdAt: text(row, 'created_at'),
+    updatedAt: text(row, 'updated_at'),
+  })
+}
+
+export const getFollowup = (q: Queries, id: string): Followup | undefined => {
+  const row = q.get<Row>('SELECT * FROM followups WHERE id = ?', id)
+  return row === undefined ? undefined : toFollowup(row)
+}
+
+export const followupsOf = (q: Queries, applicationId: string): readonly Followup[] =>
+  q.all<Row>('SELECT * FROM followups WHERE application_id = ? ORDER BY n', applicationId).map(toFollowup)
+
+export const followupsOfContact = (q: Queries, contactId: string): readonly Followup[] =>
+  q.all<Row>('SELECT * FROM followups WHERE contact_id = ? ORDER BY rowid', contactId).map(toFollowup)
+
+const followupData = (f: Followup): string => JSON.stringify({ to: f.to, versions: f.versions })
+
+export function insertFollowup(q: Queries, f: Followup, event: EventSpec, now: Date): void {
+  q.run(
+    `INSERT INTO followups (id, application_id, n, channel, contact_id, state, rewrite_from, version, warnings, data, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    f.id,
+    f.applicationId,
+    f.n,
+    f.channel,
+    f.contactId,
+    f.state,
+    f.rewriteFrom,
+    f.version,
+    JSON.stringify(f.warnings),
+    followupData(f),
+    f.createdAt,
+    f.updatedAt,
+  )
+  appendEvent(q, { ...withData(event, { followupId: f.id }), applicationId: f.applicationId, companyId: companyOf(q, f.applicationId) }, now)
+}
+
+/** Writes a follow-up moved by `followupTransition` and, when given, its own send row (T-F6…T-F14). */
+export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Date, send?: Send): void {
+  q.run(
+    'UPDATE followups SET channel = ?, contact_id = ?, state = ?, rewrite_from = ?, version = ?, warnings = ?, data = ?, updated_at = ? WHERE id = ?',
+    f.channel,
+    f.contactId,
+    f.state,
+    f.rewriteFrom,
+    f.version,
+    JSON.stringify(f.warnings),
+    followupData(f),
+    f.updatedAt,
+    f.id,
+  )
+  if (send !== undefined) upsertSend(q, f.applicationId, send)
+  appendEvent(q, { ...withData(event, { followupId: f.id }), applicationId: f.applicationId, companyId: companyOf(q, f.applicationId) }, now)
+}
+
+// ── Profile versions, rules, meta ────────────────────────────────────────────────────────────────
+
+/** Never rewrites: a profile is saved as a NEW version (design D7). */
+export function insertProfileVersion(q: Queries, saved: ProfileVersion, event: EventSpec, now: Date): void {
+  q.run('INSERT INTO profile_versions (version, created_at, data) VALUES (?, ?, ?)', saved.version, saved.createdAt, JSON.stringify(saved.profile))
+  appendEvent(q, { ...withData(event, { version: saved.version }), applicationId: null, companyId: null }, now)
+}
+
+export function latestProfileVersion(q: Queries): ProfileVersion | undefined {
+  const row = q.get<Row>('SELECT * FROM profile_versions ORDER BY version DESC LIMIT 1')
+  if (row === undefined) return undefined
+  return deepFreeze({ version: Number(row.version), createdAt: text(row, 'created_at'), profile: json(row, 'data', {}) as ProfileVersion['profile'] })
+}
+
+const toRule = (row: Row): Rule =>
+  deepFreeze({
+    id: text(row, 'id'),
+    text: text(row, 'text'),
+    scope: text(row, 'scope') as Rule['scope'],
+    enabled: row.enabled === 1,
+    createdAt: text(row, 'created_at'),
+    updatedAt: text(row, 'updated_at'),
+  })
+
+export const listRules = (q: Queries): readonly Rule[] => q.all<Row>('SELECT * FROM rules ORDER BY created_at, rowid').map(toRule)
+
+export const getRule = (q: Queries, id: string): Rule | undefined => {
+  const row = q.get<Row>('SELECT * FROM rules WHERE id = ?', id)
+  return row === undefined ? undefined : toRule(row)
+}
+
+export function insertRule(q: Queries, rule: Rule, event: EventSpec, now: Date): void {
+  q.run(
+    'INSERT INTO rules (id, text, scope, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    rule.id,
+    rule.text,
+    rule.scope,
+    flag(rule.enabled),
+    rule.createdAt,
+    rule.updatedAt,
+  )
+  appendEvent(q, { ...withData(event, { ruleId: rule.id }), applicationId: null, companyId: null }, now)
+}
+
+export function updateRule(q: Queries, rule: Rule, event: EventSpec, now: Date): void {
+  q.run('UPDATE rules SET text = ?, scope = ?, enabled = ?, updated_at = ? WHERE id = ?', rule.text, rule.scope, flag(rule.enabled), rule.updatedAt, rule.id)
+  appendEvent(q, { ...withData(event, { ruleId: rule.id }), applicationId: null, companyId: null }, now)
+}
+
+export const getMeta = (q: Queries, key: string): string | undefined => {
+  const row = q.get<Row>('SELECT value FROM meta WHERE key = ?', key)
+  return row === undefined ? undefined : text(row, 'value')
+}
+
+export function setMeta(q: Queries, key: string, value: string): void {
+  q.run('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', key, value)
+}
+
+// ── The startup write (design D13 `start` step 2) ───────────────────────────────────────────────
+
+export interface Recovered {
+  readonly sends: number
+  readonly work: number
+  readonly contacts: number
+}
+
+function recoverSend(q: Queries, applicationId: string, row: Send, now: Date): void {
+  const restarted = { kind: row.kind, restarted: true }
+  const sendMoved = sendTransition(row, { type: 'smtp-unknown' }, now) // T-S4: always valid from `sending`
+  if (!sendMoved.ok) return
+  if (row.kind === 'initial') {
+    const app = getApplication(q, applicationId)
+    const moved = app === undefined ? undefined : appTransition(app, { type: 'smtp-unknown' }, now) // T-A16 + T-S4
+    if (moved?.ok === true) return saveApplication(q, moved.value, { kind: 'send-unknown', data: restarted }, now)
+  } else {
+    const f = row.followupId === null ? undefined : getFollowup(q, row.followupId)
+    const fMoved = f === undefined ? undefined : followupTransition(f, { type: 'smtp-unknown' }, now) // T-F8
+    if (fMoved?.ok === true) return saveFollowup(q, fMoved.value, { kind: 'send-unknown', data: restarted }, now, sendMoved.value)
+  }
+  // The owner of the row is not in `sending` (it should be): the row alone still leaves `sending`, so
+  // no send waits forever, and the event says the two disagreed.
+  upsertSend(q, applicationId, sendMoved.value)
+  const data = { ...restarted, followupId: row.followupId, ownerOutOfStep: true }
+  appendEvent(q, { kind: 'send-unknown', data, applicationId, companyId: companyOf(q, applicationId) }, now)
+}
+
+/**
+ * Only the daemon runs this, in its opening `tx` — never the CLI, which would mark a send in flight
+ * as doubtful (design D3, «La postulación de prueba»). Every `sends` row in `sending` (initial and
+ * follow-ups) → `send-unknown`; `work.running → queued`; every contact `checking → unverified` with
+ * `checkedAt = null` and its override kept (T-D6; the requeue is the check queue's, N4).
+ */
+export function recoverOnStart(q: Queries, now: Date): Recovered {
+  const sending = q.all<Row>("SELECT * FROM sends WHERE state = 'sending' ORDER BY rowid")
+  for (const row of sending) recoverSend(q, text(row, 'application_id'), toSend(row), now)
+  const work = q.run("UPDATE work SET state = 'queued', updated_at = ? WHERE state = 'running'", now.toISOString()).changes
+  const checking = q.all<Row>("SELECT * FROM contacts WHERE address_status = 'checking' ORDER BY rowid").map(toContact)
+  for (const contact of checking) {
+    const moved = addressTransition(contact, { type: 'restart' }, now)
+    if (moved.ok) saveContact(q, moved.value, { kind: 'address-checked', data: { found: false, restarted: true } }, now)
+  }
+  return { sends: sending.length, work, contacts: checking.length }
+}
