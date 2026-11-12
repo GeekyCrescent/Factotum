@@ -27,7 +27,8 @@ export function briefPrompt(ctx: PromptContext): string {
     '4. **Functional vs. simulated** — what the mockup should really do (navigate, fill a form, filter) and what it only pretends (integrations, payments, messages).',
     '5. **Out of scope** — what the inputs mention and this mockup will not show.',
     '',
-    'A mockup is a navigable demo for a sales meeting, not a product: favour the steps that would sell it, and say which those are.',
+    'A mockup is a navigable demo, not a product. For a client of BWR it is shown in a meeting to win the work; for the owner\'s own project it is a prototype to decide the design, not a sales demo. Tell which one this is from the inputs, and write for it.',
+    'In «Functional vs. simulated», mark exactly ONE step as the one that sells the idea: the moment it clicks. Mark exactly ONE step, never several.',
     closing(ctx),
   ].join('\n')
 }

@@ -57,3 +57,16 @@ test('promptFor answers the brief, and null for a stage of a later cut', () => {
 test('no inputs yet: the prompt says so instead of an empty list', () => {
   assert.match(briefPrompt({ ...CTX, inputs: [] }), /There are no inputs listed yet/)
 })
+
+test('P1.4: exactly ONE step is marked as the one that sells it', () => {
+  const prompt = briefPrompt(CTX)
+  assert.match(prompt, /Mark exactly ONE step/)
+  assert.doesNotMatch(prompt, /favour the steps that would sell it/)
+})
+
+test('P1.4: the frame fits an internal project too, not only a client of BWR sold in a meeting', () => {
+  const prompt = briefPrompt({ ...CTX, client: 'Factotum (internal)' })
+  assert.doesNotMatch(prompt, /a mockup for a client of BWR/)
+  assert.match(prompt, /owner's own project/)
+  assert.match(prompt, /prototype to decide the design, not a sales demo/)
+})
