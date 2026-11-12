@@ -19,6 +19,8 @@ export interface RunSpec {
   readonly site: 'docs' | 'work'
   /** Relative to `vaultDir`: what the submission must name, exist and not be empty (D3, check 3). */
   readonly files: readonly string[]
+  /** Relative to `workDir`: the same, for what a stage builds there (the app, crit. 32). */
+  readonly workFiles?: readonly string[]
   readonly options: OptionRule | null
   readonly gate: 'approve' | 'choose' | null
   /** It publishes from the work-dir: the real-data guard runs before it is accepted (D3, check 6). */
@@ -27,6 +29,8 @@ export interface RunSpec {
   readonly versionedDirs?: readonly string[]
   /** The Vercel project it deploys to, `<project>-<deploysTo>` (D4); its URLs must be that project's (check 5). */
   readonly deploysTo?: 'directions' | 'mockup'
+  /** The URL the run must hand in, and the only one it may (D3, check 5): a preview, or production. */
+  readonly hands?: 'previewUrl' | 'prodUrl'
 }
 
 export interface StageSpec extends RunSpec {
@@ -35,6 +39,10 @@ export interface StageSpec extends RunSpec {
   /** A choosing stage: the one of its documents that takes `chosen: <id>` (D6, criterion 28). */
   readonly chosenIn?: string
 }
+
+/** The app's folder in the work-dir (crit. 32), and the file that proves a build made one. */
+export const APP_DIR = 'mockup-app'
+const APP_MANIFEST = `${APP_DIR}/package.json`
 
 export const STAGES: Readonly<Record<StageId, StageSpec>> = {
   brief: { id: 'brief', site: 'docs', files: ['01-brief.md'], options: null, gate: 'approve', guard: false, next: 'concepts' },
@@ -51,15 +59,15 @@ export const STAGES: Readonly<Record<StageId, StageSpec>> = {
     next: 'build',
     chosenIn: '05-visual-direction.md',
   },
-  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', guard: true, deploysTo: 'mockup', next: 'deliver' },
-  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, guard: true, deploysTo: 'mockup', next: null },
+  build: { id: 'build', site: 'work', files: [], workFiles: [APP_MANIFEST], options: null, gate: 'approve', guard: true, deploysTo: 'mockup', hands: 'previewUrl', next: 'deliver' },
+  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, guard: true, deploysTo: 'mockup', hands: 'prodUrl', next: null },
 }
 
 /** Every kind of run: the stages, and the two of the changes track (not stages, D2). */
 export const RUN_SPECS: Readonly<Record<RunKind, RunSpec>> = {
   ...STAGES,
-  change: { site: 'work', files: [], options: null, gate: 'approve', guard: true, deploysTo: 'mockup' },
-  redeploy: { site: 'work', files: [], options: null, gate: null, guard: true, deploysTo: 'mockup' },
+  change: { site: 'work', files: [], workFiles: [APP_MANIFEST], options: null, gate: 'approve', guard: true, deploysTo: 'mockup', hands: 'previewUrl' },
+  redeploy: { site: 'work', files: ['changes.md'], options: null, gate: null, guard: true, deploysTo: 'mockup', hands: 'prodUrl' },
 }
 
 /** The Vercel project a run of `kind` deploys to, from the vault project's slug; `null` if it deploys nothing. */
@@ -77,8 +85,8 @@ export function previousStage(id: StageId): StageId | null {
   return (Object.values(STAGES).find((spec) => spec.next === id)?.id ?? null)
 }
 
-/** What THIS cut launches (tasks.md: cut 1 is brief, cut 2 adds concepts and plan). The rest answers `not-yet`. */
-export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts', 'plan']
+/** What THIS cut launches (tasks.md: cut 1 is brief, cut 2 adds concepts and plan, cut 3 the rest by block). The rest answers `not-yet`. */
+export const CUT_KINDS: readonly RunKind[] = ['brief', 'concepts', 'plan', 'build']
 
 export function isLaunchable(kind: RunKind): boolean {
   return CUT_KINDS.includes(kind)

@@ -35,6 +35,9 @@ export interface AcceptInput {
   readonly sessionId: string
   readonly summary: string
   readonly options?: readonly StageOption[]
+  /** What a publishing run handed in (D3, check 5), kept on the mockup for the gate and the gallery. */
+  readonly previewUrl?: string
+  readonly prodUrl?: string
 }
 
 const conflict = <T>(reason: string): Result<T> => ({ ok: false, error: { code: 'conflict', reason } })
@@ -135,7 +138,15 @@ export function acceptSubmit(m: Mockup, runId: string, input: AcceptInput, now: 
     summary: input.summary,
     ...(input.options === undefined ? {} : { options: input.options }),
   }
-  return ok(put(m, found.stage, step, now))
+  return ok(put(withUrls(m, input), found.stage, step, now))
+}
+
+function withUrls(m: Mockup, input: AcceptInput): Mockup {
+  if (input.previewUrl === undefined && input.prodUrl === undefined) return m
+  return {
+    ...m,
+    urls: { ...m.urls, ...(input.previewUrl === undefined ? {} : { preview: input.previewUrl }), ...(input.prodUrl === undefined ? {} : { prod: input.prodUrl }) },
+  }
 }
 
 export function decide(m: Mockup, input: DecisionInput, now: Date): Result<Mockup> {

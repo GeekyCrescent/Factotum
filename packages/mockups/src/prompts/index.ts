@@ -6,6 +6,7 @@
 import { previousStage, STAGES } from '../stages.ts'
 import type { Mockup, StageId } from '../types.ts'
 import { briefPrompt } from './brief.ts'
+import { buildPrompt } from './build.ts'
 import type { PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
 import { planPrompt } from './plan.ts'
@@ -27,6 +28,7 @@ export function contextFor(m: Mockup, kind: StageId, runId: string, redo?: Promp
     vaultDir: m.vaultDir,
     workDir: m.workDir,
     inputs: m.inputs,
+    urls: m.urls,
     ...(redo === undefined ? {} : { redo }),
     ...(before === null || option === undefined || file === undefined ? {} : { chosen: { stage: before, file, option } }),
   }
@@ -40,6 +42,8 @@ export function promptFor(ctx: PromptContext): string | null {
       return conceptsPrompt(ctx)
     case 'plan':
       return planPrompt(ctx)
+    case 'build':
+      return buildPrompt(ctx)
     default:
       return null
   }

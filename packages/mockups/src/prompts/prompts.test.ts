@@ -4,6 +4,7 @@ import { mockup, withStep } from '../test-support.ts'
 import { briefPrompt } from './brief.ts'
 import { choiceSection, type PromptContext } from './common.ts'
 import { conceptsPrompt } from './concepts.ts'
+import { buildPrompt } from './build.ts'
 import { planPrompt } from './plan.ts'
 import { contextFor, promptFor } from './index.ts'
 
@@ -53,11 +54,12 @@ test('Word through textutil, PDF through the read tool, and a PDF without text r
   assert.match(prompt, /no text layer.*as an image/s)
 })
 
-test('promptFor answers brief, concepts and plan, and null for a stage of a later cut', () => {
+test('promptFor answers brief, concepts, plan and build, and null for a kind of a later block', () => {
   assert.equal(promptFor(CTX), briefPrompt(CTX))
   assert.equal(promptFor({ ...CTX, stage: 'concepts' }), conceptsPrompt({ ...CTX, stage: 'concepts' }))
   assert.equal(promptFor({ ...CTX, stage: 'plan' }), planPrompt({ ...CTX, stage: 'plan' }))
-  assert.equal(promptFor({ ...CTX, stage: 'build' }), null)
+  assert.equal(promptFor({ ...CTX, stage: 'build' }), buildPrompt({ ...CTX, stage: 'build' }))
+  assert.equal(promptFor({ ...CTX, stage: 'change' }), null)
 })
 
 test('no inputs yet: the prompt says so instead of an empty list', () => {
@@ -204,4 +206,74 @@ test('crit. 35: the deploy stays protected until check_real_data clears it; a re
   const disable = prompt.indexOf('vercel project protection disable')
   assert.ok(enable !== -1 && enable < deploy && deploy < checked && checked < disable, 'enable → deploy → check → disable')
   assert.match(prompt, /vercel remove <url> --yes/)
+})
+
+const BUILD: PromptContext = {
+  ...CTX,
+  stage: 'build',
+  chosen: { stage: 'plan', file: '05-visual-direction.md', option: { id: 'c', title: 'Fichero', blurb: 'Cards you flip.', url: 'https://medical-trust-center-directions-x.vercel.app/c.html' } },
+}
+
+test('the build prompt, first run', (t) => {
+  t.assert.snapshot(buildPrompt(BUILD))
+})
+
+test('crit. 32: the build makes the app in <workDir>/mockup-app/, builds it clean and deploys a preview from THAT folder', () => {
+  const prompt = buildPrompt(BUILD)
+  assert.ok(prompt.includes(`${CTX.workDir}/mockup-app`))
+  assert.match(prompt, /npm run build/)
+  assert.match(prompt, /Publish .*mockup-app to a Vercel preview, from inside that folder/)
+  assert.ok(prompt.includes('vercel link --yes --project medical-trust-center-mockup'))
+  assert.match(prompt, /a preview, never `--prod`/)
+  assert.doesNotMatch(prompt, /vercel deploy (--yes )?--prod/)
+})
+
+test('crit. 32: the build reads the plan, seeds ALL its data from ONE file made from 04-data.md, and animates the chosen direction', () => {
+  const prompt = buildPrompt(BUILD)
+  for (const doc of ['01-brief.md', '03-story-and-pages.md', '04-data.md', '05-visual-direction.md']) assert.ok(prompt.includes(`${CTX.vaultDir}/${doc}`), doc)
+  assert.match(prompt, /ONE file/)
+  assert.match(prompt, /chose «Fichero» \(c\)/)
+  assert.ok(prompt.includes(`${CTX.workDir}/directions/c.html`), 'the chosen direction’s page, as the reference')
+  assert.match(prompt, /prefers-reduced-motion/)
+  assert.match(prompt, /390/)
+})
+
+test('crit. 32: the build hands in previewUrl and names the app it built', () => {
+  const prompt = buildPrompt(BUILD)
+  assert.match(prompt, /previewUrl/)
+  assert.ok(prompt.includes('files ["mockup-app/package.json"]'))
+})
+
+test('crit. 35: the build preview stays protected until check_real_data clears it', () => {
+  const prompt = buildPrompt(BUILD)
+  const enable = prompt.indexOf('vercel project protection enable medical-trust-center-mockup --sso')
+  const deploy = prompt.indexOf('vercel deploy --yes')
+  const checked = prompt.indexOf('check_real_data')
+  const disable = prompt.indexOf('vercel project protection disable medical-trust-center-mockup --sso')
+  assert.ok(enable !== -1 && enable < deploy && deploy < checked && checked < disable, 'enable → deploy → check → disable')
+})
+
+test('crit. 37 and the private inputs: a failed vercel ends without submitting; inputs/private is off limits in build', () => {
+  const prompt = buildPrompt(BUILD)
+  assert.match(prompt, /If `vercel` fails.*do NOT call `submit_stage`/s)
+  assert.match(prompt, /Do NOT open anything in .*inputs\/private/)
+})
+
+test('crit. 29: a build redo carries the comment, literal, and the preview it replaces', (t) => {
+  const prompt = buildPrompt({ ...BUILD, urls: { preview: 'https://medical-trust-center-mockup-old-team.vercel.app' }, redo: { comment: 'El paso 3 más lento.', previous: [] } })
+  assert.match(prompt, /> El paso 3 más lento\./)
+  assert.ok(prompt.includes('https://medical-trust-center-mockup-old-team.vercel.app'))
+  assert.match(prompt, /the app as it is now in .*mockup-app/)
+  t.assert.snapshot(prompt)
+})
+
+test('crit. 28: contextFor hands build the direction chosen at plan, and the mockup’s URLs', () => {
+  const options = [
+    { id: 'a', title: 'A', blurb: 'a', url: 'https://p-directions-x.vercel.app/a.html' },
+    { id: 'b', title: 'B', blurb: 'b', url: 'https://p-directions-x.vercel.app/b.html' },
+  ]
+  const m = { ...withStep(mockup({ id: 'm' }), 'plan', { status: 'done', version: 1, options, chosen: 'a' }), urls: { preview: 'https://p-mockup-x.vercel.app' } }
+  const ctx = contextFor(m, 'build', 'r1')
+  assert.deepEqual(ctx.chosen, { stage: 'plan', file: '05-visual-direction.md', option: options[0] })
+  assert.deepEqual(ctx.urls, { preview: 'https://p-mockup-x.vercel.app' })
 })

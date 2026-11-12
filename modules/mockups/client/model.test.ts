@@ -57,9 +57,12 @@ test('crit. 19: another run alive in the mockup blocks a start, with its stage n
   assert.match(launchBlocked(m, 'plan', { sessions: true }) ?? '', /concepts is running/)
 })
 
-test('a stage of a later block is shown and cannot start (E4); concepts now can', () => {
-  const m = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' }, build: { status: 'ready' } }, { buildSiteId: 'acme' })
-  assert.equal(stageActions(m, 'build', { sessions: true, now: NOW }).start?.disabled, 'next cut')
+test('a stage of a later block is shown and cannot start (E4); build now can', () => {
+  const done = { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'done' } } as const
+  const m = mockup('a', { ...done, build: { status: 'done' }, deliver: { status: 'ready' } }, { buildSiteId: 'acme' })
+  assert.equal(stageActions(m, 'deliver', { sessions: true, now: NOW }).start?.disabled, 'next cut')
+  const b = mockup('a', { ...done, build: { status: 'ready' } }, { buildSiteId: 'acme' })
+  assert.equal(stageActions(b, 'build', { sessions: true, now: NOW }).start?.disabled, undefined)
   const p = mockup('a', { brief: { status: 'done' }, concepts: { status: 'done' }, plan: { status: 'ready' } })
   assert.equal(stageActions(p, 'plan', { sessions: true, now: NOW }).start?.disabled, undefined)
   const c = mockup('a', { brief: { status: 'done' }, concepts: { status: 'ready' } })
@@ -81,7 +84,8 @@ test('crit. 28: a choosing gate offers choose, not approve; an approving gate th
 test('crit. 27, 28: after approving or choosing, the screen launches the next stage only if this cut launches it', () => {
   assert.equal(afterDecision('brief'), 'concepts')
   assert.equal(afterDecision('concepts'), 'plan')
-  assert.equal(afterDecision('plan'), undefined)
+  assert.equal(afterDecision('plan'), 'build')
+  assert.equal(afterDecision('build'), undefined)
   assert.equal(afterDecision('deliver'), undefined)
 })
 

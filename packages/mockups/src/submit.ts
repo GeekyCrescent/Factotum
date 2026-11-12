@@ -132,14 +132,17 @@ async function checkRealData(deps: SubmitDeps, sessionId: string, siteId: string
 /** Check 3. `undefined`: every file is there, inside, and not empty. */
 async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boolean): Promise<string | undefined> {
   const { vaultDir, workDir } = live.mockup
-  for (const required of RUN_SPECS[live.stage].files) {
-    if (!input.files.includes(required)) return `files must include ${required}, the document this stage writes.`
+  const spec = RUN_SPECS[live.run.kind]
+  const required = spec.files
+  const built = spec.workFiles ?? []
+  for (const file of [...required, ...built]) {
+    if (!input.files.includes(file)) return `files must include ${file}, which this stage writes.`
   }
-  const required = RUN_SPECS[live.stage].files
   for (const file of input.files) {
-    // A document the stage requires is read from the mockup folder, so it must be THERE; anything else
-    // may be in either folder.
-    const candidates = isAbsolute(file) ? [file] : required.includes(file) ? [join(vaultDir, file)] : [join(vaultDir, file), join(workDir, file)]
+    // A document the stage requires is read from the mockup folder, so it must be THERE; what it builds,
+    // from the work folder; anything else may be in either.
+    const home = required.includes(file) ? [vaultDir] : built.includes(file) ? [workDir] : [vaultDir, workDir]
+    const candidates = isAbsolute(file) ? [file] : home.map((dir) => join(dir, file))
     let found: string | undefined
     for (const candidate of candidates) {
       try {
@@ -151,11 +154,7 @@ async function checkFiles(live: Live, input: SubmitInput, caseInsensitive: boole
         // Not there; the next folder, or "does not exist".
       }
     }
-    if (found === undefined) {
-      return required.includes(file)
-        ? `${file} does not exist in ${vaultDir}. Write it there and call again.`
-        : `${file} does not exist in ${vaultDir} nor in ${workDir}. Write it there and call again.`
-    }
+    if (found === undefined) return `${file} does not exist in ${home.join(' nor in ')}. Write it there and call again.`
     const realPath = await real(found)
     if (!inside(vaultDir, realPath, caseInsensitive) && !inside(workDir, realPath, caseInsensitive)) {
       return `${file} is outside the mockup folders (${vaultDir}, ${workDir}). Write it inside them.`
@@ -209,8 +208,16 @@ export function isVercelUrl(raw: string, vercelProject: string | null = null): b
   return vercelProject.length <= PROJECT_PREFIX_CHARS ? label.startsWith(`${vercelProject}-`) : label.startsWith(vercelProject.slice(0, PROJECT_PREFIX_CHARS))
 }
 
-/** Check 5. `undefined`: every URL handed in is a deployment of the stage's own Vercel project. */
-export function checkUrls(input: SubmitInput, vercelProject: string | null = null): string | undefined {
+/**
+ * Check 5. `undefined`: the run handed the URL it must (a preview, or production) and no other, and
+ * every URL is a deployment of the stage's own Vercel project.
+ */
+export function checkUrls(input: SubmitInput, kind: RunKind, vercelProject: string | null = null): string | undefined {
+  const hands = RUN_SPECS[kind].hands
+  for (const key of ['previewUrl', 'prodUrl'] as const) {
+    if (key === hands && input[key] === undefined) return `the ${kind} stage needs ${key}, the URL its deploy printed, answering 200.`
+    if (key !== hands && input[key] !== undefined) return `the ${kind} stage takes no ${key}; call again without it.`
+  }
   const urls: readonly [string, string | undefined][] = [
     ...(input.options ?? []).map((option): [string, string | undefined] => [`option ${option.id}'s url`, option.url]),
     ['previewUrl', input.previewUrl],
@@ -231,7 +238,8 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
   const live = ownRun(deps, sessionId, siteId, input.runId)
   if (typeof live === 'string') return refuse(live)
 
-  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(live.stage, input.options) ?? checkUrls(input, vercelProjectOf(live.mockup.project, live.stage))
+  const kind = live.run.kind
+  const problem = (await checkFiles(live, input, deps.caseInsensitive)) ?? checkOptions(kind, input.options) ?? checkUrls(input, kind, vercelProjectOf(live.mockup.project, kind))
   if (problem !== undefined) return refuse(`Not submitted: ${problem}`)
   if (RUN_SPECS[live.stage].guard) {
     const guarded = await guard(live.mockup.workDir, deps.guardLimits ?? GUARD_LIMITS)
@@ -247,7 +255,18 @@ async function submit(deps: SubmitDeps, sessionId: string, siteId: string, raw: 
     if (current === undefined) return { ok: false, error: { code: 'not-found', reason: 'the mockup is gone' } }
     const linked = linkSession(current, input.runId, sessionId, now)
     if (!linked.ok) return linked
-    const accepted = acceptSubmit(linked.value, input.runId, { sessionId, summary: input.summary, ...(input.options === undefined ? {} : { options: input.options }) }, now)
+    const accepted = acceptSubmit(
+      linked.value,
+      input.runId,
+      {
+        sessionId,
+        summary: input.summary,
+        ...(input.options === undefined ? {} : { options: input.options }),
+        ...(input.previewUrl === undefined ? {} : { previewUrl: input.previewUrl }),
+        ...(input.prodUrl === undefined ? {} : { prodUrl: input.prodUrl }),
+      },
+      now,
+    )
     if (!accepted.ok) return accepted
     const mockups = file.mockups.map((m) => (m.id === current.id ? accepted.value : m))
     return { ok: true, value: { file: { ...file, mockups }, mockup: accepted.value } }

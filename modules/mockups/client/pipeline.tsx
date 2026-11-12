@@ -16,6 +16,7 @@ import { Gate } from './gate.tsx'
 import { Glyph } from './glyph.tsx'
 import { Icon } from './icon.tsx'
 import { Inputs } from './inputs.tsx'
+import { Deployments } from './links.tsx'
 import { messageOf, noticeOf, redoStage, startStage, type LaunchOutcome, type Notice } from './launch.ts'
 import { afterDecision, nowStage, stageActions, statusLine } from './model.ts'
 import { pollRequest, reconcileProject, requestProject, type ProjectState } from './project.ts'
@@ -152,6 +153,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
         step={step}
         actions={actions}
         busy={busy}
+        previewUrl={stage === 'build' ? mockup.urls.preview : undefined}
         dictationApi={sessions}
         onApprove={() => void decide({ action: 'approve' })}
         onChoose={(optionId) => void decide({ action: 'choose', optionId })}
@@ -221,6 +223,7 @@ export function Pipeline({ props, id, open }: { readonly props: ViewProps; reado
         </div>
         <aside class="mk-margin">
           {margin}
+          <Deployments urls={mockup.urls} />
           <Inputs api={api} dictationApi={sessions} mockup={mockup} onChanged={(m) => setLoaded({ kind: 'ok', mockup: m })} />
           <BuildProject state={project} mockup={mockup} onRequest={() => void requestProject({ mockups: api, sessions }, mockup).then(setProject)} />
         </aside>

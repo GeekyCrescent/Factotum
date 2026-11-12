@@ -369,3 +369,78 @@ test('review: check_real_data answers only a stage that publishes', async () => 
   await seedConcepts()
   assert.match(textOf(await check({ runId: 'c1' })), /publishes nothing/)
 })
+
+/** A build run on the work-dir's project, with the plan chosen behind it and the app's package.json written. */
+async function seedBuild(): Promise<void> {
+  await store.change((file) => {
+    let m = mockup({ id: 'm1', name: 'MTC app', vaultDir, workDir, buildSiteId: 'acme' })
+    for (const id of ['brief', 'concepts', 'plan'] as const) m = withStep(m, id, { status: 'done', version: 1 })
+    m = withStep(m, 'build', { status: 'ready' })
+    return { ok: true, value: { file: { ...file, mockups: [value(startRun(m, { kind: 'build', runId: 'b1', siteId: 'acme' }, NOW))] } } }
+  })
+  await mkdir(join(workDir, 'mockup-app'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'package.json'), '{"name":"acme"}\n')
+}
+const built = () => store.current().mockups[0]
+const PREVIEW = 'https://acme-mockup-abc123-team.vercel.app'
+const APP = ['mockup-app/package.json']
+const callBuild = (raw: Record<string, unknown>) => call({ runId: 'b1', files: APP, summary: 's', ...raw }, { siteId: 'acme' })
+
+test('crit. 16, 32: a build without its previewUrl is refused, and nothing changes', async () => {
+  await seedBuild()
+  const result = await callBuild({})
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /needs previewUrl/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16, check 3: a build must name the app it built, and the app must be in the work-dir', async () => {
+  await seedBuild()
+  assert.match(textOf(await callBuild({ files: ['notes.md'], previewUrl: PREVIEW })), /must include mockup-app\/package\.json/)
+  await rm(join(workDir, 'mockup-app', 'package.json'))
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/package\.json does not exist in .*Acme/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('check 5, pinned: a build preview of the directions project, or any other, is refused', async () => {
+  await seedBuild()
+  for (const url of ['https://acme-directions-abc-team.vercel.app', 'https://evil.vercel.app', 'http://acme-mockup-abc-team.vercel.app']) {
+    assert.match(textOf(await callBuild({ previewUrl: url })), /acme-mockup/, url)
+  }
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16: a build that also hands a prodUrl is refused — it deploys a preview, never production', async () => {
+  await seedBuild()
+  const result = await callBuild({ previewUrl: PREVIEW, prodUrl: 'https://acme-mockup.vercel.app' })
+  assert.match(textOf(result), /takes no prodUrl/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 32: a build is accepted with its preview: waiting, the URL kept on the mockup, one push', async () => {
+  await seedBuild()
+  const result = await callBuild({ previewUrl: PREVIEW })
+  assert.equal(result.isError, undefined, textOf(result))
+  assert.equal(built()?.stages.build.status, 'waiting')
+  assert.equal(built()?.urls.preview, PREVIEW)
+  assert.deepEqual(notify.sent, [{ title: 'MTC app: build ready', body: 'Tap to review.', path: '/m/mockups/m1/build', tag: 'mockups-gate-m1-build' }])
+})
+
+test('crit. 35: a build whose app carries a copy of a private input is refused, at the check and at submit', async () => {
+  await seedBuild()
+  await mkdir(join(workDir, 'inputs', 'private'), { recursive: true })
+  await writeFile(join(workDir, 'inputs', 'private', 'rows.csv'), 'real,rows\n1,2\n')
+  await mkdir(join(workDir, 'mockup-app', 'data'), { recursive: true })
+  await writeFile(join(workDir, 'mockup-app', 'data', 'seed.csv'), 'real,rows\n1,2\n')
+  assert.match(textOf(await check({ runId: 'b1' }, { siteId: 'acme' })), /mockup-app\/data\/seed\.csv is a copy/)
+  assert.match(textOf(await callBuild({ previewUrl: PREVIEW })), /mockup-app\/data\/seed\.csv is a copy/)
+  assert.equal(built()?.stages.build.status, 'running')
+})
+
+test('crit. 16: a stage that deploys nothing refuses a previewUrl it was handed', async () => {
+  await seed()
+  await writeFile(join(vaultDir, '01-brief.md'), '# Brief')
+  const result = await call({ runId: 'r1', files: ['01-brief.md'], summary: 's', previewUrl: PREVIEW })
+  assert.match(textOf(result), /takes no previewUrl/)
+  assert.equal(brief()?.status, 'running')
+})

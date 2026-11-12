@@ -175,3 +175,11 @@ test('ops never touch their input', () => {
   archive(before, NOW)
   assert.equal(JSON.stringify(before), frozen)
 })
+
+test('crit. 32: an accepted build keeps its preview URL on the mockup and waits at its gate', () => {
+  const m = withStep(mockup({ id: 'm' }), 'build', { status: 'running', run: { id: 'b', kind: 'build', siteId: 'acme', startedAt: NOW.toISOString() } })
+  const accepted = value(acceptSubmit(m, 'b', { sessionId: SESSION, summary: 's', previewUrl: 'https://acme-mockup-x.vercel.app' }, LATER))
+  assert.equal(accepted.stages.build.status, 'waiting')
+  assert.equal(accepted.urls.preview, 'https://acme-mockup-x.vercel.app')
+  assert.equal(accepted.urls.prod, undefined)
+})

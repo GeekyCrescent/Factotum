@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CUT_KINDS, isLaunchable, nextStage, RUN_SPECS, STAGES } from './stages.ts'
+import { CUT_KINDS, isLaunchable, nextStage, RUN_SPECS, STAGES, vercelProjectOf } from './stages.ts'
 import { STAGE_IDS } from './types.ts'
 
 test('the stage table carries the five stages of D2, in order, each pointing at the next', () => {
@@ -43,11 +43,39 @@ test('changes are not a stage: change has a gate on the work-dir, redeploy has n
   assert.equal(RUN_SPECS.brief, STAGES.brief)
 })
 
-test('cut 2 launches brief, concepts and plan; build and the rest arrive with cut 3', () => {
-  assert.deepEqual(CUT_KINDS, ['brief', 'concepts', 'plan'])
-  assert.equal(isLaunchable('plan'), true)
-  assert.equal(isLaunchable('build'), false)
+test('cut 3, block H: build launches too; deliver and the changes arrive with J and L', () => {
+  assert.deepEqual(CUT_KINDS, ['brief', 'concepts', 'plan', 'build'])
+  assert.equal(isLaunchable('build'), true)
+  assert.equal(isLaunchable('deliver'), false)
   assert.equal(isLaunchable('change'), false)
+})
+
+test('crit. 16, 32, 33, 36: what each publishing run hands in — a preview from build and change, production from deliver and redeploy', () => {
+  assert.deepEqual(
+    Object.entries(RUN_SPECS).map(([kind, spec]) => [kind, spec.hands ?? null]),
+    [
+      ['brief', null],
+      ['concepts', null],
+      ['plan', null],
+      ['build', 'previewUrl'],
+      ['deliver', 'prodUrl'],
+      ['change', 'previewUrl'],
+      ['redeploy', 'prodUrl'],
+    ],
+  )
+})
+
+test('crit. 32: build and change must name the app they built in the work-dir; redeploy writes changes.md in the vault', () => {
+  assert.deepEqual(RUN_SPECS.build.workFiles, ['mockup-app/package.json'])
+  assert.deepEqual(RUN_SPECS.change.workFiles, ['mockup-app/package.json'])
+  assert.deepEqual(RUN_SPECS.redeploy.files, ['changes.md'])
+  assert.equal(RUN_SPECS.brief.workFiles, undefined)
+})
+
+test('check 5 is pinned to the stage’s own Vercel project: <slug>-directions for plan, <slug>-mockup for the app', () => {
+  assert.equal(vercelProjectOf('acme', 'plan'), 'acme-directions')
+  for (const kind of ['build', 'deliver', 'change', 'redeploy'] as const) assert.equal(vercelProjectOf('acme', kind), 'acme-mockup', kind)
+  assert.equal(vercelProjectOf('acme', 'brief'), null)
 })
 
 test('crit. 35: the guard runs on what publishes — plan, build, deliver, change, redeploy — and not on brief nor concepts', () => {

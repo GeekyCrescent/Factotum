@@ -7,7 +7,7 @@
 
 import { isAbsolute, join } from 'node:path'
 import { INPUTS_DIR, PRIVATE_DIR } from '../inputs.ts'
-import { RUN_SPECS } from '../stages.ts'
+import { APP_DIR, RUN_SPECS } from '../stages.ts'
 import type { InputRef, RunKind, StageId, StageOption } from '../types.ts'
 
 export interface PromptContext {
@@ -24,6 +24,8 @@ export interface PromptContext {
   readonly redo?: { readonly comment: string; readonly previous: readonly string[] }
   /** What the owner chose at the stage before this one, and the document it is in (criterion 28). */
   readonly chosen?: { readonly stage: StageId; readonly file: string; readonly option: StageOption }
+  /** The mockup's deployments so far: a redo of the app names the preview it replaces. */
+  readonly urls?: { readonly preview?: string; readonly prod?: string }
 }
 
 /** The absolute path of a document of the mockup folder. */
@@ -80,14 +82,18 @@ export function preamble(ctx: PromptContext, role: string): string {
   ].join('\n')
 }
 
+/** The owner's words as a Markdown quote, line by line: literal, and plainly not the module's. */
+export function quote(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')
+}
+
 /** The redo section: the previous version and the owner's comment, literal (criterion 29). */
 export function redoSection(ctx: PromptContext): string {
   if (ctx.redo === undefined) return ''
   const previous = ctx.redo.previous.map((path) => `- ${isAbsolute(path) ? path : join(ctx.vaultDir, path)}`).join('\n')
-  const quoted = ctx.redo.comment
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n')
   return [
     '',
     '## This is a redo',
@@ -98,7 +104,7 @@ export function redoSection(ctx: PromptContext): string {
     '',
     'The owner’s comment, literal:',
     '',
-    quoted,
+    quote(ctx.redo.comment),
     '',
     'Rewrite the document in place, starting from the previous version and doing what the comment asks. Keep what the comment does not touch.',
   ].join('\n')
@@ -142,9 +148,15 @@ export function deploySection(dir: string, vercelProject: string): string {
   ].join('\n')
 }
 
+/** The absolute path of the app in the work folder (crit. 32). */
+export function appDir(ctx: PromptContext): string {
+  return join(ctx.workDir, APP_DIR)
+}
+
 /** How the stage ends: the exact files, and `submit_stage` with its runId. */
 export function closing(ctx: PromptContext): string {
-  const files = RUN_SPECS[ctx.stage].files
+  const spec = RUN_SPECS[ctx.stage]
+  const files = [...spec.files, ...(spec.workFiles ?? [])]
   return [
     '',
     '## When you are done',

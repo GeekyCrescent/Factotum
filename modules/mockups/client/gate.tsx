@@ -10,6 +10,7 @@ import type { Api as DictationApi } from '../../shared/dictation/contract.ts'
 import type { Step } from '../types.ts'
 import { Glyph } from './glyph.tsx'
 import { NoteDictation } from './inputs.tsx'
+import { OpenUrl } from './links.tsx'
 import type { StageActions } from './model.ts'
 import { Options } from './options.tsx'
 
@@ -18,6 +19,7 @@ export function Gate({
   step,
   actions,
   busy,
+  previewUrl,
   dictationApi,
   onApprove,
   onChoose,
@@ -27,6 +29,8 @@ export function Gate({
   readonly step: Step
   readonly actions: StageActions
   readonly busy: boolean
+  /** A gate on a deployed app (build, a change): the preview the owner opens before deciding. */
+  readonly previewUrl?: string | undefined
   readonly dictationApi: DictationApi | undefined
   readonly onApprove: () => void
   readonly onChoose: (optionId: string) => void
@@ -42,6 +46,7 @@ export function Gate({
         <Glyph status="waiting" /> {label} is waiting on you
       </div>
       {step.summary === undefined ? null : <p class="mk-summary">«{step.summary}»</p>}
+      <OpenUrl label="Open the preview" url={previewUrl} />
       {actions.gate === 'choose' ? (
         <Options options={step.options ?? []} busy={busy} enabled={actions.choose} onChoose={onChoose} />
       ) : (
