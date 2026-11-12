@@ -57,6 +57,9 @@ importers:
       '@factotum/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@factotum/mockups':
+        specifier: workspace:*
+        version: link:../mockups
       '@factotum/modules':
         specifier: workspace:*
         version: link:../../modules
@@ -110,6 +113,18 @@ importers:
       '@types/web-push':
         specifier: ^3.6.4
         version: 3.6.4
+
+  packages/mockups:
+    dependencies:
+      '@factotum/core':
+        specifier: workspace:*
+        version: link:../core
+      '@factotum/sessions':
+        specifier: workspace:*
+        version: link:../sessions
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.3
 
   packages/sessions:
     dependencies:

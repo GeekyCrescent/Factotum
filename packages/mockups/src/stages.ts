@@ -1,0 +1,62 @@
+/**
+ * The stage table (design D2): THE ONLY SOURCE of what each stage runs on, writes, offers and asks.
+ *
+ * `ops.ts`, `submit.ts` and the prompts read it; none of them restates a row (CLAUDE.md §0: a rule
+ * written in two places drifts).
+ */
+
+import type { RunKind, StageId } from './types.ts'
+
+export interface OptionRule {
+  readonly min: number
+  readonly max: number
+  /** Each option must carry the URL of its preview (plan's directions). */
+  readonly url: boolean
+}
+
+export interface RunSpec {
+  /** `docs`: the session runs on `docsSiteId`; `work`: on the mockup's work-dir project. */
+  readonly site: 'docs' | 'work'
+  /** Relative to `vaultDir`: what the submission must name, exist and not be empty (D3, check 3). */
+  readonly files: readonly string[]
+  readonly options: OptionRule | null
+  readonly gate: 'approve' | 'choose' | null
+}
+
+export interface StageSpec extends RunSpec {
+  readonly id: StageId
+  readonly next: StageId | null
+}
+
+export const STAGES: Readonly<Record<StageId, StageSpec>> = {
+  brief: { id: 'brief', site: 'docs', files: ['01-brief.md'], options: null, gate: 'approve', next: 'concepts' },
+  concepts: { id: 'concepts', site: 'docs', files: ['02-concepts.md'], options: { min: 2, max: 3, url: false }, gate: 'choose', next: 'plan' },
+  plan: {
+    id: 'plan',
+    site: 'docs',
+    files: ['03-story-and-pages.md', '04-data.md', '05-visual-direction.md'],
+    options: { min: 2, max: 3, url: true },
+    gate: 'choose',
+    next: 'build',
+  },
+  build: { id: 'build', site: 'work', files: [], options: null, gate: 'approve', next: 'deliver' },
+  deliver: { id: 'deliver', site: 'work', files: ['06-presenter-guide.md'], options: null, gate: null, next: null },
+}
+
+/** Every kind of run: the stages, and the two of the changes track (not stages, D2). */
+export const RUN_SPECS: Readonly<Record<RunKind, RunSpec>> = {
+  ...STAGES,
+  change: { site: 'work', files: [], options: null, gate: 'approve' },
+  redeploy: { site: 'work', files: [], options: null, gate: null },
+}
+
+export function nextStage(id: StageId): StageId | null {
+  return STAGES[id].next
+}
+
+/** What THIS cut launches (tasks.md: cut 1 is brief). The rest answers `not-yet`. */
+export const CUT_KINDS: readonly RunKind[] = ['brief']
+
+export function isLaunchable(kind: RunKind): boolean {
+  return CUT_KINDS.includes(kind)
+}
