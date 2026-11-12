@@ -19,7 +19,7 @@ import { outcome } from './subagents.ts'
 import { serviceOutcome } from './services.ts'
 import { Icon } from './icon.tsx'
 import type { SessionIcon } from './icons.ts'
-import { Markdown } from './markdown.tsx'
+import { Markdown } from '../../shared/markdown/markdown.tsx'
 
 const GLYPHS: Readonly<Record<string, SessionIcon>> = {
   Read: 'file-text',

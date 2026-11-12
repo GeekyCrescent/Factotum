@@ -8,6 +8,7 @@
     { "path": "../sessions" },
     { "path": "../inbox" },
     { "path": "../tasks" },
+    { "path": "../mockups" },
     { "path": "../../modules" }
   ]
 }

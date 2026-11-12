@@ -17,6 +17,7 @@
     "@factotum/core": "workspace:*",
     "@factotum/inbox": "workspace:*",
     "@factotum/kernel": "workspace:*",
+    "@factotum/mockups": "workspace:*",
     "@factotum/modules": "workspace:*",
     "@factotum/sessions": "workspace:*",
     "@factotum/tasks": "workspace:*",

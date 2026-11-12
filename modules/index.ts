@@ -68,3 +68,10 @@ export type { SessionsConfig } from './sessions/config.ts'
 export { tasksModule } from './tasks/server.ts'
 export type { TasksModuleOptions } from './tasks/server.ts'
 export type { BoardView, CreateTasks, Task, Tasks, TasksLink, TasksSetup } from './tasks/types.ts'
+
+/**
+ * Mockups (spec 2026-11-12-maquetas): a factory and a link, the arrangement of `tasks`. Its family,
+ * `submit_stage`, is the second one `sessions` reads on every `tools/list` (design D1).
+ */
+export { mockupsModule } from './mockups/server.ts'
+export type { CreateMockups, Mockups, MockupsLink } from './mockups/types.ts'
