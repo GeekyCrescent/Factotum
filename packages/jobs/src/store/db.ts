@@ -87,23 +87,44 @@ async function loadSqlite(load: () => Promise<Sqlite>): Promise<Result<Sqlite>> 
   }
 }
 
+/** SQLite's primary code for «another connection holds the lock» (the extended codes share the low byte). */
+const SQLITE_BUSY = 5
+const PRIMARY_CODE_MASK = 0xff
+
+/** Still locked after `busy_timeout`: someone else holds the file, nothing says it is damaged. */
+const isBusy = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'errcode' in error && (Number(error.errcode) & PRIMARY_CODE_MASK) === SQLITE_BUSY
+
+type Inspection =
+  | { readonly kind: 'ok'; readonly version: number }
+  /** Not ours to touch: copied aside and refused. */
+  | { readonly kind: 'bad'; readonly reason: string }
+  /** Locked past the wait: refused, with no copy (the next start tries again). */
+  | { readonly kind: 'busy'; readonly reason: string }
+
+function unreadable(error: unknown): Inspection {
+  return isBusy(error)
+    ? { kind: 'busy', reason: `jobs.db is locked by another process past ${BUSY_TIMEOUT_MS} ms: ${messageOf(error)}` }
+    : { kind: 'bad', reason: `jobs.db does not open: ${messageOf(error)}` }
+}
+
 /** The version, then `integrity_check`: either one failing means the store is not ours to touch. */
-function inspect(handle: Handle, target: number): Result<number> {
+function inspect(handle: Handle, target: number): Inspection {
   let version: number
   try {
     version = Number(handle.prepare('PRAGMA user_version').get()?.user_version ?? 0)
   } catch (error) {
-    return fail('module-error', `jobs.db does not open: ${messageOf(error)}`)
+    return unreadable(error)
   }
-  if (version > target) return fail('module-error', `jobs.db schema version ${version} is newer than this code's ${target}`)
+  if (version > target) return { kind: 'bad', reason: `jobs.db schema version ${version} is newer than this code's ${target}` }
   try {
     const rows = handle.prepare('PRAGMA integrity_check').all()
     const verdict = rows.map((row) => String(row.integrity_check)).join('; ')
-    if (verdict !== 'ok') return fail('module-error', 'jobs.db fails integrity_check')
+    if (verdict !== 'ok') return { kind: 'bad', reason: 'jobs.db fails integrity_check' }
   } catch (error) {
-    return fail('module-error', `jobs.db does not open: ${messageOf(error)}`)
+    return unreadable(error)
   }
-  return ok(version)
+  return { kind: 'ok', version }
 }
 
 function migrate(handle: Handle, from: number, migrations: readonly string[]): Result<void> {
@@ -198,20 +219,22 @@ export async function openDb(options: OpenOptions): Promise<Result<Db>> {
   } catch (error) {
     return quarantine(file, options.now, `jobs.db does not open: ${messageOf(error)}`)
   }
+  // The CLI and the daemon open the same file: the wait goes on BEFORE the first read, or a lock held
+  // for a moment reads as damage. Setting it touches no page, so it cannot be busy itself.
+  handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
   const inspected = inspect(handle, migrations.length)
-  if (!inspected.ok) {
+  if (inspected.kind !== 'ok') {
     handle.close()
-    return quarantine(file, options.now, inspected.error.reason)
+    return inspected.kind === 'busy' ? fail('module-error', inspected.reason) : quarantine(file, options.now, inspected.reason)
   }
   try {
-    handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
     handle.exec('PRAGMA journal_mode = WAL')
     handle.exec('PRAGMA foreign_keys = ON')
   } catch (error) {
     handle.close()
     return fail('module-error', `jobs.db pragmas failed: ${messageOf(error)}`)
   }
-  const migrated = migrate(handle, inspected.value, migrations)
+  const migrated = migrate(handle, inspected.version, migrations)
   if (!migrated.ok) {
     handle.close()
     return migrated

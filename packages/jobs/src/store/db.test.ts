@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { openDb, type Db } from './db.ts'
 import { MIGRATIONS, SCHEMA_VERSION } from './schema.sql.ts'
 import { manualClock, tempBase } from '../test-support.ts'
@@ -213,6 +214,64 @@ test('a v99 store is not touched: copied to jobs.db.bad-<date> (0600) and refuse
   const bad = readdirSync(base.dir).filter((name) => name.startsWith('jobs.db.bad-'))
   assert.deepEqual(bad, ['jobs.db.bad-2026-11-14T03-04-05.000Z'])
   assert.equal(mode(join(base.dir, bad[0] ?? '')), 0o600)
+})
+
+interface HeldLock {
+  /** Lets go now, and resolves when the holder is gone. */
+  readonly release: () => Promise<void>
+}
+
+/**
+ * A second process (the CLI beside the daemon) holding the file: a worker thread takes an EXCLUSIVE
+ * lock and keeps it until `holdMs` passes or `release` is called. Resolves once the lock is held.
+ */
+async function holdLock(file: string, holdMs: number): Promise<HeldLock> {
+  const signal = new Int32Array(new SharedArrayBuffer(4))
+  const source = `
+    const { workerData, parentPort } = require('node:worker_threads')
+    const { DatabaseSync } = require('node:sqlite')
+    const handle = new DatabaseSync(workerData.file)
+    handle.exec('PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; INSERT INTO meta (key, value) VALUES (\\'lock\\', \\'x\\');')
+    parentPort.postMessage('locked')
+    Atomics.wait(workerData.signal, 0, 0, workerData.holdMs)
+    handle.exec('ROLLBACK')
+    handle.close()
+  `
+  const worker = new Worker(source, { eval: true, workerData: { file, holdMs, signal } })
+  const exited = new Promise<void>((resolve) => worker.once('exit', () => resolve()))
+  await new Promise<void>((resolve, reject) => {
+    worker.once('message', () => resolve())
+    worker.once('error', reject)
+  })
+  return {
+    release: () => {
+      Atomics.store(signal, 0, 1)
+      Atomics.notify(signal, 0)
+      return exited
+    },
+  }
+}
+
+test('a store busy for a moment (another process holds it) is waited for, not copied aside as damaged', async () => {
+  using base = tempBase()
+  ;(await open(base.dir)).close()
+  const lock = await holdLock(join(base.dir, 'jobs.db'), 300)
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
+  await lock.release()
+  assert.ok(opened.ok, opened.ok ? '' : opened.error.reason)
+  opened.value.close()
+  assert.deepEqual(readdirSync(base.dir).filter((name) => name.includes('.bad-')), [])
+})
+
+test('a store still locked past busy_timeout is refused with the reason, and NOT copied aside', async () => {
+  using base = tempBase()
+  ;(await open(base.dir)).close()
+  const lock = await holdLock(join(base.dir, 'jobs.db'), 30_000)
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
+  await lock.release()
+  assert.equal(opened.ok, false)
+  if (!opened.ok) assert.match(opened.error.reason, /locked by another process past 2000 ms/)
+  assert.deepEqual(readdirSync(base.dir).filter((name) => name.includes('.bad-')), [])
 })
 
 test('a file that is not a database is copied aside and refused, without a throw', async () => {
