@@ -1,0 +1,221 @@
+/**
+ * Opening `jobs.db`: load the driver, check, migrate, lock the modes down (design D2).
+ *
+ * `node:sqlite` IS LOADED BY A DYNAMIC `import()` HERE AND NOWHERE ELSE (v4, N4). A static import
+ * would break the loading of the whole daemon on a Node without it; this way only `jobs` goes off,
+ * with the reason (requirements §6). B7 greps for a static one. Types come from `typeof import(…)`.
+ *
+ * NOTHING HERE THROWS. `openDb`, `tx` and `backup` answer with a `Result`; a store that is newer,
+ * unreadable or damaged is never touched — it is copied to `jobs.db.bad-<date>` and refused.
+ *
+ * `DatabaseSync` creates its files with the umask of the process, so every open ends with a
+ * `chmod 0o600` of `jobs.db`, `-wal` and `-shm`, and every copy gets the same (R8).
+ *
+ * `openDb` only opens, migrates and checks: the startup write (`sending → send-unknown`…) is the
+ * daemon's, in `repo.ts`, never the CLI's (design D3, «La postulación de prueba»).
+ */
+
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fail, ok, type Result } from '../types.ts'
+import { MIGRATIONS } from './schema.sql.ts'
+
+type Sqlite = typeof import('node:sqlite')
+type Handle = InstanceType<Sqlite['DatabaseSync']>
+type Statement = ReturnType<Handle['prepare']>
+
+export type SqlValue = null | number | bigint | string | Uint8Array
+
+/** The query handle every function of `repo.ts` takes. Rows come back frozen, as plain objects. */
+export interface Queries {
+  readonly run: (sql: string, ...params: SqlValue[]) => { readonly changes: number }
+  readonly get: <R = Readonly<Record<string, SqlValue>>>(sql: string, ...params: SqlValue[]) => R | undefined
+  readonly all: <R = Readonly<Record<string, SqlValue>>>(sql: string, ...params: SqlValue[]) => readonly R[]
+}
+
+export interface Db {
+  /** BEGIN IMMEDIATE … COMMIT; `fn` gives a Result and a `!ok` ROLLs BACK. Never throws. */
+  readonly tx: <T>(fn: (q: Queries) => Result<T>) => Result<T>
+  readonly read: <T>(fn: (q: Queries) => T) => T
+  /** `VACUUM INTO`, then `chmod 0o600` before the copy counts. */
+  readonly backup: (to: string) => Result<void>
+  readonly close: () => void
+}
+
+export interface OpenOptions {
+  /** `<stateDir>`; created `0700`. */
+  readonly dir: string
+  readonly now: () => Date
+  /** The seam for a Node without `node:sqlite`. */
+  readonly load?: () => Promise<Sqlite>
+  /** The seam for a test migration (a v2 on top of v1). */
+  readonly migrations?: readonly string[]
+}
+
+export const DB_FILE = 'jobs.db'
+const BUSY_TIMEOUT_MS = 2000
+const MIN_NODE = '22.13'
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+function lockDown(path: string): void {
+  if (existsSync(path)) chmodSync(path, 0o600)
+}
+
+const companions = (file: string): readonly string[] => [file, `${file}-wal`, `${file}-shm`]
+
+/** Copies the store (and its WAL) aside, untouched, and refuses with the reason. */
+function quarantine<T>(file: string, now: () => Date, reason: string): Result<T> {
+  const stamp = now().toISOString().replaceAll(':', '-')
+  const bad = `${file}.bad-${stamp}`
+  for (const [from, to] of [
+    [file, bad],
+    [`${file}-wal`, `${bad}-wal`],
+  ] as const) {
+    if (!existsSync(from)) continue
+    copyFileSync(from, to)
+    chmodSync(to, 0o600)
+  }
+  return fail('module-error', `${reason}; a copy is at ${DB_FILE}.bad-${stamp}`)
+}
+
+async function loadSqlite(load: () => Promise<Sqlite>): Promise<Result<Sqlite>> {
+  try {
+    return ok(await load())
+  } catch {
+    return fail('module-error', `node:sqlite is not available in Node ${process.versions.node}; jobs needs >= ${MIN_NODE}`)
+  }
+}
+
+/** The version, then `integrity_check`: either one failing means the store is not ours to touch. */
+function inspect(handle: Handle, target: number): Result<number> {
+  let version: number
+  try {
+    version = Number(handle.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+  } catch (error) {
+    return fail('module-error', `jobs.db does not open: ${messageOf(error)}`)
+  }
+  if (version > target) return fail('module-error', `jobs.db schema version ${version} is newer than this code's ${target}`)
+  try {
+    const rows = handle.prepare('PRAGMA integrity_check').all()
+    const verdict = rows.map((row) => String(row.integrity_check)).join('; ')
+    if (verdict !== 'ok') return fail('module-error', 'jobs.db fails integrity_check')
+  } catch (error) {
+    return fail('module-error', `jobs.db does not open: ${messageOf(error)}`)
+  }
+  return ok(version)
+}
+
+function migrate(handle: Handle, from: number, migrations: readonly string[]): Result<void> {
+  for (let version = from; version < migrations.length; version += 1) {
+    try {
+      handle.exec('BEGIN IMMEDIATE')
+      handle.exec(migrations[version] ?? '')
+      handle.exec(`PRAGMA user_version = ${version + 1}`)
+      handle.exec('COMMIT')
+    } catch (error) {
+      if (handle.isTransaction) handle.exec('ROLLBACK')
+      return fail('module-error', `jobs.db migration to v${version + 1} failed: ${messageOf(error)}`)
+    }
+  }
+  return ok(undefined)
+}
+
+function queriesOver(handle: Handle): Queries {
+  const cache = new Map<string, Statement>()
+  const prepared = (sql: string): Statement => {
+    const known = cache.get(sql)
+    if (known !== undefined) return known
+    const statement = handle.prepare(sql)
+    cache.set(sql, statement)
+    return statement
+  }
+  const frozen = <R>(row: object): R => Object.freeze({ ...row }) as R
+  return {
+    run: (sql, ...params) => ({ changes: Number(prepared(sql).run(...params).changes) }),
+    get: <R>(sql: string, ...params: SqlValue[]) => {
+      const row = prepared(sql).get(...params)
+      return row === undefined ? undefined : frozen<R>(row)
+    },
+    all: <R>(sql: string, ...params: SqlValue[]) => Object.freeze(prepared(sql).all(...params).map((row) => frozen<R>(row))),
+  }
+}
+
+function dbOver(handle: Handle): Db {
+  const queries = queriesOver(handle)
+  let inTx = false
+  let closed = false
+  return {
+    tx: (fn) => {
+      if (closed) return fail('module-error', 'jobs.db is closed')
+      if (inTx) return fail('module-error', 'a transaction is already open')
+      inTx = true
+      try {
+        handle.exec('BEGIN IMMEDIATE')
+        const result = fn(queries)
+        handle.exec(result.ok ? 'COMMIT' : 'ROLLBACK')
+        return result
+      } catch (error) {
+        // The body threw (a trigger, a constraint, a bug): undo whatever it wrote, and answer.
+        if (handle.isOpen && handle.isTransaction) handle.exec('ROLLBACK')
+        return fail('module-error', messageOf(error))
+      } finally {
+        inTx = false
+      }
+    },
+    read: (fn) => fn(queries),
+    backup: (to) => {
+      if (inTx) return fail('module-error', 'a backup cannot run inside a transaction')
+      try {
+        mkdirSync(dirname(to), { recursive: true, mode: 0o700 })
+        chmodSync(dirname(to), 0o700)
+        handle.prepare('VACUUM INTO ?').run(to)
+        chmodSync(to, 0o600)
+        return ok(undefined)
+      } catch (error) {
+        return fail('module-error', `backup failed: ${messageOf(error)}`)
+      }
+    },
+    close: () => {
+      if (closed) return
+      closed = true
+      handle.close()
+    },
+  }
+}
+
+export async function openDb(options: OpenOptions): Promise<Result<Db>> {
+  const migrations = options.migrations ?? MIGRATIONS
+  const sqlite = await loadSqlite(options.load ?? (() => import('node:sqlite')))
+  if (!sqlite.ok) return sqlite
+  mkdirSync(options.dir, { recursive: true, mode: 0o700 })
+  chmodSync(options.dir, 0o700)
+  const file = join(options.dir, DB_FILE)
+
+  let handle: Handle
+  try {
+    handle = new sqlite.value.DatabaseSync(file)
+  } catch (error) {
+    return quarantine(file, options.now, `jobs.db does not open: ${messageOf(error)}`)
+  }
+  const inspected = inspect(handle, migrations.length)
+  if (!inspected.ok) {
+    handle.close()
+    return quarantine(file, options.now, inspected.error.reason)
+  }
+  try {
+    handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+    handle.exec('PRAGMA journal_mode = WAL')
+    handle.exec('PRAGMA foreign_keys = ON')
+  } catch (error) {
+    handle.close()
+    return fail('module-error', `jobs.db pragmas failed: ${messageOf(error)}`)
+  }
+  const migrated = migrate(handle, inspected.value, migrations)
+  if (!migrated.ok) {
+    handle.close()
+    return migrated
+  }
+  for (const path of companions(file)) lockDown(path)
+  return ok(dbOver(handle))
+}
