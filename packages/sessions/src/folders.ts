@@ -2,11 +2,15 @@
  * Adding, changing and removing projects and shared folders (spec 2026-09-29, D3, D4). Kept apart
  * from `engine.ts`, which runs sessions.
  *
- * WIDENING NEEDS THE OWNER'S PHONE; NARROWING DOES NOT (guardrails 2, 4). A new project or shared
- * folder is a REQUEST: checked, then an approval pushed to a device, and written only when the owner
- * answers from there — checked AGAIN, inside the registry's queue, against the registry as it is by
- * then (criterion 15). A process on this machine can call every route here (requirements §0.5); what
- * it does not have is the token, which travels only in memory and in the encrypted push.
+ * A NEW PROJECT IS ADDED AT ONCE (owner's decision, 2026-11-13, amending ADR-0011 §3): checked, then
+ * written through the same request and `apply` a shared folder uses, approved by the daemon itself,
+ * so the screen's status poll and the "Added" notice stay as they were. The cost is owned: any
+ * process on this machine — an agent included — can now register a folder it may write in.
+ *
+ * A SHARED FOLDER STILL NEEDS THE OWNER'S PHONE: a REQUEST, checked, then an approval pushed to a
+ * device, and written only when the owner answers from there — checked AGAIN, inside the registry's
+ * queue, against the registry as it is by then (criterion 15). What a local process does not have is
+ * the token, which travels only in memory and in the encrypted push.
  *
  * Renaming, recolouring, ordering, categorising, removing a shared folder and deleting a project need
  * no approval: they only narrow, or change nothing an agent can use.
@@ -101,12 +105,14 @@ export function createFolders(deps: FoldersDeps): Folders {
 
   /**
    * The checks that come BEFORE the disk, in the order of design D3: a broken registry, an index not
-   * built yet, too many waiting, nobody to ask. Each is a 409 and none of them pushes anything.
+   * built yet, and — only for what asks the phone — too many waiting, nobody to ask. Each is a 409
+   * and none of them pushes anything.
    */
-  const gate = async (): Promise<RequestResult | undefined> => {
+  const gate = async (asksPhone: boolean): Promise<RequestResult | undefined> => {
     const broken = table.broken()
     if (broken !== undefined) return { outcome: 'conflict', conflict: 'broken', reason: `the projects registry is broken: ${broken}` }
     if (!deps.index.ready) return { outcome: 'conflict', conflict: 'starting', reason: 'factotum is still starting; try again in a moment' }
+    if (!asksPhone) return undefined
     if (grants.pendingCount() >= MAX_PENDING_GRANTS) return { outcome: 'conflict', conflict: 'too-many', reason: 'too many pending requests' }
     if (!deps.notify.canReach()) return { outcome: 'conflict', conflict: 'no-device', reason: NO_DEVICE }
     return undefined
@@ -139,6 +145,17 @@ export function createFolders(deps: FoldersDeps): Folders {
       data: { kind: 'grant', grantId: opened.token, requestId: opened.requestId, name: request.base },
       until: opened.expiresAt,
     })
+    return { outcome: 'requested', requestId: opened.requestId, expiresAt: opened.expiresAt }
+  }
+
+  /**
+   * A request the daemon approves itself, with no notice asking for it: opened only so its status
+   * reads as any other's, and answered before the caller hears back — so the first poll already
+   * says `approved` or `rejected`, with why.
+   */
+  const openApproved = async (request: GrantRequest): Promise<RequestResult> => {
+    const opened = grants.open(request)
+    await grants.answer(opened.token, 'allow', apply(request, opened.requestId))
     return { outcome: 'requested', requestId: opened.requestId, expiresAt: opened.expiresAt }
   }
 
@@ -186,21 +203,18 @@ export function createFolders(deps: FoldersDeps): Folders {
 
   return {
     requestProject: async (request) => {
-      const refused = await gate()
+      const refused = await gate(false)
       if (refused !== undefined) return refused
       const projects = table.registryView().projects
       const candidate = await checkCandidate(request.path, 'project', world(projects, table.registryView().shared.map((s) => s.path)))
       if (!candidate.ok) return { outcome: 'invalid', reason: candidate.reason }
-      if (grants.waitingFor(candidate.realPath)) {
-        return { outcome: 'conflict', conflict: 'already-waiting', reason: 'a request for that folder is already waiting for your approval' }
-      }
       const id = await idFor(request, candidate.base)
       if ('refused' in id) return { outcome: 'invalid', reason: id.refused }
-      return open({ kind: 'project', path: candidate.realPath, id: id.id, name: request.name, color: request.color, base: candidate.base })
+      return await openApproved({ kind: 'project', path: candidate.realPath, id: id.id, name: request.name, color: request.color, base: candidate.base })
     },
 
     requestShared: async (path) => {
-      const refused = await gate()
+      const refused = await gate(true)
       if (refused !== undefined) return refused
       const view = table.registryView()
       const candidate = await checkCandidate(path, 'shared', world(view.projects, view.shared.map((s) => s.path)))

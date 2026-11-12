@@ -103,14 +103,11 @@ export interface NewProject {
   readonly color: Color | undefined
 }
 
+/** No approval: a project is added at once (2026-11-13, amending ADR-0011 §3). */
 export function NewProjectDialog({
-  canRequest,
-  file,
   onCreate,
   onClose,
 }: {
-  readonly canRequest: boolean
-  readonly file: string
   readonly onCreate: (project: NewProject) => Promise<void>
   readonly onClose: () => void
 }) {
@@ -159,7 +156,6 @@ export function NewProjectDialog({
             <small>It comes from the folder's real name unless you type one.</small>
           </label>
         ) : null}
-        <Approval canRequest={canRequest} file={file} />
         {error === undefined ? null : <p class="s-error" role="alert">{error}</p>}
         <Buttons busy={busy} disabled={path.trim() === ''} action="Create project" onCancel={onClose} />
       </form>

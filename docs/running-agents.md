@@ -5,15 +5,15 @@ write here" means, and — at more length — what this does **not** protect you
 
 ---
 
-## A project is something you approve
+## A project is something you add
 
 A project (a *site*, in the code) is a folder an agent may write in. They live in
 `~/.factotum/<env>/modules/sessions/projects.json`, and **the daemon is the only thing
 that writes that file** ([ADR-0011](adr/0011-projects-registry-and-grants.md)).
 
 **From the app:** Projects, *Add project*, type the folder (`~/code/thing` works). The
-daemon checks it and sends an approval to your phone; nothing is added until you answer
-there. What gets registered is the folder's **resolved** path, and its id comes from the
+daemon checks it and adds it at once — **no approval on the phone** (since 2026-11-13; see
+[ADR-0011](adr/0011-projects-registry-and-grants.md#amendments) for what that costs). What gets registered is the folder's **resolved** path, and its id comes from the
 resolved folder's name unless you type one. Name and colour you can change any time,
 with no approval; deleting a project deletes its conversations and never its folder.
 
@@ -40,7 +40,7 @@ factotum doctor             # where the file is, how many projects, whether it i
 
 **Nothing is authorised by being inside a folder.** There is no `projectRoots` setting
 and no discovery of git repositories underneath something. A project is allowed because
-you approved it.
+you added it.
 
 A project may not be `/`, your home, `~/.factotum` or the checkout factotum runs from
 (nor anything inside or above those two), and may not equal, contain or sit inside
@@ -468,7 +468,7 @@ machine could read it ([ADR-0015](adr/0015-dictation-in-the-sessions-module.md))
 |---|---|
 | `sessions` disabled in `factotum doctor` | The config fragment is wrong; the reason is printed |
 | A project marked *Folder missing* | Its folder is not there. It launches nothing until it is back; the others are fine |
-| Add project answers *no device can approve* | No phone is subscribed. Subscribe one in Device, or add it by hand with the daemon stopped |
+| Add a shared folder answers *no device can approve* | No phone is subscribed. Subscribe one in Device, or add it by hand with the daemon stopped |
 | `409` when launching | The site already has a live session (and does not allow several at once, or you just turned that off), or it is a git repo that is dirty or behind. The screen offers to go to the session, cancel it, or launch anyway |
 | A session `failed` right after a restart | It was running when the daemon stopped. The log is intact up to the last event that was written |
 | A denied write you did not expect | The site is probably narrower than the job. Widen the site rather than widening the gate |

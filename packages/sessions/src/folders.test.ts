@@ -109,6 +109,12 @@ async function requested(engine: SessionEngine, path: string, extra: { id?: stri
   return result.outcome === 'requested' ? result : { requestId: '', expiresAt: '' }
 }
 
+async function shared(engine: SessionEngine, path: string) {
+  const result = await engine.requestShared(path)
+  assert.equal(result.outcome, 'requested', JSON.stringify(result))
+  return result.outcome === 'requested' ? result : { requestId: '', expiresAt: '' }
+}
+
 async function settle(engine: SessionEngine, id: string): Promise<void> {
   const deadline = Date.now() + 15_000
   for (;;) {
@@ -120,58 +126,79 @@ async function settle(engine: SessionEngine, id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// asking (criteria 8, 10, 12, 13, 14, 17, 21)
+// adding a project: no approval, written at once (2026-11-13, amends ADR-0011 §3)
 // ---------------------------------------------------------------------------
 
-test('THE RESPONSE DOES NOT AUTHORISE: a request id and a deadline, and the token appears in no field of it (criterion 8)', async () => {
-  const { engine, notices, folder } = await world()
-  const result = await engine.requestProject({ path: await folder('web'), id: undefined, name: undefined, color: undefined })
-  assert.equal(result.outcome, 'requested')
-  if (result.outcome !== 'requested') return
-  const token = tokenOf(notices, result.requestId)
-  assert.equal(JSON.stringify(result).includes(token), false)
-  assert.deepEqual(Object.keys(result).sort(), ['expiresAt', 'outcome', 'requestId'])
+test('A PROJECT IS ADDED AT ONCE: no approval pushed, the status already approved, and it launches without a restart', async () => {
+  const { engine, notices, registry, folder } = await world()
+  const path = await folder('web')
+  const { requestId } = await requested(engine, path, { name: 'Web app' })
+  assert.deepEqual(registry.current().projects.map((p) => [p.id, p.path, p.name]), [['web', path, 'Web app']])
+  assert.deepEqual(await engine.requestStatus(requestId), { status: 'approved', reason: undefined })
+  assert.equal(notices.some((n) => n.tag?.startsWith('grant:')), false, 'no approval notice')
+
+  const launched = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
+  assert.equal(launched.outcome, 'started')
+  await settle(engine, launched.outcome === 'started' ? launched.sessionId : '')
+  assert.equal(engine.view().sites.find((s) => s.id === 'web')?.name, 'Web app')
 })
 
-test('THE NOTICE NAMES THE FOLDER, NEVER ITS PATH, and asks until the deadline (criterion 17)', async () => {
-  const { engine, notices, folder, root } = await world()
-  const { requestId, expiresAt } = await requested(engine, await folder('web'))
-  const notice = notices[0]
-  assert.match(notice?.body ?? '', /^Add project · web \(in factotum-folders-[^/]+\)$/)
-  assert.equal(notice?.until, expiresAt)
-  assert.equal(notice?.tag, `grant:${requestId}`)
-  assert.match(notice?.path ?? '', /^\/m\/sessions\/projects\?grant=[A-Za-z0-9_-]{43}$/)
-  assert.deepEqual(Object.keys(notice?.data ?? {}).sort(), ['grantId', 'kind', 'name', 'requestId'])
-  assert.equal(JSON.stringify(notice).includes(root), false, 'no path anywhere in it')
-})
-
-test('NOBODY TO ASK: a 409 that names Device and the way by hand, and nothing is pushed (criterion 10)', async () => {
-  const { engine, notices, folder, reach } = await world()
+test('A PROJECT NEEDS NO DEVICE: added with nothing subscribed', async () => {
+  const { engine, registry, folder, reach } = await world()
   reach.value = false
-  const result = await engine.requestProject({ path: await folder('web'), id: undefined, name: undefined, color: undefined })
-  assert.equal(result.outcome, 'conflict')
-  assert.equal(result.outcome === 'conflict' ? result.conflict : '', 'no-device')
-  assert.match(result.outcome === 'conflict' ? result.reason : '', /Device.*by hand/)
-  assert.deepEqual(notices, [])
+  await requested(engine, await folder('web'))
+  assert.deepEqual(registry.current().projects.map((p) => p.id), ['web'])
 })
 
-test('THE DISK RULES are a 400 and push nothing: missing, the home, ~/.factotum, inside another project (criterion 12)', async () => {
-  const { engine, notices, folder, home, root } = await world({ sites: (r) => [{ id: 'a', path: join(r, 'a') }] })
+test('“ADDED” IS STILL SAID, with its own tag, no deadline and no token', async () => {
+  const { engine, notices, folder } = await world()
+  const { requestId } = await requested(engine, await folder('web'))
+  const added = notices.find((n) => n.tag === `added:${requestId}`)
+  assert.equal(added?.body, 'Added · web')
+  assert.equal(added?.until, undefined)
+  assert.equal(added?.data, undefined)
+  assert.equal(added?.path, '/m/sessions/projects')
+})
+
+test('A WRITE THAT FAILS is `rejected` with why on the status, and nothing is registered', async () => {
+  const { engine, registry, folder } = await world()
+  registry.failNextWrite('could not write projects.json: EACCES')
+  const { requestId } = await requested(engine, await folder('web'))
+  assert.deepEqual(await engine.requestStatus(requestId), { status: 'rejected', reason: 'could not write projects.json: EACCES' })
+  assert.deepEqual(registry.current().projects, [])
+})
+
+test('/a THEN /a/b: the second is a 400, inside the project just added', async () => {
+  const { engine, registry, folder } = await world()
+  await requested(engine, await folder('a'))
+  const inner = await engine.requestProject({ path: await folder('a/b'), id: undefined, name: undefined, color: undefined })
+  assert.equal(inner.outcome, 'invalid')
+  assert.match(inner.outcome === 'invalid' ? inner.reason : '', /inside the project "a"/)
+  assert.deepEqual(registry.current().projects.map((p) => p.id), ['a'])
+})
+
+test('MANY PROJECTS IN A ROW: no ceiling, since none waits', async () => {
+  const { engine, registry, folder } = await world()
+  for (const name of ['a', 'b', 'c', 'd']) await requested(engine, await folder(name))
+  assert.deepEqual(registry.current().projects.map((p) => p.id), ['a', 'b', 'c', 'd'])
+})
+
+test('THE DISK RULES are a 400 and write nothing: missing, the home, ~/.factotum, inside another project (criterion 12)', async () => {
+  const { engine, notices, registry, folder, home, root } = await world({ sites: (r) => [{ id: 'a', path: join(r, 'a') }] })
   await folder('a/inner')
   for (const path of [join(root, 'nope'), home, join(home, '.factotum'), join(root, 'a', 'inner'), join(root, 'a')]) {
     const result = await engine.requestProject({ path, id: undefined, name: undefined, color: undefined })
     assert.equal(result.outcome, 'invalid', path)
   }
   assert.deepEqual(notices, [])
+  assert.deepEqual(registry.current().projects.map((p) => p.id), ['a'])
 })
 
-test('A SYMLINK REGISTERS WHERE IT LANDS: resolved path, id and notice from the target’s name (criterion 13)', async () => {
-  const { engine, notices, registry, folder, root } = await world()
+test('A SYMLINK REGISTERS WHERE IT LANDS: resolved path and id from the target’s name (criterion 13)', async () => {
+  const { engine, registry, folder, root } = await world()
   const target = await folder('real-name')
   await symlink(target, join(root, 'alias'))
-  const { requestId } = await requested(engine, join(root, 'alias'))
-  assert.match(notices[0]?.body ?? '', /^Add project · real-name \(in /)
-  await engine.answerGrant(tokenOf(notices, requestId), 'allow')
+  await requested(engine, join(root, 'alias'))
   assert.deepEqual(registry.current().projects.map((p) => [p.id, p.path]), [['real-name', target]])
 })
 
@@ -210,81 +237,79 @@ test('A BROKEN REGISTRY refuses a request BEFORE anything is pushed; removed is 
   assert.equal((await engine.removeHistory('demo')).outcome, 'conflict')
 })
 
+// ---------------------------------------------------------------------------
+// a shared folder still asks the phone (criteria 8, 9, 10, 15, 17, 21)
+// ---------------------------------------------------------------------------
+
+test('THE RESPONSE DOES NOT AUTHORISE: a request id and a deadline, and the token appears in no field of it (criterion 8)', async () => {
+  const { engine, notices, folder } = await world()
+  const result = await engine.requestShared(await folder('notes'))
+  assert.equal(result.outcome, 'requested')
+  if (result.outcome !== 'requested') return
+  const token = tokenOf(notices, result.requestId)
+  assert.equal(JSON.stringify(result).includes(token), false)
+  assert.deepEqual(Object.keys(result).sort(), ['expiresAt', 'outcome', 'requestId'])
+})
+
+test('THE NOTICE NAMES THE FOLDER, NEVER ITS PATH, and asks until the deadline (criterion 17)', async () => {
+  const { engine, notices, folder, root } = await world()
+  const { requestId, expiresAt } = await shared(engine, await folder('notes'))
+  const notice = notices[0]
+  assert.match(notice?.body ?? '', /^Share folder · notes \(in factotum-folders-[^/]+\)$/)
+  assert.equal(notice?.until, expiresAt)
+  assert.equal(notice?.tag, `grant:${requestId}`)
+  assert.match(notice?.path ?? '', /^\/m\/sessions\/projects\?grant=[A-Za-z0-9_-]{43}$/)
+  assert.deepEqual(Object.keys(notice?.data ?? {}).sort(), ['grantId', 'kind', 'name', 'requestId'])
+  assert.equal(JSON.stringify(notice).includes(root), false, 'no path anywhere in it')
+})
+
+test('NOBODY TO ASK: a shared folder is a 409 that names Device and the way by hand, and nothing is pushed (criterion 10)', async () => {
+  const { engine, notices, folder, reach } = await world()
+  reach.value = false
+  const result = await engine.requestShared(await folder('notes'))
+  assert.equal(result.outcome, 'conflict')
+  assert.equal(result.outcome === 'conflict' ? result.conflict : '', 'no-device')
+  assert.match(result.outcome === 'conflict' ? result.reason : '', /Device.*by hand/)
+  assert.deepEqual(notices, [])
+})
+
 test('THREE WAITING IS THE CEILING: the fourth is a 409 (criterion 21)', async () => {
   const { engine, folder } = await world()
-  for (const name of ['a', 'b', 'c']) await requested(engine, await folder(name))
-  const fourth = await engine.requestProject({ path: await folder('d'), id: undefined, name: undefined, color: undefined })
+  for (const name of ['a', 'b', 'c']) await shared(engine, await folder(name))
+  const fourth = await engine.requestShared(await folder('d'))
   assert.equal(fourth.outcome === 'conflict' ? fourth.reason : fourth.outcome, 'too many pending requests')
 })
 
-// ---------------------------------------------------------------------------
-// answering (criteria 9, 15, 16, 19)
-// ---------------------------------------------------------------------------
-
-test('ONLY THE TOKEN APPROVES, and the project launches without a restart (criterion 9)', async () => {
-  const { engine, notices, folder } = await world()
-  const path = await folder('web')
-  const { requestId } = await requested(engine, path, { name: 'Web app' })
+test('ONLY THE TOKEN APPROVES a shared folder (criterion 9)', async () => {
+  const { engine, notices, registry, folder } = await world()
+  const path = await folder('notes')
+  const { requestId } = await shared(engine, path)
   assert.deepEqual(await engine.answerGrant(requestId, 'allow'), { outcome: 'unknown' })
-  const answered = await engine.answerGrant(tokenOf(notices, requestId), 'allow')
-  assert.deepEqual(answered, { outcome: 'approved', reason: undefined, first: true })
+  assert.deepEqual(await engine.answerGrant(tokenOf(notices, requestId), 'allow'), { outcome: 'approved', reason: undefined, first: true })
   assert.deepEqual(await engine.requestStatus(requestId), { status: 'approved', reason: undefined })
-
-  const launched = await engine.launch({ siteId: 'web', entryId: 'free', text: 'quick', force: false })
-  assert.equal(launched.outcome, 'started')
-  await settle(engine, launched.outcome === 'started' ? launched.sessionId : '')
-  assert.equal(engine.view().sites.find((s) => s.id === 'web')?.name, 'Web app')
-})
-
-test('“ADDED” IS SAID, with its own tag, no deadline and no token (criterion 19)', async () => {
-  const { engine, notices, folder } = await world()
-  const { requestId } = await requested(engine, await folder('web'))
-  await engine.answerGrant(tokenOf(notices, requestId), 'allow')
-  const added = notices.find((n) => n.tag === `added:${requestId}`)
-  assert.equal(added?.body, 'Added · web')
-  assert.equal(added?.until, undefined)
-  assert.equal(added?.data, undefined)
-  assert.equal(added?.path, '/m/sessions/projects')
+  assert.deepEqual(registry.current().shared.map((s) => s.path), [path])
 })
 
 test('TWO ANSWERS GIVE ONE RESULT, and a write that fails is `rejected` with why, for both (criterion 9)', async () => {
   const { engine, notices, registry, folder } = await world()
-  const { requestId } = await requested(engine, await folder('web'))
+  const { requestId } = await shared(engine, await folder('notes'))
   const token = tokenOf(notices, requestId)
   registry.failNextWrite('could not write projects.json: EACCES')
   const [a, b] = await Promise.all([engine.answerGrant(token, 'allow'), engine.answerGrant(token, 'allow')])
   assert.deepEqual(a, { outcome: 'rejected', reason: 'could not write projects.json: EACCES', first: true })
   assert.deepEqual(b, { outcome: 'rejected', reason: 'could not write projects.json: EACCES', first: false })
-  assert.deepEqual(registry.current().projects, [])
-})
-
-test('/a AND /a/b APPROVED ONE AFTER THE OTHER: one lands, the other is rejected in the queue (criterion 15)', async () => {
-  const { engine, notices, registry, folder } = await world()
-  const outer = await requested(engine, await folder('a'))
-  const inner = await requested(engine, await folder('a/b'))
-  const [first, second] = await Promise.all([
-    engine.answerGrant(tokenOf(notices, outer.requestId), 'allow'),
-    engine.answerGrant(tokenOf(notices, inner.requestId), 'allow'),
-  ])
-  assert.equal(first.outcome, 'approved')
-  assert.equal(second.outcome, 'rejected')
-  assert.deepEqual(registry.current().projects.map((p) => p.id), ['a'])
-  // The notice says it could not, WITHOUT the reason; the reason is on the status.
-  const refused = notices.find((n) => n.tag === `added:${inner.requestId}`)
-  assert.equal(refused?.body, 'Could not add · b')
-  const status = await engine.requestStatus(inner.requestId)
-  assert.equal(status.status, 'rejected')
-  assert.match('reason' in status ? (status.reason ?? '') : '', /inside the project "a"/)
+  assert.deepEqual(registry.current().shared, [])
 })
 
 test('A FOLDER THAT VANISHED BEFORE THE ANSWER is rejected and nothing is written (criterion 15)', async () => {
   const { engine, notices, registry, folder } = await world()
-  const path = await folder('web')
-  const { requestId } = await requested(engine, path)
+  const path = await folder('notes')
+  const { requestId } = await shared(engine, path)
   await rename(path, `${path}-gone`)
   const answered = await engine.answerGrant(tokenOf(notices, requestId), 'allow')
   assert.equal(answered.outcome, 'rejected')
-  assert.deepEqual(registry.current().projects, [])
+  assert.deepEqual(registry.current().shared, [])
+  assert.equal(notices.find((n) => n.tag === `added:${requestId}`)?.body, 'Could not add · notes')
 })
 
 test('A CHECK THAT DOES NOT END inside the queue is rejected at its ceiling (criterion 15, R11)', async () => {
@@ -294,29 +319,29 @@ test('A CHECK THAT DOES NOT END inside the queue is rejected at its ceiling (cri
     isDirectory: async () => true,
   }
   const { engine, notices, registry, folder } = await world({ candidateTimeoutMs: 50, disk })
-  const { requestId } = await requested(engine, await folder('web'))
+  const { requestId } = await shared(engine, await folder('notes'))
   hang = true
   const answered = await engine.answerGrant(tokenOf(notices, requestId), 'allow')
   assert.deepEqual(answered, { outcome: 'rejected', reason: 'checking that folder timed out', first: true })
-  assert.deepEqual(registry.current().projects, [])
+  assert.deepEqual(registry.current().shared, [])
 })
 
 test('deny writes nothing and says denied', async () => {
   const { engine, notices, registry, folder } = await world()
-  const { requestId } = await requested(engine, await folder('web'))
+  const { requestId } = await shared(engine, await folder('notes'))
   assert.equal((await engine.answerGrant(tokenOf(notices, requestId), 'deny')).outcome, 'denied')
-  assert.deepEqual(registry.current().projects, [])
+  assert.deepEqual(registry.current().shared, [])
   assert.equal(notices.some((n) => n.tag === `added:${requestId}`), false)
 })
 
 test('GET BY TOKEN: the full path while pending, `settled` after, `unknown` for anything else', async () => {
   const { engine, notices, folder } = await world()
-  const path = await folder('web')
-  const { requestId } = await requested(engine, path, { name: 'W' })
+  const path = await folder('notes')
+  const { requestId } = await shared(engine, path)
   const token = tokenOf(notices, requestId)
   const pending = await engine.inspectGrant(token)
   assert.equal(pending.kind, 'pending')
-  assert.deepEqual(pending.kind === 'pending' ? pending.request : undefined, { kind: 'project', path, id: 'web', name: 'W', color: undefined })
+  assert.deepEqual(pending.kind === 'pending' ? pending.request : undefined, { kind: 'shared', path })
   await engine.answerGrant(token, 'deny')
   assert.deepEqual(await engine.inspectGrant(token), { kind: 'settled' })
   assert.deepEqual(await engine.inspectGrant('z'.repeat(43)), { kind: 'unknown' })
@@ -324,10 +349,20 @@ test('GET BY TOKEN: the full path while pending, `settled` after, `unknown` for 
 
 test('stop expires every waiting request: nobody can approve into a stopped engine', async () => {
   const { engine, notices, folder } = await world()
-  const { requestId } = await requested(engine, await folder('web'))
+  const { requestId } = await shared(engine, await folder('notes'))
   await engine.stop()
   assert.equal((await engine.requestStatus(requestId)).status, 'expired')
   await assert.rejects(() => engine.answerGrant(tokenOf(notices, requestId), 'allow'), /engine stopped/)
+})
+
+test('ONE REQUEST PER FOLDER: asking again while one waits is a 409, and it does not eat the ceiling', async () => {
+  const { engine, folder, notices } = await world()
+  const path = await folder('notes')
+  await shared(engine, path)
+  const again = await engine.requestShared(path)
+  assert.equal(again.outcome === 'conflict' ? again.conflict : again.outcome, 'already-waiting')
+  assert.equal(notices.length, 1)
+  for (const name of ['a', 'b']) await shared(engine, await folder(name))
 })
 
 // ---------------------------------------------------------------------------
@@ -532,16 +567,6 @@ test('REMOVED PROJECTS: “Delete history” deletes their conversations; a regi
   assert.deepEqual((await engine.projects()).removed, [])
   assert.equal((await engine.removeHistory('demo')).outcome, 'unknown')
   assert.equal((await engine.removeHistory('web')).outcome, 'unknown')
-})
-
-test('ONE REQUEST PER FOLDER: asking again while one waits is a 409, and it does not eat the ceiling', async () => {
-  const { engine, folder, notices } = await world()
-  const path = await folder('web')
-  await requested(engine, path)
-  const again = await engine.requestProject({ path, id: 'web-2', name: undefined, color: undefined })
-  assert.equal(again.outcome === 'conflict' ? again.conflict : again.outcome, 'already-waiting')
-  assert.equal(notices.length, 1)
-  for (const name of ['a', 'b']) await requested(engine, await folder(name))
 })
 
 test('PINS: pinProject stores them on that project, pinnedOf and the view read them, a rename keeps them (criterion 29)', async () => {

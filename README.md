@@ -115,8 +115,8 @@ are willing to let an agent write in, and a **catalog** of things to launch.
 Typing `/` at the start of the box lists the skills and agents the CLI announces, optionally
 arranged by a note of yours.
 
-**Projects are added from the app**, and adding one sends an approval to your phone:
-nothing is written until you answer there. They live in
+**Projects are added from the app**, at once, with no approval on the phone (a shared
+folder still asks for one). They live in
 `~/.factotum/<env>/modules/sessions/projects.json`, which **only the daemon writes**; the
 first start seeds it from the config's `sites`. Without a phone, stop the daemon, add an
 entry to that file, and start it again: `factotum site add <path>` prints exactly how, and

@@ -110,6 +110,16 @@ A request for a project or a shared folder is **an ask with no session**:
 - **ADR-0010 §4.** `until` has **two** consumers now: the ask and the folder request. The comment on
   `NotificationMessage.until` in `packages/core/src/module.ts` ("Its one consumer is the ask") is
   out of date; `core` is not touched by this spec, and it is fixed by the next one that opens it.
+- **§3, for projects only (2026-11-13, the owner's decision).** A new project no longer asks the
+  phone: once the shape, the disk rules and the id pass, the daemon opens the request and approves it
+  itself, through the same `apply` inside the registry's queue, so the status poll and the "Added"
+  notice are unchanged. No device is needed, and neither the ceiling of three nor "already waiting"
+  applies. **What this gives up:** the routes have no login (`networking.md`), so any process on the
+  machine — an agent's `Bash` included — can now register any folder the disk rules allow (anything
+  outside `/`, the home itself, `~/.factotum` and the checkout, and not nested in another project)
+  and write there from its next session. The "Added · <name>" notice is the only signal left that it
+  happened. **Shared folders keep the approval.** Reverting is restoring `requestProject` in
+  `packages/sessions/src/folders.ts` to `open(...)` and `gate()` with the phone checks.
 
 ## Reverting
 
