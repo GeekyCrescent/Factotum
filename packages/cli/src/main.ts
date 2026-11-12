@@ -13,10 +13,23 @@
 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_MODULES, inboxModule, sessionsModule, tasksModule, type CreateEngine, type CreateInbox, type CreateTasks, type TasksLink } from '@factotum/modules'
+import {
+  ALL_MODULES,
+  inboxModule,
+  mockupsModule,
+  sessionsModule,
+  tasksModule,
+  type CreateEngine,
+  type CreateInbox,
+  type CreateMockups,
+  type CreateTasks,
+  type MockupsLink,
+  type TasksLink,
+} from '@factotum/modules'
 import { createEngine } from '@factotum/sessions'
 import { createInbox } from '@factotum/inbox'
 import { createTasks, createTasksLink } from '@factotum/tasks'
+import { createMockups, createMockupsLink } from '@factotum/mockups'
 import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum/kernel'
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
@@ -147,6 +160,12 @@ const inboxFactory: CreateInbox = createInbox
 const tasksFactory: CreateTasks = createTasks
 const newTasksLink: () => TasksLink = createTasksLink
 
+/**
+ * And for the mockups (spec 2026-11-12-maquetas, D1): the same two ties, the factory and the link.
+ */
+const mockupsFactory: CreateMockups = createMockups
+const newMockupsLink: () => MockupsLink = createMockupsLink
+
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
   // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
@@ -177,6 +196,8 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // Empty until `tasks` starts; `sessions` reads its family on every `tools/list` (design D1, D7): while
   // `tasks` is off, starting or failed, `create_task` is simply not on the list (criterion 2).
   const tasksLink = newTasksLink()
+  // The same for `submit_stage`, the family the mockups' stage sessions submit with (design D1).
+  const mockupsLink = newMockupsLink()
 
   let handle
   try {
@@ -184,9 +205,10 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
       env,
       modules: [
         ...ALL_MODULES,
-        sessionsModule(launchEngine, hookUrl, { installRoot: installRoot(), agentTools: [tasksLink.family] }),
+        sessionsModule(launchEngine, hookUrl, { installRoot: installRoot(), agentTools: [tasksLink.family, mockupsLink.family] }),
         inboxModule(inboxFactory),
         tasksModule(tasksFactory, tasksLink, { nowOffsetMs: tasksNowOffset(env, process.env, (message) => console.warn(message)) }),
+        mockupsModule(mockupsFactory, mockupsLink),
       ],
       version: VERSION,
       site: createStaticSite(siteRoot()),
