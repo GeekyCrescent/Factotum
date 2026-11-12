@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 import { parseKit } from './kit.ts'
-import { parsePackage, type PackageEntry } from './package.ts'
+import { channelOf, parsePackage, seenOnSite, splitSendVia, type PackageEntry } from './package.ts'
 
 const fixture = (name: string) => readFile(new URL(`../../test/fixtures/${name}`, import.meta.url), 'utf8')
 const kit = parseKit(await fixture('kit.md'))
@@ -148,4 +148,149 @@ test('ads: nothing is missing in a complete entry; an entry without a body or ro
   const noSendVia = parsePackage('x.md', '## 1. Bare Co\n\n- **Role:** Dev · **CV version:** A\n\n> Hi.\n', kit)
   assert.deepEqual(noSendVia.entries[0]?.missing, ['sendVia'])
   assert.equal(noSendVia.entries[0]?.channel, 'form')
+})
+
+// ── S4b: the email shapes (files 03 and 04) ────────────────────────────────────────────────────────
+
+const wave1 = parsePackage('03-wave1.md', await fixture('package-wave1.md'), kit)
+const wave2 = parsePackage('04-wave2.md', await fixture('package-wave2.md'), kit)
+
+const channels = (file: { readonly entries: readonly PackageEntry[] }) =>
+  file.entries.reduce<Record<string, number>>((counts, e) => ({ ...counts, [e.channel]: (counts[e.channel] ?? 0) + 1 }), {})
+
+test('emails: Subject, and the body is the blockquote right after the bullets', () => {
+  const first = entry(wave1.entries, 1)
+  assert.equal(first.letter?.subject, 'Part-time junior engineer (Node/AWS/AI), Jan–Jun 2027')
+  assert.ok(first.letter?.body.startsWith('Hi Kookaburra team,\n\nYour careers FAQ'))
+  assert.deepEqual(first.missing, [])
+})
+
+test('channel by the PRIMARY destination: one per shape of Send via', () => {
+  const shapes: readonly (readonly [string, string])[] = [
+    ['hr@acme.example', 'email'],
+    ['email info@acme.example', 'email'],
+    ['email to Careers — **[Careers email — TODO]**', 'email'],
+    ['LinkedIn message to Kim Doe (first)', 'linkedin'],
+    ['LinkedIn message to Kim Doe', 'linkedin'],
+    ['LinkedIn to Kim Doe (https://www.linkedin.com/company/acme)', 'linkedin'],
+    ['LinkedIn (https://linkedin.com/company/acme)', 'linkedin'],
+    ['SEEK — https://www.seek.com.au/job/1', 'platform'],
+    ['BambooHR — https://acme.bamboohr.com/careers/1', 'form'],
+    ['https://acme.example/contact-us (contact form, Sydney office)', 'form'],
+    ['the contact option on https://acme.example', 'form'],
+    ['https://acme.example/careers (register interest; no email in the data)', 'form'],
+    ['Expression of Interest at https://jobs.dover.com/acme', 'form'],
+    ['the Sales contact at https://acme.example/partner (or phone 1300 000 000)', 'form'],
+  ]
+  for (const [primary, expected] of shapes) assert.equal(channelOf(primary).channel, expected, primary)
+})
+
+test('Send via splits outside parentheses by · ; plus then or otherwise and (cc', () => {
+  assert.deepEqual(splitSendVia('LinkedIn message to A (first) · email a@x.example'), ['LinkedIn message to A (first)', 'email a@x.example'])
+  assert.deepEqual(splitSendVia('LinkedIn to A (https://x; y), then email a@x.example'), ['LinkedIn to A (https://x; y)', 'email a@x.example'])
+  assert.deepEqual(splitSendVia('a@x.example, plus LinkedIn to B'), ['a@x.example', 'LinkedIn to B'])
+  assert.deepEqual(splitSendVia('LinkedIn to A; b@x.example only as a fallback'), ['LinkedIn to A', 'b@x.example only as a fallback'])
+  assert.deepEqual(splitSendVia('LinkedIn message to A; otherwise the contact option on https://x'), ['LinkedIn message to A', 'the contact option on https://x'])
+  assert.deepEqual(splitSendVia('a@x.example, or the postings via https://x'), ['a@x.example', 'the postings via https://x'])
+  assert.deepEqual(splitSendVia('Dover — https://x (cc c@x.example optional)'), ['Dover — https://x', 'cc c@x.example optional'])
+  assert.deepEqual(splitSendVia('form — https://x **and** email h@x.example'), ['form — https://x', 'email h@x.example'])
+  assert.deepEqual(splitSendVia('LinkedIn to A (https://x), cc p@x.example (seen)'), ['LinkedIn to A (https://x)', 'cc p@x.example (seen)'])
+})
+
+test('LinkedIn first, then an email → linkedin, the instruction without linkedin.com URLs, the email a secondary contact', () => {
+  const lyrebird = entry(wave1.entries, 2)
+  assert.equal(lyrebird.channel, 'linkedin')
+  assert.deepEqual(lyrebird.target, { to: null, url: null, instruction: 'LinkedIn message to Robin Vale (first)' })
+  assert.deepEqual(lyrebird.addresses, [{ email: 'info@lyrebird.example', status: 'unverified', evidence: null, primary: false }])
+  const possum = entry(wave2.entries, 1)
+  assert.equal(possum.channel, 'linkedin')
+  assert.equal(possum.target.instruction, 'LinkedIn message to Jo Park')
+  assert.deepEqual(possum.addresses.map((a) => a.email), ['business@possum.example'])
+  const quokka = entry(wave1.entries, 4)
+  assert.deepEqual(quokka.target, { to: null, url: null, instruction: 'LinkedIn' })
+})
+
+test('a form or a careers page first → form, even with LinkedIn after it', () => {
+  const numbat = entry(wave1.entries, 3)
+  assert.equal(numbat.channel, 'form')
+  assert.equal(numbat.target.url, 'https://numbat.example/contact-us/')
+  assert.equal(entry(wave1.entries, 5).target.url, 'https://wombat.example')
+  assert.equal(entry(wave2.entries, 8).channel, 'form')
+  assert.equal(entry(wave2.entries, 8).target.url, 'https://cassowary.bamboohr.com/careers')
+})
+
+test('email only when the first destination is an address; secondary addresses are contacts', () => {
+  const echidna = entry(wave1.entries, 6)
+  assert.equal(echidna.channel, 'email')
+  assert.equal(echidna.target.to, 'info@echidna.example')
+  assert.deepEqual(echidna.addresses, [{ email: 'info@echidna.example', status: 'unverified', evidence: null, primary: true }])
+  assert.deepEqual(entry(ads.entries, 5).addresses.map((a) => [a.email, a.primary]), [['hr@petrel.example', false]])
+  assert.deepEqual(entry(ads.entries, 7).addresses.map((a) => [a.email, a.primary]), [['careers@ironbark.example', false]])
+  assert.deepEqual(entry(ads.entries, 6).addresses, [])
+})
+
+test('channel counts per file', () => {
+  assert.deepEqual(channels(ads), { platform: 1, form: 5, email: 1 })
+  assert.deepEqual(channels(wave1), { email: 2, linkedin: 2, form: 2 })
+  assert.deepEqual(channels(wave2), { linkedin: 3, email: 4, form: 2 })
+})
+
+test('every address enters unverified, with or without the «Unverified address» mark', () => {
+  assert.equal(entry(wave1.entries, 1).addresses[0]?.status, 'unverified') // marked in the notes
+  assert.equal(entry(wave2.entries, 2).addresses[0]?.status, 'unverified') // not marked at all
+  assert.equal(entry(wave2.entries, 3).addresses[0]?.status, 'unverified') // marked in Send via
+})
+
+test('an address the package says was seen on the site, with a date, enters verified, with the line as evidence', () => {
+  const verified = (n: number) => entry(wave2.entries, n).addresses.filter((a) => a.status === 'verified')
+  assert.deepEqual(verified(4).map((a) => a.email), ['hello@emu.example']) // seen on the homepage on 10 Nov 2026
+  assert.deepEqual(verified(5).map((a) => a.email), ['info@bilby.example']) // seen on the site 10 Nov 2026
+  assert.deepEqual(verified(6).map((a) => a.email), ['contact@quoll.example']) // (seen 10 Nov 2026, …)
+  assert.deepEqual(verified(7).map((a) => a.email), ['hello@cockatoo.example']) // seen on the homepage, 10 Nov 2026
+  assert.deepEqual(verified(8).map((a) => a.email), ['hello@cassowary.example']) // seen on the contact page, 10 Nov 2026
+  assert.match(verified(4)[0]?.evidence ?? '', /seen on the homepage on 10 Nov 2026/)
+})
+
+test('«seen on the homepage» without a date, and «only seen on an aggregator», are not verified', () => {
+  assert.deepEqual(entry(wave2.entries, 9).addresses.map((a) => a.status), ['unverified'])
+  assert.equal(seenOnSite('support@x.example (seen on the homepage) only as a fallback'), false)
+  assert.equal(seenOnSite('the listing was only seen on an aggregator: https://jobs.example/2026-10-x'), false)
+  assert.equal(seenOnSite('hello@x.example (from Exa data, but seen on the homepage on 10 Nov 2026)'), true)
+  assert.equal(seenOnSite('hello@x.example (seen 2026-11-10 on the site)'), true)
+  assert.equal(seenOnSite('seen in LinkedIn data 10 Nov 2026'), false)
+  assert.equal(seenOnSite('seen (somewhere) 10 Nov 2026'), false)
+})
+
+test('wave 1: the signature line becomes the {signature} slot', () => {
+  const body = entry(wave1.entries, 1).letter?.body ?? ''
+  assert.ok(body.endsWith('Could we have a 15-minute call?\n\n{signature}'))
+  assert.ok(entry(ads.entries, 6).letter?.body.endsWith('Thank you,\n{signature}'))
+})
+
+test('wave 2: the signature at the top of the file → {signature} appended to every body', () => {
+  for (const e of wave2.entries) assert.ok(e.letter?.body.endsWith('\n\n{signature}'), `${e.n}`)
+  assert.ok(entry(wave2.entries, 1).letter?.body.endsWith('Would a 20-minute chat in the week of 19 January suit?\n\n{signature}'))
+  assert.ok(!entry(ads.entries, 3).letter?.body.includes('{signature}'), 'no top signature in the ads file: nothing appended')
+})
+
+test('no stored text carries the phone or the signature of the fixture profile', () => {
+  for (const file of [ads, wave1, wave2]) {
+    for (const e of file.entries) {
+      const texts = [e.letter?.subject, e.letter?.body, e.linkedin, e.notes, ...e.form.flatMap((f) => [f.answer, f.hint])]
+      for (const text of texts.filter((t): t is string => typeof t === 'string')) {
+        assert.ok(!text.includes('+61 400 000 000'), `${file.file}#${e.n}: ${text}`)
+        assert.ok(!text.includes('[phone]'), `${file.file}#${e.n}: ${text}`)
+        assert.ok(!text.includes('alex.example@example.com'), `${file.file}#${e.n}: ${text}`)
+      }
+    }
+  }
+})
+
+test('the LinkedIn note inline (wave 2) or in a blockquote after «— to X:» (wave 1)', () => {
+  assert.equal(entry(wave2.entries, 1).linkedin, 'Hi Jo — I own the tool-calling layer of a production agent. Open to a part-time engineer on your agents?')
+  assert.equal(entry(wave1.entries, 1).linkedin, 'Hi Dana, I build production LLM agents and would like to offer part-time engineering. Open to a 15-min chat?')
+})
+
+test('other placeholders stay in the body for the linter to block', () => {
+  assert.ok(entry(wave2.entries, 2).letter?.body.includes('[Why climate: one honest sentence in your own words. TODO]'))
 })

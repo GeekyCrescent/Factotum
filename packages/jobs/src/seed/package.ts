@@ -8,7 +8,7 @@
  */
 
 import { resolveFormAnswer, type Kit, type KitRefResult } from './kit.ts'
-import { blockquoteAt, firstEmail, sectionsOf } from './markdown.ts'
+import { blockquoteAt, emailsIn, firstEmail, sectionsOf, slotSignature } from './markdown.ts'
 
 export type Channel = 'email' | 'form' | 'platform' | 'linkedin'
 
@@ -34,6 +34,19 @@ export interface PackageKitRef extends KitRefResult {
   readonly question: string
 }
 
+/**
+ * An email address named in `Send via`, for the company's contacts (design D8 step 4). Every one enters
+ * `unverified` unless the package says it was seen on the site with a date (`seenOnSite`).
+ */
+export interface SeedAddress {
+  readonly email: string
+  readonly status: 'verified' | 'unverified'
+  /** The `Send via` clause that made it `verified`, for the report; null when `unverified`. */
+  readonly evidence: string | null
+  /** The address the entry is sent to (`target.to` of an `email` entry). */
+  readonly primary: boolean
+}
+
 export interface PackageEntry {
   readonly n: number
   readonly company: string
@@ -51,6 +64,7 @@ export interface PackageEntry {
   readonly linkedin: string | null
   /** «Owner notes»: never sent, so placeholders stay as they are. */
   readonly notes: string
+  readonly addresses: readonly SeedAddress[]
   readonly kitRefs: readonly PackageKitRef[]
   /** The fields the entry lacks, for the report (`{ file, n, missing }`). */
   readonly missing: readonly string[]
@@ -65,6 +79,12 @@ const URL_IN_TEXT = /https?:\/\/[^\s()<>"'`*]+/i
 const PORTFOLIO_TODO = /`?\[[^\]\n]*portfolio[^\]\n]*\bTODO\b[^\]\n]*\]`?/gi
 const BODY_HEADING = /^\*\*(cover letter|profile summary|expression-of-interest email)\b/i
 const FIELD = /\*\*([^*]+?):\*\*\s*/g
+/** linkedin.com URLs are never opened (guardrail 5): they leave the instruction. */
+const LINKEDIN_URL = /https?:\/\/(?:[a-z]+\.)?linkedin\.com\/[^\s)]*/gi
+const SEEN_DATE = String.raw`(?:\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{4}|\d{4}-\d{2}-\d{2})`
+/** `seen`, then within 60 characters and without crossing `(`, `)` or `;`, a date (design D8 step 4, v4 N6). */
+const SEEN = new RegExp(String.raw`\bseen\b[^()\n;]{0,60}?${SEEN_DATE}`, 'gi')
+const NOT_THE_SITE = /aggregator|\bexa\b|linkedin data/i
 
 const firstUrl = (text: string): string | null => URL_IN_TEXT.exec(text)?.[0].replace(/[.,;:]+$/, '') ?? null
 const slotPortfolio = (text: string): string => text.replace(PORTFOLIO_TODO, '{portfolio}')
@@ -101,6 +121,10 @@ function fieldsOf(lines: readonly string[]): ReadonlyMap<string, string> {
  */
 export function channelOf(primary: string): { readonly channel: Channel; readonly target: Target } {
   const text = primary.trim()
+  if (/^linkedin\b/i.test(text)) {
+    const instruction = text.replace(LINKEDIN_URL, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim()
+    return { channel: 'linkedin', target: { to: null, url: null, instruction } }
+  }
   if (/^seek\b/i.test(text)) return { channel: 'platform', target: { to: null, url: firstUrl(text), instruction: null } }
   const address = text.replace(/^email\s+(to\s+)?/i, '')
   const email = firstEmail(address)
@@ -116,7 +140,7 @@ const SEPARATORS = [' · ', ';', ', plus ', ' plus ', ', then ', ' then ', ', ot
 
 /** Splits `Send via` into its destinations, outside parentheses and brackets (design D8 step 4). */
 export function splitSendVia(value: string): readonly string[] {
-  const text = value.replace(/\*\*and\*\*/g, 'and').replace(/\s\(cc\s+([^)]*)\)/g, ' · cc $1')
+  const text = value.replace(/\*\*and\*\*/g, 'and').replace(/\s\(cc\s+([^)]*)\)/g, ' · cc $1').replace(/,\s+cc\s+/g, ' · cc ')
   const parts: string[] = []
   let depth = 0
   let start = 0
@@ -133,6 +157,48 @@ export function splitSendVia(value: string): readonly string[] {
   }
   parts.push(text.slice(start))
   return parts.map((part) => part.trim()).filter((part) => part.length > 0)
+}
+
+const seenMatches = (clause: string): readonly RegExpExecArray[] =>
+  [...clause.matchAll(SEEN)].filter((match) => !NOT_THE_SITE.test(match[0]))
+
+/** The clause says the address was seen on the company's own site, with a date (design D8 step 4, v4 N6). */
+export function seenOnSite(clause: string): boolean {
+  return seenMatches(clause).length > 0
+}
+
+/**
+ * The verified addresses of a `Send via`: each «seen … <date>» marks the nearest address before it in
+ * the same destination, or, when that destination names none, the last one of the destination before
+ * (`… shows x@y and https://… (seen 10 Nov 2026)` is split at its ` and `).
+ */
+function verifiedOf(parts: readonly string[]): ReadonlyMap<string, string> {
+  const verified = new Map<string, string>()
+  parts.forEach((part, index) => {
+    for (const seen of seenMatches(part)) {
+      const before = emailsIn(part).filter((found) => found.index < seen.index).at(-1)
+      const email = before?.email ?? emailsIn(parts[index - 1] ?? '').at(-1)?.email
+      if (email !== undefined) verified.set(email.toLowerCase(), part)
+    }
+  })
+  return verified
+}
+
+function addressesOf(parts: readonly string[], to: string | null): readonly SeedAddress[] {
+  const verified = verifiedOf(parts)
+  const seen = new Set<string>()
+  return parts
+    .flatMap((part) => emailsIn(part).map((found) => found.email))
+    .filter((email) => {
+      const key = email.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((email) => {
+      const evidence = verified.get(email.toLowerCase()) ?? null
+      return { email, status: evidence === null ? 'unverified' : 'verified', evidence, primary: email === to }
+    })
 }
 
 /** The lines after a bold heading line, up to the next bold heading or the end. */
@@ -193,12 +259,22 @@ function cvBaseOf(value: string | undefined): 'A' | 'B' | null {
   return letter === 'A' || letter === 'B' ? letter : null
 }
 
-function entryOf(n: number, company: string, lines: readonly string[], kit: Kit): PackageEntry {
+/**
+ * The body with the signature as the `{signature}` slot (design D8 step 5): the signature line replaced
+ * (wave 1, the ads), or the slot appended when the file signs once at the top (wave 2).
+ */
+function signedBody(raw: string | null, signedAtTop: boolean): string | null {
+  if (raw === null) return null
+  const { text, found } = slotSignature(raw)
+  return found || !signedAtTop ? text : `${text}\n\n{signature}`
+}
+
+function entryOf(n: number, company: string, lines: readonly string[], kit: Kit, signedAtTop: boolean): PackageEntry {
   const fields = fieldsOf(lines)
   const sendVia = fields.get('send via') ?? null
-  const primary = sendVia === null ? '' : (splitSendVia(sendVia)[0] ?? '')
-  const { channel, target } = channelOf(primary)
-  const body = bodyOf(lines)
+  const parts = sendVia === null ? [] : splitSendVia(sendVia)
+  const { channel, target } = channelOf(parts[0] ?? '')
+  const body = signedBody(bodyOf(lines), signedAtTop)
   const subject = fields.get('subject') ?? null
   const role = fields.get('role') ?? null
   const cvBase = cvBaseOf(fields.get('cv version'))
@@ -226,6 +302,7 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit)
     skills: skillsOf(lines),
     linkedin: linkedin === null ? null : slotPortfolio(linkedin),
     notes: notesOf(lines),
+    addresses: addressesOf(parts, target.to),
     kitRefs: refs,
     missing,
   }
@@ -233,10 +310,12 @@ function entryOf(n: number, company: string, lines: readonly string[], kit: Kit)
 
 /** A package file → its entries: each `## N. Company` up to the next `---`. */
 export function parsePackage(file: string, markdown: string, kit: Kit): PackageFile {
+  const preamble = markdown.split(/^##\s+\d+\./m)[0] ?? ''
+  const signedAtTop = /^\*\*Signature\b/im.test(preamble)
   const entries = sectionsOf(markdown).map((section) => {
     const end = section.lines.findIndex((line) => line.trim() === '---')
     const lines = end === -1 ? section.lines : section.lines.slice(0, end)
-    return entryOf(section.n, section.title, lines, kit)
+    return entryOf(section.n, section.title, lines, kit, signedAtTop)
   })
   return { file, entries }
 }

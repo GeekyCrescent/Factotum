@@ -56,6 +56,10 @@ export function blockquoteAt(lines: readonly string[], from: number): { readonly
 
 export const firstEmail = (text: string): string | null => EMAIL_IN_TEXT.exec(text)?.[0] ?? null
 
+/** Every email address in a text, with where it starts. */
+export const emailsIn = (text: string): readonly { readonly email: string; readonly index: number }[] =>
+  [...text.matchAll(new RegExp(EMAIL_IN_TEXT.source, 'gi'))].map((match) => ({ email: match[0], index: match.index }))
+
 /** `Name · email · phone · LinkedIn`: three or more ` · ` parts, one of them an email address. */
 export function isSignatureLine(line: string): boolean {
   const parts = line.split(' · ')
