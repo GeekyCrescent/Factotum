@@ -54,7 +54,13 @@
     "",
     "tasks: the kanban board. It lives on ONE host, the one that is always on (mode board); on the",
     "other host use mode relay with relayTo, the board host's machine name. There is NO backup of",
-    "the board. Read docs/tasks.md before turning it on."
+    "the board. Read docs/tasks.md before turning it on.",
+    "",
+    "mockups: a client's request to a deployed URL by stages, on ONE host (the one with the vault",
+    "and vercel). docsSiteId is the sessions project that contains vault.projectsDir; workRoot is",
+    "where new work folders go; mapFile and model are optional. Stage sessions write outside their",
+    "project: set crossWritesAllowed true only if sessions has allowOutside. EVERY URL it deploys is",
+    "PUBLIC. Read docs/mockups.md before turning it on."
   ],
   "environment": "prod",
   "listen": {
@@ -123,6 +129,16 @@
       "mode": "board",
       "timeZone": "Australia/Sydney",
       "model": "sonnet"
+    },
+    "mockups": {
+      "enabled": false,
+      "docsSiteId": "personal",
+      "vault": {
+        "projectsDir": "~/Obsidian/Personal/01-projects",
+        "mapFile": "~/Obsidian/Personal/06-maps/day-job/day-job.md"
+      },
+      "workRoot": "~/Work/Projects",
+      "crossWritesAllowed": false
     }
   }
 }

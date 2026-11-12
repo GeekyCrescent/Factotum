@@ -166,6 +166,16 @@ push, agents that create tasks and are launched from a card. It lives on **one**
 is always on — and the other host opens it there. **There is no backup.** [docs/tasks.md](docs/tasks.md)
 says where to put it, what goes to Claude and to the push, and who can create cards. ADR-0021 is the why.
 
+## Mockups
+
+A client's request — an RFP, a meeting, a few bullets — taken to a deployed URL by stages: brief,
+concepts, plan with visual directions, build, delivery, and changes after. Each stage is an agent
+session launched from the screen that leaves its document in your vault; you approve, choose or redo
+from the phone at each gate. Directions, previews and production are **public Vercel URLs**, and real
+client data is kept out of them by a check that only catches literal copies.
+[docs/mockups.md](docs/mockups.md) says what it needs (a vault, a logged-in `vercel`, writes outside
+the project) and what it does not protect. ADR-0022 is the why.
+
 ## Two environments
 
 `dev` and `prod` are separate configs, separate state and separate ports, and they
@@ -262,6 +272,8 @@ packages/inbox    the mail digest: IMAP read-only, classification, digests on di
                   Knows nothing about HTTP either
 packages/tasks    the task board: cards, cycles, Triage, reminders, in one JSON file.
                   Knows nothing about HTTP either
+packages/mockups  mockups by stages: runs, gates, prompts, the real-data guard, the
+                  vault. Knows nothing about HTTP either
 packages/cli      the `factotum` binary — and the composition root
 modules/          the bundled modules, plus local.ts where yours go
 apps/web          the client shell: navigation and module mounting
