@@ -18,6 +18,7 @@ import { uuidv7 } from '@factotum/sessions'
 import { addressTransition, appTransition, followupTransition, sendTransition } from '../state.ts'
 import type {
   Application,
+  Artifacts,
   Company,
   Contact,
   EventKind,
@@ -225,6 +226,12 @@ export function getCompany(q: Queries, id: string): Company | undefined {
   })
 }
 
+/** The seed matches companies by `nameKey` (design D8 step 6). */
+export const companyByNameKey = (q: Queries, nameKey: string): Company | undefined => {
+  const row = q.get<Row>('SELECT id FROM companies WHERE name_key = ?', nameKey)
+  return row === undefined ? undefined : getCompany(q, text(row, 'id'))
+}
+
 /** `company.record` of design D6: the text of the seeded fields. */
 export const companyRecord = (q: Queries, id: string): string | undefined => {
   const row = q.get<Row>('SELECT data FROM companies WHERE id = ?', id)
@@ -292,6 +299,11 @@ export function getOpportunity(q: Queries, id: string): Opportunity | undefined 
     discardReason: textOrNull(row, 'discard_reason'),
     checkedAt: textOrNull(row, 'checked_at'),
   })
+}
+
+export const opportunityIdByDedupeKey = (q: Queries, dedupeKey: string): string | undefined => {
+  const row = q.get<Row>('SELECT id FROM opportunities WHERE dedupe_key = ?', dedupeKey)
+  return row === undefined ? undefined : text(row, 'id')
 }
 
 // ── Sends ────────────────────────────────────────────────────────────────────────────────────────
@@ -373,6 +385,12 @@ export const getApplication = (q: Queries, id: string): Application | undefined 
   return row === undefined ? undefined : toApplication(q, row)
 }
 
+/** `seed_key = '<file>#<N>'` (requirements crit. 10): what keeps a second import from duplicating. */
+export const applicationBySeedKey = (q: Queries, seedKey: string): Application | undefined => {
+  const row = q.get<Row>('SELECT * FROM applications WHERE seed_key = ?', seedKey)
+  return row === undefined ? undefined : toApplication(q, row)
+}
+
 export function applicationsByState(q: Queries, states: readonly Application['state'][]): readonly Application[] {
   const marks = states.map(() => '?').join(', ')
   return q.all<Row>(`SELECT * FROM applications WHERE state IN (${marks}) ORDER BY rowid`, ...states).map((row) => toApplication(q, row))
@@ -430,6 +448,54 @@ export function saveApplication(q: Queries, app: Application, event: EventSpec, 
   )
   for (const send of app.sends) upsertSend(q, app.id, send)
   appendEvent(q, { ...event, applicationId: app.id, companyId: app.companyId }, now)
+}
+
+// ── Artifacts ────────────────────────────────────────────────────────────────────────────────────
+
+type ArtifactContent = Pick<Artifacts, 'cv' | 'letter' | 'form' | 'skills' | 'linkedin' | 'origin'>
+
+/**
+ * A version of an application's artifacts. It carries NO event of its own: a version is the content
+ * of the event that made it (`imported` of the seed, `prepared` of a generation), written beside it in
+ * the same `tx` by the same caller.
+ */
+export function insertArtifacts(q: Queries, applicationId: string, a: Artifacts, now: Date): void {
+  const content: ArtifactContent = { cv: a.cv, letter: a.letter, form: a.form, skills: a.skills, linkedin: a.linkedin, origin: a.origin }
+  q.run(
+    `INSERT INTO artifacts (application_id, version, content, pdf, png, contact_hash, profile_version, rules, usage, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    applicationId,
+    a.version,
+    JSON.stringify(content),
+    a.pdf,
+    a.png,
+    a.contactHash,
+    a.profileVersion,
+    JSON.stringify(a.rules),
+    a.usage === null ? null : JSON.stringify(a.usage),
+    now.toISOString(),
+  )
+}
+
+export function getArtifacts(q: Queries, applicationId: string, version: number): Artifacts | undefined {
+  const row = q.get<Row>('SELECT * FROM artifacts WHERE application_id = ? AND version = ?', applicationId, version)
+  if (row === undefined) return undefined
+  const content = json<ArtifactContent>(row, 'content', { cv: null, letter: null, form: [], skills: null, linkedin: null, origin: 'seed' })
+  return deepFreeze({
+    version: Number(row.version),
+    cv: content.cv,
+    pdf: textOrNull(row, 'pdf'),
+    png: textOrNull(row, 'png'),
+    contactHash: textOrNull(row, 'contact_hash'),
+    letter: content.letter,
+    form: content.form,
+    skills: content.skills,
+    linkedin: content.linkedin,
+    profileVersion: Number(row.profile_version),
+    rules: json(row, 'rules', []),
+    usage: json(row, 'usage', null),
+    origin: content.origin,
+  })
 }
 
 const companyOf = (q: Queries, applicationId: string): string | null =>
