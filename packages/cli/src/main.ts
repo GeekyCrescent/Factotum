@@ -41,6 +41,7 @@ import { install, uninstall } from './install.ts'
 import { qrCommand } from './qr-command.ts'
 import { siteCommand, stripEnvFlag } from './site-command.ts'
 import { pushCommand } from './push-command.ts'
+import { jobsCommand } from './jobs-command.ts'
 import { askTimeoutFrom } from './ask-timeout.ts'
 import { tasksNowOffset } from './tasks-now.ts'
 
@@ -52,6 +53,8 @@ const USAGE = `factotum ${VERSION}
   factotum qr [--env dev|prod]         show the QR again, without touching the config
   factotum site <list|add|rm>          the projects agents may write in (added from the app)
   factotum push reset [--env dev|prod] forget every device subscribed to notifications
+  factotum jobs test-application --to <addr> [--env dev|prod]
+                                       the test application (close it with --close <id> --reason <text>)
   factotum install [--env dev|prod]    keep it running across logins (launchd)
   factotum uninstall [--env dev|prod]  stop doing that
 
@@ -103,6 +106,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'push':
       // Same reason as `site`: `--env` must not reach the subcommand parser.
       return await pushCommand({ env, argv: stripEnvFlag(rest) })
+    case 'jobs':
+      // Same reason as `site`: `--env` must not reach the subcommand parser.
+      return await jobsCommand({ env, argv: stripEnvFlag(rest) })
     case 'start':
       return await start(env)
     case 'install':
