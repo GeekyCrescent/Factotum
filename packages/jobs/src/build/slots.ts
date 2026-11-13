@@ -19,7 +19,10 @@ export type SlotName = (typeof SLOT_NAMES)[number]
 /** Kit §3, «Neutral answer (default)», first sentence. */
 export const RATE_NEUTRAL = "I'm open to the advertised range."
 
-/** The block each slot gives when its field is empty; `{rate}` gives none. */
+/**
+ * The block each slot gives when its field is empty; `{rate}` gives none. `{signature}` is
+ * `missing-phone` for its phone, and `missing-profile-field` for its name or email (`Filled.blocks`).
+ */
 export const SLOT_WARNING: Readonly<Record<SlotName, WarningCode | null>> = {
   signature: 'missing-phone',
   suburb: 'missing-profile-field',
@@ -33,8 +36,43 @@ const SEPARATOR = ' · '
 
 export const isSlotName = (value: string): value is SlotName => (SLOT_NAMES as readonly string[]).includes(value)
 
-/** The signature line: name · email · phone · LinkedIn (the order of the package's signatures). */
-export function signatureOf(profile: Profile): string {
+/** A slot that stayed unfilled: the block it gives and the profile field that is empty (D6, `detail`). */
+export interface SlotBlock {
+  readonly slot: SlotName
+  readonly code: WarningCode
+  /** The key of `profile.identity` the owner fills to clear it. */
+  readonly field: IdentityField
+}
+
+type IdentityField = keyof Profile['identity']
+
+/**
+ * What `{signature}` needs, in the order its blocks are named: the phone is `missing-phone` (the D6
+ * table); a name or an email is `missing-profile-field` with the field («Huecos»: a slot without its
+ * field gives its own block, with the field in the `detail`). LinkedIn is optional.
+ */
+const SIGNATURE_NEEDS: readonly (readonly [IdentityField, WarningCode])[] = [
+  ['name', 'missing-profile-field'],
+  ['email', 'missing-profile-field'],
+  ['phone', 'missing-phone'],
+]
+
+/** The field each other slot reads; `{rate}` reads the preferences and never blocks. */
+const SLOT_FIELD: Readonly<Record<Exclude<SlotName, 'signature' | 'rate'>, IdentityField>> = {
+  suburb: 'suburb',
+  timezone: 'timezone',
+  portfolio: 'portfolioUrl',
+}
+
+const present = (value: string): string | null => (value.trim() === '' ? null : value.trim())
+const isEmpty = (profile: Profile, field: IdentityField): boolean => present(profile.identity[field]) === null
+
+/**
+ * The signature line: name · email · phone · LinkedIn (the order of the package's signatures), or
+ * null when the name, the email or the phone is empty — a partial signature never goes out.
+ */
+export function signatureOf(profile: Profile): string | null {
+  if (SIGNATURE_NEEDS.some(([field]) => isEmpty(profile, field))) return null
   const { name, email, phone, linkedin } = profile.identity
   return [name, email, phone, linkedin]
     .map((part) => part.trim())
@@ -42,28 +80,32 @@ export function signatureOf(profile: Profile): string {
     .join(SEPARATOR)
 }
 
-/** The value of a slot, or null when its field is empty. */
+/** The value of a slot, or null when a field it needs is empty. */
 function valueOf(slot: SlotName, profile: Profile): string | null {
-  const present = (value: string): string | null => (value.trim() === '' ? null : value.trim())
   switch (slot) {
     case 'signature':
-      // Without a phone there is no signature: the CV and the letters need it (missing-phone).
-      return present(profile.identity.phone) === null ? null : signatureOf(profile)
-    case 'suburb':
-      return present(profile.identity.suburb)
-    case 'timezone':
-      return present(profile.identity.timezone)
+      return signatureOf(profile)
     case 'rate':
       return present(profile.preferences.rateExpectation) ?? RATE_NEUTRAL
-    case 'portfolio':
-      return present(profile.identity.portfolioUrl)
+    default:
+      return present(profile.identity[SLOT_FIELD[slot]])
   }
+}
+
+/** The blocks an unfilled slot gives: one per empty field it needs. */
+function blocksOf(slot: SlotName, profile: Profile): readonly SlotBlock[] {
+  if (slot === 'signature') return SIGNATURE_NEEDS.filter(([field]) => isEmpty(profile, field)).map(([field, code]) => ({ slot, code, field }))
+  if (slot === 'rate') return []
+  const code = SLOT_WARNING[slot]
+  return code === null ? [] : [{ slot, code, field: SLOT_FIELD[slot] }]
 }
 
 export interface Filled {
   readonly text: string
   /** The slots left unfilled, once each, in the order they first appear. */
   readonly missing: readonly SlotName[]
+  /** What those slots block on, each with its empty field (the linter's `detail`). */
+  readonly blocks: readonly SlotBlock[]
 }
 
 export function fillSlots(text: string, profile: Profile): Filled {
@@ -74,5 +116,5 @@ export function fillSlots(text: string, profile: Profile): Filled {
     if (!missing.includes(name)) missing.push(name)
     return token
   })
-  return { text: filled, missing }
+  return { text: filled, missing, blocks: missing.flatMap((slot) => blocksOf(slot, profile)) }
 }
