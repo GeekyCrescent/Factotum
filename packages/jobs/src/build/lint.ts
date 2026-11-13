@@ -19,6 +19,7 @@
 
 import { BRACKET_TOKEN, isSendableAddress } from '../shape.ts'
 import type { Artifacts, Channel, Company, CvDoc, FollowupVersion, Opportunity, Profile, Warning, WarningCode } from '../types.ts'
+import { unknownNumbers } from './numbers.ts'
 import { contactHashOf } from './render.ts'
 import { fillSlots, isSlotName } from './slots.ts'
 import { countTerm, HEALTH_KEYWORDS, HEALTH_WORDS, matchTerm, MAX_HEALTH_MENTIONS } from './terms.ts'
@@ -142,6 +143,15 @@ function forbiddenIn(texts: readonly Text[], profile: Profile): readonly Warning
   return cv.flatMap(({ where, text }) => profile.forbiddenStacks.filter((stack) => matchTerm(text, stack)).map((stack) => warn('forbidden-stack', where, stack)))
 }
 
+/** L2: the figures of the CV and the letter (subject included) need a source; the rest are not checked. */
+const NUMBERED: ReadonlySet<Where> = new Set(['cv', 'letter', 'subject'])
+
+function unknownNumbersIn(texts: readonly Text[], ctx: LintContext): readonly Warning[] {
+  return texts
+    .filter((t) => NUMBERED.has(t.where))
+    .flatMap(({ where, text }) => unknownNumbers(text, ctx).map((figure) => warn('unknown-number', where, `number ${figure} not in cv-maestro`)))
+}
+
 // — Too long —
 
 const wordsIn = (text: string): number => text.split(/\s+/).filter((word) => word !== '').length
@@ -196,6 +206,7 @@ export function lint(artifacts: Artifacts, ctx: LintContext): readonly Warning[]
     ...confidentialIn(texts, ctx.profile),
     ...healthIn(texts, ctx.company.isHealthEmployer),
     ...forbiddenIn(texts, ctx.profile),
+    ...unknownNumbersIn(texts, ctx),
     ...tooLongIn(artifacts, texts, ctx.channel),
     ...cvWarnings(artifacts, ctx),
     ...(artifacts.letter === null && !ctx.letterPending ? [warn('missing-letter', 'letter', 'no letter')] : []),
