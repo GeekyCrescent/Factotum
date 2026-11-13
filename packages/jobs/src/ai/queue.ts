@@ -24,23 +24,21 @@ import type { Db, Queries } from '../store/db.ts'
 import {
   dueWork,
   getApplication,
-  getFollowup,
   getMeta,
   insertWork,
   saveApplication,
   saveWork,
   setGenRequest,
-  type GenRequestKind,
   type Lane,
   type Work,
   type WorkKind,
 } from '../store/repo.ts'
 import { fail, ok, type Application, type Artifacts, type Followup, type FollowupVersion, type Result, type Warning } from '../types.ts'
-import { PAUSED_UNTIL, writeReturn, type RewriteFailed } from './returns.ts'
+import { classesOf, PAUSED_UNTIL, writeReturn, type RewriteFailed } from './returns.ts'
 import type { RunFailure } from './run.ts'
 
 export type { Lane, Work, WorkKind } from '../store/repo.ts'
-export { LIMIT_PAUSE_MS, MAX_ATTEMPTS, PAUSED_UNTIL, RETRY_DELAYS_MS, type RewriteFailed } from './returns.ts'
+export { classesOf, LIMIT_PAUSE_MS, MAX_ATTEMPTS, PAUSED_UNTIL, RETRY_DELAYS_MS, type RewriteFailed } from './returns.ts'
 
 /** design D10 «Timeouts», by kind. `reprint` and `score` are not Claude writing: a minute. */
 export const TIMEOUT_MS: Readonly<Record<WorkKind, number>> = {
@@ -137,17 +135,6 @@ export interface Queue {
    * back in the queue. After `stop` the queue starts nothing and `add` is refused.
    */
   readonly stop: () => Promise<void>
-}
-
-/**
- * The classes a work writes in `gen_requests` (D3 «La guarda»): a `rewrite` of an application
- * brings back the letter AND the CV; a follow-up's, its own text.
- */
-export function classesOf(q: Queries, kind: WorkKind, ref: string): readonly GenRequestKind[] {
-  if (kind === 'cv' || kind === 'reprint') return ['cv']
-  if (kind === 'letter') return ['letter']
-  if (kind === 'rewrite') return getFollowup(q, ref) === undefined ? ['letter', 'cv'] : ['followup']
-  return []
 }
 
 const MISSING_KIND: Readonly<Partial<Record<Warning['code'], GeneratedKind>>> = { 'missing-cv': 'cv', 'missing-letter': 'letter' }

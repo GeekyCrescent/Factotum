@@ -37,7 +37,9 @@ import {
   saveWork,
   setMeta,
   type EventSpec,
+  type GenRequestKind,
   type Work,
+  type WorkKind,
 } from '../store/repo.ts'
 import { fail, ok, type Application, type Artifacts, type Followup, type Result } from '../types.ts'
 import type { ArtifactsPatch, JobOutput, JobResult, LintFn, RelintFn } from './queue.ts'
@@ -79,6 +81,44 @@ const EMPTY: Omit<Artifacts, 'version'> = {
 }
 
 const GENERATED: ReadonlySet<string> = new Set(['cv', 'letter'])
+
+/**
+ * The classes a work writes in `gen_requests` (D3 «La guarda»): a `rewrite` of an application
+ * brings back the letter AND the CV; a follow-up's, its own text.
+ */
+export function classesOf(q: Queries, kind: WorkKind, ref: string): readonly GenRequestKind[] {
+  if (kind === 'cv' || kind === 'reprint') return ['cv']
+  if (kind === 'letter') return ['letter']
+  if (kind === 'rewrite') return getFollowup(q, ref) === undefined ? ['letter', 'cv'] : ['followup']
+  return []
+}
+
+/**
+ * THE GUARD (D3, v4 A5): BY REQUEST OF THE SAME CLASS, NOT BY STATE. Some class of this work now
+ * points to ANOTHER work — a newer request of that class overtook it. A request of another class does
+ * not: a letter and a CV asked together both come back and both are kept.
+ */
+function superseded(q: Queries, work: Work): boolean {
+  const classes = new Set(classesOf(q, work.kind, work.ref))
+  return genRequestsOf(q, work.ref).some((r) => classes.has(r.kind) && r.workId !== work.id)
+}
+
+/** The application a work's entity belongs to (itself, or a follow-up's). */
+function applicationOfRef(q: Queries, ref: string): Application | undefined {
+  const row = getFollowup(q, ref)
+  return getApplication(q, row?.applicationId ?? ref)
+}
+
+function discard(q: Queries, work: Work, now: Date): Result<void> {
+  const app = applicationOfRef(q, work.ref)
+  if (app === undefined) return ok(undefined)
+  const followupId = app.id === work.ref ? {} : { followupId: work.ref }
+  appendEvent(q, { kind: 'prepared', data: { discarded: true, kind: work.kind, workId: work.id, ...followupId }, applicationId: app.id, companyId: app.companyId }, now)
+  return ok(undefined)
+}
+
+const REVIEWED: ReadonlySet<string> = new Set(['in-review', 'ready'])
+const FOLLOWUP_REVIEWED: ReadonlySet<string> = new Set(['draft', 'ready'])
 
 /** Another request of this entity is still queued or running (T-A2, T-A3). */
 function pendingBesides(q: Queries, entityId: string, workId: string): boolean {
@@ -131,8 +171,10 @@ export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatc
     const moved = appTransition(app, { type: 'rewrite-returned', pdfExists: pdfOn(artifacts, deps), warnings, version: app.version }, now) // T-A8
     return moved.ok ? saveApplication(q, moved.value, { kind: 'rewritten', data: { version: app.version, workId: work.id } }, now) : moved
   }
-  // Kept as a version; the state is not this return's to move.
-  return saveApplication(q, { ...app, updatedAt: now.toISOString() }, event, now)
+  // Kept as a version; the state is not this return's to move — re-linted when it is reviewable (D6).
+  const saved = saveApplication(q, { ...app, updatedAt: now.toISOString() }, event, now)
+  if (!saved.ok || !REVIEWED.has(app.state)) return saved
+  return deps.relintOne(q, { kind: 'application', id: app.id }, now)
 }
 
 export function followupReturned(q: Queries, work: Work, produced: Omit<Followup['versions'][number], 'version' | 'origin' | 'instruction'>, deps: ReturnDeps, now: Date): Result<void> {
@@ -145,7 +187,9 @@ export function followupReturned(q: Queries, work: Work, produced: Omit<Followup
     return moved.ok ? saveFollowup(q, moved.value, { kind: 'rewritten', data: { version: version.version, workId: work.id } }, now) : moved
   }
   const kept = { ...row, version: version.version, versions: [...row.versions, version], updatedAt: now.toISOString() }
-  return saveFollowup(q, kept, { kind: 'prepared', data: { kind: work.kind, version: version.version, workId: work.id } }, now)
+  const saved = saveFollowup(q, kept, { kind: 'prepared', data: { kind: work.kind, version: version.version, workId: work.id } }, now)
+  if (!saved.ok || !FOLLOWUP_REVIEWED.has(row.state)) return saved
+  return deps.relintOne(q, { kind: 'followup', id: row.id }, now)
 }
 
 // ── Failing for the third time ───────────────────────────────────────────────────────────────────
@@ -240,13 +284,18 @@ function failedRun(q: Queries, work: Work, reason: string, deps: ReturnDeps, now
   }
   const failed: Work = { ...work, state: 'failed', attempts, notBefore: null, reason, updatedAt: now.toISOString() }
   const saved = saveWork(q, failed)
-  return saved.ok ? workFailed(q, failed, deps, now) : saved
+  if (!saved.ok) return saved
+  return superseded(q, failed) ? ok(NOTHING) : workFailed(q, failed, deps, now)
 }
 
 function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, now: Date): Result<Aftermath> {
   liftPause(q, work, now)
   const saved = saveWork(q, { ...work, state: 'done', notBefore: null, reason: null, updatedAt: now.toISOString() })
   if (!saved.ok) return saved
+  if (output.type !== 'apply' && superseded(q, work)) {
+    const discarded = discard(q, work, now)
+    return discarded.ok ? ok(NOTHING) : discarded
+  }
   const written =
     output.type === 'application'
       ? applicationReturned(q, work, output.artifacts, deps, now)
