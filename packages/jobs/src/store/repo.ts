@@ -29,6 +29,7 @@ import type {
   Rule,
   Send,
 } from '../types.ts'
+import { fail, ok, type Result } from '../types.ts'
 import type { Queries, SqlValue } from './db.ts'
 
 type Row = Readonly<Record<string, SqlValue>>
@@ -561,8 +562,30 @@ export function insertFollowup(q: Queries, f: Followup, event: EventSpec, now: D
   appendEvent(q, { ...withData(event, { followupId: f.id }), applicationId: f.applicationId, companyId: companyOf(q, f.applicationId) }, now)
 }
 
-/** Writes a follow-up moved by `followupTransition` and, when given, its own send row (T-F6…T-F14). */
-export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Date, send?: Send): void {
+/** The follow-up states that only exist beside a send row of their own (T-F6…T-F10, T-F14). */
+const SEND_BACKED: ReadonlySet<Followup['state']> = new Set<Followup['state']>(['sending', 'sent', 'failed', 'send-unknown'])
+
+/**
+ * Why a follow-up and the send given with it cannot be written together, or null. A follow-up in a
+ * send state without ITS row (same follow-up, same state) would be stuck after a restart: the startup
+ * write only scans `sends`.
+ */
+function sendMismatch(f: Followup, send: Send | undefined): string | null {
+  if (!SEND_BACKED.has(f.state)) return null
+  if (send === undefined) return `a follow-up in ${f.state} needs its send row`
+  if (send.followupId !== f.id) return `the send row given is not this follow-up's (${String(send.followupId)})`
+  if (send.state !== f.state) return `the send row is ${send.state}, the follow-up ${f.state}`
+  return null
+}
+
+/**
+ * Writes a follow-up moved by `followupTransition` and, when given, its own send row (T-F6…T-F14).
+ * In `sending`/`sent`/`failed`/`send-unknown` the send is REQUIRED: a `conflict` otherwise, before
+ * anything is written.
+ */
+export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Date, send?: Send): Result<void> {
+  const mismatch = sendMismatch(f, send)
+  if (mismatch !== null) return fail('conflict', mismatch)
   q.run(
     'UPDATE followups SET channel = ?, contact_id = ?, state = ?, rewrite_from = ?, version = ?, warnings = ?, data = ?, updated_at = ? WHERE id = ?',
     f.channel,
@@ -577,6 +600,7 @@ export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Dat
   )
   if (send !== undefined) upsertSend(q, f.applicationId, send)
   appendEvent(q, { ...withData(event, { followupId: f.id }), applicationId: f.applicationId, companyId: companyOf(q, f.applicationId) }, now)
+  return ok(undefined)
 }
 
 // ── Profile versions, rules, meta ────────────────────────────────────────────────────────────────
@@ -656,7 +680,7 @@ function recoverSend(q: Queries, applicationId: string, row: Send, now: Date): v
   } else {
     const f = row.followupId === null ? undefined : getFollowup(q, row.followupId)
     const fMoved = f === undefined ? undefined : followupTransition(f, { type: 'smtp-unknown' }, now) // T-F8
-    if (fMoved?.ok === true) return saveFollowup(q, fMoved.value, { kind: 'send-unknown', data: restarted }, now, sendMoved.value)
+    if (fMoved?.ok === true && saveFollowup(q, fMoved.value, { kind: 'send-unknown', data: restarted }, now, sendMoved.value).ok) return
   }
   // The owner of the row is not in `sending` (it should be): the row alone still leaves `sending`, so
   // no send waits forever, and the event says the two disagreed.

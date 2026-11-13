@@ -179,6 +179,27 @@ test('follow-ups: create, read by application and by contact, apply a transition
   db.close()
 })
 
+test('a follow-up never reaches sending, sent, failed or send-unknown without its own send row', async () => {
+  using base = tempBase()
+  const db = await seeded(base)
+  write(db, (q) => repo.insertApplication(q, application({ state: 'sent', sends: [send({ state: 'sent' })] }), { seedKey: null }, note, NOW))
+  write(db, (q) => repo.insertFollowup(q, followup({ state: 'ready' }), { kind: 'followup-proposed' }, NOW))
+  const before = eventCount(db)
+  const own = (state: 'sending' | 'sent' | 'failed' | 'send-unknown') => send({ kind: 'followup-1', followupId: 'fu-1', messageId: '<f1@x>', state })
+  for (const state of ['sending', 'sent', 'failed', 'send-unknown'] as const) {
+    const missing = db.tx((q) => repo.saveFollowup(q, followup({ state }), { kind: 'approved' }, NOW))
+    assert.deepEqual(missing, { ok: false, error: { code: 'conflict', reason: `a follow-up in ${state} needs its send row` } })
+    const other = db.tx((q) => repo.saveFollowup(q, followup({ state }), { kind: 'approved' }, NOW, send({ kind: 'followup-1', followupId: 'fu-9', state })))
+    assert.equal(other.ok, false, `${state}: a row of another follow-up`)
+    const outOfStep = db.tx((q) => repo.saveFollowup(q, followup({ state }), { kind: 'approved' }, NOW, own(state === 'sent' ? 'failed' : 'sent')))
+    assert.equal(outOfStep.ok, false, `${state}: a row in another state`)
+  }
+  assert.equal(eventCount(db), before)
+  assert.equal(db.read((q) => repo.getFollowup(q, 'fu-1'))?.state, 'ready')
+  assert.deepEqual(db.tx((q) => repo.saveFollowup(q, followup({ state: 'sending' }), { kind: 'approved' }, NOW, own('sending'))), { ok: true, value: undefined })
+  db.close()
+})
+
 test('contacts: read by company, apply an address transition with its event', async () => {
   using base = tempBase()
   const db = await seeded(base)
