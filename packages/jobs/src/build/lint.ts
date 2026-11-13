@@ -180,6 +180,12 @@ function cvWarnings(artifacts: Artifacts, ctx: LintContext): readonly Warning[] 
   return [...phone, ...stale, ...(missing === null ? [] : [warn('missing-cv', 'cv', missing)])]
 }
 
+/** D6 «Carta ausente»: a state predicate, and only on `email` — the manual channels never send a letter. */
+function missingLetter(artifacts: Artifacts, ctx: LintContext): readonly Warning[] {
+  const isMissing = ctx.channel === 'email' && artifacts.letter === null && !ctx.letterPending
+  return isMissing ? [warn('missing-letter', 'letter', 'no letter')] : []
+}
+
 function adWarnings(artifacts: Artifacts, ctx: LintContext): readonly Warning[] {
   const senior = ctx.profile.redLines.titleWords.filter((word) => matchTerm(ctx.opportunity.title, word)).map((word) => warn('senior-title', 'ad', word, false))
   const gaps = ctx.opportunity.kind === 'vacancy' ? (artifacts.cv?.gaps ?? []) : []
@@ -209,7 +215,7 @@ export function lint(artifacts: Artifacts, ctx: LintContext): readonly Warning[]
     ...unknownNumbersIn(texts, ctx),
     ...tooLongIn(artifacts, texts, ctx.channel),
     ...cvWarnings(artifacts, ctx),
-    ...(artifacts.letter === null && !ctx.letterPending ? [warn('missing-letter', 'letter', 'no letter')] : []),
+    ...missingLetter(artifacts, ctx),
     ...adWarnings(artifacts, ctx),
   ])
 }

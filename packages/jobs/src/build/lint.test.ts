@@ -208,6 +208,14 @@ test('missing-letter: no letter while one is still queued does not give it; the 
   assert.deepEqual(only(lint(noLetter, { ...CTX, letterPending: false }), 'missing-letter'), [block('missing-letter', 'letter', 'no letter')])
 })
 
+test('missing-letter: only on the email channel — form, platform and linkedin never send a letter', () => {
+  const noLetter: Artifacts = { ...CLEAN, letter: null }
+  for (const channel of ['form', 'platform', 'linkedin'] as const) {
+    assert.deepEqual(only(lint(noLetter, { ...CTX, channel, to: null }), 'missing-letter'), [], channel)
+  }
+  assert.deepEqual(only(lint(noLetter, { ...CTX, channel: 'email' }), 'missing-letter'), [block('missing-letter', 'letter', 'no letter')])
+})
+
 // — Senior title —
 
 test('senior title: a title word of the profile in the ad’s title warns, and does not block', () => {
