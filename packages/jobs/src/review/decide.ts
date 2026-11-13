@@ -10,7 +10,8 @@
  * - `instruct` with a letter: `rewriting` (T-A7), the `instruction` event (`instructionEvent`) and a
  *   `rewrite` queued `interactive`. Without one (v6, M9): no rewrite — `generating` (T-A4) with a NEW
  *   `letter` queued, which reads the instruction from the same event.
- * - `override` («I checked it»): only `unsupported-claim` and `external-link`; the warning keeps its
+ * - `override` («I checked it», `checkIt`): `unsupported-claim`, `external-link`, `ad-closed`, and only
+ *   when one of them is open (`conflict nothing-to-check` otherwise); the warning keeps its
  *   code and gets `overridden`, the event carries the codes (never the text), and T-A5/T-A6 re-decide.
  * - `switch-to-form` (T-A10): to the ad's URL or the careers page, `channel-changed`, and a re-lint of
  *   that application (L4's `relintOne`, injected).
@@ -22,10 +23,11 @@
 import { instructionEvent } from '../ai/returns.ts'
 import type { Queue, RelintFn } from '../ai/queue.ts'
 import type { Approved, Sender } from '../send/send.ts'
+import { checkIt } from '../build/verify.ts'
 import { appTransition } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { fail, ok, type Application, type Result, type Warning, type WarningCode } from '../types.ts'
+import { fail, ok, type Application, type Result, type WarningCode } from '../types.ts'
 import type { Batch, ItemResult, ReviewItemRef } from './batch.ts'
 
 export const DECISION_KINDS = ['approve', 'skip', 'instruct', 'override', 'switch-to-form', 'switch-channel'] as const
@@ -46,8 +48,6 @@ export interface Decision {
 
 /** The skip reason that closes the application (requirements crit. 30). */
 export const NOT_A_FIT = 'not a fit'
-/** «I checked it» exists only beside these (D6 «Cómo se resuelve»). */
-export const OVERRIDABLE: readonly WarningCode[] = ['unsupported-claim', 'external-link']
 export const MAX_INSTRUCTION_CHARS = 2_000
 export const MAX_REASON_CHARS = 200
 
@@ -138,14 +138,9 @@ function instruct(q: Queries, deps: DecideDeps, app: Application, words: string,
   return ok(undefined)
 }
 
+/** «I checked it»: `checkIt` of `verify.ts`, the one implementation (T-A5 / T-A6). */
 function override(q: Queries, deps: DecideDeps, app: Application, codes: readonly WarningCode[], now: Date): Result<void> {
-  if (codes.length === 0 || codes.some((code) => !OVERRIDABLE.includes(code))) return fail('invalid', 'only unsupported-claim and external-link take «I checked it»', 'warningCodes')
-  const at = { at: now.toISOString() }
-  const warnings: readonly Warning[] = app.warnings.map((w) => (codes.includes(w.code) && w.overridden === null ? { ...w, overridden: at } : w))
-  const pdf = repo.getArtifacts(q, app.id, app.version)?.pdf ?? null
-  const pdfExists = pdf !== null && deps.pdfExists(pdf)
-  const moved = move(q, app, { type: 'relint', pdfExists, warnings }, { kind: 'override', data: { codes: [...codes] } }, now) // T-A5 / T-A6
-  return moved.ok ? ok(undefined) : moved
+  return checkIt(q, { applicationId: app.id, codes, pdfExists: deps.pdfExists }, now)
 }
 
 function switchToForm(q: Queries, deps: DecideDeps, app: Application, now: Date): Result<void> {

@@ -122,7 +122,7 @@ test('«I checked it» overrides every `unsupported-claim`, the application beco
   const db = await queueStore(base)
   const gap: Warning = { code: 'requirement-gap', where: 'ad', detail: 'Kubernetes', blocks: false, overridden: null }
   insertApp(db, { state: 'in-review', warnings: [claim(SECRET_DETAIL), claim('another'), gap] }, WITH_PDF)
-  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', code: 'unsupported-claim', pdfExists: () => true }, NOW)))
+  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', codes: ['unsupported-claim'], pdfExists: () => true }, NOW)))
 
   const app = appOf(db, 'app-1')
   assert.equal(app.state, 'ready')
@@ -133,7 +133,7 @@ test('«I checked it» overrides every `unsupported-claim`, the application beco
   const override = eventsOf(db, 'app-1').filter((e) => e.kind === 'override')
   assert.deepEqual(
     override.map((e) => e.data),
-    [{ code: 'unsupported-claim' }],
+    [{ codes: ['unsupported-claim'] }],
   )
   assert.ok(!JSON.stringify(eventsOf(db, 'app-1')).includes('40 teams'), 'no event carries the claim')
 })
@@ -143,13 +143,13 @@ test('«I checked it» leaves the application in review while another block rema
   const db = await queueStore(base)
   const name: Warning = { code: 'confidential-name', where: 'cv', detail: 'IMSS', blocks: true, overridden: null }
   insertApp(db, { state: 'in-review', warnings: [claim('x'), name] }, WITH_PDF)
-  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', code: 'unsupported-claim', pdfExists: () => true }, NOW)))
+  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', codes: ['unsupported-claim'], pdfExists: () => true }, NOW)))
   assert.equal(appOf(db, 'app-1').state, 'in-review')
 
   using other = tempBase()
   const db2 = await queueStore(other)
   insertApp(db2, { state: 'in-review', warnings: [claim('x')] }, WITH_PDF)
-  valueOf(db2.tx((q) => checkIt(q, { applicationId: 'app-1', code: 'unsupported-claim', pdfExists: () => false }, NOW)))
+  valueOf(db2.tx((q) => checkIt(q, { applicationId: 'app-1', codes: ['unsupported-claim'], pdfExists: () => false }, NOW)))
   assert.equal(appOf(db2, 'app-1').state, 'in-review', 'never ready without its PDF on disk')
 })
 
@@ -158,11 +158,11 @@ test('«I checked it» also serves `external-link`, and is refused for any other
   const db = await queueStore(base)
   const link: Warning = { code: 'external-link', where: 'letter', detail: 'evil.example', blocks: true, overridden: null }
   insertApp(db, { state: 'ready', warnings: [link] }, WITH_PDF)
-  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', code: 'external-link', pdfExists: () => true }, NOW)))
+  valueOf(db.tx((q) => checkIt(q, { applicationId: 'app-1', codes: ['external-link'], pdfExists: () => true }, NOW)))
   assert.notEqual(appOf(db, 'app-1').warnings[0]?.overridden, null)
 
   const refused = (applicationId: string, code: Warning['code']) =>
-    db.tx((q) => checkIt(q, { applicationId, code, pdfExists: () => true }, NOW))
+    db.tx((q) => checkIt(q, { applicationId, codes: [code], pdfExists: () => true }, NOW))
   const codeOf = (r: ReturnType<typeof refused>) => (r.ok ? 'ok' : r.error.code)
   assert.equal(codeOf(refused('app-1', 'confidential-name')), 'invalid')
   assert.equal(codeOf(refused('nobody', 'unsupported-claim')), 'not-found')

@@ -266,6 +266,25 @@ describe('decide override and switch-to-form', () => {
     errorOf(decide(w.deps, decision(item, 'override', { warningCodes: [] })), 'invalid')
   })
 
+  test('«I checked it» with no open warning of those codes is a conflict, and writes nothing', async () => {
+    const w = await world()
+    const checked: Warning = { ...CLAIM, overridden: { at: NOW.toISOString() } }
+    insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [checked, STACK] })
+    const item = itemOf(w.start(), 'a1')
+    const before = eventsOf(w.db, 'a1').length
+    errorOf(decide(w.deps, decision(item, 'override', { warningCodes: ['unsupported-claim'] })), 'conflict', 'nothing-to-check')
+    errorOf(decide(w.deps, decision(item, 'override', { warningCodes: ['external-link'] })), 'conflict', 'nothing-to-check')
+    assert.equal(eventsOf(w.db, 'a1').length, before)
+  })
+
+  test('«I checked it» on a closed ad (the card offers it beside «Skip it»)', async () => {
+    const w = await world()
+    const closed: Warning = { code: 'ad-closed', where: 'ad', detail: 'the ad is closed (expired): skip it?', blocks: true, overridden: null }
+    insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [closed] }, { ...SEED_ARTIFACTS, pdf: 'cv.pdf' })
+    valueOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'override', { warningCodes: ['ad-closed'] })))
+    assert.equal(appOf(w.db, 'a1').state, 'ready')
+  })
+
   test('switch-to-form (T-A10): channel form, the URL, channel-changed, and a re-lint of that item', async () => {
     const w = await world()
     valueOf(

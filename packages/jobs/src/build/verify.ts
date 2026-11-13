@@ -19,7 +19,7 @@ import { VERIFY_JSON_SCHEMA, verifySchema, type VerifyOutput } from '../ai/schem
 import { appTransition } from '../state.ts'
 import type { Queries } from '../store/db.ts'
 import { getApplication, getArtifacts, saveApplication } from '../store/repo.ts'
-import { fail, type Application, type Result, type Warning } from '../types.ts'
+import { fail, type Application, type Result, type Warning, type WarningCode } from '../types.ts'
 import { runFixed, type CvSources, type FixedRunDeps, type VerifyFn, type VerifyOutcome, type VerifyTarget } from './cv.ts'
 import { failed } from './print.ts'
 
@@ -51,30 +51,42 @@ export function createVerifier(deps: VerifierDeps): VerifyFn {
 
 // ── «I checked it» ───────────────────────────────────────────────────────────────────────────────
 
-/** The codes «I checked it» resolves (D6 «Cómo se resuelve cada bloqueo»). */
-export const CHECKABLE: ReadonlySet<Warning['code']> = new Set<Warning['code']>(['unsupported-claim', 'external-link'])
+/**
+ * The codes «I checked it» resolves (D6 «Cómo se resuelve cada bloqueo»), and `ad-closed`, which the
+ * card offers beside «Skip it» (R3's decision; revalidate.ts: «the owner may override it»).
+ */
+export const CHECKABLE: readonly WarningCode[] = ['unsupported-claim', 'external-link', 'ad-closed']
+
+/** The reason of an «I checked it» with no open warning of its codes. */
+export const NOTHING_TO_CHECK = 'nothing-to-check'
 
 const REVIEWED: ReadonlySet<Application['state']> = new Set<Application['state']>(['in-review', 'ready'])
 
 export interface CheckIt {
   readonly applicationId: string
-  readonly code: Warning['code']
+  readonly codes: readonly WarningCode[]
   /** The caller's `stat` of the current PDF (as the linter's `pdfExists`). */
   readonly pdfExists: (path: string) => boolean
 }
 
-/** «I checked it», in the caller's `tx`: the warnings of `code` overridden, the state re-decided, `override { code }`. */
+/**
+ * «I checked it», in the caller's `tx` — THE ONE IMPLEMENTATION (the review's `override` calls it):
+ * every open warning of `codes` overridden, the state re-decided (T-A5/T-A6), `override { codes }`.
+ * A code it does not resolve is `invalid`; no open warning of those codes is `conflict nothing-to-check`.
+ */
 export function checkIt(q: Queries, input: CheckIt, now: Date): Result<void> {
-  if (!CHECKABLE.has(input.code)) return fail('invalid', '«I checked it» does not resolve this warning', 'code')
+  if (input.codes.length === 0 || input.codes.some((code) => !CHECKABLE.includes(code))) {
+    return fail('invalid', `only ${CHECKABLE.join(', ')} take «I checked it»`, 'warningCodes')
+  }
   const app = getApplication(q, input.applicationId)
   if (app === undefined) return fail('not-found', 'no such application')
   if (!REVIEWED.has(app.state)) return fail('conflict', `an application ${app.state} is not in review`)
-  const open = (w: Warning): boolean => w.code === input.code && w.overridden === null
-  if (!app.warnings.some(open)) return fail('conflict', 'there is nothing of this kind to check')
+  const open = (w: Warning): boolean => input.codes.includes(w.code) && w.overridden === null
+  if (!app.warnings.some(open)) return fail('conflict', NOTHING_TO_CHECK)
   const at = now.toISOString()
   const warnings = app.warnings.map((w) => (open(w) ? { ...w, overridden: { at } } : w))
   const pdf = getArtifacts(q, app.id, app.version)?.pdf ?? null
   const moved = appTransition(app, { type: 'relint', pdfExists: pdf !== null && input.pdfExists(pdf), warnings }, now)
   if (!moved.ok) return moved
-  return saveApplication(q, { ...moved.value, updatedAt: at }, { kind: 'override', data: { code: input.code } }, now)
+  return saveApplication(q, { ...moved.value, updatedAt: at }, { kind: 'override', data: { codes: [...input.codes] } }, now)
 }
