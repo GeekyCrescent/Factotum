@@ -177,6 +177,13 @@ describe('searchAddress (N2, design D9 «La re-búsqueda»)', () => {
     }
   })
 
+  test('decodes numeric entities, and leaves out-of-range ones as text instead of throwing', async () => {
+    assert.deepEqual(await search({ [HOME]: page('ada&#x40;acme.example') }), { kind: 'found', url: HOME })
+    for (const bad of ['&#99999999999;', '&#x110000;', '&#xD800;', '&#55296;', '&#xFFFFFFFFFFFFFFFFFFFF;']) {
+      assert.deepEqual(await search({ [HOME]: page(`${bad} ${EMAIL}`) }), { kind: 'found', url: HOME }, bad)
+    }
+  })
+
   test('an anchor whose link text is cut by the next anchor still counts by its own text', async () => {
     const { net, asked } = netOf({
       [HOME]: '<a href="/p/1">Contact<a href="/p/2">nothing here</a><A HREF=\'/p/3\' class="x">Our <b>team</b></A>',

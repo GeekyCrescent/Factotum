@@ -46,10 +46,18 @@ export type AddressSearch = (target: AddressTarget, signal?: AbortSignal) => Pro
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = { commat: '@', period: '.', amp: '&', nbsp: ' ', quot: '"', apos: "'" }
 
+const MAX_CODE_POINT = 0x10ffff
+const isSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdfff
+
+/** A character reference's character; the reference itself when it names none (`String.fromCodePoint` would throw). */
+function charOf(code: number, whole: string): string {
+  return code > MAX_CODE_POINT || isSurrogate(code) ? whole : String.fromCodePoint(code)
+}
+
 function decodeEntities(html: string): string {
   return html.replace(/&#(\d+);|&#x([0-9a-f]+);|&([a-z]+);/gi, (whole, dec?: string, hex?: string, name?: string) => {
-    if (dec !== undefined) return String.fromCodePoint(Number(dec))
-    if (hex !== undefined) return String.fromCodePoint(Number.parseInt(hex, 16))
+    if (dec !== undefined) return charOf(Number(dec), whole)
+    if (hex !== undefined) return charOf(Number.parseInt(hex, 16), whole)
     return NAMED_ENTITIES[(name ?? '').toLowerCase()] ?? whole
   })
 }
