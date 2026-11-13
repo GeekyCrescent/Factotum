@@ -207,6 +207,10 @@
   font-size: var(--text-caption);
 }
 
+.j-label-detail {
+  overflow-wrap: anywhere;
+}
+
 .j-label.amber {
   background: var(--ask-bg);
   color: var(--ask);
@@ -415,4 +419,14 @@
 
 .j-rule {
   margin: 0;
+}
+
+/* --- A finger, not a pointer ---------------------------------------------- */
+
+/* The shell's small button is 36 px; on a touch screen every button of the review takes 44 px
+   (`--hit`). The focus ring is the shell's `:focus-visible`, which nothing here overrides. */
+@media (pointer: coarse) {
+  .j-screen .btn.sm {
+    min-height: var(--hit);
+  }
 }

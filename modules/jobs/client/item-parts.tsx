@@ -12,8 +12,10 @@ export function Labels({ labels }: { readonly labels: readonly Label[] }) {
   return (
     <ul class="j-labels">
       {labels.map((label, at) => (
-        <li key={at} class={`j-label ${label.tone}`} title={label.title ?? undefined}>
+        <li key={at} class={`j-label ${label.tone}`}>
           {label.text}
+          {/* The detail is read, not hovered: a phone has no hover and a screen reader skips `title`. */}
+          {label.title === null ? null : <span class="j-label-detail"> · {label.title}</span>}
         </li>
       ))}
     </ul>
@@ -110,9 +112,10 @@ export function FormAnswers({ form }: { readonly form: readonly FormAnswer[] }) 
           const mark = formMark(answer)
           return (
             <li key={at} class={`j-answer${mark === '⚠' ? ' warn' : ''}`}>
-              <span class="j-mark" aria-label={mark === '✓' ? 'ok' : 'check this'}>
+              <span class="j-mark" aria-hidden="true">
                 {mark}
               </span>
+              <span class="sr-only">{mark === '✓' ? 'ok' : 'check this'}</span>
               <div>
                 <p class="j-question">{answer.question}</p>
                 <p class="j-text">{answer.answer}</p>

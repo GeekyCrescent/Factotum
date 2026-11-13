@@ -186,7 +186,7 @@ export function approveGate(item: ReviewItem, result: ItemResult | undefined, no
 export interface Label {
   readonly text: string
   readonly tone: 'plain' | 'amber' | 'red'
-  /** The `detail`, on hover. */
+  /** The `detail`, drawn after the label (visible: a phone has no hover). */
   readonly title: string | null
 }
 
