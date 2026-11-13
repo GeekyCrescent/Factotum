@@ -151,6 +151,13 @@ export async function assertLinearTime(what: string, full: number, run: (size: n
   }
 }
 
+/**
+ * How long a killed process group may take to disappear. Alone it is milliseconds; with the whole
+ * suite in parallel (over a thousand tests, many spawning processes) the default 10 s was missed —
+ * the flake `packages/tasks` has on `main` (§M Bloque 0), copied here with the code.
+ */
+export const PROCESS_GONE_MS = 30_000
+
 export async function eventually(check: () => boolean | Promise<boolean>, what: string, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms
   while (!(await check())) {

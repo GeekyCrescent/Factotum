@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { eventually, manualTimers, realTimers, tempBase } from '../test-support.ts'
+import { eventually, manualTimers, PROCESS_GONE_MS, realTimers, tempBase } from '../test-support.ts'
 import { countPages, pagesOf, POPPLER_TIMEOUT_MS, renderPreview, type PopplerRun } from './pdf.ts'
 import { KILL_GRACE_MS, SETTLE_GRACE_MS } from './process.ts'
 
@@ -114,7 +114,7 @@ test('a hung pdfinfo is killed at 15 s on the injected timers, and its whole gro
   assert.deepEqual(manual.pending(), [POPPLER_TIMEOUT_MS])
   manual.fire(POPPLER_TIMEOUT_MS)
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'pdfinfo gave no answer within 15 s' } })
-  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`)
+  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`, PROCESS_GONE_MS)
   assert.deepEqual(manual.pending(), [], 'the SIGKILL grace is disposed once the run settled')
 })
 
@@ -134,7 +134,7 @@ test('a group that ignores SIGTERM gets SIGKILL after the grace, and the run sti
   assert.equal(alive(pid!), true, 'SIGTERM alone did not end it')
   manual.fire(KILL_GRACE_MS)
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'pdfinfo gave no answer within 15 s' } })
-  await eventually(() => !alive(pid!), 'the stubborn pdfinfo is gone')
+  await eventually(() => !alive(pid!), 'the stubborn pdfinfo is gone', PROCESS_GONE_MS)
 })
 
 test('a descendant in another group holding stdout: close never comes, and a last timer settles the run as timed out', async () => {
@@ -148,7 +148,7 @@ test('a descendant in another group holding stdout: close never comes, and a las
   const [pid, grandchild] = callsIn(base.dir)
   try {
     manual.fire(POPPLER_TIMEOUT_MS)
-    await eventually(() => !alive(pid!), 'pdfinfo gone')
+    await eventually(() => !alive(pid!), 'pdfinfo gone', PROCESS_GONE_MS)
     manual.fire(KILL_GRACE_MS)
     assert.deepEqual(manual.pending(), [SETTLE_GRACE_MS], 'a last timer, since close may never come')
     manual.fire(SETTLE_GRACE_MS)
@@ -168,7 +168,7 @@ test('the signal aborted mid-run kills the group and answers stopped; already ab
   await eventually(() => callsIn(base.dir).length === 2, 'pdfinfo started')
   stop.abort()
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'stopped' } })
-  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`)
+  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`, PROCESS_GONE_MS)
 
   const before = callsIn(base.dir).length
   assert.deepEqual(await countPages(run({ signal: stop.signal }), pdf), { ok: false, error: { code: 'module-error', reason: 'stopped' } })
@@ -243,5 +243,5 @@ test('a hung pdftoppm is killed at 15 s too', async () => {
   manual.fire(POPPLER_TIMEOUT_MS)
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'pdftoppm gave no answer within 15 s' } })
   const [pid] = callsIn(base.dir)
-  await eventually(() => !alive(pid!), 'pdftoppm gone')
+  await eventually(() => !alive(pid!), 'pdftoppm gone', PROCESS_GONE_MS)
 })

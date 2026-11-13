@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { capturedLog, eventually, manualTimers, realTimers } from '../test-support.ts'
+import { capturedLog, eventually, manualTimers, PROCESS_GONE_MS, realTimers } from '../test-support.ts'
 import { isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
@@ -51,12 +51,6 @@ function alive(pid: number): boolean {
   }
 }
 
-/**
- * How long a killed group may take to disappear. Alone it is milliseconds; with the whole suite in
- * parallel (hundreds of tests, many spawning processes) the same check missed the default 10 s —
- * the flake `packages/tasks` has on `main` (§M Bloque 0), copied here with the code.
- */
-const PROCESS_GONE_MS = 30_000
 
 test('a good answer is the structured output with its usage, the cache counted apart; the prompt went by stdin', async () => {
   const { input, cwd } = await rig()
@@ -230,7 +224,7 @@ test('a claude that ignores SIGTERM gets SIGKILL after the grace, and the run st
   assert.deepEqual(manual.pending(), [KILL_GRACE_MS])
   manual.fire(KILL_GRACE_MS)
   assert.deepEqual(await pending, { ok: false, kind: 'failed', reason: 'claude gave no answer within 30 s' })
-  await eventually(() => !alive(pid!), 'the stubborn claude is gone')
+  await eventually(() => !alive(pid!), 'the stubborn claude is gone', PROCESS_GONE_MS)
 })
 
 test('a descendant in another group holding stdout: close never comes, and a last timer settles the run as timed out', async () => {

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { eventually, manualTimers, realTimers, tempBase } from '../test-support.ts'
+import { eventually, manualTimers, PROCESS_GONE_MS, realTimers, tempBase } from '../test-support.ts'
 import { chromiumArgs, CHROMIUM_TIMEOUT_MS, printPdf, type ChromiumRun } from './chromium.ts'
 import { countPages } from './pdf.ts'
 
@@ -131,7 +131,7 @@ test('a hung chromium is killed at 30 s on the injected timers, and its whole gr
   assert.deepEqual(manual.pending(), [CHROMIUM_TIMEOUT_MS])
   manual.fire(CHROMIUM_TIMEOUT_MS)
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'chromium gave no answer within 30 s' } })
-  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`)
+  for (const pid of callsIn(base.dir)) await eventually(() => !alive(pid), `process ${pid} gone`, PROCESS_GONE_MS)
 })
 
 test('an aborted signal answers stopped and never spawns', async () => {

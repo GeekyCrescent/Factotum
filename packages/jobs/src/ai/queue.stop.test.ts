@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
-import { eventually, realTimers, tempBase } from '../test-support.ts'
+import { eventually, PROCESS_GONE_MS, realTimers, tempBase } from '../test-support.ts'
 import type { JobHandler } from './queue.ts'
 import { runClaude } from './run.ts'
 import { DONE, queueStore, rig, workOf } from './test-queue.ts'
@@ -46,7 +46,7 @@ test('criterion 27: stop() kills the hung runs and waits; the next start puts th
   await eventually(async () => (await pids()).length === 2, 'two claudes started')
 
   await queue.stop()
-  for (const pid of await pids()) await eventually(() => !alive(pid), `claude ${pid} gone`)
+  for (const pid of await pids()) await eventually(() => !alive(pid), `claude ${pid} gone`, PROCESS_GONE_MS)
   assert.deepEqual(queue.running(), [])
   // A stopped run writes nothing: no attempt, no failure; the row stays as the process left it.
   assert.deepEqual(ids.map((id) => [workOf(db, id).state, workOf(db, id).attempts]), [['running', 0], ['running', 0], ['queued', 0]])
