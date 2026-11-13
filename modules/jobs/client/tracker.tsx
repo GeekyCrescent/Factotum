@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
 import type { BatchAnswer, Overview, ViewProps } from './contract.ts'
-import { createLock } from './guard.ts'
+import { createLock, runOrSay } from './guard.ts'
 import { refusalOf } from './model.ts'
 import { SendLines } from './send-lines.tsx'
 import { countersOf, startOf } from './tracker-model.ts'
@@ -55,7 +55,7 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
       navigate('review')
       return
     }
-    await lock.run(async () => {
+    await runOrSay(lock, async () => {
       setBusy(true)
       try {
         await api.post<BatchAnswer>('batch')
@@ -65,7 +65,7 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
       } finally {
         setBusy(false)
       }
-    })
+    }, setError)
   }
 
   const plan = overview === null ? null : startOf(overview)
@@ -73,7 +73,7 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
     <div class="j-screen">
       <header class="j-review-bar">
         <p class="j-crumb">Jobs</p>
-        <SendLines sends={sends} busy={busy} />
+        <SendLines sends={sends} busy={busy || sends.acting} />
       </header>
       <main class="j-tracker">
         {error === null ? null : (
@@ -110,7 +110,7 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
         )}
         <div class="j-tracker-acts">
           {plan === null ? null : (
-            <button type="button" class="btn primary decide" disabled={busy || !plan.enabled} onClick={() => void start()}>
+            <button type="button" class="btn primary decide" disabled={busy || sends.acting || !plan.enabled} onClick={() => void start()}>
               {plan.label}
             </button>
           )}

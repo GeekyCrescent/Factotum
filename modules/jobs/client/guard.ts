@@ -91,3 +91,13 @@ export function createLock(): Lock {
   }
   return { run, held: () => taken }
 }
+
+/** What the screen says when the lock refuses an action: never dropped in silence. */
+export const LOCK_HELD = 'Another action is still running — try again in a moment.'
+
+/** `lock.run`, and when the lock is held, `say(LOCK_HELD)` before answering null. */
+export function runOrSay<T>(lock: Lock, task: () => Promise<T>, say: (text: string) => void): Promise<T> | null {
+  const running = lock.run(task)
+  if (running === null) say(LOCK_HELD)
+  return running
+}

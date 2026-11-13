@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { Api, RetryRequest, SendNeed, SendState, SendView, UnknownRequest } from './contract.ts'
-import type { Lock } from './guard.ts'
+import { runOrSay, type Lock } from './guard.ts'
 import { refusalOf, type SendKey } from './model.ts'
 import {
   answerRefused,
@@ -57,6 +57,8 @@ const pathOf = (key: SendKey): string => `a/${encodeURIComponent(key.application
 
 export interface SendsState {
   readonly sends: readonly TrackedSend[]
+  /** An answer is in flight: the screen's buttons are off while it holds the lock. */
+  readonly acting: boolean
   /** Starts following a send just approved (or retried). */
   readonly track: (key: SendKey, state?: SendState | null) => void
   /** «Retry» (`POST …/retry`, then followed again) or an answer to «did it go?» (`POST …/unknown`). */
@@ -71,6 +73,7 @@ export interface SendsState {
 
 export function useSends(api: Api, lock: Lock): SendsState {
   const [sends, setSends] = useState<readonly TrackedSend[]>([])
+  const [acting, setActing] = useState(false)
   const latest = useRef(sends)
   latest.current = sends
   /** The sends with a read in flight, by `sendIdOf`: one at a time each. */
@@ -144,7 +147,9 @@ export function useSends(api: Api, lock: Lock): SendsState {
       if (send === undefined) return
       const expect = expectOf(send)
       const seen: RetryRequest = expect === null ? {} : { expect }
-      await lock.run(async () => {
+      const refused = (text: string): void => setSends((now) => answerRefused(now, key, text))
+      await runOrSay(lock, async () => {
+        setActing(true)
         try {
           if (action === 'retry') {
             const view = await api.post<SendView>(`${pathOf(key)}/retry`, seen)
@@ -167,8 +172,10 @@ export function useSends(api: Api, lock: Lock): SendsState {
           }
           const reason = refusalOf(cause).text
           setSends((now) => (action === 'retry' ? retryRefused(now, key, reason) : answerRefused(now, key, reason)))
+        } finally {
+          if (alive.current) setActing(false)
         }
-      })
+      }, refused)
     },
     [api, lock, reread],
   )
@@ -177,5 +184,5 @@ export function useSends(api: Api, lock: Lock): SendsState {
   const repoll = useCallback((key: SendKey): void => setSends((now) => repolled(now, key)), [])
   const dismiss = useCallback((key: SendKey): void => setSends((now) => dismissed(now, key)), [])
 
-  return { sends, track, act, seed, repoll, dismiss }
+  return { sends, acting, track, act, seed, repoll, dismiss }
 }

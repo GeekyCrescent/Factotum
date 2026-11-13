@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AssistPanel } from './assist-panel.tsx'
 import { assistOf, type AssistView } from './assist-model.ts'
 import type { BatchView, Decision, MarkAnswer, ReviewItem, ViewProps } from './contract.ts'
-import { confirmedLocal, createLock, decisionOn, localResultOf, viewOf, withLocal, type LocalResults } from './guard.ts'
+import { confirmedLocal, createLock, decisionOn, LOCK_HELD, localResultOf, runOrSay, viewOf, withLocal, type LocalResults } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice, type SendKey } from './model.ts'
 import { stillRewriting } from './rewrite-model.ts'
 import { isDialogOpen } from './sheet.tsx'
@@ -70,7 +70,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const [advanceFrom, setAdvanceFrom] = useState<number | undefined>(undefined)
   const [notice, setNotice] = useState<Notice | undefined>(undefined)
   /** For drawing only; the guard is `lock`, read synchronously by every decision (D15). */
-  const [busy, setBusy] = useState(false)
+  const [deciding, setBusy] = useState(false)
+  const sayLocked = useCallback((text: string): void => setNotice({ text, tone: 'ask' }), [])
+  /** A decision, or a send answer, holds the lock: every button that takes it is off. */
+  const busy = deciding || sends.acting
   const box = useRef<HTMLTextAreaElement>(null)
   /** The skip sheet is open on this card (`viewOf`): a card changed under it closes it. */
   const [skipping, setSkipping] = useState<string | undefined>(undefined)
@@ -111,7 +114,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
     async (decision: Omit<Decision, 'itemId' | 'seen'>, moveOn: boolean): Promise<boolean> => {
       // Decided here already: the card on screen may be one render behind the decision.
       if (item === undefined || local.current.has(item.itemId)) return false
-      const running = lock.run(async (): Promise<boolean> => {
+      // Held by a send answer or another decision: said, never dropped in silence.
+      const running = runOrSay(lock, async (): Promise<boolean> => {
         setBusy(true)
         setNotice(undefined)
         try {
@@ -135,10 +139,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
         } finally {
           setBusy(false)
         }
-      })
+      }, sayLocked)
       return running ?? false
     },
-    [item, lock, decide, sends, index, setLocal],
+    [item, lock, decide, sends, index, setLocal, sayLocked],
   )
 
   const approve = useCallback(() => {
@@ -185,15 +189,18 @@ export function Review({ props }: { readonly props: ViewProps }) {
     },
     // One at a time, as a decision; then the batch is read again so the card shows «generating…».
     retryJob: async (applicationId, job) => {
-      await lock.run(async () => {
+      await runOrSay(lock, async () => {
+        setBusy(true)
         try {
           await api.post(`a/${encodeURIComponent(applicationId)}/retry`, { job })
           setNotice({ text: `${RETRYING[job]} again…`, tone: 'ask' })
           await reload()
         } catch (cause) {
           setNotice(noticeOf(refusalOf(cause)))
+        } finally {
+          setBusy(false)
         }
-      })
+      }, sayLocked)
     },
     settings: (anchor) => navigate(`settings#${anchor}`),
     skip,
@@ -213,7 +220,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
         setBusy(false)
       }
     })
-    return (await running) ?? 'another action is still running'
+    return (await running) ?? LOCK_HELD
   }
   const closeAssist = (): void => {
     if (assist !== undefined) setAdvanceFrom(assist.from)

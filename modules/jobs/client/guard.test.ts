@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { BatchView, ItemResult, ReviewItem } from './contract.ts'
-import { SETTLE_MS, canDecide, confirmedLocal, createLock, decisionOn, localResultOf, settleLeft, viewOf, withLocal } from './guard.ts'
+import { LOCK_HELD, SETTLE_MS, canDecide, confirmedLocal, createLock, decisionOn, localResultOf, runOrSay, settleLeft, viewOf, withLocal } from './guard.ts'
 
 // ── What was seen is what is approved (D15 «Lo que se vio es lo que se aprueba») ─────────────────
 
@@ -115,4 +115,18 @@ test('a local result goes once a read confirms it, or once its item is no longer
 test('nothing to prune gives back the same map', () => {
   const local: ReadonlyMap<string, ItemResult> = new Map([['i-2', 'skipped']])
   assert.equal(confirmedLocal(local, batchOf({})), local)
+})
+
+test('an action the lock refuses is never dropped in silence: it says another one is still running', async () => {
+  const lock = createLock()
+  const said: string[] = []
+  let release = (): void => undefined
+  const first = runOrSay(lock, () => new Promise<string>((resolve) => (release = () => resolve('done'))), (text) => said.push(text))
+  const second = runOrSay(lock, async () => 'never', (text) => said.push(text))
+  assert.equal(second, null)
+  assert.deepEqual(said, [LOCK_HELD])
+  release()
+  assert.equal(await first, 'done')
+  assert.equal(await runOrSay(lock, async () => 'again', (text) => said.push(text)), 'again')
+  assert.deepEqual(said, [LOCK_HELD])
 })
