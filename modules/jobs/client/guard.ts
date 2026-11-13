@@ -21,3 +21,30 @@ export function settleLeft(shownAt: number, now: number): number {
   if (elapsed < 0) return SETTLE_MS
   return Math.max(0, SETTLE_MS - elapsed)
 }
+
+/**
+ * ONE DECISION IN FLIGHT: a synchronous lock, not React state — two clicks in one frame both read the
+ * same `busy`, but the second `run` finds the lock taken. Released in `finally`, whatever happened.
+ */
+export interface Lock {
+  /** Runs `task` and holds the lock until it settles; `null`, without running it, when held. */
+  readonly run: <T>(task: () => Promise<T>) => Promise<T> | null
+  readonly held: () => boolean
+}
+
+export function createLock(): Lock {
+  let taken = false
+  const run = <T>(task: () => Promise<T>): Promise<T> | null => {
+    if (taken) return null
+    taken = true
+    const settle = async (): Promise<T> => {
+      try {
+        return await task()
+      } finally {
+        taken = false
+      }
+    }
+    return settle()
+  }
+  return { run, held: () => taken }
+}

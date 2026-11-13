@@ -15,8 +15,9 @@
  */
 
 import type { ComponentChildren } from 'preact'
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
+import { createLock } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf, type SendKey } from './model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
@@ -39,7 +40,9 @@ export function Review({ props }: { readonly props: ViewProps }) {
   /** After a decision went through: move on from this index once the batch is read again. */
   const [advanceFrom, setAdvanceFrom] = useState<number | undefined>(undefined)
   const [notice, setNotice] = useState<string | undefined>(undefined)
+  /** For drawing only; the guard is `lock`, read synchronously by every decision (D15). */
   const [busy, setBusy] = useState(false)
+  const lock = useMemo(createLock, [])
   const box = useRef<HTMLTextAreaElement>(null)
 
   // A batch seen for the first time opens on its first undecided item from the cursor.
@@ -70,21 +73,27 @@ export function Review({ props }: { readonly props: ViewProps }) {
   /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
   const send = useCallback(
     async (decision: Omit<Decision, 'itemId'>, moveOn: boolean): Promise<boolean> => {
-      if (item === undefined || busy) return false
-      setBusy(true)
-      setNotice(undefined)
-      const outcome = await decide({ ...decision, itemId: item.itemId })
-      setBusy(false)
-      if (isRefusal(outcome)) {
-        setNotice(outcome.text)
-        return false
-      }
-      const key = decision.kind === 'approve' ? sendKeyOf(item) : null
-      if (key !== null && outcome.state === 'sending') sends.track(key)
-      if (moveOn) setAdvanceFrom(index)
-      return true
+      if (item === undefined) return false
+      const running = lock.run(async (): Promise<boolean> => {
+        setBusy(true)
+        setNotice(undefined)
+        try {
+          const outcome = await decide({ ...decision, itemId: item.itemId })
+          if (isRefusal(outcome)) {
+            setNotice(outcome.text)
+            return false
+          }
+          const key = decision.kind === 'approve' ? sendKeyOf(item) : null
+          if (key !== null && outcome.state === 'sending') sends.track(key)
+          if (moveOn) setAdvanceFrom(index)
+          return true
+        } finally {
+          setBusy(false)
+        }
+      })
+      return running ?? false
     },
-    [item, busy, decide, sends, index],
+    [item, lock, decide, sends, index],
   )
 
   const approve = useCallback(() => {

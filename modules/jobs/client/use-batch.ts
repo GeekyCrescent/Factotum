@@ -11,8 +11,9 @@
  * address waits for its check (`shouldPollBatch`), and only with the page visible.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Api, BatchAnswer, DecideAnswer, Decision } from './contract.ts'
+import { createLock } from './guard.ts'
 import { refusalOf, shouldPollBatch, type Refusal } from './model.ts'
 
 export const POLL_MS = 2_000
@@ -50,15 +51,19 @@ export function useBatch(api: Api): BatchState {
     }
   }, [api, apply])
 
+  /** «Start review» twice in one frame arms ONE batch: the second press finds the lock taken. */
+  const starting = useMemo(createLock, [])
   const start = useCallback(async (): Promise<void> => {
-    const mine = ++reads.current.started
-    try {
-      apply(mine, await api.post<BatchAnswer>('batch'))
-      setError(undefined)
-    } catch (cause) {
-      setError(refusalOf(cause).text)
-    }
-  }, [api, apply])
+    await starting.run(async () => {
+      const mine = ++reads.current.started
+      try {
+        apply(mine, await api.post<BatchAnswer>('batch'))
+        setError(undefined)
+      } catch (cause) {
+        setError(refusalOf(cause).text)
+      }
+    })
+  }, [api, apply, starting])
 
   const decide = useCallback(
     async (decision: Decision): Promise<DecideAnswer | Refusal> => {
