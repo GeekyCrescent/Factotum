@@ -14,7 +14,8 @@ import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
 import { eventually, realTimers, tempBase, type ManualClock } from '../test-support.ts'
-import { fail, ok, type Artifacts, type CvDoc } from '../types.ts'
+import type { VerifyOutcome, VerifyTarget } from '../build/cv.ts'
+import { fail, ok, type Artifacts, type CvDoc, type Warning } from '../types.ts'
 import { createRewriteHandler, type PrintFn, type RewriteDeps } from './rewrite.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
@@ -53,10 +54,14 @@ interface World {
   readonly clock: ManualClock
   readonly runDir: string
   readonly prints: number[]
+  /** What the verifier was asked to read, in order. */
+  readonly verified: VerifyTarget[]
   readonly answer: (value: unknown) => void
 }
 
-async function world(print?: PrintFn, overrides: Partial<RewriteDeps> = {}): Promise<World> {
+const CLEAN: VerifyOutcome = { ok: true, warnings: [], usage: null }
+
+async function world(print?: PrintFn, overrides: Partial<RewriteDeps> = {}, verify: (target: VerifyTarget) => VerifyOutcome = () => CLEAN): Promise<World> {
   const base = tempBase()
   const db = await queueStore(base)
   const profile = valueOf(loadProfileSeed())
@@ -69,8 +74,13 @@ async function world(print?: PrintFn, overrides: Partial<RewriteDeps> = {}): Pro
   const runDir = join(base.dir, 'run')
   mkdirSync(runDir, { recursive: true })
   const prints: number[] = []
+  const verified: VerifyTarget[] = []
   let clockRef: ManualClock | undefined
   const handler = createRewriteHandler({
+    verify: async (target) => {
+      verified.push(target)
+      return verify(target)
+    },
     db,
     now: () => clockRef?.now() ?? NOW,
     timers: realTimers,
@@ -82,13 +92,13 @@ async function world(print?: PrintFn, overrides: Partial<RewriteDeps> = {}): Pro
       print ??
       (async ({ version }) => {
         prints.push(version)
-        return ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: `hash-${version}` })
+        return ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: `hash-${version}`, pages: 1 })
       }),
     ...overrides,
   })
   const { queue, clock } = rig(db, { handlers: { rewrite: handler } })
   clockRef = clock
-  return { db, queue, clock, runDir, prints, answer: (value) => writeFileSync(join(runDir, 'fake-claude.answer'), JSON.stringify(value)) }
+  return { db, queue, clock, runDir, prints, verified, answer: (value) => writeFileSync(join(runDir, 'fake-claude.answer'), JSON.stringify(value)) }
 }
 
 /** T-A7 as the review writes it: `rewriting`, the instruction event, and a `rewrite` queued. */
@@ -244,6 +254,91 @@ describe('the rewrite of an application (R2, design D10)', () => {
     assert.equal(workOf(w.db, workId).reason, 'cv-maestro not found')
   })
 
+  describe('every rewrite goes through the verifier (D6, D15 «Lo que se vio es lo que se aprueba»)', () => {
+    const letterClaim = (detail: string, overridden: Warning['overridden'] = null): Warning => ({ code: 'unsupported-claim', where: 'letter', detail, blocks: true, overridden })
+    const cvClaim = (detail: string, overridden: Warning['overridden'] = null): Warning => ({ code: 'unsupported-claim', where: 'cv', detail, blocks: true, overridden })
+
+    test('a letter blocked by a claim stays blocked when the new letter has one too', async () => {
+      const w = await world(undefined, {}, () => ({ ok: true, warnings: [letterClaim('led 40 people')], usage: null }))
+      insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [letterClaim('led 12 people')] }, ARTIFACTS)
+      w.answer(answer())
+      const workId = instruct(w, 'a1', 'Drop the team size')
+      await run(w, workId, 0)
+      const app = appOf(w.db, 'a1')
+      assert.equal(app.state, 'in-review')
+      assert.deepEqual(app.warnings, [letterClaim('led 40 people')])
+      assert.deepEqual(w.verified, [{ cv: null, letter: 'Application\n\nDear Ada,\n\nShorter. {portfolio}\n\n{signature}', origin: 'rewritten' }], 'only the letter changed: only it is read')
+    })
+
+    test('the block goes when the new verification passes', async () => {
+      const w = await world()
+      insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [letterClaim('led 12 people')] }, ARTIFACTS)
+      w.answer(answer())
+      const workId = instruct(w, 'a1', 'Drop the team size')
+      await run(w, workId, 0)
+      assert.equal(appOf(w.db, 'a1').state, 'ready')
+      assert.deepEqual(appOf(w.db, 'a1').warnings, [])
+    })
+
+    test('an «I checked it» on a field the rewrite did not change survives', async () => {
+      const w = await world()
+      const checked = cvClaim('ran a team of 5', { at: NOW.toISOString() })
+      insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [checked, letterClaim('led 12 people')] }, ARTIFACTS)
+      w.answer(answer())
+      const workId = instruct(w, 'a1', 'Drop the team size')
+      await run(w, workId, 0)
+      const app = appOf(w.db, 'a1')
+      assert.deepEqual(app.warnings, [checked])
+      assert.equal(app.state, 'ready')
+    })
+
+    test('a CV that changed is read too, and a reprint on 2 pages is cv-overflow', async () => {
+      const w = await world(async ({ version }) => ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: 'h', pages: 2 }))
+      insertApp(w.db, { id: 'a1', state: 'ready' }, ARTIFACTS)
+      const cv = { ...CV, headline: 'Graduate engineer' }
+      w.answer(answer({ cv, letter: ARTIFACTS.letter }))
+      const workId = instruct(w, 'a1', 'Change the headline')
+      await run(w, workId, 0)
+      assert.deepEqual(w.verified, [{ cv, letter: null, origin: 'rewritten' }])
+      const app = appOf(w.db, 'a1')
+      assert.equal(app.state, 'in-review')
+      assert.deepEqual(app.warnings, [{ code: 'cv-overflow', where: 'cv', detail: 'the CV prints on 2 pages', blocks: true, overridden: null }])
+    })
+
+    test('a verifier that does not run fails the attempt: the queue retries, nothing comes back unchecked', async () => {
+      const w = await world(undefined, {}, () => ({ ok: false, kind: 'failed', reason: 'claude gave no answer within 120 s' }))
+      insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [letterClaim('led 12 people')] }, ARTIFACTS)
+      w.answer(answer())
+      const workId = instruct(w, 'a1', 'Drop the team size')
+      await run(w, workId, 1)
+      assert.equal(workOf(w.db, workId).state, 'queued')
+      assert.equal(workOf(w.db, workId).reason, 'the check did not run: claude gave no answer within 120 s')
+      assert.equal(appOf(w.db, 'a1').version, 1)
+    })
+
+    test('a verifier at the usage limit is a limit (no attempt counted)', async () => {
+      const w = await world(undefined, {}, () => ({ ok: false, kind: 'limit', reason: 'claude hit its usage limit' }))
+      insertApp(w.db, { id: 'a1', state: 'in-review' }, ARTIFACTS)
+      w.answer(answer())
+      const workId = instruct(w, 'a1', 'Shorter')
+      w.queue.pump()
+      await eventually(() => workOf(w.db, workId).reason === 'claude hit its usage limit', 'the limit is written')
+      await w.queue.settled()
+      assert.equal(workOf(w.db, workId).attempts, 0)
+    })
+  })
+
+  test('a null LinkedIn note and a null subject stay null, whatever comes back', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' }, { ...ARTIFACTS, letter: { subject: null, body: BODY }, linkedin: null })
+    w.answer(answer({ linkedin: 'Hi, see https://evil.example', letter: { subject: 'Click https://evil.example', body: 'Dear Ada,\n\nShorter. {portfolio}\n\n{signature}' } }))
+    const workId = instruct(w, 'a1', 'Shorter')
+    await run(w, workId, 0)
+    const v2 = w.db.read((q) => repo.getArtifacts(q, 'a1', 2))
+    assert.equal(v2?.linkedin, null)
+    assert.equal(v2?.letter?.subject, null)
+  })
+
   describe('what it cannot rewrite is a failed run, before Claude', () => {
     const direct = async (w: World, ref: string, overrides: Partial<RewriteDeps> = {}) => {
       const handler = createRewriteHandler({
@@ -255,6 +350,7 @@ describe('the rewrite of an application (R2, design D10)', () => {
         claude: { model: 'sonnet', effort: undefined, bin: FAKE },
         readFixed: () => ok({ master: '', guide: '' }),
         print: async () => fail('module-error', 'unused'),
+        verify: async () => CLEAN,
         ...overrides,
       })
       const work = { id: 'w', kind: 'rewrite', ref, lane: 'interactive', state: 'running', attempts: 0, notBefore: null, reason: null, createdAt: '', updatedAt: '' } as const
@@ -272,6 +368,12 @@ describe('the rewrite of an application (R2, design D10)', () => {
       assert.deepEqual(await direct(w, 'fu-1'), { ok: false, kind: 'failed', reason: 'a follow-up rewrite is R2b' })
     })
 
+    test('an application with no instruction to follow: never a rewrite with an empty one', async () => {
+      const w = await world()
+      insertApp(w.db, { id: 'a1', state: 'rewriting', rewriteFrom: 'ready' }, ARTIFACTS)
+      assert.deepEqual(await direct(w, 'a1'), { ok: false, kind: 'failed', reason: 'no instruction to follow' })
+    })
+
     test('an application without a letter', async () => {
       const w = await world()
       insertApp(w.db, { id: 'a1', state: 'ready' }, { ...ARTIFACTS, letter: null })
@@ -281,6 +383,7 @@ describe('the rewrite of an application (R2, design D10)', () => {
     test('a prompt file that cannot be written', async () => {
       const w = await world()
       insertApp(w.db, { id: 'a1', state: 'ready' }, ARTIFACTS)
+      instruct(w, 'a1', 'Shorter')
       const result = await direct(w, 'a1', { stateDir: '/dev/null/nowhere' })
       assert.equal(result.ok, false)
       if (!result.ok) assert.match(result.reason, /prompt file/)
