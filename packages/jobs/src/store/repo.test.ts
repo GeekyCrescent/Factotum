@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { openDb, type Db, type Queries } from './db.ts'
+import { openDb, type Db, type Queries, type SqlValue } from './db.ts'
 import * as repo from './repo.ts'
 import { addressTransition, appTransition, followupTransition, sendTransition } from '../state.ts'
 import { ADDRESSES, application, CAP, contact, followup, NOW, send, valueOf } from '../test-state.ts'
@@ -246,7 +246,7 @@ test('the startup write: every sending row → send-unknown, running work → qu
     return undefined
   })
   const recovered = write(db, (q) => repo.recoverOnStart(q, NOW))
-  assert.deepEqual(recovered, { sends: 2, work: 1, contacts: 1 })
+  assert.deepEqual(recovered, { sends: 2, work: 1, contacts: 1, skipped: [] })
   const read = db.read((q) => ({
     initial: repo.getApplication(q, 'app-initial'),
     followupApp: repo.getApplication(q, 'app-followup'),
@@ -266,7 +266,7 @@ test('the startup write: every sending row → send-unknown, running work → qu
     ['send-unknown', { kind: 'followup-1', followupId: 'fu-9', restarted: true }],
     ['address-checked', { found: false, restarted: true, contactId: 'contact-2' }],
   ])
-  assert.deepEqual(write(db, (q) => repo.recoverOnStart(q, NOW)), { sends: 0, work: 0, contacts: 0 })
+  assert.deepEqual(write(db, (q) => repo.recoverOnStart(q, NOW)), { sends: 0, work: 0, contacts: 0, skipped: [] })
   db.close()
 })
 
@@ -287,6 +287,42 @@ test('the startup write resolves a sending row even when its owner is out of ste
     { kind: 'initial', restarted: true, followupId: null, ownerOutOfStep: true },
     { kind: 'followup-1', restarted: true, followupId: null, ownerOutOfStep: true },
   ])
+  db.close()
+})
+
+/** The real queries, with the rows of one SELECT rewritten: what the startup write would see if they drifted. */
+const drifting = (q: Queries, select: string, patch: Readonly<Record<string, SqlValue>>): Queries => ({
+  ...q,
+  all: <R>(sql: string, ...params: SqlValue[]) => {
+    const rows = q.all<Readonly<Record<string, SqlValue>>>(sql, ...params)
+    return (sql.startsWith(select) ? rows.map((row) => ({ ...row, ...patch })) : rows) as readonly R[]
+  },
+})
+
+test('the startup write reports what it could not move, with the reason, instead of counting it', async () => {
+  using base = tempBase()
+  const db = await seeded(base)
+  write(db, (q) => {
+    repo.insertContact(q, contact(ADDRESSES.checking, { id: 'contact-2' }), note, NOW)
+    repo.insertApplication(q, application({ state: 'sending', sends: [send({ messageId: '<i@x>' })] }), { seedKey: null }, note, NOW)
+    return undefined
+  })
+  const before = eventCount(db)
+  const recovered = write(db, (q) => {
+    const sendsSeenAsSent = drifting(q, "SELECT * FROM sends WHERE state = 'sending'", { state: 'sent' })
+    return repo.recoverOnStart(drifting(sendsSeenAsSent, "SELECT * FROM contacts WHERE address_status = 'checking'", { address_status: 'verified' }), NOW)
+  })
+  assert.deepEqual(recovered.sends, 0)
+  assert.deepEqual(recovered.contacts, 0)
+  assert.deepEqual(
+    recovered.skipped.map((s) => [s.kind, s.id]),
+    [
+      ['send', 'app-1/initial'],
+      ['contact', 'contact-2'],
+    ],
+  )
+  for (const s of recovered.skipped) assert.match(s.reason, /\S/)
+  assert.equal(eventCount(db), before)
   db.close()
 })
 
