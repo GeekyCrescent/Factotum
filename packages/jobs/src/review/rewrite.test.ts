@@ -6,7 +6,7 @@ import { describe, test } from 'node:test'
 
 import { REMOVE_PORTFOLIO_INSTRUCTION } from '../ai/prompts/rewrite.ts'
 import { instructionEvent } from '../ai/returns.ts'
-import { appOf, eventsOf, insertApp, queueStore, rig, workOf } from '../ai/test-queue.ts'
+import { appOf, eventsOf, insertApp, insertFollowup, queueStore, rig, workOf } from '../ai/test-queue.ts'
 import type { Queue } from '../ai/queue.ts'
 import { loadProfileSeed } from '../profile.ts'
 import { appTransition } from '../state.ts'
@@ -244,22 +244,46 @@ describe('the rewrite of an application (R2, design D10)', () => {
     assert.equal(workOf(w.db, workId).reason, 'cv-maestro not found')
   })
 
-  test('a work whose entity is gone is a failed run', async () => {
-    const w = await world()
-    const handler = createRewriteHandler({
-      db: w.db,
-      now: () => NOW,
-      timers: realTimers,
-      stateDir: w.runDir,
-      runDir: w.runDir,
-      claude: { model: 'sonnet', effort: undefined, bin: FAKE },
-      readFixed: () => ok({ master: '', guide: '' }),
-      print: async () => fail('module-error', 'unused'),
+  describe('what it cannot rewrite is a failed run, before Claude', () => {
+    const direct = async (w: World, ref: string, overrides: Partial<RewriteDeps> = {}) => {
+      const handler = createRewriteHandler({
+        db: w.db,
+        now: () => NOW,
+        timers: realTimers,
+        stateDir: w.runDir,
+        runDir: w.runDir,
+        claude: { model: 'sonnet', effort: undefined, bin: FAKE },
+        readFixed: () => ok({ master: '', guide: '' }),
+        print: async () => fail('module-error', 'unused'),
+        ...overrides,
+      })
+      const work = { id: 'w', kind: 'rewrite', ref, lane: 'interactive', state: 'running', attempts: 0, notBefore: null, reason: null, createdAt: '', updatedAt: '' } as const
+      return handler(work, { signal: new AbortController().signal, timeoutMs: 1000 })
+    }
+
+    test('an entity that is gone', async () => {
+      assert.deepEqual(await direct(await world(), 'nobody'), { ok: false, kind: 'failed', reason: 'no such application' })
     })
-    const result = await handler(
-      { id: 'w', kind: 'rewrite', ref: 'nobody', lane: 'interactive', state: 'running', attempts: 0, notBefore: null, reason: null, createdAt: '', updatedAt: '' },
-      { signal: new AbortController().signal, timeoutMs: 1000 },
-    )
-    assert.deepEqual(result, { ok: false, kind: 'failed', reason: 'no such application' })
+
+    test('a follow-up (R2b)', async () => {
+      const w = await world()
+      insertApp(w.db, { id: 'app-1', state: 'sent' }, ARTIFACTS)
+      insertFollowup(w.db, { id: 'fu-1' })
+      assert.deepEqual(await direct(w, 'fu-1'), { ok: false, kind: 'failed', reason: 'a follow-up rewrite is R2b' })
+    })
+
+    test('an application without a letter', async () => {
+      const w = await world()
+      insertApp(w.db, { id: 'a1', state: 'ready' }, { ...ARTIFACTS, letter: null })
+      assert.deepEqual(await direct(w, 'a1'), { ok: false, kind: 'failed', reason: 'no letter to rewrite' })
+    })
+
+    test('a prompt file that cannot be written', async () => {
+      const w = await world()
+      insertApp(w.db, { id: 'a1', state: 'ready' }, ARTIFACTS)
+      const result = await direct(w, 'a1', { stateDir: '/dev/null/nowhere' })
+      assert.equal(result.ok, false)
+      if (!result.ok) assert.match(result.reason, /prompt file/)
+    })
   })
 })
