@@ -22,8 +22,8 @@ import type {
   WarningCode,
 } from './contract.ts'
 
-export { addressControls, ADDRESS_STALE_DAYS, isStaleCheck, type AddressControls, type Toggle } from './address.ts'
-import { addressControls, isStaleCheck } from './address.ts'
+export { addressControls, ADDRESS_STALE_DAYS, isStaleCheck, staleInMs, type AddressControls, type Toggle } from './address.ts'
+import { addressControls, isStaleCheck, staleInMs } from './address.ts'
 
 /** The instruction «Remove the portfolio line» sends, already written (D6, P4). */
 export const REMOVE_PORTFOLIO = 'Remove the portfolio line and anything that refers to it'
@@ -276,6 +276,20 @@ export function shouldPollBatch(batch: BatchView, now: Date): boolean {
   return batch.rewriting > 0 || batch.items.some((item) => waitsForCheck(item, batch, now))
 }
 
+/**
+ * A batch not polled may need it later with nothing read in between: a verified address goes stale
+ * by the clock alone. The ms until the first undecided email's address does; null when none will.
+ */
+export function msUntilStale(batch: BatchView, now: Date): number | null {
+  const waits = batch.items.flatMap((item) => {
+    if (batch.results[item.itemId] !== undefined) return []
+    const subject = reviewableOf(item)
+    if (subject === null || !subject.email || subject.address === null || subject.address.status === 'checking') return []
+    return [staleInMs(subject.address, now)]
+  })
+  return waits.length === 0 ? null : Math.min(...waits)
+}
+
 // ── The send line (D9 paso 4) ────────────────────────────────────────────────────────────────────
 
 export interface SendKey {
@@ -374,6 +388,17 @@ export function noticesOf(error: string | undefined, notice: Notice | undefined)
 export function safeHref(url: string | null, prefix?: string): string | null {
   if (url === null || !/^https?:\/\//i.test(url)) return null
   return prefix === undefined || url.startsWith(prefix) ? url : null
+}
+
+/**
+ * A file path the daemon sent (`cv.png`, `cv.pdf`) for `api.url`: only a relative module path — no
+ * leading `/`, no `//`, no `..` segment, no `\`, no scheme — so a tampered row can never point the
+ * `<img>` or the download at another module, another host or up the tree.
+ */
+export function safeModulePath(path: string | null): string | null {
+  if (path === null || path === '' || path.startsWith('/') || path.includes('//') || path.includes('\\')) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return null
+  return path.split('/').some((segment) => segment === '..' || segment === '.') ? null : path
 }
 
 // ── The keys (crit. 36) ──────────────────────────────────────────────────────────────────────────

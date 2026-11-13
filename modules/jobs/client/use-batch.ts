@@ -14,9 +14,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Api, BatchAnswer, DecideAnswer, Decision } from './contract.ts'
 import { createLock } from './guard.ts'
-import { refusalOf, shouldPollBatch, type Refusal } from './model.ts'
+import { msUntilStale, refusalOf, shouldPollBatch, type Refusal } from './model.ts'
 
 export const POLL_MS = 2_000
+/** The longest a `setTimeout` waits (2^31 - 1 ms); a longer wait is taken in steps. */
+const MAX_TIMER_MS = 2_147_483_647
 
 export interface BatchState {
   readonly answer: BatchAnswer | undefined
@@ -98,6 +100,14 @@ export function useBatch(api: Api): BatchState {
     }, POLL_MS)
     return () => clearInterval(timer)
   }, [polling, reload])
+
+  // Not polled, but an address goes stale by the clock alone: read again then, and the poll starts.
+  const staleIn = batch === null || polling ? null : msUntilStale(batch, new Date())
+  useEffect(() => {
+    if (staleIn === null) return
+    const timer = setTimeout(() => void reload(), Math.min(staleIn, MAX_TIMER_MS))
+    return () => clearTimeout(timer)
+  }, [staleIn, reload])
 
   const clearError = useCallback(() => setError(undefined), [])
   return { answer, error, clearError, reload, start, decide }

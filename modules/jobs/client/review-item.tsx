@@ -19,7 +19,7 @@ import type { JSX, RefObject } from 'preact'
 import { useState } from 'preact/hooks'
 import type { ApplicationCard, Decision, FollowupCard, ItemResult, ReplyCard, ReviewItem, RewriteInfo, ViewProps } from './contract.ts'
 import { Cv, FormAnswers, Gaps, Labels, Letter, Notes, ToLine } from './item-parts.tsx'
-import { blockersOf, exitsFor, gapsOf, labelsOf, reviewableOf, safeHref, type Exit, type Reviewable } from './model.ts'
+import { blockersOf, exitsFor, gapsOf, labelsOf, refusalOf, reviewableOf, safeHref, type Exit, type Reviewable } from './model.ts'
 import { isRuleHint } from './rule-hint.ts'
 
 /** What the card can ask of the screen. */
@@ -248,6 +248,8 @@ interface InstructBoxProps {
 
 function InstructBox({ props, text, setText, box, busy, placeholder, onSend }: InstructBoxProps) {
   const [rule, setRule] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** Why the rule was not saved, as the daemon said it. */
+  const [ruleError, setRuleError] = useState<string | null>(null)
   const instruction = text.trim()
   const send = () => {
     if (instruction === '' || busy) return
@@ -255,11 +257,14 @@ function InstructBox({ props, text, setText, box, busy, placeholder, onSend }: I
     void onSend(instruction)
   }
   const saveRule = async () => {
+    if (rule === 'saving') return
     setRule('saving')
+    setRuleError(null)
     try {
       await props.api.post('rules', { text: instruction, scope: 'all' })
       setRule('saved')
-    } catch {
+    } catch (cause) {
+      setRuleError(refusalOf(cause).text)
       setRule('failed')
     }
   }
@@ -292,9 +297,12 @@ function InstructBox({ props, text, setText, box, busy, placeholder, onSend }: I
           {rule === 'saved' ? (
             'Saved as a rule for all.'
           ) : (
-            <button type="button" class="btn sm quiet" disabled={rule === 'saving'} onClick={() => void saveRule()}>
-              {rule === 'failed' ? 'Could not save it — try again' : 'Save as a rule for all?'}
-            </button>
+            <>
+              {rule === 'failed' && ruleError !== null ? <span role="alert">Could not save it: {ruleError} </span> : null}
+              <button type="button" class="btn sm quiet" disabled={rule === 'saving'} onClick={() => void saveRule()}>
+                {rule === 'failed' ? 'Try again' : 'Save as a rule for all?'}
+              </button>
+            </>
           )}
         </p>
       ) : null}

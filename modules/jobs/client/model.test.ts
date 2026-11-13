@@ -19,6 +19,9 @@ import {
   noticesOf,
   refusalOf,
   safeHref,
+  safeModulePath,
+  msUntilStale,
+  ADDRESS_STALE_DAYS,
   sendKeyOf,
   statusOf,
   sendLine,
@@ -426,6 +429,32 @@ test('the batch is polled while something rewrites or an address is being checke
   // Decided items, and forms, do not keep it polling.
   assert.equal(shouldPollBatch(batch([checking], { x: 'skipped' }), NOW), false)
   assert.equal(shouldPollBatch(batch([appItem({ channel: 'form', contact: null }, 'f')]), NOW), false)
+})
+
+test('a batch not polled says when its first address goes stale, so the poll can start then', () => {
+  const twoHours = 2 * 3_600_000
+  assert.equal(msUntilStale(batch(three), NOW), ADDRESS_STALE_DAYS * 86_400_000 - twoHours + 1)
+  // Decided items, forms and addresses already being checked have nothing to wait for.
+  assert.equal(msUntilStale(batch(three, { a: 'approved', b: 'skipped', c: 'sent' }), NOW), null)
+  assert.equal(msUntilStale(batch([appItem({ channel: 'form', contact: null }, 'f')]), NOW), null)
+  const checking = appItem({ contact: { id: 'k', name: null, email: 'x@y.io', address: address({ status: 'checking' }) } }, 'x')
+  assert.equal(msUntilStale(batch([checking]), NOW), null)
+  const stale = appItem({ contact: { id: 'k', name: null, email: 'x@y.io', address: address({ checkedAt: DAYS_AGO_15 }) } }, 's')
+  assert.equal(msUntilStale(batch([stale]), NOW), 0)
+})
+
+test('a file path from the daemon is used only when it is a plain module path', () => {
+  assert.equal(safeModulePath('a/app-1/v/2/preview.png'), 'a/app-1/v/2/preview.png')
+  assert.equal(safeModulePath('a/app-1/v/2/Juan%20CV.pdf'), 'a/app-1/v/2/Juan%20CV.pdf')
+  assert.equal(safeModulePath('/etc/passwd'), null)
+  assert.equal(safeModulePath('a/../../secrets'), null)
+  assert.equal(safeModulePath('..'), null)
+  assert.equal(safeModulePath('a//b'), null)
+  assert.equal(safeModulePath('//evil.io/x.png'), null)
+  assert.equal(safeModulePath('https://evil.io/x.png'), null)
+  assert.equal(safeModulePath('a\\..\\b'), null)
+  assert.equal(safeModulePath(''), null)
+  assert.equal(safeModulePath(null), null)
 })
 
 // ── The send line (D9 paso 4) ────────────────────────────────────────────────────────────────────

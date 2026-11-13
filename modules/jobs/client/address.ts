@@ -18,6 +18,13 @@ export function isStaleCheck(address: Address, now: Date): boolean {
   return now.getTime() - new Date(address.checkedAt).getTime() > ADDRESS_STALE_DAYS * DAY_MS
 }
 
+/** Ms until `isStaleCheck` turns true for this address; 0 when it already is. */
+export function staleInMs(address: Address, now: Date): number {
+  if (address.checkedAt === null) return 0
+  const staleAt = new Date(address.checkedAt).getTime() + ADDRESS_STALE_DAYS * DAY_MS + 1
+  return Math.max(0, staleAt - now.getTime())
+}
+
 /** `hidden`: not offered. `off`: shown, disabled. `on`: shown, enabled. */
 export type Toggle = 'hidden' | 'off' | 'on'
 

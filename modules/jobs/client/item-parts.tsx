@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import { ARM_EXPIRY_MS, pressArmed } from './arm.ts'
 import type { Api, ApplicationCard, ContactView, FormAnswer } from './contract.ts'
-import { addressControls, formMark, type Label } from './model.ts'
+import { addressControls, formMark, safeModulePath, type Label } from './model.ts'
 
 export function Labels({ labels }: { readonly labels: readonly Label[] }) {
   return (
@@ -88,12 +88,15 @@ export function Letter({ title, subject, body }: { readonly title: string; reado
 }
 
 export function Cv({ api, cv }: { readonly api: Api; readonly cv: ApplicationCard['cv'] }) {
+  // The daemon's paths go to `api.url` only as plain module paths (`safeModulePath`).
+  const png = safeModulePath(cv.png)
+  const pdf = safeModulePath(cv.pdf)
   return (
     <section class="j-doc j-cv">
       <h3 class="j-doc-title">CV{cv.base === null ? '' : ` — ${cv.base}`}</h3>
-      {cv.png === null ? <p class="j-quiet">No preview yet.</p> : <img class="j-cv-png" src={api.url(cv.png)} alt="The CV, first page" />}
-      {cv.pdf === null ? null : (
-        <a class="btn sm" href={api.url(cv.pdf)} download>
+      {png === null ? <p class="j-quiet">No preview yet.</p> : <img class="j-cv-png" src={api.url(png)} alt="The CV, first page" />}
+      {pdf === null ? null : (
+        <a class="btn sm" href={api.url(pdf)} download>
           Download PDF
         </a>
       )}
