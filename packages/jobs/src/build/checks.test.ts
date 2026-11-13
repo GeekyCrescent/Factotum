@@ -244,6 +244,52 @@ describe('the check queue (N4, design D9 «Cuándo se comprueba»)', () => {
     db.close()
   })
 
+  test('enqueueSeedChecks takes every due seeded address: unverified, and verified never checked or stale; not a fresh one', async () => {
+    using base = tempBase()
+    const db = await emptyStore(base)
+    write(db, (q) => {
+      addContact(q, 'seenNull', { ...ADDRESSES.verifiedToday, checkedAt: null })
+      addContact(q, 'seenStale', ADDRESSES.verifiedStale)
+      addContact(q, 'seenFresh', ADDRESSES.verifiedToday)
+      addContact(q, 'unv', ADDRESSES.unverifiedNeverChecked)
+      addContact(q, 'unvFresh', ADDRESSES.unverifiedToday)
+      for (const [i, id] of ['seenNull', 'seenStale', 'seenFresh', 'unv', 'unvFresh'].entries()) addApp(q, id, id, { state: 'draft' }, { seedKey: `ads.md#${i}` })
+    })
+    const h = harness(db, () => new Promise<AddressOutcome>(() => undefined))
+    assert.equal(h.queue.enqueueSeedChecks(['ads.md']), 3)
+    assert.deepEqual([h.queue.running(), ...h.queue.pending()], ['seenNull', 'seenStale', 'unv'])
+    assert.deepEqual([statusOf(db, 'seenFresh'), statusOf(db, 'unvFresh')], ['verified', 'unverified'])
+    await h.queue.stop()
+    db.close()
+  })
+
+  test('enqueueContacts(ids, { front }): the seed hook\'s entry, by contact id, with the same due rule and no status filter', async () => {
+    using base = tempBase()
+    const db = await emptyStore(base)
+    write(db, (q) => {
+      addContact(q, 'busy', ADDRESSES.unverifiedNeverChecked)
+      addContact(q, 'back', ADDRESSES.unverifiedNeverChecked)
+      addContact(q, 'seenNull', { ...ADDRESSES.verifiedToday, checkedAt: null })
+      addContact(q, 'seenStale', ADDRESSES.verifiedStale)
+      addContact(q, 'seenFresh', ADDRESSES.verifiedToday)
+      addContact(q, 'unv', ADDRESSES.unverifiedNeverChecked)
+      addContact(q, 'unvFresh', ADDRESSES.unverifiedToday)
+    })
+    const h = harness(db, () => new Promise<AddressOutcome>(() => undefined))
+    valueOf(h.queue.enqueueCheck('busy'))
+    await eventually(() => h.queue.running() === 'busy', 'busy running')
+    assert.equal(h.queue.enqueueContacts(['back']), 1)
+    const ids = ['seenNull', 'seenStale', 'seenFresh', 'unv', 'unvFresh', 'unv', 'ghost', 'back']
+    assert.equal(h.queue.enqueueContacts(ids, { front: true }), 3, 'moved, already, fresh and unknown do not count')
+    assert.deepEqual(h.queue.pending(), ['seenNull', 'seenStale', 'unv', 'back'])
+    assert.deepEqual([statusOf(db, 'seenNull'), statusOf(db, 'seenStale'), statusOf(db, 'unv')], ['checking', 'checking', 'checking'])
+    assert.deepEqual([statusOf(db, 'seenFresh'), statusOf(db, 'unvFresh')], ['verified', 'unverified'])
+    assert.match(h.lines.join('\n'), /warn address check of ghost not queued: not-found/)
+    assert.equal(h.queue.enqueueContacts([]), 0)
+    await h.queue.stop()
+    db.close()
+  })
+
   test('enqueueApplicationCheck: an email application whose address was never checked (on ready/in-review); other channels have none', async () => {
     using base = tempBase()
     const db = await emptyStore(base)

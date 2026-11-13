@@ -13,7 +13,8 @@
  * untouched. (The AD check of N3 is the application's, in `applications.checks`.)
  *
  * WHO CALLS WHAT (design D9's list):
- * - the seed import, right after importing → `enqueueSeedChecks(files)`, in front of the rest;
+ * - the seed import, right after importing → `enqueueContacts(contactIds, { front: true })` (its
+ *   hook; `enqueueSeedChecks(files)` is the same by seed file), in front of the rest;
  * - an email application reaching `ready`/`in-review` → `enqueueApplicationCheck(id)`;
  * - every tick (D16) → `prepareTick({ batchSize })` for the next `2 × batchSize` candidates;
  * - startup, after the opening `tx` → `enqueueRestarted()`, in front;
@@ -65,7 +66,13 @@ export interface PrepareTickOptions {
 export interface CheckQueue {
   readonly enqueueCheck: (contactId: string, options?: EnqueueOptions) => Result<Enqueued>
   readonly enqueueApplicationCheck: (applicationId: string, options?: EnqueueOptions) => Result<Enqueued>
-  /** Every `unverified` address of the unsent email applications of these seed files, in front. Returns how many were queued. */
+  /**
+   * These contacts, each one whose check is due (`isDue`: `checking`, or `checkedAt` missing or stale —
+   * `verified` included), at the back or in front. The seed import's hook. Returns how many were
+   * queued: one already pending (`moved`/`already`), fresh or refused (logged) does not count.
+   */
+  readonly enqueueContacts: (contactIds: readonly string[], options?: EnqueueOptions) => number
+  /** The due addresses (as `enqueueContacts`) of the unsent email applications of these seed files, in front. Returns how many were queued. */
   readonly enqueueSeedChecks: (files: readonly string[]) => number
   /** The contacts the startup write took out of `checking` (T-D6), in front. Returns how many. */
   readonly enqueueRestarted: () => number
@@ -211,10 +218,10 @@ export function createCheckQueue(deps: CheckQueueDeps): CheckQueue {
       return firstOf(enqueueMany([app.target.contactId], options.front === true))
     },
 
-    enqueueSeedChecks: (files) => {
-      const unverified = db.read((q) => seedCheckContacts(q, files).filter((id) => getContact(q, id)?.address?.status === 'unverified'))
-      return enqueueCounted(unverified, true)
-    },
+    enqueueContacts: (contactIds, options = {}) => enqueueCounted(contactIds, options.front === true),
+
+    // No status filter: `admit`'s `isDue` decides, so a package-«seen» `verified` never checked is due too.
+    enqueueSeedChecks: (files) => enqueueCounted(db.read((q) => seedCheckContacts(q, files)), true),
 
     enqueueRestarted: () => enqueueCounted(db.read(restartedContacts), true),
 
