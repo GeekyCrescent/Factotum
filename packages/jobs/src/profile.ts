@@ -9,7 +9,7 @@
  * version 1; from then on the profile is the owner's. No `.ts` here carries those values (B7 greps).
  *
  * `afterSave` RUNS INSIDE THE SAME `tx` as the new version and answers with a `Result`: a `!ok` rolls
- * the version back. Here it is a no-op by default; L4 wires it to `relintUnsent`.
+ * the version back. Here it is a no-op by default; `build/relint.ts` (`saveProfileRelinting`, L4) passes `relintUnsent`.
  */
 
 import { readFileSync } from 'node:fs'
