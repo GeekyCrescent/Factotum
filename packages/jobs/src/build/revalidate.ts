@@ -44,8 +44,10 @@ const SEEK_NO_LONGER = /this job is no longer advertised/i
 
 // ── Reading the page ─────────────────────────────────────────────────────────────────────────────
 
-const isSeek = (host: string): boolean => ['seek.com.au', 'seek.com'].some((domain) => host === domain || host.endsWith(`.${domain}`))
-const isWwr = (host: string): boolean => host === 'weworkremotely.com' || host === 'www.weworkremotely.com'
+/** `au.seek.com.` and `au.seek.com` are the same host: the root dot is dropped before comparing. */
+const bareHost = (host: string): string => host.toLowerCase().replace(/\.$/, '')
+const isSeek = (host: string): boolean => ['seek.com.au', 'seek.com'].some((domain) => bareHost(host) === domain || bareHost(host).endsWith(`.${domain}`))
+const isWwr = (host: string): boolean => ['weworkremotely.com', 'www.weworkremotely.com'].includes(bareHost(host))
 
 /** The JSON object that starts at `start` (a `{`), by balanced braces outside strings; null when it never closes. */
 function objectAt(text: string, start: number): string | null {

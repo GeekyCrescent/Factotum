@@ -80,6 +80,14 @@ describe('classifyAd (N3, design D9 «El anuncio vivo», markers of A6)', () => 
     }
   })
 
+  test('a host written with the root dot is still SEEK / We Work Remotely', () => {
+    const expired = redux({ id: '1', isExpired: true })
+    const seekPage = { status: 200, url: 'https://au.seek.com./job/1', redirects: [], contentType: 'text/html', body: expired }
+    assert.deepEqual(classifyAd('https://au.seek.com./job/1', { ok: true, value: seekPage }), { kind: 'closed', reason: 'seek-expired' })
+    const wwrPage = { status: 200, url: 'https://weworkremotely.com./', redirects: ['https://weworkremotely.com./'], contentType: 'text/html', body: '' }
+    assert.deepEqual(classifyAd('https://weworkremotely.com./remote-jobs/x', { ok: true, value: wwrPage }), { kind: 'closed', reason: 'redirected-home' })
+  })
+
   test('the SEEK markers are SEEK\'s: the same text elsewhere is an open page', async () => {
     const url = 'https://acme.example/jobs/1'
     assert.deepEqual(await verdictOf(url, { [url]: '<p>This job is no longer advertised</p>' }), { kind: 'open' })
