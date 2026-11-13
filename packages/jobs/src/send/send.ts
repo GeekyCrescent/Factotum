@@ -29,6 +29,7 @@ import * as repo from '../store/repo.ts'
 import { fail, ok, type Address, type Application, type Followup, type Result, type Send, type SendKind } from '../types.ts'
 import { applyDeferredReplies, hasHumanReply } from './deferred.ts'
 import { outgoingFor, type Outgoing } from './message.ts'
+import { recipientOf } from './recipient.ts'
 
 export const MESSAGE_ID_HOST = 'jobs.factotum.local'
 /** The reason `stop()` aborts with: never classified, never written (D9 step 5). */
@@ -152,6 +153,8 @@ export function createSender(deps: SenderDeps): Sender {
       if (!moved.ok) return moved
       const approved = { kind: 'approved', data: { kind: 'initial' } } as const
       if (moved.value.state === 'approved') return then(repo.saveApplication(q, moved.value, approved, at), 'approved') // T-A12
+      const recipient = recipientOf(q, app.target.contactId, app.target.to)
+      if (!recipient.ok) return recipient
       const override = writeOverride(q, app.target.contactId, address, sendAnyway, at)
       if (!override.ok) return override
       return then(repo.saveApplication(q, moved.value, approved, at), 'sending') // T-A11 + T-S1 / T-S8
@@ -168,6 +171,8 @@ export function createSender(deps: SenderDeps): Sender {
       const context = { state: app.state, hasHumanReply: hasHumanReply(q, app.id) }
       const moved = followupTransition(f, { type: 'approve', app: context, address, sendAnyway, cap: capOf(q, at) }, at) // T-F6
       if (!moved.ok) return moved
+      const recipient = recipientOf(q, f.contactId, f.to)
+      if (!recipient.ok) return recipient
       const gate = approvalGate(address, at, sendAnyway)
       const addressOverride = gate.ok && gate.value.override !== 'none'
       const profileVersion = repo.latestProfileVersion(q)?.version ?? null

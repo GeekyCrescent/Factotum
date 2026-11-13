@@ -220,6 +220,49 @@ describe('the address guard: «Qué responde el motor» (E2, v5 X4)', () => {
     })
   })
 
+  test('the recipient is the CONTACT: its edited email (the stored copy stale) → blocked address-changed, no row; initial and follow-up', async (t) => {
+    await within(t, {}, async (w) => {
+      write(w.db, (q) => q.run("UPDATE contacts SET email = 'other@acme.example' WHERE id = 'contact-1'"))
+      const sender = createSender(w.deps)
+      errorOf(sender.approve('app-1', 'initial'), 'blocked', 'address-changed')
+      assert.equal(appOf(w.db).state, 'ready')
+      assert.deepEqual(appOf(w.db).sends, [])
+      write(w.db, (q) => sentWithFollowup(q, followup()))
+      errorOf(sender.approve('app-1', 'followup-1'), 'blocked', 'address-changed')
+      assert.equal(w.db.read((q) => repo.getFollowup(q, 'fu-1'))?.state, 'ready')
+      assert.equal(appOf(w.db).sends.length, 1)
+      assert.equal(w.server.commands.length, 0)
+    })
+  })
+
+  test('the contact edited between step 1 and step 2 → nothing sent, the row failed address-changed', async (t) => {
+    await within(t, {}, async (w) => {
+      write(w.db, (q) => {
+        q.run("UPDATE applications SET state = 'sending' WHERE id = 'app-1'")
+        q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', 1)")
+        q.run("UPDATE contacts SET email = 'other@acme.example' WHERE id = 'contact-1'")
+      })
+      const sender = createSender(w.deps)
+      sender.launch('app-1', 'initial')
+      await sender.settled()
+      assert.equal(appOf(w.db).sends[0]?.state, 'failed')
+      assert.equal(appOf(w.db).sends[0]?.reason, 'address-changed')
+      assert.equal(w.inputs.length, 0)
+      assert.equal(w.server.commands.length, 0)
+    })
+  })
+
+  test('the same address → it goes to the contact’s email, the one the guard judged', async (t) => {
+    await within(t, {}, async (w) => {
+      write(w.db, (q) => sentWithFollowup(q, followup()))
+      const sender = createSender(w.deps)
+      valueOf(sender.approve('app-1', 'followup-1'))
+      await sender.settled()
+      assert.deepEqual(w.inputs.map((i) => i.to), ['ada@acme.example'])
+      assert.ok(w.server.commands.some((c) => /^RCPT TO:<?ada@acme\.example>?$/i.test(c)), w.server.commands.join(' '))
+    })
+  })
+
   test('an application with no contact is blocked no-address', async (t) => {
     await within(t, {}, async (w) => {
       write(w.db, (q) => q.run("UPDATE applications SET contact_id = NULL WHERE id = 'app-1'"))

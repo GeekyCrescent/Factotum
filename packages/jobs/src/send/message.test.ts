@@ -62,7 +62,8 @@ describe('the message of step 2', () => {
   for (const [name, options, setup, reason] of [
     ['no letter', { letter: null }, undefined, 'missing-letter'],
     ['no subject', { letter: { subject: null, body: 'x' } }, undefined, 'missing-subject'],
-    ['no to', {}, (q: Queries) => q.run("UPDATE applications SET target = json_set(target, '$.to', '') WHERE id = 'app-1'"), 'no-address'],
+    ['a stored to that is not the contact\'s email', {}, (q: Queries) => q.run("UPDATE applications SET target = json_set(target, '$.to', '') WHERE id = 'app-1'"), 'address-changed'],
+    ['a contact with no email', {}, (q: Queries) => q.run("UPDATE contacts SET email = NULL WHERE id = 'contact-1'"), 'no-address'],
     ['no PDF in the artifact', {}, (q: Queries) => q.run("UPDATE artifacts SET pdf = NULL WHERE application_id = 'app-1'"), 'missing-cv'],
   ] as const) {
     test(`the initial with ${name} → blocked ${reason}`, async (t) => {

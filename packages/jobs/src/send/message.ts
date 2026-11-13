@@ -15,6 +15,7 @@ import { fillSlots } from '../build/slots.ts'
 import type { Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { fail, ok, type Application, type Profile, type Result, type Send, type SendKind } from '../types.ts'
+import { recipientOf } from './recipient.ts'
 
 export interface Outgoing {
   readonly to: string
@@ -27,6 +28,8 @@ export interface Outgoing {
 }
 
 interface Draft {
+  /** The contact the send goes to, and the copy of its email stored beside the draft. */
+  readonly contactId: string | null
   readonly to: string | null
   readonly subject: string | null
   readonly body: string
@@ -52,7 +55,7 @@ function initialDraft(q: Queries, app: Application, profile: Profile): Result<Dr
   if (artifacts?.letter == null) return fail('blocked', 'missing-letter')
   if (artifacts.pdf === null) return fail('blocked', 'missing-cv')
   const { subject, body } = artifacts.letter
-  return ok({ to: app.target.to, subject, body, attachment: { filename: cvFileName(profile), path: artifacts.pdf } })
+  return ok({ contactId: app.target.contactId, to: app.target.to, subject, body, attachment: { filename: cvFileName(profile), path: artifacts.pdf } })
 }
 
 function followupDraft(q: Queries, app: Application, row: Send): Result<Draft> {
@@ -60,9 +63,10 @@ function followupDraft(q: Queries, app: Application, row: Send): Result<Draft> {
   const version = f?.versions.find((v) => v.version === f.version)
   if (f === undefined || version === undefined) return fail('conflict', 'the follow-up has no current version')
   const thread = app.sends.filter((s) => s.kind !== row.kind && s.channel === 'smtp' && s.state === 'sent' && s.messageId !== null).map((s) => s.messageId as string)
-  if (thread.length === 0) return ok({ to: f.to, subject: version.subject, body: version.body }) // D12 rule 2
+  if (thread.length === 0) return ok({ contactId: f.contactId, to: f.to, subject: version.subject, body: version.body }) // D12 rule 2
   const initialSubject = repo.getArtifacts(q, app.id, app.version)?.letter?.subject ?? null
   return ok({
+    contactId: f.contactId,
     to: f.to,
     subject: initialSubject === null ? null : reSubject(initialSubject),
     body: version.body,
@@ -80,8 +84,10 @@ export function outgoingFor(q: Queries, id: string, kind: SendKind): Result<Outg
   if (profile === undefined) return fail('blocked', 'missing-profile')
   const draft = kind === 'initial' ? initialDraft(q, app, profile.profile) : followupDraft(q, app, row)
   if (!draft.ok) return draft
-  const { to, subject, body, ...rest } = draft.value
-  if (to === null || to.trim() === '') return fail('blocked', 'no-address')
+  const { contactId, to: storedTo, subject, body, ...rest } = draft.value
+  const recipient = recipientOf(q, contactId, storedTo)
+  if (!recipient.ok) return recipient
+  const { to } = recipient.value
   if (subject === null) return fail('blocked', 'missing-subject')
   const filledSubject = fillSlots(subject, profile.profile)
   const filledText = fillSlots(body, profile.profile)
