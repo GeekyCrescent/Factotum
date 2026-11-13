@@ -6,6 +6,7 @@
 import type { Queue } from '../ai/queue.ts'
 import { BACKUP_FAILING } from '../clock.ts'
 import type { MailHealth } from '../mail-health.ts'
+import { newBatchCount } from '../review/open.ts'
 import type { SeenBatch } from '../review/seen.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -23,6 +24,9 @@ export interface ReadsDeps {
   /** What step 3 found on disk. */
   readonly paths: Health['paths']
   readonly stateDir: string
+  /** «Today» of a skip and of `holdUntil`, for what a new batch would hold. */
+  readonly now: () => Date
+  readonly timeZone: string
 }
 
 export interface Reads {
@@ -32,7 +36,7 @@ export interface Reads {
   readonly file: (id: string, version: number, kind: 'pdf' | 'png') => Result<string>
 }
 
-export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps): Reads {
+export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone }: ReadsDeps): Reads {
   function health(): Health {
     const mail = mailNow()
     const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
@@ -63,8 +67,9 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
       const open = repo.openBatch(q)
       return {
         counts: countsOf(apps),
-        reviewable: readyOutside(q, open?.items ?? []),
+        reviewable: newBatchCount(q, now(), timeZone),
         batchOpen: open !== undefined,
+        batchUndecided: open === undefined ? 0 : undecidedIn(open),
         missingPhone: isPhoneMissing(repo.latestProfileVersion(q)?.profile),
         notices: health().warnings,
         sends: sendsNeeding(q, apps),
@@ -83,6 +88,9 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
 
   return { health, overview, answer, file }
 }
+
+/** The items of the open batch with no result yet: while there is one, the tracker continues it (R8). */
+const undecidedIn = (batch: repo.StoredBatch): number => batch.items.filter((item) => typeof item.itemId !== 'string' || batch.results[item.itemId] === undefined).length
 
 /** R9: no phone, nothing becomes ready. `identity` is read defensively: a stored profile is data. */
 const isPhoneMissing = (profile: Profile | undefined): boolean => (profile?.identity?.phone ?? '').trim() === ''

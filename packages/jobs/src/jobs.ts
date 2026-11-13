@@ -144,7 +144,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
   const { queue } = buildGeneration(base, { font, vault, linter })
   const clock = buildClock(base, { queue, ads, checks })
   const review = openReview({ db, now, timeZone, enqueueChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log })
-  const reads = views({ db, queue, mail: password.current, paths, stateDir })
+  const reads = views({ db, queue, mail: password.current, paths, stateDir, now, timeZone })
   const imports = inFlight()
 
   const life = lifecycle({

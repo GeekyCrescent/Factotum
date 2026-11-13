@@ -7,6 +7,7 @@ const overview = (over: Partial<Overview> = {}): Overview => ({
   counts: { toReview: 12, approvedNotSent: 3, sent: 20, awaitingReply: 18, interviews: 1, offers: 0 },
   reviewable: 12,
   batchOpen: false,
+  batchUndecided: 0,
   missingPhone: false,
   notices: [],
   sends: [],
@@ -26,6 +27,11 @@ test('the counters of crit. 63, in its order', () => {
 
 test('«Start review (N)» arms a batch; with one open it continues it, never arms another over it', () => {
   assert.deepEqual(startOf(overview()), { label: 'Start review (12)', enabled: true, arms: true })
-  assert.deepEqual(startOf(overview({ batchOpen: true })), { label: 'Continue review', enabled: true, arms: false })
+  assert.deepEqual(startOf(overview({ batchOpen: true, batchUndecided: 4 })), { label: 'Continue review', enabled: true, arms: false })
   assert.deepEqual(startOf(overview({ reviewable: 0 })), { label: 'Start review (0)', enabled: false, arms: true })
+})
+
+test('a finished batch (open, nothing undecided) offers a new one of what is left — blocked ones too — never «Continue review» (R8)', () => {
+  assert.deepEqual(startOf(overview({ batchOpen: true, batchUndecided: 0, reviewable: 3 })), { label: 'Start review (3)', enabled: true, arms: true })
+  assert.deepEqual(startOf(overview({ batchOpen: true, batchUndecided: 0, reviewable: 0 })), { label: 'Start review (0)', enabled: false, arms: true })
 })

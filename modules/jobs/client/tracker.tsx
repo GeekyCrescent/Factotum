@@ -1,7 +1,7 @@
 /**
  * The tracker of this cut, `/m/jobs` (spec 2026-11-12-postulaciones, task R7; design D15 «Tracker»;
  * requirements crit. 63): the warnings of `health()`, the counters, and «Start review (N)» — or
- * «Continue review» with a batch open, which is never armed over. The list of applications, the
+ * «Continue review» while the open batch has an undecided item, which is never armed over (R8). The list of applications, the
  * filters and the detail are T2a's.
  *
  * THE SENDS THAT NEED THE OWNER are here too, one card per send («did it go?», failed): after a

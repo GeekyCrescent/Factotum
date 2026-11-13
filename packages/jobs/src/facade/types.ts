@@ -127,10 +127,12 @@ export interface Overview {
     readonly interviews: number
     readonly offers: number
   }
-  /** `ready` applications outside the open batch: «Start review (N)». */
+  /** What «Start review» would put in a new batch, before `batchSize` — `ready` and `in-review` alike (R8): «Start review (N)». */
   readonly reviewable: number
-  /** A batch is open: the tracker continues it instead of arming another over it. */
+  /** A batch is open (decided or not). */
   readonly batchOpen: boolean
+  /** The items of the open batch with no result yet (0 with none open): while > 0 the tracker continues it; at 0 it offers a new one (R8). */
+  readonly batchUndecided: number
   /** The current profile has no phone (R9): nothing becomes ready. */
   readonly missingPhone: boolean
   /** `health().warnings`. */

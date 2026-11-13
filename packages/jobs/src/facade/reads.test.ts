@@ -19,6 +19,8 @@ function readsOf(db: Db, mailReason: string | null = null) {
     mail: () => (mailReason === null ? { state: 'ok', reason: null, at: NOW.toISOString() } : { state: 'bad', reason: mailReason, at: NOW.toISOString() }),
     paths: PATHS,
     stateDir: '/nowhere',
+    now: () => NOW,
+    timeZone: 'Australia/Sydney',
   })
 }
 
@@ -51,8 +53,9 @@ test('C1 overview: the tracker shape of the screen — counters of crit. 63, rev
 
   // Assert
   assert.deepEqual(overview.counts, { toReview: 2, approvedNotSent: 2, sent: 3, awaitingReply: 1, interviews: 1, offers: 1 })
-  assert.equal(overview.reviewable, 1, 'the ready one; never the test application')
+  assert.equal(overview.reviewable, 1, 'what a new batch would hold: with the test application in review, it alone (D15)')
   assert.equal(overview.batchOpen, false)
+  assert.equal(overview.batchUndecided, 0)
   assert.equal(overview.missingPhone, false)
   assert.deepEqual(overview.notices, ['Mail: password file is readable by others'])
   assert.deepEqual(
@@ -64,7 +67,7 @@ test('C1 overview: the tracker shape of the screen — counters of crit. 63, rev
   )
 })
 
-test('C1 overview: an open batch is continued, not counted again; a profile without a phone says so', async () => {
+test('C1 overview: an open batch with an undecided item is continued; a profile without a phone says so', async () => {
   // Arrange
   using base = tempBase()
   const db = await queueStore(base)
@@ -82,10 +85,57 @@ test('C1 overview: an open batch is continued, not counted again; a profile with
 
   // Assert
   assert.equal(overview.batchOpen, true)
-  assert.equal(overview.reviewable, 0)
+  assert.equal(overview.batchUndecided, 1)
   assert.equal(overview.missingPhone, true)
   assert.deepEqual(overview.notices, [])
   assert.deepEqual(overview.sends, [])
+})
+
+test('R8 overview: a finished batch with blocked items left offers a new batch of them — never a dead end (crit. 28b, D15)', async () => {
+  // Arrange: the open batch is all decided; nothing is ready, one in-review (blocked) is left.
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  insertApp(db, { id: 'a-done', state: 'approved' }, ARTIFACTS)
+  insertApp(db, { id: 'a-blocked', state: 'in-review' }, ARTIFACTS)
+  insertApp(db, { id: 'a-held', state: 'in-review', holdUntil: '2027-01-12' }, ARTIFACTS)
+  valueOf(
+    db.tx((q) => {
+      repo.insertBatch(q, { id: 'b-1', items: [{ itemId: 'i-1', kind: 'application', applicationId: 'a-done' }], cursor: 1, results: { 'i-1': 'approved' } }, NOW)
+      return ok(undefined)
+    }),
+  )
+
+  // Act
+  const overview = readsOf(db).overview()
+
+  // Assert
+  assert.equal(overview.batchOpen, true)
+  assert.equal(overview.batchUndecided, 0, 'every item of the open batch has its result')
+  assert.equal(overview.reviewable, 1, 'what a new batch would hold: the blocked in-review one, not the one held to 2027')
+})
+
+test('R8 overview: an open batch with an undecided item counts it; a skipped-today application is not reviewable', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  insertApp(db, { id: 'a-open', state: 'ready' }, ARTIFACTS)
+  insertApp(db, { id: 'a-skipped', state: 'in-review' }, ARTIFACTS)
+  valueOf(
+    db.tx((q) => {
+      repo.appendEvent(q, { kind: 'skipped', applicationId: 'a-skipped', companyId: 'company-1', at: NOW.toISOString(), data: {} }, NOW)
+      repo.insertBatch(q, { id: 'b-1', items: [{ itemId: 'i-1', kind: 'application', applicationId: 'a-open' }, { itemId: 'i-2', kind: 'application', applicationId: 'a-skipped' }], cursor: 1, results: { 'i-2': 'skipped' } }, NOW)
+      return ok(undefined)
+    }),
+  )
+
+  // Act
+  const overview = readsOf(db).overview()
+
+  // Assert
+  assert.equal(overview.batchUndecided, 1)
+  assert.equal(overview.reviewable, 1, 'the ready one; the one skipped today waits for tomorrow')
 })
 
 test('R6 batch answer: says the profile has no phone, so the review warns on top (crit. 15)', async () => {

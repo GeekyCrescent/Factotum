@@ -59,6 +59,17 @@ function poolOf(q: Queries): Pool {
   }
 }
 
+/**
+ * How many items «Start review» would put in a new batch, before `batchSize` (R8): `buildBatch` over the
+ * pool as it is now — the `ready` AND the `in-review` (blocked) ones, minus what is skipped today or
+ * held — so the tracker never offers «Start review (0)» while blocked items wait (crit. 28b, D15).
+ */
+export function newBatchCount(q: Queries, at: Date, timeZone: string): number {
+  let n = 0
+  const newId = (): string => `count-${(n += 1)}`
+  return buildBatch(poolOf(q), { today: todayIn(at, timeZone), timeZone, batchSize: Number.POSITIVE_INFINITY, newId }).length
+}
+
 /** Whether the entity of an item is still in a batch state. A reply stays until it is marked done (`pendingAsks`). */
 function isLive(q: Queries, item: ReviewItemRef, asks: ReadonlySet<string>): boolean {
   const appLive = (id: string): boolean => APP_IN_BATCH.includes(repo.getApplication(q, id)?.state ?? 'closed')
