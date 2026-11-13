@@ -94,7 +94,7 @@ function input(clock: ManualTimers, extra: Partial<SendInput> = {}): SendInput {
     subject: 'Application — Data Analyst',
     text: 'Dear hiring team,\n\nPlease find my CV attached.\n\nJuan',
     messageId: MESSAGE_ID,
-    attachment: { filename: CV, path: pdf.path },
+    attachment: { filename: CV, content: pdf.bytes },
     timers: clock.timers,
     signal: new AbortController().signal,
     ...extra,
@@ -338,18 +338,15 @@ test('a 250 that is not Gmail\'s "250 2.0.0 OK" is not taken as sent: after-data
   assert.equal(result.reason, 'unexpected answer: 250 Queued')
 })
 
-test('an attachment that cannot be read never finishes a body: before-data, and nothing crashes', async (t) => {
+test('the attachment is the bytes the caller read: nothing is opened from the disk after 354', async (t) => {
   const h = await harness(t)
   if (h === undefined) return
+  const content = Buffer.from('%PDF-1.7\nread by the caller, in memory\n')
 
-  const result = await sendMail(input(h.clock, { attachment: { filename: CV, path: join(tmpdir(), 'factotum-mail-no-such-cv.pdf') } }), h.connect)
+  const result = await sendMail(input(h.clock, { attachment: { filename: CV, content } }), h.connect)
 
-  assert.deepEqual(h.errors.map(shapeOf), [{ code: 'ESTREAM', command: 'API', responseCode: undefined }])
-  assert.equal(h.server.messages.length, 0)
-  assert.equal(result.ok, false)
-  if (result.ok) return
-  assert.equal(result.phase, 'before-data')
-  assert.match(result.reason, /ENOENT|ESTREAM/)
+  assert.equal(result.ok, true)
+  assert.deepEqual(attachmentIn(h.server.messages[0] ?? ''), content)
 })
 
 test('the caller aborting (stop) after the body went out is after-data: the server may have it', async (t) => {

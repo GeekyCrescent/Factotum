@@ -51,7 +51,11 @@ export interface SendInput {
   readonly messageId: string
   readonly inReplyTo?: string
   readonly references?: readonly string[]
-  readonly attachment?: { readonly filename: string; readonly path: string }
+  /**
+   * The bytes, read by the caller BEFORE the send: never a path nodemailer would open lazily after
+   * `354`, when the file may no longer be the one the caller checked (D9, revisión del corte 1a).
+   */
+  readonly attachment?: { readonly filename: string; readonly content: Buffer }
   readonly timers: Timers
   /** The caller's: `stop()`. */
   readonly signal: AbortSignal
@@ -235,7 +239,7 @@ function composed(message: SmtpMessage): ConstructorParameters<typeof MailCompos
     messageId: message.messageId,
     ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
     ...(message.references === undefined ? {} : { references: [...message.references] }),
-    ...(message.attachment === undefined ? {} : { attachments: [{ filename: message.attachment.filename, path: message.attachment.path }] }),
+    ...(message.attachment === undefined ? {} : { attachments: [{ filename: message.attachment.filename, content: message.attachment.content }] }),
   }
 }
 

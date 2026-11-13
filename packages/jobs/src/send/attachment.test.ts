@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, test } from 'node:test'
 
@@ -80,9 +80,28 @@ describe('the CV is confined to <stateDir>/artifacts (D9 step 2, revisión de E)
         valueOf(sender.approve('app-1', 'initial'))
         await sender.settled()
         assert.equal(appOf(w.db).state, 'sent')
-        assert.equal(w.inputs[0]?.attachment?.path, w.pdf)
+        assert.deepEqual(w.inputs[0]?.attachment?.content, readFileSync(w.pdf))
         assert.ok((w.server.messages[0] ?? '').includes('application/pdf'))
       })
     }
+  })
+
+  test('D9 (revisión 1a): the bytes attached are the ones read at prepare — a file changed after it does not change the mail', async (t) => {
+    await within(t, {}, async (w) => {
+      const checked = readFileSync(w.pdf)
+      const sender = createSender({
+        ...w.deps,
+        sendMail: async (input) => {
+          writeFileSync(w.pdf, '%PDF-1.7\nswapped after the check\n')
+          return w.deps.sendMail(input)
+        },
+      })
+      valueOf(sender.approve('app-1', 'initial'))
+      await sender.settled()
+      assert.equal(appOf(w.db).state, 'sent')
+      const message = w.server.messages[0] ?? ''
+      assert.ok(!message.includes(Buffer.from('%PDF-1.7\nswapped after the check\n').toString('base64')), 'the swapped file did not go')
+      assert.ok(message.includes(checked.toString('base64')), 'the file read at prepare went')
+    })
   })
 })

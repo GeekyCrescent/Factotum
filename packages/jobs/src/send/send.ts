@@ -27,7 +27,7 @@ import { addressTransition, appTransition, approvalGate, followupTransition, sen
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { fail, ok, type Address, type Application, type Followup, type Result, type Send, type SendKind } from '../types.ts'
-import { confinedPdf } from './attachment.ts'
+import { confinedPdf, readPdf } from './attachment.ts'
 import { applyDeferredReplies, hasHumanReply } from './deferred.ts'
 import { outgoingFor, type Outgoing } from './message.ts'
 import { recipientOf } from './recipient.ts'
@@ -144,6 +144,9 @@ export function enqueueIfPending<T>(db: Db, enqueue: Enqueue, id: string, kind: 
 
 const then = <T>(written: Result<void>, value: T): Result<T> => (written.ok ? ok(value) : written)
 
+/** The message with its CV read into memory (step 2): the bytes checked are the bytes sent. */
+type Loaded = Omit<Outgoing, 'attachment'> & { readonly attachment?: NonNullable<SendInput['attachment']> }
+
 export function createSender(deps: SenderDeps): Sender {
   const { db, log } = deps
   const applyDeferred = deps.applyDeferred ?? applyDeferredReplies
@@ -224,14 +227,15 @@ export function createSender(deps: SenderDeps): Sender {
     return ok(inputFor(message.value, password.password, signal))
   }
 
-  /** The attachment by its confined real path, or `missing-cv`: never another path the store names. */
-  function confined(message: Outgoing): Result<Outgoing> {
-    if (message.attachment === undefined) return ok(message)
-    const path = confinedPdf(deps.stateDir, message.attachment.path)
-    return path === null ? fail('blocked', 'missing-cv') : ok({ ...message, attachment: { ...message.attachment, path } })
+  /** The attachment's bytes, read NOW from its confined real path, or `missing-cv`: never another path the store names. */
+  function confined(message: Outgoing): Result<Loaded> {
+    const { attachment, ...rest } = message
+    if (attachment === undefined) return ok(rest)
+    const content = readPdf(deps.stateDir, attachment.path)
+    return content === null ? fail('blocked', 'missing-cv') : ok({ ...rest, attachment: { filename: attachment.filename, content } })
   }
 
-  function inputFor(message: Outgoing, password: string, signal: AbortSignal): SendInput {
+  function inputFor(message: Loaded, password: string, signal: AbortSignal): SendInput {
     const { address, displayName, smtpHost } = deps.mail
     return {
       host: smtpHost,
