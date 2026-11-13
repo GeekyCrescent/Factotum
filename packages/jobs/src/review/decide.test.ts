@@ -3,6 +3,7 @@ import { describe, test } from 'node:test'
 
 import { appOf, controlled, eventsOf, insertApp, insertFollowup, queueStore, rig, SEED_ARTIFACTS } from '../ai/test-queue.ts'
 import type { Approved } from '../send/send.ts'
+import { appTransition } from '../state.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
@@ -329,6 +330,30 @@ describe('decide override and switch-to-form', () => {
     insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [closed] }, { ...SEED_ARTIFACTS, pdf: 'cv.pdf' })
     valueOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'override', { warningCodes: ['ad-closed'] })))
     assert.equal(appOf(w.db, 'a1').state, 'ready')
+  })
+
+  test('switch-to-form re-lints that item and a found warning survives the re-lint (D6 «Re-lint»)', async () => {
+    const w = await world()
+    valueOf(
+      w.db.tx((q) => {
+        const opp = repo.getOpportunity(q, 'opp-1')
+        if (opp === undefined) return fail('not-found', 'opp')
+        repo.insertOpportunity(q, { ...opp, id: 'opp-2', url: 'https://acme.example/jobs/1' }, 'acme|other', { kind: 'imported' }, NOW)
+        return ok(undefined)
+      }),
+    )
+    insertApp(w.db, { id: 'a1', state: 'in-review', opportunityId: 'opp-2', warnings: [CLAIM] }, { ...SEED_ARTIFACTS, pdf: 'cv.pdf' })
+    // L4's relintOne as it will be: the linter's warnings only (here none), through the `relint` transition.
+    const relintOne: DecideDeps['relintOne'] = (q, entity, now) => {
+      const app = repo.getApplication(q, entity.id)
+      if (app === undefined) return fail('not-found', entity.id)
+      const moved = appTransition(app, { type: 'relint', pdfExists: true, warnings: [] }, now)
+      return moved.ok ? repo.saveApplication(q, moved.value, { kind: 'relinted', data: {} }, now) : moved
+    }
+    valueOf(decide({ ...w.deps, relintOne }, decision(itemOf(w.start(), 'a1'), 'switch-to-form')))
+    const app = appOf(w.db, 'a1')
+    assert.deepEqual(app.warnings, [CLAIM])
+    assert.equal(app.state, 'in-review', 'the unsupported claim still blocks')
   })
 
   test('switch-to-form (T-A10): channel form, the URL, channel-changed, and a re-lint of that item', async () => {

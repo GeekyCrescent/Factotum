@@ -341,6 +341,23 @@ function withSend(app: Application, send: Send): Application {
   return { ...app, sends: [...others, send].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]) }
 }
 
+/** D6 «Re-lint»: the warnings no linter makes, which a re-lint keeps (with their `overridden`). */
+const KEPT_BY_RELINT: ReadonlySet<Warning['code']> = new Set<Warning['code']>(['unsupported-claim', 'cv-overflow', 'ad-closed', 'requirement-gap'])
+
+const sameWarning = (a: Warning, b: Warning): boolean => a.code === b.code && a.where === b.where && a.detail === b.detail
+
+/**
+ * What a re-lint leaves (D6 «Re-lint»): the linter's warnings, each keeping an «I checked it» the same
+ * warning already had (the same link still there); then the found warnings it does not repeat. Pure.
+ * A caller that passes the whole list (an override, the ad's closing) loses nothing: the same warning
+ * is never kept twice.
+ */
+export function relintedWarnings(previous: readonly Warning[], linted: readonly Warning[]): readonly Warning[] {
+  const carried = linted.map((w) => (w.overridden !== null ? w : { ...w, overridden: previous.find((p) => p.overridden !== null && sameWarning(p, w))?.overridden ?? null }))
+  const kept = previous.filter((p) => KEPT_BY_RELINT.has(p.code) && !carried.some((w) => sameWarning(w, p)))
+  return [...carried, ...kept]
+}
+
 /** Ready needs the CV printed and no block left; anything else reviewed is in-review. */
 const reviewedState = (pdfExists: boolean, warnings: readonly Warning[]): AppState => (pdfExists && !hasBlock(warnings) ? 'ready' : 'in-review')
 
@@ -473,7 +490,10 @@ function stepFor(event: AppEvent, now: Date): Step {
     case 'instruction':
       return (app) => instruction(app, event.hasLetter)
     case 'relint':
-      return only(REVIEWED, (app) => ok({ ...app, state: reviewedState(event.pdfExists, event.warnings), warnings: event.warnings })) // T-A5, T-A6
+      return only(REVIEWED, (app) => {
+        const warnings = relintedWarnings(app.warnings, event.warnings)
+        return ok({ ...app, state: reviewedState(event.pdfExists, warnings), warnings }) // T-A5, T-A6
+      })
     case 'rewrite-returned':
       return only(['rewriting'], (app) =>
         ok({ ...app, state: reviewedState(event.pdfExists, event.warnings), warnings: event.warnings, version: event.version, rewriteFrom: null }),

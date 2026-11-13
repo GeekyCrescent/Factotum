@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { appTransition, newApplication, type AppEvent } from './state.ts'
 import { ADDRESSES, ADVISORY, application, BLOCKER, CAP, errorOf, NOW, send, valueOf } from './test-state.ts'
-import type { AppState, Application } from './types.ts'
+import type { AppState, Application, Warning } from './types.ts'
 
 const AT = NOW.toISOString()
 const approve = (overrides: Partial<Extract<AppEvent, { type: 'approve' }>> = {}): AppEvent => ({
@@ -111,6 +111,28 @@ test('T-A5: a clean re-lint takes in-review to ready', () => {
   const next = move(application({ state: 'in-review', warnings: [BLOCKER] }), { type: 'relint', pdfExists: true, warnings: [ADVISORY] })
   assert.equal(next.state, 'ready')
   assert.deepEqual(next.warnings, [ADVISORY])
+})
+
+test('D6 «Re-lint»: a re-lint replaces only the linter’s warnings; the found ones stay, «I checked it» and all', () => {
+  const at = { at: NOW.toISOString() }
+  const claim: Warning = { code: 'unsupported-claim', where: 'cv', detail: 'led 12 people', blocks: true, overridden: null }
+  const overflow: Warning = { code: 'cv-overflow', where: 'cv', detail: 'the CV prints on 2 pages', blocks: true, overridden: at }
+  const closed: Warning = { code: 'ad-closed', where: 'ad', detail: 'the ad is closed (expired): skip it?', blocks: true, overridden: null }
+  const gap: Warning = { code: 'requirement-gap', where: 'ad', detail: 'Kubernetes', blocks: false, overridden: null }
+  const checkedLink: Warning = { code: 'external-link', where: 'letter', detail: 'evil.example', blocks: true, overridden: at }
+  const app = application({ state: 'in-review', warnings: [BLOCKER, claim, overflow, closed, gap, checkedLink] })
+  const linkAgain: Warning = { ...checkedLink, overridden: null }
+  const next = move(app, { type: 'relint', pdfExists: true, warnings: [ADVISORY, linkAgain, gap] })
+  assert.deepEqual(next.warnings, [ADVISORY, checkedLink, gap, claim, overflow, closed])
+  assert.equal(next.state, 'in-review', 'the claim and the closed ad still block')
+})
+
+test('D6 «Re-lint»: an «I checked it» of a link that is gone does not cover another link', () => {
+  const checkedLink: Warning = { code: 'external-link', where: 'letter', detail: 'evil.example', blocks: true, overridden: { at: NOW.toISOString() } }
+  const other: Warning = { ...checkedLink, detail: 'other.example', overridden: null }
+  const next = move(application({ state: 'ready', warnings: [checkedLink] }), { type: 'relint', pdfExists: true, warnings: [other] })
+  assert.deepEqual(next.warnings, [other])
+  assert.equal(next.state, 'in-review')
 })
 
 test('T-A6: a re-lint with a block (cv-stale) takes ready back to in-review', () => {
