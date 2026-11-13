@@ -81,7 +81,7 @@ export function outgoingFor(q: Queries, id: string, kind: SendKind): Result<Outg
   const draft = kind === 'initial' ? initialDraft(q, app, profile.profile) : followupDraft(q, app, row)
   if (!draft.ok) return draft
   const { to, subject, body, ...rest } = draft.value
-  if (to === null) return fail('blocked', 'no-address')
+  if (to === null || to.trim() === '') return fail('blocked', 'no-address')
   if (subject === null) return fail('blocked', 'missing-subject')
   const filledSubject = fillSlots(subject, profile.profile)
   const filledText = fillSlots(body, profile.profile)
