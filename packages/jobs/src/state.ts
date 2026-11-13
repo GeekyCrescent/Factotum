@@ -656,7 +656,9 @@ function onAddress(contact: Contact, event: AddressEvent, now: Date, address: Ad
     case 'check-found':
       return address.status === 'checking' ? set({ ...address, status: 'verified', verifiedUrl: event.url, checkedAt: at }) : notInTable(event.type, address.status) // T-D3
     case 'check-missed':
-      return address.status === 'checking' ? set({ ...address, status: 'unverified', checkedAt: at }) : notInTable(event.type, address.status) // T-D4
+      // T-D4: `verifiedUrl` is where it was SEEN (D3); a re-check of a stale `verified` that misses
+      // leaves nothing seen, so the old url goes, like T-D6/T-D7. The override stays (D3: T-D2…T-D4).
+      return address.status === 'checking' ? set(unverified(at, address.override)) : notInTable(event.type, address.status)
     case 'send-anyway': {
       // T-D5: never in checking, only after a finished, fresh check.
       if (address.status !== 'unverified') return notInTable(event.type, address.status)

@@ -269,6 +269,13 @@ test('T-D4: not found, no website, no network or past the deadline: checking →
   assert.deepEqual(next.address, { status: 'unverified', verifiedUrl: null, checkedAt: AT, override: { at: TODAY } })
 })
 
+test('T-D4 on a stale verified address re-checked: the old verifiedUrl goes, the address was not seen this time', () => {
+  const rechecking = d(contact(ADDRESSES.verifiedStale), { type: 'enqueue-check' })
+  assert.equal(rechecking.address?.verifiedUrl, 'https://acme.example/contact')
+  const next = d(rechecking, { type: 'check-missed' })
+  assert.deepEqual(next.address, { status: 'unverified', verifiedUrl: null, checkedAt: AT, override: null })
+})
+
 test('T-D5: «Send anyway» on a finished, fresh check writes the override; never on a stale or unchecked one', () => {
   const next = d(contact(ADDRESSES.unverifiedToday), { type: 'send-anyway' })
   assert.deepEqual(next.address?.override, { at: AT })
