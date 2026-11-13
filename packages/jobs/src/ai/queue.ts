@@ -19,13 +19,28 @@
 
 import type { Logger } from '@factotum/core'
 import { uuidv7 } from '@factotum/sessions'
-import { appTransition } from '../state.ts'
+import { appTransition, type GeneratedKind } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
-import { dueWork, getApplication, getWork, insertWork, saveApplication, saveWork, setGenRequest, type GenRequestKind, type Lane, type Work, type WorkKind } from '../store/repo.ts'
-import { fail, ok, type Artifacts, type FollowupVersion, type Result, type Warning } from '../types.ts'
+import {
+  dueWork,
+  getApplication,
+  getFollowup,
+  getMeta,
+  insertWork,
+  saveApplication,
+  saveWork,
+  setGenRequest,
+  type GenRequestKind,
+  type Lane,
+  type Work,
+  type WorkKind,
+} from '../store/repo.ts'
+import { fail, ok, type Application, type Artifacts, type Followup, type FollowupVersion, type Result, type Warning } from '../types.ts'
+import { PAUSED_UNTIL, writeReturn, type RewriteFailed } from './returns.ts'
 import type { RunFailure } from './run.ts'
 
 export type { Lane, Work, WorkKind } from '../store/repo.ts'
+export { LIMIT_PAUSE_MS, MAX_ATTEMPTS, PAUSED_UNTIL, RETRY_DELAYS_MS, type RewriteFailed } from './returns.ts'
 
 /** design D10 «Timeouts», by kind. `reprint` and `score` are not Claude writing: a minute. */
 export const TIMEOUT_MS: Readonly<Record<WorkKind, number>> = {
@@ -68,8 +83,8 @@ export type JobHandler = (work: Work, ctx: JobContext) => Promise<JobResult>
 
 /** What a returned generation is linted with: L1, injected (H4). */
 export type LintTarget =
-  | { readonly kind: 'application'; readonly application: import('../types.ts').Application; readonly artifacts: Artifacts }
-  | { readonly kind: 'followup'; readonly followup: import('../types.ts').Followup; readonly version: FollowupVersion }
+  | { readonly kind: 'application'; readonly application: Application; readonly artifacts: Artifacts }
+  | { readonly kind: 'followup'; readonly followup: Followup; readonly version: FollowupVersion }
 export type LintFn = (q: Queries, target: LintTarget, now: Date) => readonly Warning[]
 /** Re-lints one entity in `in-review`/`ready` (or a follow-up `draft`/`ready`) and writes it: L4, injected. */
 export type RelintFn = (q: Queries, entity: { readonly kind: 'application' | 'followup'; readonly id: string }, now: Date) => Result<void>
@@ -85,6 +100,8 @@ export interface QueueDeps {
   readonly relintOne: RelintFn
   /** Whether the printed CV is on disk (T-A2); `existsSync` in production. */
   readonly pdfExists: (path: string) => boolean
+  /** A rewrite failed for good (T-A9, T-F5): the batch puts it at its end (D15). After the `tx`. */
+  readonly onRewriteFailed?: ((entity: RewriteFailed) => void) | undefined
 }
 
 export interface EnqueueSpec {
@@ -99,8 +116,15 @@ export interface Queue {
   readonly enqueue: (q: Queries, spec: EnqueueSpec) => Result<Work>
   /** The seed's seam (S6): T-A1 — `draft → generating`, `gen_requests(id, 'cv')`, a bulk `cv`. Inside the caller's `tx`. */
   readonly enqueueCv: (q: Queries, applicationId: string) => Result<void>
+  /**
+   * «Retry» of `missing-cv`/`missing-letter` (T-A4): a new request of ONLY the classes that failed,
+   * interactive, and the application back to `generating`. Inside the caller's `tx`; pump after.
+   */
+  readonly retry: (q: Queries, applicationId: string) => Result<readonly GeneratedKind[]>
   /** `enqueue` in a `tx` of its own, then the pump. */
   readonly add: (spec: EnqueueSpec) => Result<Work>
+  /** `meta.pausedUntil` while a usage limit holds the queue (for `health()`); null when it runs. */
+  readonly pausedUntil: () => string | null
   /** Starts what can start. Never inside a `tx`; never throws. */
   readonly pump: () => void
   /** The ids running now, in the order they started. */
@@ -109,12 +133,19 @@ export interface Queue {
   readonly settled: () => Promise<void>
 }
 
-/** The classes a work writes in `gen_requests` (D3 «La guarda»). */
-export function classesOf(kind: WorkKind): readonly GenRequestKind[] {
+/**
+ * The classes a work writes in `gen_requests` (D3 «La guarda»): a `rewrite` of an application
+ * brings back the letter AND the CV; a follow-up's, its own text.
+ */
+export function classesOf(q: Queries, kind: WorkKind, ref: string): readonly GenRequestKind[] {
   if (kind === 'cv' || kind === 'reprint') return ['cv']
   if (kind === 'letter') return ['letter']
+  if (kind === 'rewrite') return getFollowup(q, ref) === undefined ? ['letter', 'cv'] : ['followup']
   return []
 }
+
+const MISSING_KIND: Readonly<Partial<Record<Warning['code'], GeneratedKind>>> = { 'missing-cv': 'cv', 'missing-letter': 'letter' }
+const GENERATED_ORDER: readonly GeneratedKind[] = ['cv', 'letter']
 
 interface Running {
   readonly work: Work
@@ -150,7 +181,7 @@ export function createQueue(deps: QueueDeps): Queue {
       updatedAt: at,
     }
     insertWork(q, work)
-    for (const kind of classesOf(spec.kind)) setGenRequest(q, spec.ref, kind, work.id)
+    for (const kind of classesOf(q, spec.kind, spec.ref)) setGenRequest(q, spec.ref, kind, work.id)
     return ok(Object.freeze(work))
   }
 
@@ -164,29 +195,49 @@ export function createQueue(deps: QueueDeps): Queue {
     return saveApplication(q, moved.value, { kind: 'prepared', data: { queued: ['cv'], workId: work.value.id } }, now())
   }
 
+  function retry(q: Queries, applicationId: string): Result<readonly GeneratedKind[]> {
+    const app = getApplication(q, applicationId)
+    if (app === undefined) return fail('not-found', 'no such application')
+    const failed = new Set(app.warnings.map((w) => MISSING_KIND[w.code]))
+    const kinds = GENERATED_ORDER.filter((kind) => failed.has(kind))
+    if (kinds.length === 0) return fail('conflict', 'no generation of this application failed')
+    const moved = appTransition(app, { type: 'retry-generation', kinds }, now()) // T-A4
+    if (!moved.ok) return moved
+    for (const kind of kinds) enqueue(q, { kind, ref: applicationId, lane: 'interactive' })
+    const saved = saveApplication(q, moved.value, { kind: 'retried', data: { kinds } }, now())
+    return saved.ok ? ok(kinds) : saved
+  }
+
   const claudeRunning = (): number => [...inFlight.values()].filter((r) => r.work.kind !== 'reprint').length
   const printing = (): boolean => [...inFlight.values()].some((r) => r.work.kind === 'reprint')
 
-  function canStart(work: Work): boolean {
-    if (work.kind === 'reprint') return !printing()
-    return claudeRunning() < deps.concurrency
+  /** Claude slots now: none while paused, ONE for the probe once the pause ran out (D10), else all. */
+  function claudeSlots(q: Queries, at: string): number {
+    const until = getMeta(q, PAUSED_UNTIL)
+    if (until === undefined) return deps.concurrency
+    return until > at ? 0 : 1
   }
 
   function next(): Work | undefined {
-    const due = db.read((q) => dueWork(q, now().toISOString())).filter((work) => !inFlight.has(work.id))
-    return [...due].sort(byPriority(lastKind)).find(canStart)
+    const at = now().toISOString()
+    const { due, slots } = db.read((q) => ({ due: dueWork(q, at), slots: claudeSlots(q, at) }))
+    const canStart = (work: Work): boolean => (work.kind === 'reprint' ? !printing() : claudeRunning() < slots)
+    return due
+      .filter((work) => !inFlight.has(work.id))
+      .sort(byPriority(lastKind))
+      .find(canStart)
   }
 
   /** Marks it running in its own `tx`, then runs it outside any. */
   function start(work: Work): boolean {
     const at = now().toISOString()
-    const marked = db.tx((q) => saveWork(q, { ...work, state: 'running', updatedAt: at }))
+    const running: Work = { ...work, state: 'running', updatedAt: at }
+    const marked = db.tx((q) => saveWork(q, running))
     if (!marked.ok) {
       log.error(`jobs queue: ${work.kind} ${work.id} could not start (${marked.error.reason})`)
       return false
     }
     const controller = new AbortController()
-    const running: Work = { ...work, state: 'running', updatedAt: at }
     const done = execute(running, controller.signal).then((result) => conclude(running, result))
     inFlight.set(work.id, { work: running, controller, done })
     lastKind = work.kind
@@ -203,19 +254,24 @@ export function createQueue(deps: QueueDeps): Queue {
     }
   }
 
-  /** Writes what came back, in its own `tx`, and pumps again. */
+  /** Writes what came back, in its own `tx`, tells the batch, and pumps again. */
   function conclude(work: Work, result: JobResult): void {
     inFlight.delete(work.id)
-    const at = now()
-    const written = db.tx((q) => {
-      const current = getWork(q, work.id) ?? work
-      if (!result.ok) return saveWork(q, { ...current, state: 'failed', reason: result.reason, updatedAt: at.toISOString() })
-      const applied = result.output.type === 'apply' ? result.output.apply(q, at) : ok(undefined)
-      if (!applied.ok) return applied
-      return saveWork(q, { ...current, state: 'done', reason: null, updatedAt: at.toISOString() })
-    })
-    if (!written.ok) log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${written.error.reason})`)
+    const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
+    if (!written.ok) {
+      log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${written.error.reason})`)
+    } else if (written.value.rewriteFailed !== null) {
+      tell(written.value.rewriteFailed)
+    }
     pump()
+  }
+
+  function tell(entity: RewriteFailed): void {
+    try {
+      deps.onRewriteFailed?.(entity)
+    } catch (error) {
+      log.error(`jobs queue: the batch was not told of a failed rewrite (${messageOf(error)})`)
+    }
   }
 
   function pump(): void {
@@ -235,6 +291,7 @@ export function createQueue(deps: QueueDeps): Queue {
   return {
     enqueue,
     enqueueCv,
+    retry,
     add: (spec) => {
       const added = db.tx((q) => enqueue(q, spec))
       if (added.ok) pump()
@@ -243,5 +300,6 @@ export function createQueue(deps: QueueDeps): Queue {
     pump,
     running: () => [...inFlight.keys()],
     settled,
+    pausedUntil: () => db.read((q) => getMeta(q, PAUSED_UNTIL)) ?? null,
   }
 }
