@@ -112,9 +112,13 @@ test('a duration in a request is not a claim: «Could we have a 15-minute call?�
   assert.deepEqual(unknown(lint(artifacts, CTX)), [])
 })
 
-test('durations: N-minute(s), N-min, N-hour(s), N minutes, N hours, N-day(s), N days, N-week(s) give no figure to check', () => {
-  const text = 'A 15-minute or 20-min chat, a 2-hour slot, 45 minutes, 3 hours, a 5-day trial, 10 days, a 6-week ramp, 2-weeks notice.'
+test('durations: N-minute(s), N-min, N-hour(s), N-day(s), N-week(s) give no figure to check', () => {
+  const text = 'A 15-minute or 20-min chat, a 2-hour slot, a 5-day trial, a 6-week ramp, 2-weeks notice.'
   assert.deepEqual(unknownNumbers(text, SOURCES), [])
+})
+
+test('a figure before a spaced unit is a claim: «saved 47 hours a week», «in 11 days», «43 minutes» are checked', () => {
+  assert.deepEqual(unknownNumbers('Saved 47 hours a week; shipped in 11 days; cut builds to 43 minutes.', SOURCES), ['47', '11', '43'])
 })
 
 test('a claim number next to a duration is still checked: «cut 37% of the time», «13 years», «13-month»', () => {

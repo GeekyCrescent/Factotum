@@ -13,9 +13,8 @@
  * token (`v2.0`, `v3.10.1`), minor parts included.
  *
  * A DURATION IN THE TEXT CHECKED IS NOT A CLAIM: «Could we have a 15-minute call?» asks, it does not
- * assert (R8). A figure directly followed by a minute, hour, day or week unit — hyphenated (`15-minute`,
- * `20-min`, `2-hour`, `5-day`, `6-weeks`) or after one space (`45 minutes`, `3 hours`, `10 days`) — is
- * not checked. Tight on purpose: months and years are not durations here (`13 years of experience` is a
+ * assert (R8). A figure joined BY A HYPHEN to a minute, hour, day or week unit (`15-minute`, `20-min`,
+ * `2-hour`, `5-day`, `6-weeks`) is not checked. After a space it is: «saved 40 hours a week» is a claim. Tight on purpose: months and years are not durations here (`13 years of experience` is a
  * claim), and only the text checked loses them — every figure of a source stays a source.
  */
 
@@ -34,8 +33,8 @@ const FIGURE = /(?<![\p{L}\p{N}])(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?/gu
 /** A version token, `v2.0` or `V3.10.1`: a name, not a figure — without this, its `.0` gave a `0`. */
 const VERSION = /(?<![\p{L}\p{N}])v\d+(?:\.\d+)*/giu
 
-/** A figure directly followed by a minute/hour/day/week unit (`15-minute`, `45 minutes`). */
-const DURATION = /(?<![\p{L}\p{N}.,])\d+(?:\.\d+)?(?:-|\s)(?:min(?:ute)?s?|hours?|hrs?|days?|weeks?)(?![\p{L}\p{N}])/giu
+/** A figure hyphenated to a minute/hour/day/week unit (`15-minute`, `6-week`); never after a space. */
+const DURATION = /(?<![\p{L}\p{N}.,])\d+(?:\.\d+)?-(?:min(?:ute)?s?|hours?|hrs?|days?|weeks?)(?![\p{L}\p{N}])/giu
 
 const normalise = (figure: string): string => String(Number(figure.replace(/,/g, '')))
 
