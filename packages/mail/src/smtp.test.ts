@@ -306,6 +306,26 @@ test('the reason never carries the user or the password', async (t) => {
   assert.match(result.reason, /<user> may not send; key \*\*\* revoked/)
 })
 
+test('the reason never carries the recipient either, whatever its case: <recipient>', async (t) => {
+  const h = await harness(t, { at: 'RCPT TO', how: '550 5.1.1 <Hiring@Clinic.example> address not found - gsmtp' })
+  if (h === undefined) return
+
+  const result = await sendMail(input(h.clock), h.connect)
+
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.reason.toLowerCase().includes('hiring@clinic.example'), false, result.reason)
+  assert.match(result.reason, /<<recipient>> address not found/)
+})
+
+test('a fault before any server, quoting the recipient, is masked too', async () => {
+  const { connect } = fakeConnect({ throwOnConnect: new Error('cannot route to hiring@clinic.example') })
+
+  const result = await sendMail(input(manualTimers()), connect)
+
+  assert.deepEqual(result, { ok: false, phase: 'before-data', reason: 'cannot route to <recipient>' })
+})
+
 test('a 250 that is not Gmail\'s "250 2.0.0 OK" is not taken as sent: after-data', async (t) => {
   const h = await harness(t, { at: 'message', how: '250 Queued' })
   if (h === undefined) return

@@ -2,7 +2,8 @@
  * The sender (spec 2026-11-12, D4): ONE message, over implicit TLS on 465, behind a seam.
  *
  * NOTHING THROWS OUT OF HERE. Every way it can go wrong ends in `{ ok: false, phase, reason }`, and
- * the reason goes through the same mask as `reasonOf`: never the password, the user name masked.
+ * the reason goes through the same mask as `reasonOf`: never the password, the user name and the
+ * recipient masked.
  *
  * THE PHASE IS WHAT THE CALLER NEEDS TO KNOW: `before-data` means the server cannot have the message
  * (retrying is safe), `after-data` that it may (it must not be sent again blindly). Measured in M6
@@ -146,7 +147,7 @@ export const connectNodemailer: ConnectSmtp = ({ auth, ...options }) => {
 
 export async function sendMail(input: SendInput, connect: ConnectSmtp = connectNodemailer): Promise<SendResult> {
   if (input.signal.aborted) return { ok: false, phase: 'before-data', reason: STOPPED }
-  const secrets = { user: input.user, password: input.password }
+  const secrets = { user: input.user, password: input.password, recipient: input.to }
   // Everything that can fail without a server fails here, before a socket or a timer exists.
   if (!isOneRecipient(input.to)) return { ok: false, phase: 'before-data', reason: INVALID_RECIPIENT }
   const payload = compose(input)

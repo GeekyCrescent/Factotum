@@ -87,8 +87,12 @@ export async function closeQuietly(client: ImapClient | undefined, aborted: bool
   }
 }
 
-/** The server's words or Node's code — never the password, and the user name masked. */
-export function reasonOf(error: unknown, secrets: { readonly user: string; readonly password: string }): string {
+/**
+ * The server's words or Node's code — never the password, the user name masked, and a send's
+ * recipient masked too (`<recipient>`, in any case: a server may echo it with other capitals), since
+ * the reason is stored and served.
+ */
+export function reasonOf(error: unknown, secrets: { readonly user: string; readonly password: string; readonly recipient?: string }): string {
   const record = (error ?? {}) as { authenticationFailed?: unknown; response?: unknown; code?: unknown; message?: unknown }
   const words =
     typeof record.response === 'string' && record.response !== ''
@@ -100,7 +104,14 @@ export function reasonOf(error: unknown, secrets: { readonly user: string; reado
           : 'unknown error'
   const prefix = record.authenticationFailed === true ? 'login refused: ' : ''
   const masked = mask(mask(words, secrets.password, '***'), secrets.user, '<user>')
-  return `${prefix}${masked}`.slice(0, REASON_MAX)
+  const unaddressed = secrets.recipient === undefined ? masked : maskAnyCase(masked, secrets.recipient.trim(), '<recipient>')
+  return `${prefix}${unaddressed}`.slice(0, REASON_MAX)
+}
+
+/** `mask`, whatever the case of the text: for an address, which a server may echo with other capitals. */
+function maskAnyCase(text: string, secret: string, as: string): string {
+  if (secret === '') return text
+  return text.replace(new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), as)
 }
 
 export function mask(text: string, secret: string, as: string): string {
