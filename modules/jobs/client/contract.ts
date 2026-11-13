@@ -308,8 +308,24 @@ export interface DecideAnswer {
  */
 export type UnknownAnswer = 'went' | 'again' | 'not-went'
 
+/**
+ * The row as the card showed it — its `state` and `at` — sent with every send answer (`unknown`,
+ * `retry`). The engine answers `409 stale` and does nothing when the row has moved since: another
+ * device answered it, or the send finished (D15 «Lo que se vio es lo que se aprueba»).
+ */
+export interface SendExpect {
+  readonly state: SendState
+  readonly at: string
+}
+
 export interface UnknownRequest {
   readonly answer: UnknownAnswer
+  readonly expect?: SendExpect
+}
+
+/** `POST /a/:id/sends/:kind/retry`. */
+export interface RetryRequest {
+  readonly expect?: SendExpect
 }
 
 /**

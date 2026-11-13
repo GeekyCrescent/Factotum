@@ -334,6 +334,32 @@ test('mark, retry and unknown hand the send over; unknown checks its answer', as
   assert.deepEqual(calls.log, [`markSent ["${ID}","followup-1"]`, `retrySend ["${ID}","followup-1"]`, `resolveUnknown ["${ID}","followup-1","not-went"]`])
 })
 
+test('retry and unknown pass the row the screen saw (`expect`) to the engine; a malformed one is a 400 on expect', async () => {
+  const { routes, calls } = await started()
+  const params = { id: ID, kind: 'initial' }
+  const expect = { state: 'send-unknown', at: SEND.at }
+  assert.equal((await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer: 'again', expect } })).status, 200)
+  assert.equal((await call(routes, 'POST /a/:id/sends/:kind/retry', { params, body: { expect: { state: 'failed', at: SEND.at } } })).status, 200)
+  for (const bad of [{ state: 'nope', at: SEND.at }, { state: 'failed' }, { state: 'failed', at: 7 }, 'failed', { state: 'failed', at: 'x'.repeat(65) }]) {
+    for (const key of ['POST /a/:id/sends/:kind/unknown', 'POST /a/:id/sends/:kind/retry']) {
+      const response = await call(routes, key, { params, body: { answer: 'went', expect: bad } })
+      assert.equal(response.status, 400, `${key} ${JSON.stringify(bad)}`)
+      assert.equal(errorOf(response)?.field, 'expect')
+    }
+  }
+  assert.deepEqual(calls.log, [
+    `resolveUnknown ["${ID}","initial","again",{"expect":{"state":"send-unknown","at":"${SEND.at}"}}]`,
+    `retrySend ["${ID}","initial",{"expect":{"state":"failed","at":"${SEND.at}"}}]`,
+  ])
+})
+
+test('a row that moved since the screen read it is a 409 stale', async () => {
+  const { routes } = await started({ resolveUnknown: failing('conflict', 'stale') })
+  const response = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params: { id: ID, kind: 'initial' }, body: { answer: 'again', expect: { state: 'send-unknown', at: SEND.at } } })
+  assert.equal(response.status, 409)
+  assert.deepEqual(errorOf(response), { code: 'conflict', message: 'stale' })
+})
+
 test('POST /a/:id/retry { job } asks the engine again; a job that is not one is a 400 on job', async () => {
   const { routes, calls } = await started()
   const response = await call(routes, 'POST /a/:id/retry', { params: { id: ID }, body: { job: 'reprint' } })

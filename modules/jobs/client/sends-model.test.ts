@@ -6,7 +6,12 @@ import {
   actionsOf,
   answerRefused,
   answerUnconfirmed,
+  cardOf,
+  expectOf,
   isSendRefusal,
+  isStaleRefusal,
+  staleRead,
+  toRefresh,
   kindLabel,
   MAX_LINES,
   MAX_POLL_FAILURES,
@@ -112,10 +117,11 @@ test('the state a decision answered is read as a send state, or not at all', () 
   assert.equal(sendStateOf(undefined), null)
 })
 
-test('an approve answered «failed» at once is tracked failed, with Retry, and not polled', () => {
+test('an approve answered «failed» at once is tracked failed, with Retry, and read once for its `at`', () => {
   const sends = tracked([], key('a', 'Acme'), 'failed')
   assert.deepEqual(sends[0]?.line, { text: 'Acme: the send failed', tone: 'err', final: true, retry: true })
-  assert.equal(isPolling(sends[0] as TrackedSend), false)
+  assert.equal(isPolling(sends[0] as TrackedSend), true)
+  assert.equal(isPolling(polled(sends, key('a'), { ...view('failed'), at: '2026-11-13T22:00:00.000Z' })[0] as TrackedSend), false)
   assert.equal(tracked([], key('a', 'Acme'), null)[0]?.line.text, 'Sending to Acme…')
 })
 
@@ -202,4 +208,82 @@ test('an answer that could not be confirmed keeps polling, says so, and offers n
   assert.equal(read[0]?.line.text, 'Sending to Acme…')
   const unknown = answerUnconfirmed(polled(tracked([], key('b', 'Beta')), key('b'), view('send-unknown')), key('b'))
   assert.equal(polled(unknown, key('b'), view('sent'))[0]?.line.text, 'Sent to Beta ✓')
+})
+
+// ── The row the card showed travels with the answer (review finding 2) ───────────────────────────
+
+const at = (state: SendView['state'], when: string): SendView => ({ kind: 'initial', state, at: when, reason: null })
+const T1 = '2026-11-13T22:00:00.000Z'
+const T2 = '2026-11-13T22:05:00.000Z'
+
+test('each answer carries the state and the `at` the card showed; none while they are not known', () => {
+  const unknown = polled(tracked([], key('a')), key('a'), at('send-unknown', T1))
+  assert.deepEqual(expectOf(unknown[0] as TrackedSend), { state: 'send-unknown', at: T1 })
+  const seededSend = seeded([], [{ applicationId: 'b', company: 'Beta', kind: 'initial', state: 'failed', at: T2, reason: null }])
+  assert.deepEqual(expectOf(seededSend[0] as TrackedSend), { state: 'failed', at: T2 })
+  assert.equal(expectOf(tracked([], key('c'))[0] as TrackedSend), null, '«Sending…» has no row read yet')
+})
+
+test('a row read with a new `at` and the same state is news: the card takes the new `at`', () => {
+  const first = polled(tracked([], key('a')), key('a'), at('send-unknown', T1))
+  const later = polled(first, key('a'), at('send-unknown', T2))
+  assert.notEqual(later, first)
+  assert.equal(later[0]?.at, T2)
+})
+
+test('a send tracked «failed» at once, its `at` not known, is read once to learn it, then stops', () => {
+  const sends = tracked([], key('a', 'Acme'), 'failed')
+  assert.equal(isPolling(sends[0] as TrackedSend), true)
+  const read = polled(sends, key('a'), at('failed', T1))
+  assert.equal(isPolling(read[0] as TrackedSend), false)
+  assert.deepEqual(actions(read[0]), ['retry:Retry'])
+})
+
+test('a 409 stale is told apart from any other refusal', () => {
+  const refusal = (status: number, message: string) => Object.assign(new Error(message), { status, body: { error: { code: 'conflict', message } } })
+  assert.equal(isStaleRefusal(refusal(409, 'stale')), true)
+  assert.equal(isStaleRefusal(refusal(409, 'check-pending')), false)
+  assert.equal(isStaleRefusal(refusal(422, 'stale')), false)
+})
+
+test('a stale answer shows the row as it is now, says it changed, and offers what the new state offers', () => {
+  const unknown = polled(tracked([], key('a', 'Acme')), key('a'), at('send-unknown', T1))
+  const sends = staleRead(unknown, key('a'), at('failed', T2))
+  assert.deepEqual(sends[0]?.line, { text: 'Acme: this send changed — check it again', tone: 'ask', final: true, retry: true })
+  assert.deepEqual(expectOf(sends[0] as TrackedSend), { state: 'failed', at: T2 })
+  assert.deepEqual(actions(sends[0]), ['retry:Retry'])
+  const moving = staleRead(unknown, key('a'), at('sending', T2))
+  assert.equal(isPolling(moving[0] as TrackedSend), true, 'another device sent it again: follow it')
+})
+
+test('«Send again» and «It didn’t go» ask for a second click; «It went» and «Retry» do not', () => {
+  const unknown = polled(tracked([], key('a')), key('a'), at('send-unknown', T1))
+  assert.deepEqual(
+    actionsOf(unknown[0] as TrackedSend).map((a) => [a.action, a.confirm]),
+    [
+      ['went', null],
+      ['again', 'Click again to send again'],
+      ['not-went', 'Click again: it didn’t go'],
+    ],
+  )
+  const failed = polled(tracked([], key('b')), key('b'), at('failed', T1))
+  assert.equal(actionsOf(failed[0] as TrackedSend)[0]?.confirm, null)
+})
+
+test('a confirm armed on a card is gone once the card shows another row', () => {
+  const unknown = polled(tracked([], key('a')), key('a'), at('send-unknown', T1))[0] as TrackedSend
+  const moved = polled([unknown], key('a'), at('send-unknown', T2))[0] as TrackedSend
+  assert.equal(cardOf(unknown), cardOf(unknown))
+  assert.notEqual(cardOf(unknown), cardOf(moved))
+})
+
+test('on coming back to the screen, the lines that wait for the owner are read again; pending ones already are, ok ones need nothing', () => {
+  let sends: readonly TrackedSend[] = []
+  sends = polled(tracked(sends, key('u')), key('u'), at('send-unknown', T1))
+  sends = polled(tracked(sends, key('f')), key('f'), at('failed', T1))
+  sends = polled(tracked(sends, key('ok')), key('ok'), at('sent', T1))
+  sends = tracked(sends, key('p'))
+  let lost = tracked([], key('l'))
+  for (let n = 0; n < MAX_POLL_FAILURES; n += 1) lost = pollFailed(lost, key('l'))
+  assert.deepEqual(ids(toRefresh([...sends, ...lost])), ['u', 'f', 'l'])
 })

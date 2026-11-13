@@ -18,6 +18,7 @@ import type { PasswordResult, SendInput, SendResult } from '@factotum/mail'
 import type { MailHealth, FileStat } from '../mail-health.ts'
 import type { Decided, DecisionKind } from '../review/decide.ts'
 import type { ImportReport } from '../seed/report.ts'
+import type { AnswerOptions } from '../send/assist.ts'
 import type { FetchLike, Lookup } from '../scout/net.ts'
 import type {
   Address,
@@ -294,8 +295,9 @@ export interface Jobs {
   /** The client's poll. */
   readonly send: (id: string, kind: SendKind) => Result<SendView>
   readonly markSent: (id: string, kind: SendKind) => Result<Application>
-  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer) => Result<SendView>
-  readonly retrySend: (id: string, kind: SendKind) => Result<SendView>
+  /** `options.expect`: the row the screen saw; moved since → `conflict 'stale'`, nothing done (D15). */
+  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer, options?: AnswerOptions) => Result<SendView>
+  readonly retrySend: (id: string, kind: SendKind, options?: AnswerOptions) => Result<SendView>
   /** «Close» (T-A26, T-A21): wraps `closeApplication`. */
   readonly close: (id: string, input: { readonly reason: string }) => Result<Application>
   /** Synchronous: reads the caches. */

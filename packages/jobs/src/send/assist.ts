@@ -14,7 +14,7 @@
 import { appTransition, followupTransition, sendTransition, type AppEvent, type FollowupEvent, type SendEvent } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { fail, ok, type Application, type Followup, type Result, type Send, type SendKind } from '../types.ts'
+import { fail, ok, type Application, type Followup, type Result, type Send, type SendKind, type SendState } from '../types.ts'
 import { hasHumanReply } from './deferred.ts'
 import { addressGuard } from './recipient.ts'
 import { dailyCap, enqueueIfPending, followupOf, newMessageId, writeOverride, type ApproveOptions, type Enqueue, type Sender } from './send.ts'
@@ -35,16 +35,37 @@ export interface AssistDeps {
   readonly moveFollowup?: MoveFollowup
 }
 
+/**
+ * The row as the screen saw it (D15 «Lo que se vio es lo que se aprueba»): its `state` and its `at`.
+ * An answer that carries one is refused `conflict 'stale'`, deciding nothing, when the row has moved
+ * since — another device answered it, or a send finished — so a stale card never sends a copy more.
+ */
+export interface SendExpect {
+  readonly state: SendState
+  readonly at: string
+}
+
+export interface AnswerOptions extends ApproveOptions {
+  readonly expect?: SendExpect
+}
+
 export interface Assist {
-  /** `options.addressOverride` is «Send anyway» for «Send again» and «Retry», as in `approve`. */
-  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer, options?: ApproveOptions) => Result<Send>
-  readonly retrySend: (id: string, kind: SendKind, options?: ApproveOptions) => Result<Send>
+  /** `options.addressOverride` is «Send anyway» for «Send again» and «Retry», as in `approve`; `options.expect`, the row the screen saw. */
+  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer, options?: AnswerOptions) => Result<Send>
+  readonly retrySend: (id: string, kind: SendKind, options?: AnswerOptions) => Result<Send>
   readonly markSent: (id: string, kind: SendKind) => Result<Application>
 }
 
 const rowOf = (app: Application, kind: SendKind): Result<Send> => {
   const row = app.sends.find((s) => s.kind === kind)
   return row === undefined ? fail('conflict', `there is no ${kind} send`) : ok(row)
+}
+
+/** `conflict 'stale'` when the screen saw `kind`'s row in another state or at another moment; ok without `expect`. */
+function fresh(app: Application, kind: SendKind, expect: SendExpect | undefined): Result<true> {
+  if (expect === undefined) return ok(true)
+  const row = app.sends.find((s) => s.kind === kind)
+  return row !== undefined && row.state === expect.state && row.at === expect.at ? ok(true) : fail('conflict', 'stale')
 }
 
 /** What the initial's actions write: the application event (T-A13/T-A17/T-A18/T-A31) and its log line. */
@@ -65,11 +86,13 @@ export function createAssist(deps: AssistDeps): Assist {
   const move: MoveFollowup = deps.moveFollowup ?? ((_q, f, event, now) => followupTransition(f, event, now))
   const capOf = (q: Queries, at: Date) => dailyCap(q, at, deps.timeZone, deps.maxSendsPerDay)
 
-  function onInitial(id: string, step: (q: Queries, at: Date, app: Application) => Result<InitialStep>): Result<Application> {
+  function onInitial(id: string, step: (q: Queries, at: Date, app: Application) => Result<InitialStep>, expect?: SendExpect): Result<Application> {
     return db.tx((q) => {
       const at = deps.now()
       const app = repo.getApplication(q, id)
       if (app === undefined) return fail('not-found', 'no such application')
+      const seen = fresh(app, 'initial', expect)
+      if (!seen.ok) return seen
       const planned = step(q, at, app)
       if (!planned.ok) return planned
       const { event, log } = planned.value
@@ -82,12 +105,14 @@ export function createAssist(deps: AssistDeps): Assist {
     })
   }
 
-  function onFollowup(id: string, kind: SendKind, step: (q: Queries, at: Date, f: Followup) => Result<FollowupStep>): Result<Send> {
+  function onFollowup(id: string, kind: SendKind, step: (q: Queries, at: Date, f: Followup) => Result<FollowupStep>, expect?: SendExpect): Result<Send> {
     return db.tx((q) => {
       const at = deps.now()
       const app = repo.getApplication(q, id)
       const f = app === undefined ? undefined : followupOf(q, app, kind)
       if (app === undefined || f === undefined) return fail('not-found', `no such ${app === undefined ? 'application' : 'follow-up'}`)
+      const seen = fresh(app, kind, expect)
+      if (!seen.ok) return seen
       const planned = step(q, at, f)
       if (!planned.ok) return planned
       const plan = planned.value
@@ -119,7 +144,7 @@ export function createAssist(deps: AssistDeps): Assist {
     return override.ok ? ok(gate.value.override !== 'none') : override
   }
 
-  function resolveInitial(id: string, answer: UnknownAnswer, sendAnyway: boolean): Result<Send> {
+  function resolveInitial(id: string, answer: UnknownAnswer, sendAnyway: boolean, expect: SendExpect | undefined): Result<Send> {
     const kind = 'initial'
     const step = (q: Queries, at: Date, app: Application): Result<InitialStep> => {
       if (answer === 'went') return ok({ event: { type: 'it-went' }, log: (row) => ({ kind: 'sent', data: { kind, messageId: row.messageId, answer } }) }) // T-A17 + T-S5
@@ -128,10 +153,10 @@ export function createAssist(deps: AssistDeps): Assist {
       if (!guard.ok) return guard
       return ok({ event: { type: 'send-again', cap: capOf(q, at) }, log: () => ({ kind: 'approved', data: { kind, again: true } }) }) // T-A18 + T-S6
     }
-    return initialRow(onInitial(id, step))
+    return initialRow(onInitial(id, step, expect))
   }
 
-  function resolveFollowup(id: string, kind: SendKind, answer: UnknownAnswer, sendAnyway: boolean): Result<Send> {
+  function resolveFollowup(id: string, kind: SendKind, answer: UnknownAnswer, sendAnyway: boolean, expect: SendExpect | undefined): Result<Send> {
     return onFollowup(id, kind, (q, at, f) => {
       if (answer === 'went') return ok({ followup: () => ({ type: 'it-went' }), send: () => ({ type: 'it-went' }), log: (row) => ({ kind: 'sent', data: { kind, messageId: row.messageId, answer } }) }) // T-F9 + T-S5
       if (answer === 'not-went') {
@@ -145,10 +170,10 @@ export function createAssist(deps: AssistDeps): Assist {
       if (!guard.ok) return guard
       const cap = capOf(q, at)
       return ok({ followup: (app) => ({ type: 'send-again', app: context(q, app), cap }), send: () => ({ type: 'send-again', cap }), log: () => ({ kind: 'approved', data: { kind, again: true } }) }) // T-F9 + T-S6
-    })
+    }, expect)
   }
 
-  function retryFollowup(id: string, kind: SendKind, sendAnyway: boolean): Result<Send> {
+  function retryFollowup(id: string, kind: SendKind, sendAnyway: boolean, expect: SendExpect | undefined): Result<Send> {
     return onFollowup(id, kind, (q, at, f) => {
       const guard = guarded(q, at, f.state === 'failed', f, sendAnyway)
       if (!guard.ok) return guard
@@ -159,7 +184,7 @@ export function createAssist(deps: AssistDeps): Assist {
         send: () => ({ type: 'retry', messageId: newMessageId(at), cap, addressOverride: guard.value, profileVersion }),
         log: () => ({ kind: 'approved', data: { kind, retry: true } }),
       }) // T-F10 + T-S8
-    })
+    }, expect)
   }
 
   /** Steps 2–3 after an action that left the row `sending`. */
@@ -171,14 +196,17 @@ export function createAssist(deps: AssistDeps): Assist {
   return {
     resolveUnknown: (id, kind, answer, options = {}) => {
       const sendAnyway = options.addressOverride === true
-      const row = kind === 'initial' ? resolveInitial(id, answer, sendAnyway) : resolveFollowup(id, kind, answer, sendAnyway)
+      const row = kind === 'initial' ? resolveInitial(id, answer, sendAnyway, options.expect) : resolveFollowup(id, kind, answer, sendAnyway, options.expect)
       return launched(id, kind, enqueueIfPending(db, deps.enqueueCheck, id, kind, row))
     },
 
     retrySend: (id, kind, options = {}) => {
-      if (kind !== 'initial') return launched(id, kind, enqueueIfPending(db, deps.enqueueCheck, id, kind, retryFollowup(id, kind, options.addressOverride === true)))
+      if (kind !== 'initial') return launched(id, kind, enqueueIfPending(db, deps.enqueueCheck, id, kind, retryFollowup(id, kind, options.addressOverride === true, options.expect)))
       const app = db.read((q) => repo.getApplication(q, id))
       if (app === undefined) return fail('not-found', 'no such application')
+      // Read and approved with no await between: nothing moves the row in the gap.
+      const seen = fresh(app, 'initial', options.expect)
+      if (!seen.ok) return seen
       const failed = rowOf(app, 'initial')
       if (!failed.ok || failed.value.state !== 'failed') return fail('conflict', 'only a failed send is retried')
       const approved = deps.sender.approve(id, 'initial', options) // T-A11 + T-S8, every check of step 1; it launches 2–3

@@ -18,7 +18,7 @@
  */
 
 import type { Logger, Notifier, Timers } from '@factotum/core'
-import type { BatchAnswer, SendKind, SendState } from './client/contract.ts'
+import type { BatchAnswer, SendExpect, SendKind, SendState } from './client/contract.ts'
 
 /** A COPY of the engine's codes (`packages/jobs/src/types.ts`, `ErrorCode`). */
 export type JobsErrorCode = 'invalid' | 'not-found' | 'conflict' | 'blocked' | 'limit' | 'module-error'
@@ -44,6 +44,14 @@ export type RetryJob = (typeof RETRY_JOBS)[number]
 /** «It went / Send again / It didn't go» (D9; v6 M2, v5 X9). */
 export const UNKNOWN_ANSWERS = ['went', 'again', 'not-went'] as const
 export type UnknownAnswer = (typeof UNKNOWN_ANSWERS)[number]
+
+/** A COPY of the engine's send states, for an answer's `expect`. */
+export const SEND_STATES: readonly SendState[] = ['sending', 'sent', 'send-unknown', 'failed']
+
+/** What a send answer carries besides itself: the row as the screen saw it (the engine's `AnswerOptions`). */
+export interface AnswerOptions {
+  readonly expect?: SendExpect
+}
 
 /** One row of `sends`, as far as the poll reads it; the engine's row has more, and none of it leaves. */
 export interface Send {
@@ -87,9 +95,10 @@ export interface Jobs {
   /** `GET /a/:id/sends/:kind`: the client's poll. */
   readonly send: (id: string, kind: SendKind) => Result<Send>
   readonly markSent: (id: string, kind: SendKind) => Result<unknown>
-  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer) => Result<Send>
+  /** `options.expect`: the row the screen saw; moved since → `conflict 'stale'` (D15). */
+  readonly resolveUnknown: (id: string, kind: SendKind, answer: UnknownAnswer, options?: AnswerOptions) => Result<Send>
   /** From `failed`. */
-  readonly retrySend: (id: string, kind: SendKind) => Result<Send>
+  readonly retrySend: (id: string, kind: SendKind, options?: AnswerOptions) => Result<Send>
   /** «Retry» of a `missing-cv`/`missing-letter`, «Retry print» of a `cv-stale` (client contract). */
   readonly retry: (id: string, job: RetryJob) => Result<unknown>
   /** «Close» (T-A26, T-A21). In cut 1a with no route: T1 gives it one (tasks C1). */

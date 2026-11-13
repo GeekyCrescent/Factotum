@@ -28,3 +28,17 @@ export function pressArmed(armedAt: number | null, now: number): Press {
   if (now - armedAt < ARM_GRACE_MS) return { fire: false, armedAt }
   return { fire: true, armedAt: null }
 }
+
+/** An arm and the card it was set on (`viewOf` of a review item, `cardOf` of a send). */
+export interface Arm {
+  readonly at: number
+  readonly on: string
+}
+
+/**
+ * When the arm was set, if it was set on the card shown now; null otherwise. A card repainted under the
+ * finger (a new `seen`, a send row that moved) is a card the owner has not confirmed anything on.
+ */
+export function armOn(arm: Arm | null, on: string): number | null {
+  return arm !== null && arm.on === on ? arm.at : null
+}

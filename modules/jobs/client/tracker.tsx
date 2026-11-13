@@ -37,6 +37,15 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
     }
   }, [api, seed])
   useEffect(() => void load(), [load])
+  // The sends are seeded once per read: back on the screen, read again, so a send that needs the owner
+  // since — or one answered on another device — is drawn as it is now (`use-sends.ts` reads its lines).
+  useEffect(() => {
+    const again = (): void => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', again)
+    return () => document.removeEventListener('visibilitychange', again)
+  }, [load])
 
   const start = async (): Promise<void> => {
     if (overview === null) return

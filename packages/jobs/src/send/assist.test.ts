@@ -299,3 +299,58 @@ describe('«Send again» and a follow-up «Retry» pass the address guard of «A
     })
   })
 })
+
+describe('an answer carries the state the screen saw: another device moved the row → conflict stale (D15)', () => {
+  const AT = '2026-11-13T22:00:00.000Z'
+  const EARLIER = '2026-11-13T21:00:00.000Z'
+
+  test('«Send again», «It went» and «It didn’t go» of the initial: a different state or `at` → stale, nothing moves, nothing sent', async (t) => {
+    for (const answer of ['again', 'went', 'not-went'] as const) {
+      for (const expect of [
+        { state: 'send-unknown', at: EARLIER },
+        { state: 'failed', at: AT },
+      ] as const) {
+        await within(t, {}, async (w, sender, deps) => {
+          write(w.db, (q) => initialIn(q, 'send-unknown', 'send-unknown'))
+          errorOf(createAssist(deps).resolveUnknown('app-1', 'initial', answer, { expect }), 'conflict', 'stale')
+          assert.equal(appOf(w.db).state, 'send-unknown')
+          assert.equal(appOf(w.db).sends[0]?.state, 'send-unknown')
+          await sender.settled()
+          assert.equal(w.server.messages.length, 0)
+        })
+      }
+    }
+  })
+
+  test('the row as the screen saw it: the answer goes through', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => initialIn(q, 'send-unknown', 'send-unknown'))
+      assert.equal(valueOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again', { expect: { state: 'send-unknown', at: AT } })).state, 'sending')
+      await sender.settled()
+      assert.equal(appOf(w.db).state, 'sent')
+    })
+  })
+
+  test('«Retry» of the initial: stale when the row moved, goes when it did not', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => initialIn(q, 'ready', 'failed'))
+      const assist = createAssist(deps)
+      errorOf(assist.retrySend('app-1', 'initial', { expect: { state: 'failed', at: EARLIER } }), 'conflict', 'stale')
+      assert.equal(appOf(w.db).sends[0]?.state, 'failed')
+      assert.equal(valueOf(assist.retrySend('app-1', 'initial', { expect: { state: 'failed', at: AT } })).state, 'sending')
+      await sender.settled()
+    })
+  })
+
+  test('a follow-up: «Retry» and «It went» stale when the row moved; «Retry» goes when it did not', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => followupRowIn(q, 'failed'))
+      const assist = createAssist(deps)
+      errorOf(assist.retrySend('app-1', 'followup-1', { expect: { state: 'send-unknown', at: AT } }), 'conflict', 'stale')
+      errorOf(assist.resolveUnknown('app-1', 'followup-1', 'went', { expect: { state: 'send-unknown', at: AT } }), 'conflict', 'stale')
+      assert.equal(followupRow(w)?.state, 'failed')
+      assert.equal(valueOf(assist.retrySend('app-1', 'followup-1', { expect: { state: 'failed', at: AT } })).state, 'sending')
+      await sender.settled()
+    })
+  })
+})

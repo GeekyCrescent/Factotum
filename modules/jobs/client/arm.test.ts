@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ARM_EXPIRY_MS, ARM_GRACE_MS, isArmed, pressArmed } from './arm.ts'
+import { ARM_EXPIRY_MS, ARM_GRACE_MS, armOn, isArmed, pressArmed } from './arm.ts'
 
 const T = 50_000
 
@@ -32,4 +32,10 @@ test('isArmed holds until the expiry', () => {
   assert.equal(isArmed(null, T), false)
   assert.equal(isArmed(T, T + 10), true)
   assert.equal(isArmed(T, T + ARM_EXPIRY_MS), false)
+})
+
+test('an arm holds only on the card it was set on: a repainted card (new `seen`, new row) is not armed', () => {
+  assert.equal(armOn({ at: T, on: 'item\u0000v1' }, 'item\u0000v1'), T)
+  assert.equal(armOn({ at: T, on: 'item\u0000v1' }, 'item\u0000v2'), null)
+  assert.equal(armOn(null, 'item\u0000v1'), null)
 })

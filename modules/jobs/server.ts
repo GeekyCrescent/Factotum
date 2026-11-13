@@ -25,6 +25,8 @@ import { jobsConfigSchema } from './config.ts'
 import {
   RETRY_JOBS,
   SEND_KINDS,
+  SEND_STATES,
+  type AnswerOptions,
   UNKNOWN_ANSWERS,
   type CreateJobs,
   type Jobs,
@@ -101,6 +103,21 @@ function oneOf<T extends string>(list: readonly T[], value: unknown): value is T
   return typeof value === 'string' && (list as readonly string[]).includes(value)
 }
 
+/** The longest `expect.at` taken: an ISO instant is 24 characters. */
+const MAX_AT_LENGTH = 64
+
+/** A send answer's `expect`: absent → no options; well formed → `{ expect }`; anything else → null. */
+function answerOptions(body: unknown): AnswerOptions | null {
+  const expect = fieldOf(body, 'expect')
+  if (expect === undefined) return {}
+  const state = fieldOf(expect, 'state')
+  const at = fieldOf(expect, 'at')
+  if (!oneOf(SEND_STATES, state) || typeof at !== 'string' || at.length > MAX_AT_LENGTH) return null
+  return { expect: { state, at } }
+}
+
+const BAD_EXPECT = (): ModuleResponse => invalid('expect', '{ state, at } of the send as it was read')
+
 interface Holder {
   jobs?: Jobs
 }
@@ -156,9 +173,16 @@ function routeTable(holder: Holder, log: Logger): RouteTable {
     'POST /a/:id/sends/:kind/unknown': withSend((jobs, appId, kind, req) => {
       const reply = fieldOf(req.body, 'answer')
       if (!oneOf<UnknownAnswer>(UNKNOWN_ANSWERS, reply)) return invalid('answer', `one of ${UNKNOWN_ANSWERS.join(', ')}`)
-      return answer(jobs.resolveUnknown(appId, kind, reply), sendView)
+      const options = answerOptions(req.body)
+      if (options === null) return BAD_EXPECT()
+      // `409 stale` when the row moved since the screen read it (D15): nothing is sent.
+      return answer(options.expect === undefined ? jobs.resolveUnknown(appId, kind, reply) : jobs.resolveUnknown(appId, kind, reply, options), sendView)
     }),
-    'POST /a/:id/sends/:kind/retry': withSend((jobs, appId, kind) => answer(jobs.retrySend(appId, kind), sendView)),
+    'POST /a/:id/sends/:kind/retry': withSend((jobs, appId, kind, req) => {
+      const options = answerOptions(req.body)
+      if (options === null) return BAD_EXPECT()
+      return answer(options.expect === undefined ? jobs.retrySend(appId, kind) : jobs.retrySend(appId, kind, options), sendView)
+    }),
 
     // Not in D13: the client's «Retry» (`missing-cv`, `missing-letter`) and «Retry print» (`cv-stale`).
     'POST /a/:id/retry': withJobs((jobs, req) => {

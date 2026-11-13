@@ -14,16 +14,40 @@
  * response is lost (network, timeout, 5xx) may have started the send, so the line says «couldn't
  * confirm — checking…» and polls the send again (`answerUnconfirmed`), never offering «Retry» blind.
  *
+ * WHAT THE CARD SHOWED TRAVELS WITH THE ANSWER: `{ expect: { state, at } }` of the row as last read. A
+ * row that moved since — answered on another device, or the send finished — comes back `409 stale`,
+ * and the line is read again and says «this send changed — check it again» (D15). Coming back to
+ * the screen (focus, a tab made visible) reads again every line that waits for the owner.
+ *
  * ONE LOOP: it runs while some line polls, and reads the lines from a ref, so an answer never restarts
  * it and never drops the reads still in flight. One request per send at a time: a slow read is not
  * stacked on. An answer that changes nothing draws nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import type { Api, SendNeed, SendState, SendView, UnknownRequest } from './contract.ts'
+import type { Api, RetryRequest, SendNeed, SendState, SendView, UnknownRequest } from './contract.ts'
 import type { Lock } from './guard.ts'
 import { refusalOf, type SendKey } from './model.ts'
-import { answerRefused, answerUnconfirmed, dismissed, isSendRefusal, isPolling, pollFailed, polled, repolled, retryRefused, seeded, sendIdOf, tracked, type SendAction, type TrackedSend } from './sends-model.ts'
+import {
+  answerRefused,
+  answerUnconfirmed,
+  dismissed,
+  expectOf,
+  isPolling,
+  isSendRefusal,
+  isStaleRefusal,
+  pollFailed,
+  polled,
+  repolled,
+  retryRefused,
+  seeded,
+  sendIdOf,
+  staleRead,
+  toRefresh,
+  tracked,
+  type SendAction,
+  type TrackedSend,
+} from './sends-model.ts'
 
 export const SEND_POLL_MS = 1_000
 
@@ -51,45 +75,83 @@ export function useSends(api: Api, lock: Lock): SendsState {
   latest.current = sends
   /** The sends with a read in flight, by `sendIdOf`: one at a time each. */
   const inFlight = useRef(new Set<string>())
+  /** Unmounted: an answer that arrives later draws nothing. */
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
 
   const track = useCallback((key: SendKey, state: SendState | null = null): void => setSends((now) => tracked(now, key, state)), [])
 
-  const polling = sends.some(isPolling)
-  useEffect(() => {
-    if (!polling) return
-    const stop = new AbortController()
-    const read = (send: TrackedSend): void => {
+  const read = useCallback(
+    (send: TrackedSend): void => {
       const id = sendIdOf(send.key)
       if (inFlight.current.has(id)) return
       inFlight.current.add(id)
       api
         .get<SendView>(pathOf(send.key))
         .then((view) => {
-          if (!stop.signal.aborted) setSends((now) => polled(now, send.key, view))
+          if (alive.current) setSends((now) => polled(now, send.key, view))
         })
         .catch(() => {
           // Counted, not swallowed: after MAX_POLL_FAILURES in a row the line says «status unknown».
-          if (!stop.signal.aborted) setSends((now) => pollFailed(now, send.key))
+          if (alive.current) setSends((now) => pollFailed(now, send.key))
         })
         .finally(() => inFlight.current.delete(id))
-    }
+    },
+    [api],
+  )
+
+  const polling = sends.some(isPolling)
+  useEffect(() => {
+    if (!polling) return
     const timer = setInterval(() => latest.current.filter(isPolling).forEach(read), SEND_POLL_MS)
-    return () => {
-      stop.abort()
-      clearInterval(timer)
+    return () => clearInterval(timer)
+  }, [read, polling])
+
+  // Back on the screen: what waits for the owner may have been answered elsewhere meanwhile.
+  useEffect(() => {
+    const refresh = (): void => {
+      if (document.visibilityState === 'visible') toRefresh(latest.current).forEach(read)
     }
-  }, [api, polling])
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [read])
+
+  /** After a `409 stale`: the row as it is now, saying it changed; a read that fails keeps checking. */
+  const reread = useCallback(
+    async (key: SendKey): Promise<void> => {
+      try {
+        const view = await api.get<SendView>(pathOf(key))
+        if (alive.current) setSends((now) => staleRead(now, key, view))
+      } catch {
+        if (alive.current) setSends((now) => answerUnconfirmed(now, key))
+      }
+    },
+    [api],
+  )
 
   const act = useCallback(
     async (key: SendKey, action: SendAction): Promise<void> => {
+      const send = latest.current.find((line) => sendIdOf(line.key) === sendIdOf(key))
+      if (send === undefined) return
+      const expect = expectOf(send)
+      const seen: RetryRequest = expect === null ? {} : { expect }
       await lock.run(async () => {
         try {
           if (action === 'retry') {
-            await api.post(`${pathOf(key)}/retry`)
-            track(key)
+            const view = await api.post<SendView>(`${pathOf(key)}/retry`, seen)
+            setSends((now) => polled(tracked(now, key), key, view))
             return
           }
-          const body: UnknownRequest = { answer: action }
+          const body: UnknownRequest = { answer: action, ...seen }
           const view = await api.post<SendView>(`${pathOf(key)}/unknown`, body)
           setSends((now) => polled(now, key, view))
         } catch (cause) {
@@ -98,12 +160,17 @@ export function useSends(api: Api, lock: Lock): SendsState {
             setSends((now) => answerUnconfirmed(now, key))
             return
           }
+          // Moved since the card was drawn (another device): nothing was done; show it as it is now.
+          if (isStaleRefusal(cause)) {
+            await reread(key)
+            return
+          }
           const reason = refusalOf(cause).text
           setSends((now) => (action === 'retry' ? retryRefused(now, key, reason) : answerRefused(now, key, reason)))
         }
       })
     },
-    [api, lock, track],
+    [api, lock, reread],
   )
 
   const seed = useCallback((needs: readonly SendNeed[]): void => setSends((now) => seeded(now, needs)), [])

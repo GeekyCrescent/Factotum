@@ -11,7 +11,7 @@
  * went is exactly what is unknown.
  */
 
-import type { SendKind, SendNeed, SendState, SendView, UnknownAnswer } from './contract.ts'
+import type { SendExpect, SendKind, SendNeed, SendState, SendView, UnknownAnswer } from './contract.ts'
 import { sendLine, statusOf, type SendKey, type SendLine } from './model.ts'
 
 /** The bar shows this many lines when it can drop ok ones. */
@@ -28,12 +28,18 @@ export interface TrackedSend {
   readonly lost: boolean
   /** The last state read; null when none is known (lost). What the card offers comes from it. */
   readonly state: SendState | null
+  /** The `at` of the row last read; `''` while none has been read. Sent back with each answer (`expectOf`). */
+  readonly at: string
 }
 
 export const sendIdOf = (key: SendKey): string => `${key.applicationId}/${key.kind}`
 const same = (a: SendKey, b: SendKey): boolean => sendIdOf(a) === sendIdOf(b)
 
-export const isPolling = (send: TrackedSend): boolean => !send.line.final
+/** States the owner answers: their answer carries the row's `at`, so it must have been read. */
+const ANSWERED: ReadonlySet<SendState | null> = new Set<SendState | null>(['failed', 'send-unknown'])
+
+/** A line moving, or one the owner answers whose `at` was never read (an approve answered `failed`): read once more. */
+export const isPolling = (send: TrackedSend): boolean => !send.line.final || (ANSWERED.has(send.state) && send.at === '')
 
 const SEND_STATES: ReadonlySet<string> = new Set<SendState>(['sending', 'sent', 'send-unknown', 'failed'])
 
@@ -48,6 +54,7 @@ const sending = (key: SendKey, state: SendState = 'sending'): TrackedSend => ({
   failures: 0,
   lost: false,
   state,
+  at: '',
 })
 
 const evictable = (send: TrackedSend): boolean => send.line.final && send.line.tone === 'ok'
@@ -88,7 +95,7 @@ export function seeded(sends: readonly TrackedSend[], needs: readonly SendNeed[]
   const fresh = needs
     .map((need): TrackedSend => {
       const key: SendKey = { applicationId: need.applicationId, kind: need.kind, company: need.company }
-      return { key, line: sendLine({ kind: need.kind, state: need.state, at: need.at, reason: need.reason }, need.company), failures: 0, lost: false, state: need.state }
+      return { key, line: sendLine({ kind: need.kind, state: need.state, at: need.at, reason: need.reason }, need.company), failures: 0, lost: false, state: need.state, at: need.at }
     })
     .filter((send) => !known.has(sendIdOf(send.key)))
   return fresh.length === 0 ? sends : [...sends, ...fresh]
@@ -98,8 +105,8 @@ export function seeded(sends: readonly TrackedSend[], needs: readonly SendNeed[]
 export function polled(sends: readonly TrackedSend[], key: SendKey, view: SendView): readonly TrackedSend[] {
   return replaced(sends, key, (send) => {
     const line = sendLine(view, send.key.company)
-    if (sameLine(line, send.line) && send.failures === 0 && !send.lost && send.state === view.state) return send
-    return { key: send.key, line, failures: 0, lost: false, state: view.state }
+    if (sameLine(line, send.line) && send.failures === 0 && !send.lost && send.state === view.state && send.at === view.at) return send
+    return { key: send.key, line, failures: 0, lost: false, state: view.state, at: view.at }
   })
 }
 
@@ -109,7 +116,7 @@ export function pollFailed(sends: readonly TrackedSend[], key: SendKey): readonl
     const failures = send.failures + 1
     if (failures < MAX_POLL_FAILURES) return { ...send, failures }
     const line: SendLine = { text: `${send.key.company}: status unknown — check the tracker`, tone: 'ask', final: true, retry: false }
-    return { key: send.key, line, failures, lost: true, state: null }
+    return { key: send.key, line, failures, lost: true, state: null, at: '' }
   })
 }
 
@@ -126,6 +133,7 @@ export function retryRefused(sends: readonly TrackedSend[], key: SendKey, reason
     failures: 0,
     lost: false,
     state: 'failed',
+    at: send.at,
   }))
 }
 
@@ -157,7 +165,36 @@ export function answerUnconfirmed(sends: readonly TrackedSend[], key: SendKey): 
     failures: 0,
     lost: false,
     state: null,
+    at: '',
   }))
+}
+
+/** `409 stale`: the row moved since the card was drawn (another device, or the send finished). */
+export const isStaleRefusal = (cause: unknown): boolean => isSendRefusal(cause) && statusOf(cause) === 409 && (cause as Error).message === 'stale'
+
+/**
+ * What a send answer carries (D15 «Lo que se vio es lo que se aprueba»): the row as the card showed
+ * it. null while the card has no row read — and then it offers nothing to answer anyway.
+ */
+export function expectOf(send: TrackedSend): SendExpect | null {
+  return send.state === null || send.at === '' ? null : { state: send.state, at: send.at }
+}
+
+/** The card as drawn: a confirm armed on it (`arm.ts` `armOn`) is gone once it shows another row. */
+export const cardOf = (send: TrackedSend): string => `${sendIdOf(send.key)}\u0000${send.state ?? ''}\u0000${send.at}`
+
+/** After a `409 stale`, the row read again: as it is now, saying it changed, offering what it offers now. */
+export function staleRead(sends: readonly TrackedSend[], key: SendKey, view: SendView): readonly TrackedSend[] {
+  return replaced(polled(sends, key, view), key, (send) => ({ ...send, line: { ...send.line, text: `${send.key.company}: this send changed — check it again`, tone: 'ask' } }))
+}
+
+/**
+ * Coming back to the screen (focus, a tab made visible): the lines that wait for the owner — failed,
+ * «did it go?», or lost — are read again, so a card answered on another device does not stay offering
+ * its old buttons. A line still moving is polled already; a «Sent ✓» needs nothing.
+ */
+export function toRefresh(sends: readonly TrackedSend[]): readonly TrackedSend[] {
+  return sends.filter((send) => send.line.final && send.line.tone !== 'ok')
 }
 
 // ── What a send's card offers (D9; v6 M2) ────────────────────────────────────────────────────────
@@ -174,15 +211,26 @@ export const kindLabel = (kind: SendKind): string => KIND_LABELS[kind]
  * didn't go» (a follow-up's is the tracker's, only once the application has a reply, v5 X9). A line
  * that lost its reads offers none: whether it went is exactly what is unknown.
  */
-export function actionsOf(send: TrackedSend): readonly { readonly action: SendAction; readonly label: string }[] {
+export interface SendOffer {
+  readonly action: SendAction
+  readonly label: string
+  /** The label once armed, for the answers that ask for a second click (`arm.ts`); null: one click. */
+  readonly confirm: string | null
+}
+
+/**
+ * «Send again» may send a copy more and «It didn't go» drops one: each asks for a second click, as
+ * «Send anyway» does. «It went» sends nothing, «Retry» resends only a failed row.
+ */
+export function actionsOf(send: TrackedSend): readonly SendOffer[] {
   if (send.lost) return []
-  if (send.state === 'failed') return [{ action: 'retry', label: 'Retry' }]
+  if (send.state === 'failed') return [{ action: 'retry', label: 'Retry', confirm: null }]
   if (send.state !== 'send-unknown') return []
-  const both = [
-    { action: 'went', label: 'It went' },
-    { action: 'again', label: 'Send again' },
-  ] as const
-  return send.key.kind === 'initial' ? [...both, { action: 'not-went', label: 'It didn’t go' }] : both
+  const both: readonly SendOffer[] = [
+    { action: 'went', label: 'It went', confirm: null },
+    { action: 'again', label: 'Send again', confirm: 'Click again to send again' },
+  ]
+  return send.key.kind === 'initial' ? [...both, { action: 'not-went', label: 'It didn’t go', confirm: 'Click again: it didn’t go' }] : both
 }
 
 /** «Dismiss»: the owner has read it. */
