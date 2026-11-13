@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createQueue } from './ai/queue.ts'
 import { queueStore } from './ai/test-queue.ts'
-import { BACKUP_KEEP, CLOCK_MS, createClock, type ClockDeps } from './clock.ts'
+import { BACKUP_FAILING, BACKUP_FAILURES_FLAG, BACKUP_KEEP, CLOCK_MS, createClock, type ClockDeps } from './clock.ts'
 import type { Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
 import { application, NOW, valueOf } from './test-state.ts'
@@ -145,6 +145,78 @@ test('a copy that fails is logged, and the next round tries again', async () => 
   clock.start()
   await clock.idle()
   assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('backup')))
+  await clock.stop()
+})
+
+test('today’s copy already on disk but not remembered (a crash, a failed write) is replaced by a fresh one, not refused forever', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const dir = join(base.dir, 'backups')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'jobs-2026-11-14.db'), 'a partial copy')
+  const { clock, log } = clockRig(db, base.dir)
+  clock.start()
+  await clock.idle()
+  assert.deepEqual(log.lines.filter((line) => line.startsWith('error')), [])
+  assert.ok(statSync(join(dir, 'jobs-2026-11-14.db')).size > 'a partial copy'.length, 'a real copy')
+  assert.equal(db.read((q) => repo.getMeta(q, 'lastBackupDay')), '2026-11-14')
+  await clock.stop()
+})
+
+test('a prune that fails is logged, and the day’s copy still counts as taken', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const dir = join(base.dir, 'backups')
+  // A folder with a copy's name: chmod works on it, rmSync without `recursive` does not.
+  for (const day of ['01', '02', '03', '04', '05', '06', '07']) mkdirSync(join(dir, `jobs-2026-11-${day}.db`), { recursive: true })
+  const { clock, log } = clockRig(db, base.dir)
+  clock.start()
+  await clock.idle()
+  assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('prune')))
+  assert.equal(db.read((q) => repo.getMeta(q, 'lastBackupDay')), '2026-11-14')
+  await clock.stop()
+})
+
+test(`after ${BACKUP_FAILURES_FLAG} copies failed in a row the store says so (meta, for health), and a good copy clears it`, async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  writeFileSync(join(base.dir, 'backups'), 'a file where the folder goes')
+  const { clock, log, timers } = clockRig(db, base.dir)
+  clock.start()
+  await clock.idle()
+  for (let i = 1; i < BACKUP_FAILURES_FLAG; i += 1) {
+    assert.equal(db.read((q) => repo.getMeta(q, BACKUP_FAILING)), undefined, `not after ${i}`)
+    timers.tick(CLOCK_MS)
+    await clock.idle()
+  }
+  assert.match(db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? '', /^2026-11-14T00:00:00.000Z/)
+  assert.ok(log.lines.some((line) => line.includes(`${BACKUP_FAILURES_FLAG} times in a row`)))
+  rmSync(join(base.dir, 'backups'))
+  timers.tick(CLOCK_MS)
+  await clock.idle()
+  assert.equal(db.read((q) => repo.getMeta(q, BACKUP_FAILING)), undefined)
+  await clock.stop()
+})
+
+test('wave 2 is remembered only when every CV was queued: a refused one is tried again next round', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  heldDraft(db, 'a', '2026-11-15')
+  let refuse = true
+  const { clock, timers } = clockRig(db, base.dir, {
+    enqueueCv: (q, id) => {
+      if (refuse) return { ok: false, error: { code: 'module-error', reason: 'refused' } }
+      const app = repo.getApplication(q, id)!
+      return repo.saveApplication(q, { ...app, state: 'generating' }, { kind: 'prepared' }, NOW)
+    },
+  })
+  clock.start()
+  await clock.idle()
+  assert.equal(stateOf(db, 'a'), 'draft')
+  refuse = false
+  timers.tick(CLOCK_MS)
+  await clock.idle()
+  assert.equal(stateOf(db, 'a'), 'generating', 'not an hour later: the next round')
   await clock.stop()
 })
 
