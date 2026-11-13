@@ -103,7 +103,7 @@ describe('decide — which item', () => {
   test('switch-channel is a follow-up decision: conflict on an application', async () => {
     const w = await world()
     insertApp(w.db, { id: 'a1', state: 'ready' })
-    errorOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'switch-channel')), 'conflict')
+    errorOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'switch-channel')), 'conflict', 'followups-not-ready')
   })
 })
 
@@ -185,13 +185,27 @@ describe('decide skip (T-A22, S10)', () => {
     const w = await world()
     insertApp(w.db, { id: 'a1', state: 'ready' })
     insertApp(w.db, { id: 'a2', state: 'ready' })
-    valueOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'skip', { reason: 'not now' })))
+    valueOf(decide(w.deps, decision(itemOf(w.start(), 'a1'), 'skip', { reason: 'not-now' })))
     assert.equal(appOf(w.db, 'a1').state, 'ready')
     assert.equal(eventsOf(w.db, 'a1').at(-1)?.kind, 'skipped')
     assert.deepEqual(
       w.start().items.map((i) => (i.kind === 'application' ? i.applicationId : i.kind)),
       ['a2'],
     )
+  })
+
+  test('the client’s tokens are the reasons; case and spacing do not matter, anything else is invalid', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'in-review' })
+    insertApp(w.db, { id: 'a2', state: 'in-review' })
+    const batch = w.start()
+    errorOf(decide(w.deps, decision(itemOf(batch, 'a1'), 'skip', { reason: 'banana' })), 'invalid')
+    valueOf(decide(w.deps, decision(itemOf(batch, 'a1'), 'skip', { reason: ' Not a  Fit ' })))
+    assert.equal(appOf(w.db, 'a1').state, 'closed', '«Not a fit», however it is spelled, closes it')
+    assert.deepEqual(eventsOf(w.db, 'a1').at(-1)?.data, { reason: 'not-a-fit' })
+    valueOf(decide(w.deps, decision(itemOf(batch, 'a2'), 'skip', { reason: 'other', text: ' Recruiter agency ' })))
+    assert.equal(appOf(w.db, 'a2').state, 'in-review')
+    assert.deepEqual(eventsOf(w.db, 'a2').at(-1)?.data, { reason: 'other', text: 'Recruiter agency' })
   })
 })
 

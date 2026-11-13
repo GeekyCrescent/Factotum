@@ -5,8 +5,10 @@
  *
  * - `approve` goes through the SENDER (E1/E1b): an email to `sending` (T-A11), a manual channel to
  *   `approved` (T-A12). Its refusals pass through untouched (`check-pending`, `address-unverified`…).
- * - `skip` needs a reason: «not a fit» closes it (T-A22); any other leaves the state and only writes
- *   `skipped { reason }`, which keeps it out of today's batches (S10).
+ * - `skip` needs a reason, one of the client's tokens (`SKIP_REASONS`): `not-a-fit` closes it (T-A22);
+ *   any other leaves the state and only writes `skipped { reason, text? }`, which keeps it out of
+ *   today's batches (S10).
+ * - `switch-channel` is a follow-up's (T-F15): `conflict followups-not-ready`, like the others.
  * - `instruct` with a letter: `rewriting` (T-A7), the `instruction` event (`instructionEvent`) and a
  *   `rewrite` queued `interactive`. Without one (v6, M9): no rewrite — `generating` (T-A4) with a NEW
  *   `letter` queued, which reads the instruction from the same event.
@@ -20,12 +22,12 @@
  * `conflict already-decided`. A decision with a result moves the cursor past its item.
  */
 
-import { instructionEvent } from '../ai/returns.ts'
 import type { Logger } from '@factotum/core'
 
 import type { Queue, RelintFn } from '../ai/queue.ts'
-import type { Approved, Sender } from '../send/send.ts'
+import { instructionEvent } from '../ai/returns.ts'
 import { checkIt } from '../build/verify.ts'
+import type { Approved, Sender } from '../send/send.ts'
 import { appTransition } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -38,9 +40,9 @@ export type DecisionKind = (typeof DECISION_KINDS)[number]
 export interface Decision {
   readonly itemId: string
   readonly kind: DecisionKind
-  /** `skip`: why. */
+  /** `skip`: why — one of `SKIP_REASONS` (the client's tokens), however spelled. */
   readonly reason?: string
-  /** `instruct`: the owner's words. */
+  /** `instruct`: the owner's words; `skip` `other`: its text. */
   readonly text?: string
   /** `approve`: «Send anyway» (T-D5). */
   readonly addressOverride?: boolean
@@ -48,10 +50,19 @@ export interface Decision {
   readonly warningCodes?: readonly WarningCode[]
 }
 
+/** The reasons of a skip: the client's tokens (`modules/jobs/client/contract.ts`, `SkipReason`). */
+export const SKIP_REASONS = ['not-now', 'not-a-fit', 'duplicate', 'other'] as const
+export type SkipReason = (typeof SKIP_REASONS)[number]
 /** The skip reason that closes the application (requirements crit. 30). */
-export const NOT_A_FIT = 'not a fit'
+export const NOT_A_FIT: SkipReason = 'not-a-fit'
 export const MAX_INSTRUCTION_CHARS = 2_000
 export const MAX_REASON_CHARS = 200
+
+/** The token a reason names, however spelled («Not a fit», `not_a_fit`…); null when it names none. */
+export function skipReasonOf(raw: string | undefined): SkipReason | null {
+  const token = (raw ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '-')
+  return SKIP_REASONS.find((reason) => reason === token) ?? null
+}
 
 export interface DecideDeps {
   readonly db: Db
@@ -122,9 +133,9 @@ function move(q: Queries, app: Application, event: Parameters<typeof appTransiti
   return saved.ok ? moved : saved
 }
 
-function skip(q: Queries, app: Application, reason: string, now: Date): Result<void> {
+function skip(q: Queries, app: Application, reason: SkipReason, words: string, now: Date): Result<void> {
   if (app.state !== 'in-review' && app.state !== 'ready') return fail('conflict', `skip is not a transition from ${app.state}`)
-  const spec = { kind: 'skipped', data: { reason } } as const
+  const spec = { kind: 'skipped', data: reason === 'other' && words !== '' ? { reason, text: words } : { reason } } as const
   if (reason === NOT_A_FIT) {
     const closed = move(q, app, { type: 'skip-not-a-fit', reason }, spec, now) // T-A22
     return closed.ok ? ok(undefined) : closed
@@ -170,22 +181,25 @@ function writeDecision(q: Queries, deps: DecideDeps, target: Target, decision: D
   }
   switch (decision.kind) {
     case 'skip':
-      return then(skip(q, app.value, text(decision.reason), now), 'skipped')
+      return then(skip(q, app.value, skipReasonOf(decision.reason) ?? 'other', text(decision.text), now), 'skipped')
     case 'instruct':
       return then(instruct(q, deps, app.value, text(decision.text), now), 'instructed')
     case 'override':
       return then(override(q, deps, app.value, decision.warningCodes ?? [], now), null)
     case 'switch-to-form':
       return then(switchToForm(q, deps, app.value, now), null)
-    default:
-      return fail('conflict', `${decision.kind} is a follow-up decision`)
+    case 'approve':
+    case 'switch-channel':
+      // `switch-channel` is a follow-up's (T-F15, R2b); `approve` never reaches here.
+      return fail('conflict', 'followups-not-ready')
   }
 }
 
 /** Checks what the owner typed before anything is read (a system boundary). */
 function invalid(decision: Decision): Result<never> | null {
   if (!DECISION_KINDS.includes(decision.kind)) return fail('invalid', 'unknown decision', 'kind')
-  if (decision.kind === 'skip' && (text(decision.reason) === '' || text(decision.reason).length > MAX_REASON_CHARS)) return fail('invalid', 'a skip needs a reason', 'reason')
+  if (decision.kind === 'skip' && skipReasonOf(decision.reason) === null) return fail('invalid', `a skip needs a reason: ${SKIP_REASONS.join(', ')}`, 'reason')
+  if (decision.kind === 'skip' && text(decision.text).length > MAX_REASON_CHARS) return fail('invalid', `a skip's text is at most ${MAX_REASON_CHARS} characters`, 'text')
   if (decision.kind === 'instruct' && (text(decision.text) === '' || text(decision.text).length > MAX_INSTRUCTION_CHARS)) {
     return fail('invalid', `an instruction is 1 to ${MAX_INSTRUCTION_CHARS} characters`, 'text')
   }
