@@ -192,14 +192,15 @@ const RECIPIENT_REJECTED = 'the server rejected the recipient'
 const SINGLE_ADDRESS = /^[^\s@,;<>]+@[^\s@,;<>]+$/
 
 /**
- * Exactly one address, and no CR/LF anywhere: a `to` with a line break or a comma can parse into a
- * DIFFERENT recipient (or several) than the one the owner approved.
+ * Exactly one BARE address, and no CR/LF anywhere: a `to` with a line break or a comma can parse into
+ * a DIFFERENT recipient (or several) than the one the owner approved, and a display name
+ * (`"boss@a.com" <x@b.com>`) shows one address in `To:` while the envelope goes to another.
  */
 function isOneRecipient(to: string): boolean {
   if (/[\r\n]/.test(to)) return false
   const parsed = addressparser(to)
   const only = parsed[0]
-  return parsed.length === 1 && only !== undefined && 'address' in only && SINGLE_ADDRESS.test(only.address ?? '')
+  return parsed.length === 1 && only !== undefined && 'address' in only && SINGLE_ADDRESS.test(only.address ?? '') && to.trim() === only.address
 }
 
 /** The MIME tree and its envelope, built before any connection; a throw becomes a reason. */

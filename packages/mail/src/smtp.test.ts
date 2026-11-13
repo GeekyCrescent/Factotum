@@ -389,7 +389,17 @@ test('a message that cannot be composed is before-data and never connects', asyn
 })
 
 test('a recipient that is not exactly one address, or carries CR/LF, is invalid-recipient before connecting', async () => {
-  for (const to of ['hiring@clinic.example\r\nBcc: other@evil.example', 'a@clinic.example, b@clinic.example', 'not an address', '', 'hiring@clinic.example\n']) {
+  for (const to of [
+    'hiring@clinic.example\r\nBcc: other@evil.example',
+    'a@clinic.example, b@clinic.example',
+    'not an address',
+    '',
+    'hiring@clinic.example\n',
+    // A display name that is itself an address: the To: header would show one, the envelope use another.
+    '"boss@a.com" <x@b.com>',
+    'boss@a.com <x@b.com>',
+    'Hiring Team <hiring@clinic.example>',
+  ]) {
     const clock = manualTimers()
     const { connect, calls } = fakeConnect({})
 
@@ -399,7 +409,7 @@ test('a recipient that is not exactly one address, or carries CR/LF, is invalid-
     assert.deepEqual(calls, [], JSON.stringify(to))
   }
   const { connect, calls } = fakeConnect({})
-  assert.equal((await sendMail(input(manualTimers(), { to: 'Hiring Team <hiring@clinic.example>' }), connect)).ok, true)
+  assert.equal((await sendMail(input(manualTimers(), { to: ' hiring@clinic.example ' }), connect)).ok, true)
   assert.deepEqual(calls.filter((c) => c.startsWith('send')), ['send hiring@clinic.example'])
 })
 
