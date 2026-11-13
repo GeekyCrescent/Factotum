@@ -7,30 +7,30 @@
 
 import { useMemo, useState } from 'preact/hooks'
 import type { Api, ImportReport, ImportRequest } from './contract.ts'
-import { createLock } from './guard.ts'
-import { canImport, reportOf } from './import-model.ts'
-import { refusalOf } from './model.ts'
+import { createLock, runOrSay } from './guard.ts'
+import { canImport, importFailureOf, reportOf, type ImportFailure } from './import-model.ts'
 
 export function ImportPanel({ api }: { readonly api: Api }) {
   const [report, setReport] = useState<ImportReport | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ImportFailure | null>(null)
   const [busy, setBusy] = useState(false)
   const lock = useMemo(createLock, [])
 
   const run = async (dryRun: boolean): Promise<void> => {
-    await lock.run(async () => {
+    await runOrSay(lock, async () => {
       setBusy(true)
       setError(null)
       try {
         const body: ImportRequest = { dryRun }
         setReport(await api.post<ImportReport>('import', body))
       } catch (cause) {
-        const refusal = refusalOf(cause)
-        setError(refusal.text === 'missing-phone' ? 'Add your phone first: without it no CV of the package is printed.' : refusal.text)
+        // The report it replaced no longer stands: «Import» is never offered on a stale dry run.
+        setReport(null)
+        setError(importFailureOf(cause))
       } finally {
         setBusy(false)
       }
-    })
+    }, (text) => setError({ text, toPhone: false }))
   }
 
   const view = report === null ? null : reportOf(report)
@@ -50,7 +50,7 @@ export function ImportPanel({ api }: { readonly api: Api }) {
       </div>
       {error === null ? null : (
         <p class="j-error" role="alert">
-          {error} {error.startsWith('Add your phone') ? <ToPhone /> : null}
+          {error.text} {error.toPhone ? <ToPhone /> : null}
         </p>
       )}
       {view === null || report === null ? null : (

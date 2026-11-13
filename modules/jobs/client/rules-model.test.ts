@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Rule } from './contract.ts'
-import { editOf, newRuleOf, RULE_SCOPES, sortedRules } from './rules-model.ts'
+import { editOf, newRuleOf, RULE_SCOPES, sortedRules, toggleLabel } from './rules-model.ts'
 
 const rule = (over: Partial<Rule> = {}): Rule => ({ id: 'r1', text: 'Never mention health', scope: 'all', enabled: true, createdAt: '2026-11-13T00:00:00Z', updatedAt: '2026-11-13T00:00:00Z', ...over })
 
@@ -31,4 +31,9 @@ test('the rules on, newest first, then the ones switched off', () => {
     sortedRules(rules).map((r) => r.id),
     ['new', 'old', 'off'],
   )
+})
+
+test('a rule is switched, never deleted: «Turn off» on one that is on, «Turn on» on one that is off', () => {
+  assert.equal(toggleLabel(rule({ enabled: true })), 'Turn off')
+  assert.equal(toggleLabel(rule({ enabled: false })), 'Turn on')
 })

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ImportReport } from './contract.ts'
-import { canImport, reportOf } from './import-model.ts'
+import { canImport, importFailureOf, reportOf } from './import-model.ts'
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
   dryRun: true,
@@ -83,4 +83,13 @@ test('what needs a look is listed by kind, each entry by file and number', () =>
       ['Warnings', ['the queue refused a CV']],
     ],
   )
+})
+
+const refused = (status: number, message: string) => Object.assign(new Error(message), { status, body: { error: { code: 'blocked', message } } })
+
+test('a refused import is read by its code: the phone with the way to it, the profile with its own words', () => {
+  assert.deepEqual(importFailureOf(refused(422, 'missing-phone')), { text: 'Add your phone first: without it no CV of the package is printed.', toPhone: true })
+  assert.deepEqual(importFailureOf(refused(422, 'missing-profile')), { text: 'There is no profile yet: save the settings first.', toPhone: false })
+  assert.deepEqual(importFailureOf(refused(500, 'the vault is not there')), { text: 'the vault is not there', toPhone: false })
+  assert.deepEqual(importFailureOf(new Error('Add your phone, says a proxy')), { text: 'Add your phone, says a proxy', toPhone: false }, 'never by the text')
 })

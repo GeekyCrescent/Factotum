@@ -9,6 +9,9 @@ import type { Channel, NewRule, Rule, RuleEdit, RuleScope } from './contract.ts'
 
 export const MAX_RULE_CHARS = 300
 
+/** A rule is switched off, never deleted (D7: the row stays). */
+export const toggleLabel = (rule: Pick<Rule, 'enabled'>): string => (rule.enabled ? 'Turn off' : 'Turn on')
+
 const CHANNEL_LABELS: Readonly<Record<Channel, string>> = { email: 'Email', form: 'Form', platform: 'Platform', linkedin: 'LinkedIn' }
 
 export const RULE_SCOPES: readonly { readonly scope: RuleScope; readonly label: string }[] = [

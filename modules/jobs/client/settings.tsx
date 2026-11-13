@@ -9,14 +9,17 @@
  * shown beside the field it names.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
 import type { ProfileVersion, SavedProfile, ViewProps } from './contract.ts'
 import { CheckField, LineField, TextField } from './fields.tsx'
-import { createLock } from './guard.ts'
+import { createLock, runOrSay } from './guard.ts'
 import { ImportPanel } from './import-panel.tsx'
 import { refusalOf } from './model.ts'
 import { Rules } from './rules.tsx'
-import { anchorOfField, fieldOf, formOf, profileOf, savedLine, type GoalForm, type ProfileForm } from './settings-model.ts'
+import { afterSave, anchorOfField, fieldOf, formOf, profileOf, savedLine, type GoalForm, type ProfileForm } from './settings-model.ts'
+
+/** A change to the form: the fields, or how to make them from the form as it is now. */
+type Change = Partial<ProfileForm> | ((now: ProfileForm) => Partial<ProfileForm>)
 
 type Saving = { readonly kind: 'idle' } | { readonly kind: 'saved'; readonly line: string } | { readonly kind: 'refused'; readonly anchor: string; readonly why: string }
 
@@ -58,26 +61,28 @@ export function Settings({ props, anchor }: { readonly props: ViewProps; readonl
     if (form !== null && anchor !== null) scrollTo(anchor)
   }, [form === null, anchor])
 
-  const edit = (change: Partial<ProfileForm>): void => {
-    if (form === null) return
-    setForm({ ...form, ...change })
+  /** Each change applies to the form as it is NOW (a functional update): two keystrokes in one frame both land. */
+  const edit = useCallback((change: Change): void => {
+    setForm((now) => (now === null ? now : { ...now, ...(typeof change === 'function' ? change(now) : change) }))
     setSaving({ kind: 'idle' })
-  }
+  }, [])
 
   const save = async (): Promise<void> => {
     if (form === null || base === null) return
-    const outcome = profileOf(form, base.profile)
+    const posted = form
+    const outcome = profileOf(posted, base.profile)
     if (!outcome.ok) {
       setSaving({ kind: 'refused', anchor: anchorOfField(outcome.field), why: outcome.why })
       scrollTo(anchorOfField(outcome.field))
       return
     }
-    await lock.run(async () => {
+    await runOrSay(lock, async () => {
       setBusy(true)
       try {
         const saved = await api.post<SavedProfile>('profile', outcome.profile)
         setBase(saved)
-        setForm(formOf(saved.profile))
+        // What was typed during the save stays (`afterSave`); it is saved with the next «Save».
+        setForm((now) => afterSave(now, posted, saved.profile))
         setSaving({ kind: 'saved', line: savedLine(saved) })
       } catch (cause) {
         const field = fieldOf(cause)
@@ -87,7 +92,7 @@ export function Settings({ props, anchor }: { readonly props: ViewProps; readonl
       } finally {
         setBusy(false)
       }
-    })
+    }, (why) => setSaving({ kind: 'refused', anchor: 'identity', why }))
   }
 
   const errorAt = (id: string): string | null => (saving.kind === 'refused' && saving.anchor === id ? saving.why : null)
@@ -127,7 +132,7 @@ export function Settings({ props, anchor }: { readonly props: ViewProps; readonl
 
 interface SectionsProps {
   readonly form: ProfileForm
-  readonly edit: (change: Partial<ProfileForm>) => void
+  readonly edit: (change: Change) => void
   readonly errorAt: (id: string) => string | null
 }
 
@@ -145,7 +150,7 @@ function ProfileSections({ form, edit, errorAt }: SectionsProps) {
             value={form.identity[field.key]}
             hint={field.hint}
             error={errorAt(field.id)}
-            onInput={(value) => edit({ identity: { ...form.identity, [field.key]: value } })}
+            onInput={(value) => edit((now) => ({ identity: { ...now.identity, [field.key]: value } }))}
           />
         ))}
         <LineField id="rate" label="Rate you expect" value={form.rateExpectation} hint="Empty: a neutral sentence instead of a number." error={errorAt('rate')} onInput={(value) => edit({ rateExpectation: value })} />
@@ -174,7 +179,7 @@ function ProfileSections({ form, edit, errorAt }: SectionsProps) {
         <LineField label="Batch size" value={form.batchSize} hint="1 to 20." error={errorAt('batchSize')} onInput={(value) => edit({ batchSize: value })} />
         <div class="j-weights" id="weights">
           {Object.entries(form.weights).map(([key, value]) => (
-            <LineField key={key} label={`Weight: ${key}`} value={value} onInput={(next) => edit({ weights: { ...form.weights, [key]: next } })} />
+            <LineField key={key} label={`Weight: ${key}`} value={value} onInput={(next) => edit((now) => ({ weights: { ...now.weights, [key]: next } }))} />
           ))}
         </div>
         {errorAt('weights') === null ? null : (
@@ -191,17 +196,17 @@ function ProfileSections({ form, edit, errorAt }: SectionsProps) {
             {errorAt('followup')}
           </p>
         )}
-        <LineField label="Subject (no thread to reply to)" value={form.followup.subject} onInput={(subject) => edit({ followup: { ...form.followup, subject } })} />
-        <TextField label="First follow-up" value={form.followup.first} onInput={(first) => edit({ followup: { ...form.followup, first } })} />
-        <TextField label="Second follow-up" value={form.followup.second} onInput={(second) => edit({ followup: { ...form.followup, second } })} />
-        <TextField label="LinkedIn follow-up" value={form.followup.linkedin} onInput={(linkedin) => edit({ followup: { ...form.followup, linkedin } })} />
+        <LineField label="Subject (no thread to reply to)" value={form.followup.subject} onInput={(subject) => edit((now) => ({ followup: { ...now.followup, subject } }))} />
+        <TextField label="First follow-up" value={form.followup.first} onInput={(first) => edit((now) => ({ followup: { ...now.followup, first } }))} />
+        <TextField label="Second follow-up" value={form.followup.second} onInput={(second) => edit((now) => ({ followup: { ...now.followup, second } }))} />
+        <TextField label="LinkedIn follow-up" value={form.followup.linkedin} onInput={(linkedin) => edit((now) => ({ followup: { ...now.followup, linkedin } }))} />
       </section>
     </>
   )
 }
 
 function Goals({ form, edit, errorAt }: SectionsProps) {
-  const set = (at: number, change: Partial<GoalForm>) => edit({ goals: form.goals.map((goal, n) => (n === at ? { ...goal, ...change } : goal)) })
+  const set = (at: number, change: Partial<GoalForm>) => edit((now) => ({ goals: now.goals.map((goal, n) => (n === at ? { ...goal, ...change } : goal)) }))
   return (
     <section class="j-section" id="goals">
       <h2>Goals</h2>

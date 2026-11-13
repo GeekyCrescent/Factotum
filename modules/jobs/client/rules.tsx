@@ -1,15 +1,15 @@
 /**
  * The rules, on the settings page (design D7, D15 «Ajustes»; requirements crit. 17): a list with the
- * text, the scope and whether it is on; «Edit», «Delete» (which switches it off: the row stays), and
+ * text, the scope and whether it is on; «Edit», «Turn off» (the row stays), and
  * «Turn on» for one switched off. A new rule is written at the foot. One request at a time.
  * What is posted is `rules-model.ts`'s.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
 import type { Api, Rule, RuleEdit, RuleScope, RulesAnswer, SavedRule } from './contract.ts'
-import { createLock } from './guard.ts'
+import { createLock, runOrSay } from './guard.ts'
 import { refusalOf } from './model.ts'
-import { editOf, MAX_RULE_CHARS, newRuleOf, RULE_SCOPES, scopeLabel, sortedRules } from './rules-model.ts'
+import { editOf, MAX_RULE_CHARS, newRuleOf, RULE_SCOPES, scopeLabel, sortedRules, toggleLabel } from './rules-model.ts'
 
 export function Rules({ api }: { readonly api: Api }) {
   const [rules, setRules] = useState<readonly Rule[] | null>(null)
@@ -29,7 +29,7 @@ export function Rules({ api }: { readonly api: Api }) {
 
   /** Posts, reads the list again; resolves with whether it went through. */
   const post = async (path: string, body: unknown): Promise<boolean> =>
-    (await lock.run(async () => {
+    (await runOrSay(lock, async () => {
       setBusy(true)
       setError(null)
       try {
@@ -42,7 +42,7 @@ export function Rules({ api }: { readonly api: Api }) {
       } finally {
         setBusy(false)
       }
-    })) ?? false
+    }, setError)) ?? false
 
   const ruleUrl = (rule: Rule): string => `rules/${encodeURIComponent(rule.id)}`
 
@@ -84,7 +84,7 @@ export function Rules({ api }: { readonly api: Api }) {
                     Edit
                   </button>
                   <button type="button" class="btn sm" disabled={busy} onClick={() => void post(ruleUrl(rule), { enabled: !rule.enabled } satisfies RuleEdit)}>
-                    {rule.enabled ? 'Delete' : 'Turn on'}
+                    {toggleLabel(rule)}
                   </button>
                 </div>
               </li>

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Profile } from './contract.ts'
-import { anchorOfField, fieldOf, formOf, profileOf, savedLine, type ProfileForm } from './settings-model.ts'
+import { afterSave, anchorOfField, fieldOf, formOf, profileOf, savedLine, type ProfileForm } from './settings-model.ts'
 
 const PROFILE: Profile = {
   identity: {
@@ -106,4 +106,13 @@ test('the field of a 400 is read from the answer, and leads to its place on the 
   assert.equal(anchorOfField('goals.0.payFloor'), 'goals')
   assert.equal(anchorOfField('followup.first'), 'followup')
   assert.equal(anchorOfField('<script>'), 'identity')
+})
+
+test('a save that comes back takes the saved profile, unless the owner typed meanwhile: then the typing stays', () => {
+  const posted = formOf(PROFILE)
+  const saved: Profile = { ...PROFILE, situation: 'saved by the engine' }
+  assert.equal(afterSave(posted, posted, saved).situation, 'saved by the engine')
+  const typed: ProfileForm = { ...posted, situation: 'typed during the save' }
+  assert.equal(afterSave(typed, posted, saved), typed)
+  assert.equal(afterSave(null, posted, saved).situation, 'saved by the engine')
 })

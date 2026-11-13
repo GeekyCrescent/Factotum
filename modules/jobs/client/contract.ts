@@ -449,7 +449,7 @@ export interface NewRule {
   readonly enabled?: boolean
 }
 
-/** `POST /rules/:ruleId`: an edit; «Delete» is `{ enabled: false }` (D7: it switches off, the row stays). */
+/** `POST /rules/:ruleId`: an edit; «Turn off» is `{ enabled: false }` (D7: it switches off, the row stays). */
 export interface RuleEdit {
   readonly text?: string
   readonly scope?: RuleScope

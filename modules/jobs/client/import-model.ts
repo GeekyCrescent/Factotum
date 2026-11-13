@@ -7,6 +7,7 @@
  */
 
 import type { Channel, ImportReport } from './contract.ts'
+import { refusalOf, statusOf } from './model.ts'
 
 export interface ReportSection {
   readonly title: string
@@ -60,3 +61,17 @@ export function reportOf(report: ImportReport): ReportView {
 
 /** The real import is offered after a dry run that found no reason to refuse. */
 export const canImport = (report: ImportReport): boolean => report.dryRun && report.blocked === null
+
+export interface ImportFailure {
+  readonly text: string
+  /** Offer «Go to the phone». */
+  readonly toPhone: boolean
+}
+
+/** A refused import, read by the engine's code (`422 missing-phone`, `missing-profile`), never by its words. */
+export function importFailureOf(cause: unknown): ImportFailure {
+  const text = refusalOf(cause).text
+  const code = statusOf(cause) === 422 ? text : null
+  if (code === 'missing-phone' || code === 'missing-profile') return { text: BLOCKED[code], toPhone: code === 'missing-phone' }
+  return { text, toPhone: false }
+}

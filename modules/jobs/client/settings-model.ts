@@ -156,6 +156,14 @@ export function profileOf(form: ProfileForm, base: Profile): ProfileOutcome {
   }
 }
 
+/**
+ * The form after a save came back: the saved profile — unless the owner typed while it was posted
+ * (`now` is no longer the form that was posted): then their typing stays, to be saved next.
+ */
+export function afterSave(now: ProfileForm | null, posted: ProfileForm, saved: Profile): ProfileForm {
+  return now === null || now === posted ? formOf(saved) : now
+}
+
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 
 /** «Saved as version 4» (D15), and how many unsent applications the re-lint changed. */
