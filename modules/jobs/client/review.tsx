@@ -17,7 +17,7 @@
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
-import { createLock, decisionOn, viewOf } from './guard.ts'
+import { confirmedLocal, createLock, decisionOn, localResultOf, viewOf, withLocal, type LocalResults } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf } from './model.ts'
 import { sendIdOf } from './sends-model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
@@ -35,7 +35,20 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const { api, navigate } = props
   const { answer, error, clearError, start, decide } = useBatch(api)
   const sends = useSends(api)
-  const batch = answer?.batch ?? null
+  const daemonBatch = answer?.batch ?? null
+  /** Decided here, not yet read back (`guard.ts`): a ref, read synchronously by `send`, and a redraw. */
+  const local = useRef<LocalResults>(new Map())
+  const [localVersion, setLocalVersion] = useState(0)
+  const setLocal = useCallback((next: LocalResults): void => {
+    if (next === local.current) return
+    local.current = next
+    setLocalVersion((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (daemonBatch !== null) setLocal(confirmedLocal(local.current, daemonBatch))
+  }, [daemonBatch, setLocal])
+  /** The batch as the screen uses it: an item decided here is never offered again on a stale read. */
+  const batch = useMemo(() => (daemonBatch === null ? null : withLocal(daemonBatch, local.current)), [daemonBatch, localVersion])
   /** Which item is on screen, in which batch; -1 = none undecided left. */
   const [place, setPlace] = useState<{ readonly batchId: string; readonly index: number } | undefined>(undefined)
   /** After a decision went through: move on from this index once the batch is read again. */
@@ -74,7 +87,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
   /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
   const send = useCallback(
     async (decision: Omit<Decision, 'itemId' | 'seen'>, moveOn: boolean): Promise<boolean> => {
-      if (item === undefined) return false
+      // Decided here already: the card on screen may be one render behind the decision.
+      if (item === undefined || local.current.has(item.itemId)) return false
       const running = lock.run(async (): Promise<boolean> => {
         setBusy(true)
         setNotice(undefined)
@@ -86,6 +100,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
             setNotice(outcome.text)
             return false
           }
+          const decided = localResultOf(decision.kind)
+          if (decided !== null) setLocal(new Map([...local.current, [item.itemId, decided]]))
           const key = decision.kind === 'approve' ? sendKeyOf(item) : null
           if (key !== null && outcome.state === 'sending') sends.track(key)
           if (moveOn) setAdvanceFrom(index)
@@ -96,7 +112,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
       })
       return running ?? false
     },
-    [item, lock, decide, sends, index],
+    [item, lock, decide, sends, index, setLocal],
   )
 
   const approve = useCallback(() => {

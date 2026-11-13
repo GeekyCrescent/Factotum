@@ -7,7 +7,7 @@
  * trip never decides the NEXT card without it being seen.
  */
 
-import type { Decision, ReviewItem } from './contract.ts'
+import type { BatchView, Decision, ItemResult, ReviewItem } from './contract.ts'
 
 /** How long a card just shown refuses Approve and Skip. */
 export const SETTLE_MS = 700
@@ -35,6 +35,34 @@ export function viewOf(item: ReviewItem | undefined): string {
 /** The decision as posted: on the item on screen, with the `seen` of the card the owner looked at. */
 export function decisionOn(item: ReviewItem, decision: Omit<Decision, 'itemId' | 'seen'>): Decision {
   return { ...decision, itemId: item.itemId, seen: item.seen }
+}
+
+/**
+ * DECIDED HERE, NOT YET READ BACK: a decision that went through is kept by `itemId` until a read of the
+ * batch shows its result (or the item is gone). Until then the screen treats the item as decided, so a
+ * failed or stale read after the decision never brings back what was just approved.
+ */
+export type LocalResults = ReadonlyMap<string, ItemResult>
+
+const LOCAL: Readonly<Partial<Record<Decision['kind'], ItemResult>>> = { approve: 'approved', skip: 'skipped', instruct: 'instructed' }
+
+/** The result a decision that went through gives its item; null for one that decides nothing (override, switch). */
+export function localResultOf(kind: Decision['kind']): ItemResult | null {
+  return LOCAL[kind] ?? null
+}
+
+/** The batch as the screen uses it: the daemon's results, and the local ones where it has none yet. */
+export function withLocal(batch: BatchView, local: LocalResults): BatchView {
+  const missing = [...local].filter(([itemId]) => batch.results[itemId] === undefined)
+  if (missing.length === 0) return batch
+  return { ...batch, results: { ...Object.fromEntries(missing), ...batch.results } }
+}
+
+/** The local results a read has not confirmed yet; the same map when nothing changed. */
+export function confirmedLocal(local: LocalResults, batch: BatchView): LocalResults {
+  const present = new Set(batch.items.map((item) => item.itemId))
+  const kept = [...local].filter(([itemId]) => present.has(itemId) && batch.results[itemId] === undefined)
+  return kept.length === local.size ? local : new Map(kept)
 }
 
 /**

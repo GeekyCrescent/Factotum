@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ReviewItem } from './contract.ts'
-import { SETTLE_MS, canDecide, createLock, decisionOn, settleLeft, viewOf } from './guard.ts'
+import type { BatchView, ItemResult, ReviewItem } from './contract.ts'
+import { SETTLE_MS, canDecide, confirmedLocal, createLock, decisionOn, localResultOf, settleLeft, viewOf, withLocal } from './guard.ts'
 
 // ── What was seen is what is approved (D15 «Lo que se vio es lo que se aprueba») ─────────────────
 
@@ -66,4 +66,53 @@ test('the view changes with the item AND with what its card shows', () => {
 test('every decision carries the item and the seen of the card on screen', () => {
   assert.deepEqual(decisionOn(proposal('v7'), { kind: 'approve' }), { kind: 'approve', itemId: 'i-1', seen: 'v7' })
   assert.deepEqual(decisionOn(proposal('v7'), { kind: 'skip', reason: 'not-now' }), { kind: 'skip', reason: 'not-now', itemId: 'i-1', seen: 'v7' })
+})
+
+// ── Decided here, not yet read back ──────────────────────────────────────────────────────────────
+
+const batchOf = (results: Readonly<Record<string, ItemResult>>, ids = ['i-1', 'i-2', 'i-3']): BatchView => ({
+  id: 'b-1',
+  test: false,
+  items: ids.map((id) => proposal('v1', id)),
+  cursor: 0,
+  results,
+  rewriting: 0,
+})
+
+test('a decision that went through is a local result: approve, skip, instruct; the rest decide nothing', () => {
+  assert.equal(localResultOf('approve'), 'approved')
+  assert.equal(localResultOf('skip'), 'skipped')
+  assert.equal(localResultOf('instruct'), 'instructed')
+  assert.equal(localResultOf('override'), null)
+  assert.equal(localResultOf('switch-to-form'), null)
+  assert.equal(localResultOf('switch-channel'), null)
+})
+
+test('a stale read never offers again an item decided here', () => {
+  const stale = batchOf({})
+  const view = withLocal(stale, new Map([['i-1', 'approved']]))
+  assert.deepEqual(view.results, { 'i-1': 'approved' })
+  assert.notEqual(view, stale)
+})
+
+test('the daemon\'s result wins over the local one, and no local results leave the batch as it is', () => {
+  const batch = batchOf({ 'i-1': 'sent' })
+  assert.deepEqual(withLocal(batch, new Map([['i-1', 'approved']])).results, { 'i-1': 'sent' })
+  assert.equal(withLocal(batch, new Map()), batch)
+})
+
+test('a local result goes once a read confirms it, or once its item is no longer in the batch', () => {
+  const local: ReadonlyMap<string, ItemResult> = new Map([
+    ['i-1', 'approved'],
+    ['i-2', 'skipped'],
+    ['gone', 'approved'],
+  ])
+  const pruned = confirmedLocal(local, batchOf({ 'i-1': 'approved' }))
+  assert.deepEqual([...pruned.keys()], ['i-2'])
+  assert.equal(local.size, 3, 'the map given is not changed')
+})
+
+test('nothing to prune gives back the same map', () => {
+  const local: ReadonlyMap<string, ItemResult> = new Map([['i-2', 'skipped']])
+  assert.equal(confirmedLocal(local, batchOf({})), local)
 })
