@@ -9,7 +9,8 @@
  *
  * NORMALISED BEFORE COMPARING: `1,069` is `1069`, `6×` is `6`, `40%` is `40`, `03` is `3`, `3.50` is
  * `3.5`; a range `16–20` and a date `2026-02-05` give each of their numbers. A digit glued to a
- * letter is part of a name (`EC2`, `HL7`, `COMP8300`, `v2`) and is not a figure.
+ * letter is part of a name (`EC2`, `HL7`, `COMP8300`, `v2`) and is not a figure; so is a whole version
+ * token (`v2.0`, `v3.10.1`), minor parts included.
  */
 
 import type { Opportunity, Profile } from '../types.ts'
@@ -24,11 +25,15 @@ export interface NumberSources {
 /** A thousands-grouped figure, or plain digits; then an optional decimal part. Never after a letter or a digit. */
 const FIGURE = /(?<![\p{L}\p{N}])(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?/gu
 
+/** A version token, `v2.0` or `V3.10.1`: a name, not a figure — without this, its `.0` gave a `0`. */
+const VERSION = /(?<![\p{L}\p{N}])v\d+(?:\.\d+)*/giu
+
 const normalise = (figure: string): string => String(Number(figure.replace(/,/g, '')))
 
 /** The figures of `text`, normalised, in the order they first appear, once each. */
 export function numbersIn(text: string): readonly string[] {
-  return [...new Set([...text.matchAll(FIGURE)].map((m) => normalise(m[0])))]
+  const withoutVersions = text.replace(VERSION, ' ')
+  return [...new Set([...withoutVersions.matchAll(FIGURE)].map((m) => normalise(m[0])))]
 }
 
 /** Every string anywhere in `value`: the profile is free text in many fields. */

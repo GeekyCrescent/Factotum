@@ -35,6 +35,15 @@ test('numbersIn: a figure glued to a word is part of a name, not a number (EC2, 
   assert.deepEqual(numbersIn('EC2, HL7, COMP8300 and API v2; 10x and $18.9M'), ['10', '18.9'])
 })
 
+test('numbersIn: a version token (v2.0, V3.10.1) gives no figure, not even its minor part', () => {
+  assert.deepEqual(numbersIn('Migrated to API v2.0 and V3.10.1, then 7 more.'), ['7'])
+})
+
+test('a version token in the CV does not trip the unknown-number rule', () => {
+  const artifacts: Artifacts = { ...CLEAN, cv: { ...DOC, summary: 'Upgraded HL7 v2.5 feeds to OpenAPI v3.1.0.' } }
+  assert.deepEqual(unknown(lint(artifacts, CTX)), [])
+})
+
 test('numbersIn: a sentence’s full stop or a thousands comma never makes a decimal or a second number', () => {
   assert.deepEqual(numbersIn('Shipped in 2024. Then 12,500 users, 3, 4 and 5.'), ['2024', '12500', '3', '4', '5'])
 })
