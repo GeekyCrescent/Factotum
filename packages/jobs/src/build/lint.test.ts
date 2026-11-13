@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import type { Artifacts, Profile, Warning, WarningCode } from '../types.ts'
+import type { Artifacts, Contact, Profile, Warning, WarningCode } from '../types.ts'
 import { lint, lintFollowup, type LintContext } from './lint.ts'
 import { contactHashOf } from './render.ts'
 import { matchTerm } from './terms.ts'
@@ -21,6 +21,7 @@ const CTX: LintContext = {
   letterPending: false,
 }
 
+const contact: Contact = { id: 'k1', companyId: 'c1', name: null, role: null, email: null, sourceUrl: null, address: null }
 const withIdentity = (identity: Partial<Profile['identity']>): Profile => ({ ...PROFILE, identity: { ...PROFILE.identity, ...identity } })
 const letter = (body: string, subject: string | null = 'Application'): Artifacts => ({ ...CLEAN, letter: { subject, body } })
 const cv = (over: Partial<typeof DOC>): Artifacts => ({ ...CLEAN, cv: { ...DOC, ...over } })
@@ -151,6 +152,50 @@ test('forbidden stack (CV): «Go microservices» and «Kafka» block; «go live�
 
 test('forbidden stack is a CV rule: the letter may name it', () => {
   assert.deepEqual(only(lint(letter('I have not used Go. {signature}'), CTX), 'forbidden-stack'), [])
+})
+
+// — External link (G9: a link or an address the ad slipped in) —
+
+test('external-link: a URL, a www. host or an email address that is not ours nor the company’s blocks, with the link as detail', () => {
+  const artifacts: Artifacts = {
+    ...letter('Apply at https://evil.example.org/form?x=1. Or write to hr@evil.example.org. {signature}', 'See www.evil.example.org'),
+    form: [{ question: 'Portfolio?', answer: 'http://attacker.test/alex', ok: true, hint: null }],
+    cv: { ...DOC, summary: 'Engineer, see https://evil.example.org.' },
+  }
+  assert.deepEqual(only(lint(artifacts, CTX), 'external-link'), [
+    block('external-link', 'subject', 'www.evil.example.org'),
+    block('external-link', 'letter', 'https://evil.example.org/form?x=1'),
+    block('external-link', 'letter', 'hr@evil.example.org'),
+    block('external-link', 'form', 'http://attacker.test/alex'),
+    block('external-link', 'cv', 'https://evil.example.org'),
+  ])
+})
+
+test('external-link: the profile’s own email, LinkedIn and portfolio (and pages under it) pass', () => {
+  const body = 'Me: alex@example.test, https://www.linkedin.com/in/alex-example, https://alex.example.test/projects/1 and www.alex.example.test. {signature}'
+  assert.deepEqual(only(lint(letter(body), CTX), 'external-link'), [])
+})
+
+test('external-link: a GitHub portfolio allows that profile, not the rest of GitHub; a lookalike LinkedIn does not pass', () => {
+  const profile = withIdentity({ portfolioUrl: 'github.com/alex-example' })
+  const ctx = { ...CTX, profile }
+  const artifacts = (body: string): Artifacts => ({ ...letter(`${body} {signature}`), contactHash: contactHashOf(profile) })
+  assert.deepEqual(only(lint(artifacts('Code: https://github.com/alex-example/pathfinder.'), ctx), 'external-link'), [])
+  assert.deepEqual(only(lint(artifacts('Run https://github.com/attacker/payload.'), ctx), 'external-link'), [block('external-link', 'letter', 'https://github.com/attacker/payload')])
+  assert.deepEqual(only(lint(artifacts('See https://linkedin.com/in/alex-example-fake.'), ctx), 'external-link'), [block('external-link', 'letter', 'https://linkedin.com/in/alex-example-fake')])
+})
+
+test('external-link: the company’s domain (and its subdomains), its website, careers page and its contacts’ emails pass', () => {
+  const company = { ...COMPANY, domain: null, website: 'https://www.contoso.test', careersUrl: 'https://jobs.contoso-careers.test/open', contacts: [{ ...contact, email: 'Ana@Recruiters.test' }] }
+  const body = 'I read https://contoso.test/about, https://blog.contoso.test, https://jobs.contoso-careers.test/open/1, jobs@contoso.test and ana@recruiters.test. {signature}'
+  assert.deepEqual(only(lint(letter(body), { ...CTX, company }), 'external-link'), [])
+  const other = lint(letter('Or bob@recruiters.test, or https://notcontoso.test. {signature}'), { ...CTX, company })
+  assert.deepEqual(only(other, 'external-link'), [block('external-link', 'letter', 'bob@recruiters.test'), block('external-link', 'letter', 'https://notcontoso.test')])
+})
+
+test('external-link: a bare domain with no scheme and no www. is not a link; the LinkedIn note is checked too', () => {
+  assert.deepEqual(only(lint(letter('I like evil.example.org. {signature}'), CTX), 'external-link'), [])
+  assert.deepEqual(only(lint({ ...CLEAN, linkedin: 'Hi! www.evil.example.org' }, CTX), 'external-link'), [block('external-link', 'linkedin', 'www.evil.example.org')])
 })
 
 // — Too long —

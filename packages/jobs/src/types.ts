@@ -201,6 +201,8 @@ export type WarningCode =
   | 'senior-title'
   | 'requirement-gap'
   | 'missing-letter'
+  /** 13-nov (G9): a link or an address in a sent text that is neither the profile's nor the company's. */
+  | 'external-link'
 
 export interface Warning {
   readonly code: WarningCode

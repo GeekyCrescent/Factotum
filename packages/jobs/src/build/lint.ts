@@ -19,6 +19,7 @@
 
 import { BRACKET_TOKEN, isSendableAddress } from '../shape.ts'
 import type { Artifacts, Channel, Company, CvDoc, FollowupVersion, Opportunity, Profile, Warning, WarningCode } from '../types.ts'
+import { externalLinks, type LinkOwners } from './links.ts'
 import { unknownNumbers } from './numbers.ts'
 import { contactHashOf } from './render.ts'
 import { fillSlots, isSlotName } from './slots.ts'
@@ -29,8 +30,11 @@ export interface LintContext {
   readonly master: string
   readonly profile: Profile
   readonly opportunity: Pick<Opportunity, 'kind' | 'title' | 'requirements' | 'salary' | 'hours' | 'duration'>
-  /** `record`: the text of the company's seeded fields (D8), a source of allowed numbers (L2). */
-  readonly company: Pick<Company, 'isHealthEmployer'> & { readonly record: string }
+  /**
+   * `record`: the text of the company's seeded fields (D8), a source of allowed numbers (L2). Its
+   * domain, website, careers URL and contacts are the links a text may carry (`external-link`).
+   */
+  readonly company: Pick<Company, 'isHealthEmployer'> & LinkOwners['company'] & { readonly record: string }
   readonly channel: Channel
   /** `target.to`; checked only when `channel` is `email` (v5, X11). */
   readonly to: string | null
@@ -152,6 +156,16 @@ function unknownNumbersIn(texts: readonly Text[], ctx: LintContext): readonly Wa
     .flatMap(({ where, text }) => unknownNumbers(text, ctx).map((figure) => warn('unknown-number', where, `number ${figure} not in cv-maestro`)))
 }
 
+// — External link (13-nov, G9) —
+
+const MAX_LINK_DETAIL = 160
+
+/** Blocks, with «I checked it» as its way out (like `unsupported-claim`): an ad may have slipped it in. */
+function externalLinksIn(texts: readonly Text[], ctx: LintContext): readonly Warning[] {
+  const owners: LinkOwners = { profile: ctx.profile, company: ctx.company, to: ctx.to }
+  return texts.flatMap(({ where, text }) => externalLinks(text, owners).map((link) => warn('external-link', where, link.slice(0, MAX_LINK_DETAIL))))
+}
+
 // — Too long —
 
 const wordsIn = (text: string): number => text.split(/\s+/).filter((word) => word !== '').length
@@ -224,6 +238,7 @@ export function lint(artifacts: Artifacts, ctx: LintContext): readonly Warning[]
     ...healthIn(texts, ctx.company.isHealthEmployer),
     ...forbiddenIn(texts, ctx.profile),
     ...unknownNumbersIn(texts, ctx),
+    ...externalLinksIn(texts, ctx),
     ...tooLongIn(artifacts, texts, ctx.channel),
     ...cvWarnings(artifacts, ctx),
     ...missingLetter(artifacts, ctx),
