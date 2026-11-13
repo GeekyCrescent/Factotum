@@ -20,6 +20,10 @@
  *
  * AN ITEM IS ITS `itemId`. One not in the open batch is `not-found`; one already decided is
  * `conflict already-decided`. A decision with a result moves the cursor past its item.
+ *
+ * WHAT WAS SEEN IS WHAT IS DECIDED (D15): a decision that carries the item's `seen` (`seen.ts`) and
+ * finds the item changed since — a rewrite back, an address checked, a warning overridden — answers
+ * `conflict stale` and decides nothing.
  */
 
 import type { Logger } from '@factotum/core'
@@ -33,6 +37,7 @@ import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { fail, ok, type Application, type Result, type WarningCode } from '../types.ts'
 import type { Batch, ItemResult, ReviewItemRef } from './batch.ts'
+import { seenOf } from './seen.ts'
 
 export const DECISION_KINDS = ['approve', 'skip', 'instruct', 'override', 'switch-to-form', 'switch-channel'] as const
 export type DecisionKind = (typeof DECISION_KINDS)[number]
@@ -48,7 +53,15 @@ export interface Decision {
   readonly addressOverride?: boolean
   /** `override`: the codes «I checked it» is given for. */
   readonly warningCodes?: readonly WarningCode[]
+  /**
+   * The item's `seen` when its card was painted (`seen.ts`, D15 «Lo que se vio es lo que se aprueba»).
+   * Present and no longer the item's → `conflict stale`, nothing decided. Absent → not checked.
+   */
+  readonly seen?: string
 }
+
+/** A `seen` is a sha256 in hex; anything longer is not one. */
+export const MAX_SEEN_CHARS = 128
 
 /** The reasons of a skip: the client's tokens (`modules/jobs/client/contract.ts`, `SkipReason`). */
 export const SKIP_REASONS = ['not-now', 'not-a-fit', 'duplicate', 'other'] as const
@@ -111,6 +124,13 @@ function targetOf(q: Queries, itemId: string): Result<Target> {
   if (item.kind === 'application') return ok({ batch, item, applicationId: item.applicationId })
   if (item.kind === 'rewritten') return ok({ batch, item, applicationId: item.id })
   return fail('conflict', `a ${item.kind} is not decided here`)
+}
+
+/** The item the owner decided on, as long as it is still what the card showed (`seen`, D15). */
+function seenTarget(q: Queries, decision: Decision): Result<Target> {
+  const target = targetOf(q, decision.itemId)
+  if (!target.ok || decision.seen === undefined) return target
+  return seenOf(q, target.value.item) === decision.seen ? target : fail('conflict', 'stale')
 }
 
 /** The batch with the item's result, the cursor past it. */
@@ -200,6 +220,9 @@ function invalid(decision: Decision): Result<never> | null {
   if (!DECISION_KINDS.includes(decision.kind)) return fail('invalid', 'unknown decision', 'kind')
   if (decision.kind === 'skip' && skipReasonOf(decision.reason) === null) return fail('invalid', `a skip needs a reason: ${SKIP_REASONS.join(', ')}`, 'reason')
   if (decision.kind === 'skip' && text(decision.text).length > MAX_REASON_CHARS) return fail('invalid', `a skip's text is at most ${MAX_REASON_CHARS} characters`, 'text')
+  if (decision.seen !== undefined && (typeof decision.seen !== 'string' || decision.seen === '' || decision.seen.length > MAX_SEEN_CHARS)) {
+    return fail('invalid', 'seen is the fingerprint the batch gave the item', 'seen')
+  }
   if (decision.kind === 'instruct' && (text(decision.text) === '' || text(decision.text).length > MAX_INSTRUCTION_CHARS)) {
     return fail('invalid', `an instruction is 1 to ${MAX_INSTRUCTION_CHARS} characters`, 'text')
   }
@@ -207,7 +230,8 @@ function invalid(decision: Decision): Result<never> | null {
 }
 
 function approve(deps: DecideDeps, decision: Decision): Result<Decided> {
-  const target = deps.db.read((q) => targetOf(q, decision.itemId))
+  // Checked against `seen` here: the sender runs synchronously right after, so nothing comes in between.
+  const target = deps.db.read((q) => seenTarget(q, decision))
   if (!target.ok) return target
   const sent = deps.approve(target.value.applicationId, 'initial', { addressOverride: decision.addressOverride === true })
   if (!sent.ok) return sent
@@ -230,7 +254,7 @@ export function decide(deps: DecideDeps, decision: Decision): Result<Decided> {
   if (decision.kind === 'approve') return approve(deps, decision)
   const now = deps.now()
   const written = deps.db.tx((q) => {
-    const target = targetOf(q, decision.itemId)
+    const target = seenTarget(q, decision)
     return target.ok ? writeDecision(q, deps, target.value, decision, now) : target
   })
   if (!written.ok) return written

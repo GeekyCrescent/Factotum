@@ -12,6 +12,7 @@ import { fail, ok, type Profile, type Result, type SendKind, type Warning } from
 import type { Batch, ReviewItemRef } from './batch.ts'
 import { decide, NOT_A_FIT, type DecideDeps, type Decision } from './decide.ts'
 import { openReview } from './open.ts'
+import { seenOf } from './seen.ts'
 
 const TZ = 'Australia/Sydney'
 const CLAIM: Warning = { code: 'unsupported-claim', where: 'cv', detail: 'claim 1', blocks: true, overridden: null }
@@ -160,6 +161,61 @@ describe('decide approve (T-A11, T-A12 through the sender)', () => {
     const item = itemOf(w.start(), 'a1')
     errorOf(decide(w.deps, decision(item, 'approve')), 'conflict', 'check-pending')
     assert.deepEqual(w.batch()?.results, {})
+  })
+})
+
+describe('decide with seen (D15 «Lo que se vio es lo que se aprueba»)', () => {
+  const seenNow = (w: World, item: ReviewItemRef): string => w.db.read((q) => seenOf(q, item))
+  /** A rewrite that comes back between the render and the decision: a new version with another warning. */
+  const rewriteReturns = (w: World, id: string): void =>
+    valueOf(
+      w.db.tx((q) => {
+        const app = repo.getApplication(q, id)
+        if (app === undefined) return fail('not-found', id)
+        return repo.saveApplication(q, { ...app, version: app.version + 1, warnings: [CLAIM] }, { kind: 'note', data: {} }, NOW)
+      }),
+    )
+
+  test('a rewrite that returns between render and approve: conflict stale, nothing sent, nothing recorded', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    const seen = seenNow(w, item)
+    rewriteReturns(w, 'a1')
+    errorOf(decide(w.deps, decision(item, 'approve', { seen })), 'conflict', 'stale')
+    assert.deepEqual(w.approvals, [])
+    assert.deepEqual(w.batch()?.results, {})
+  })
+
+  test('the same seen: decided', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    const decided = valueOf(decide(w.deps, decision(item, 'approve', { seen: seenNow(w, item) })))
+    assert.equal(decided.result, 'approved')
+  })
+
+  test('override, skip, instruct and switch-to-form with a stale seen decide nothing', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'in-review', warnings: [CLAIM] }, { ...SEED_ARTIFACTS, pdf: 'cv.pdf' })
+    const item = itemOf(w.start(), 'a1')
+    const seen = seenNow(w, item)
+    rewriteReturns(w, 'a1')
+    const before = eventsOf(w.db, 'a1').length
+    errorOf(decide(w.deps, decision(item, 'override', { seen, warningCodes: ['unsupported-claim'] })), 'conflict', 'stale')
+    errorOf(decide(w.deps, decision(item, 'skip', { seen, reason: 'not-a-fit' })), 'conflict', 'stale')
+    errorOf(decide(w.deps, decision(item, 'instruct', { seen, text: 'Shorter' })), 'conflict', 'stale')
+    errorOf(decide(w.deps, decision(item, 'switch-to-form', { seen })), 'conflict', 'stale')
+    assert.equal(eventsOf(w.db, 'a1').length, before)
+    assert.equal(appOf(w.db, 'a1').state, 'in-review')
+  })
+
+  test('a seen that is not a fingerprint is invalid', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    errorOf(decide(w.deps, decision(item, 'approve', { seen: '' })), 'invalid')
+    errorOf(decide(w.deps, decision(item, 'approve', { seen: 'x'.repeat(200) })), 'invalid')
   })
 })
 

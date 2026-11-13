@@ -32,6 +32,7 @@ import {
   type Pool,
   type ReviewItemRef,
 } from './batch.ts'
+import { withSeen, type SeenBatch } from './seen.ts'
 
 export interface OpenDeps {
   readonly db: Db
@@ -118,27 +119,28 @@ function dueContacts(q: Queries, items: readonly ReviewItemRef[], now: Date): re
   return [...new Set(due)]
 }
 
+/** Both answer each item with its `seen` (D15 «Lo que se vio es lo que se aprueba»), for `GET|POST /batch`. */
 export interface Opened {
-  readonly startBatch: () => Result<Batch>
+  readonly startBatch: () => Result<SeenBatch>
   /** The open batch, or null when none is open. */
-  readonly batch: () => Result<Batch | null>
+  readonly batch: () => Result<SeenBatch | null>
 }
 
 export function openReview(deps: OpenDeps): Opened {
   const { db, now } = deps
   const newId = deps.newId ?? (() => uuidv7(now().getTime()))
 
-  function startBatch(): Result<Batch> {
+  function startBatch(): Result<SeenBatch> {
     const at = now()
     const built = db.tx((q) => {
       const profile = repo.latestProfileVersion(q)?.profile
-      if (profile === undefined) return fail<{ batch: Batch; due: readonly string[]; malformed: readonly string[] }>('conflict', 'no-profile')
+      if (profile === undefined) return fail<{ batch: SeenBatch; due: readonly string[]; malformed: readonly string[] }>('conflict', 'no-profile')
       repo.closeBatches(q, at)
       const pool = poolOf(q)
       const items = buildBatch(pool, { today: todayIn(at, deps.timeZone), timeZone: deps.timeZone, batchSize: profile.batchSize, newId })
       const batch: Batch = { id: newId(), items, cursor: 0, results: {} }
       repo.insertBatch(q, batch as unknown as repo.StoredBatch, at)
-      return ok({ batch, due: dueContacts(q, items, at), malformed: malformedMarks(pool.marks) })
+      return ok({ batch: withSeen(q, batch), due: dueContacts(q, items, at), malformed: malformedMarks(pool.marks) })
     })
     if (!built.ok) return built
     // Once per batch, not on every poll: what the batch read but could not use as written.
@@ -156,10 +158,10 @@ export function openReview(deps: OpenDeps): Opened {
     }
   }
 
-  function batch(): Result<Batch | null> {
+  function batch(): Result<SeenBatch | null> {
     return db.tx((q) => {
       const stored = repo.openBatch(q)
-      return ok(stored === undefined ? null : synced(q, stored, newId))
+      return ok(stored === undefined ? null : withSeen(q, synced(q, stored, newId)))
     })
   }
 
