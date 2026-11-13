@@ -153,18 +153,32 @@ export function createCheckQueue(deps: CheckQueueDeps): CheckQueue {
     const work = checkAddress({ db, search: deps.search, now }, contactId, controller.signal).catch((error: unknown) =>
       fail('module-error', messageOf(error)),
     )
-    const result = await Promise.race([work, aborted])
+    const result = await Promise.race([work, aborted]) // never rejects: `work` is caught above
     deadline[Symbol.dispose]()
     current = null
-    if (result !== 'aborted') {
-      states.set(contactId, 'done')
-      if (!result.ok) log.warn(`address check of ${contactId} not written: ${result.error.code} ${result.error.reason}`)
+    if (result !== 'aborted') return settle(contactId, result, 'done', 'not written')
+    if (!timedOut) return // stop(): no write, the contact stays `checking`
+    const written = db.tx((q) => applyAddressOutcome(q, contactId, { kind: 'timed-out' }, now()))
+    settle(contactId, written, 'timed-out', 'timed out and was not written')
+  }
+
+  /**
+   * Records how a check ended. A write that failed with the contact still `checking` (a disk error,
+   * a busy store) is NOT retried here: the state is dropped so memory agrees with the store, and the
+   * contact is adopted again by its next `enqueueCheck`/`prepareTick` (`admit`) or, at the latest,
+   * by the startup write (T-D6) and `enqueueRestarted`. A retry would repeat a minute of network
+   * against the same failing store.
+   */
+  function settle(contactId: string, written: Result<unknown>, state: CheckState, what: string): void {
+    if (written.ok) {
+      states.set(contactId, state)
       return
     }
-    if (!timedOut) return // stop(): no write, the contact stays `checking`
-    states.set(contactId, 'timed-out')
-    const written = db.tx((q) => applyAddressOutcome(q, contactId, { kind: 'timed-out' }, now()))
-    if (!written.ok) log.warn(`address check of ${contactId} timed out and was not written: ${written.error.code} ${written.error.reason}`)
+    const stillChecking = db.read((q) => getContact(q, contactId)?.address?.status === 'checking')
+    if (stillChecking) states.delete(contactId)
+    else states.set(contactId, state)
+    const after = stillChecking ? '; still checking, its next enqueue or the restart checks it again' : ''
+    log.warn(`address check of ${contactId} ${what}: ${written.error.code} ${written.error.reason}${after}`)
   }
 
   async function drain(): Promise<void> {
@@ -177,10 +191,12 @@ export function createCheckQueue(deps: CheckQueueDeps): CheckQueue {
 
   function kick(): void {
     if (active !== null || stopped || queue.length === 0) return
-    active = drain().finally(() => {
-      active = null
-      kick()
-    })
+    active = drain()
+      .catch((error: unknown) => log.error(`the address-check queue failed: ${messageOf(error)}`))
+      .finally(() => {
+        active = null
+        kick()
+      })
   }
 
   const firstOf = (results: readonly Result<Enqueued>[]): Result<Enqueued> => results[0] ?? fail('invalid', 'nothing to enqueue')

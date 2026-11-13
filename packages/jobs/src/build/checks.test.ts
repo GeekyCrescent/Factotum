@@ -5,7 +5,7 @@ import { openDb, type Db, type Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { ADDRESSES, application, contact, errorOf, NOW, send, valueOf } from '../test-state.ts'
 import { capturedLog, eventually, manualClock, manualTimers, tempBase, type ManualTimers, type TempBase } from '../test-support.ts'
-import { ok, type Address, type Application, type Opportunity } from '../types.ts'
+import { fail as errorResult, ok, type Address, type Application, type Opportunity } from '../types.ts'
 import type { AddressOutcome, AddressSearch, AddressTarget } from './address.ts'
 import { CHECK_DEADLINE_MS, createCheckQueue, type CheckQueue } from './checks.ts'
 
@@ -375,6 +375,63 @@ describe('the check queue (N4, design D9 «Cuándo se comprueba»)', () => {
       'warn address check of bare not queued: conflict the contact has no address',
     ])
     await h.queue.stop()
+    db.close()
+  })
+
+  test('a result whose write fails leaves the contact checking, not «done», and its next enqueue checks it again', async () => {
+    using base = tempBase()
+    const real = await emptyStore(base)
+    write(real, (q) => addContact(q, 'a', ADDRESSES.unverifiedNeverChecked))
+    let failWrites = false
+    const db: Db = { ...real, tx: (fn) => (failWrites ? errorResult('module-error', 'disk I/O error') : real.tx(fn)) }
+    const h = harness(db)
+    valueOf(h.queue.enqueueCheck('a'))
+    await eventually(() => h.calls.length === 1, 'a running')
+    failWrites = true
+    await answer(h, { kind: 'found', url: 'https://acme.example/contact' })
+    await eventually(() => h.queue.idle(), 'drained')
+    assert.equal(statusOf(real, 'a'), 'checking')
+    assert.equal(h.queue.stateOf('a'), null, 'memory agrees with the store: not done')
+    assert.match(h.lines.join('\n'), /warn address check of a not written: module-error disk I\/O error; still checking/)
+    failWrites = false
+    assert.equal(valueOf(h.queue.enqueueCheck('a')), 'queued', 'adopted again')
+    await eventually(() => h.calls.length === 2, 'a running again')
+    await answer(h, { kind: 'found', url: 'https://acme.example/contact' })
+    await eventually(() => h.queue.idle(), 'drained again')
+    assert.equal(statusOf(real, 'a'), 'verified')
+    assert.equal(h.queue.stateOf('a'), 'done')
+    real.close()
+  })
+
+  test('a check that throws is logged as an error, never an unhandled rejection, and the queue goes on', async () => {
+    using base = tempBase()
+    const db = await emptyStore(base)
+    write(db, (q) => {
+      addContact(q, 'a', ADDRESSES.unverifiedNeverChecked)
+      addContact(q, 'b', ADDRESSES.unverifiedNeverChecked)
+    })
+    const timers = manualTimers()
+    const hand = handSearch()
+    const { log, lines } = capturedLog()
+    let explode = true
+    const throwingLog = { ...log, warn: (message: string) => {
+      if (explode) {
+        explode = false
+        throw new Error('the log sink is gone')
+      }
+      log.warn(message)
+    } }
+    const queue = createCheckQueue({ db, timers: timers.timers, now: manualClock(NOW).now, search: hand.search, log: throwingLog })
+    valueOf(queue.enqueueCheck('a'))
+    valueOf(queue.enqueueCheck('b'))
+    await eventually(() => hand.calls.length === 1, 'a running')
+    write(db, (q) => q.run("UPDATE contacts SET address_status = 'verified' WHERE id = 'a'")) // its write will be refused → warn
+    hand.calls[0]?.answer({ kind: 'not-found' })
+    await eventually(() => hand.calls.length === 2, 'b running')
+    assert.match(lines.join('\n'), /error the address-check queue failed: the log sink is gone/)
+    assert.equal(queue.running(), 'b')
+    assert.equal(timers.pending().length, 1, 'only b\'s deadline is armed')
+    await queue.stop()
     db.close()
   })
 
