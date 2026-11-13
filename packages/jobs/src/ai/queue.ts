@@ -131,6 +131,12 @@ export interface Queue {
   readonly running: () => readonly string[]
   /** Resolves when nothing is running (what was started meanwhile included). */
   readonly settled: () => Promise<void>
+  /**
+   * Aborts every run (their groups are killed) and waits for them (R7, R27). A stopped run writes
+   * NOTHING: its row stays `running`, and the next start's opening write (`recoverOnStart`) puts it
+   * back in the queue. After `stop` the queue starts nothing and `add` is refused.
+   */
+  readonly stop: () => Promise<void>
 }
 
 /**
@@ -165,6 +171,7 @@ export function createQueue(deps: QueueDeps): Queue {
   const { db, now, log } = deps
   const inFlight = new Map<string, Running>()
   let lastKind: WorkKind | null = null
+  let stopped = false
 
   function enqueue(q: Queries, spec: EnqueueSpec): Result<Work> {
     const at = now().toISOString()
@@ -257,6 +264,7 @@ export function createQueue(deps: QueueDeps): Queue {
   /** Writes what came back, in its own `tx`, tells the batch, and pumps again. */
   function conclude(work: Work, result: JobResult): void {
     inFlight.delete(work.id)
+    if (stopped) return
     const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
     if (!written.ok) {
       log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${written.error.reason})`)
@@ -275,6 +283,7 @@ export function createQueue(deps: QueueDeps): Queue {
   }
 
   function pump(): void {
+    if (stopped) return
     try {
       for (let work = next(); work !== undefined && start(work); work = next()) {
         // `start` took it; look for the next.
@@ -293,6 +302,7 @@ export function createQueue(deps: QueueDeps): Queue {
     enqueueCv,
     retry,
     add: (spec) => {
+      if (stopped) return fail('conflict', 'the generation queue is stopped')
       const added = db.tx((q) => enqueue(q, spec))
       if (added.ok) pump()
       return added
@@ -300,6 +310,11 @@ export function createQueue(deps: QueueDeps): Queue {
     pump,
     running: () => [...inFlight.keys()],
     settled,
+    stop: async () => {
+      stopped = true
+      for (const run of inFlight.values()) run.controller.abort()
+      await settled()
+    },
     pausedUntil: () => db.read((q) => getMeta(q, PAUSED_UNTIL)) ?? null,
   }
 }
