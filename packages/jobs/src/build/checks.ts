@@ -131,7 +131,14 @@ export function createCheckQueue(deps: CheckQueueDeps): CheckQueue {
     return results
   }
 
-  const countQueued = (results: readonly Result<Enqueued>[]): number => results.filter((r) => r.ok && r.value === 'queued').length
+  /** The bulk callers: each refusal is logged (nobody is there to read a `Result`), the queued ones counted. */
+  function enqueueCounted(contactIds: readonly string[], front: boolean): number {
+    const results = enqueueMany(contactIds, front)
+    results.forEach((result, i) => {
+      if (!result.ok) log.warn(`address check of ${contactIds[i]} not queued: ${result.error.code} ${result.error.reason}`)
+    })
+    return results.filter((r) => r.ok && r.value === 'queued').length
+  }
 
   async function runOne(contactId: string): Promise<void> {
     const controller = new AbortController()
@@ -190,15 +197,15 @@ export function createCheckQueue(deps: CheckQueueDeps): CheckQueue {
 
     enqueueSeedChecks: (files) => {
       const unverified = db.read((q) => seedCheckContacts(q, files).filter((id) => getContact(q, id)?.address?.status === 'unverified'))
-      return countQueued(enqueueMany(unverified, true))
+      return enqueueCounted(unverified, true)
     },
 
-    enqueueRestarted: () => countQueued(enqueueMany(db.read(restartedContacts), true)),
+    enqueueRestarted: () => enqueueCounted(db.read(restartedContacts), true),
 
     prepareTick: ({ batchSize, candidates }) => {
       const all = candidates ?? db.read((q) => batchCandidateContacts(q, now()))
       const window = all.slice(0, 2 * batchSize).filter((id): id is string => id !== null)
-      return countQueued(enqueueMany([...new Set(window)], false))
+      return enqueueCounted([...new Set(window)], false)
     },
 
     stateOf: (contactId) => states.get(contactId) ?? null,

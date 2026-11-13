@@ -360,6 +360,24 @@ describe('the check queue (N4, design D9 «Cuándo se comprueba»)', () => {
     db.close()
   })
 
+  test('a bulk enqueue logs every contact it could not queue, and counts only the queued ones', async () => {
+    using base = tempBase()
+    const db = await emptyStore(base)
+    write(db, (q) => {
+      addContact(q, 'ok', ADDRESSES.unverifiedNeverChecked)
+      repo.insertContact(q, contact(null, { id: 'bare' }), note, NOW)
+    })
+    const h = harness(db)
+    assert.equal(h.queue.prepareTick({ batchSize: 5, candidates: ['ghost', 'ok', 'bare'] }), 1)
+    const warnings = h.lines.filter((line) => line.startsWith('warn '))
+    assert.deepEqual(warnings, [
+      'warn address check of ghost not queued: not-found no such contact',
+      'warn address check of bare not queued: conflict the contact has no address',
+    ])
+    await h.queue.stop()
+    db.close()
+  })
+
   test('a check that cannot be written is logged, and the queue goes on', async () => {
     using base = tempBase()
     const db = await emptyStore(base)
