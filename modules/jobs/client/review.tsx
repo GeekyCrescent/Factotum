@@ -137,7 +137,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
 
   const actions: ItemActions = {
     decide: (decision) => send(decision, decision.kind === 'instruct'),
-    sendAnyway: () => void send({ kind: 'approve', addressOverride: true }, true),
+    // An approval too: a card just shown does not take it (D15).
+    sendAnyway: () => {
+      if (settle.ready()) void send({ kind: 'approve', addressOverride: true }, true)
+    },
     retryJob: async (applicationId, job) => {
       try {
         await api.post(`a/${encodeURIComponent(applicationId)}/retry`, { job })

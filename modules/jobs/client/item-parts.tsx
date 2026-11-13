@@ -3,7 +3,8 @@
  * the CV, the form answers, the owner's notes and «Gaps vs the ad». Each draws what `model.ts` says.
  */
 
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
+import { ARM_EXPIRY_MS, pressArmed } from './arm.ts'
 import type { Api, ApplicationCard, ContactView, FormAnswer } from './contract.ts'
 import { addressControls, formMark, type Label } from './model.ts'
 
@@ -36,13 +37,20 @@ export interface ToLineProps {
  * (a second click confirms, T-D5) and «Switch to form» / «Switch to LinkedIn note».
  */
 export function ToLine({ entity, to, contact, formUrl, decided, busy, onSendAnyway, onSwitch }: ToLineProps) {
-  const [armed, setArmed] = useState(false)
+  const [armedAt, setArmedAt] = useState<number | null>(null)
+  const armed = armedAt !== null
   const controls = addressControls(contact?.address ?? null, { now: new Date(), entity, formUrl })
   const switchLabel = entity === 'followup' ? 'Switch to LinkedIn note' : 'Switch to form'
+  // The arm goes by itself after ARM_EXPIRY_MS (`arm.ts`).
+  useEffect(() => {
+    if (armedAt === null) return
+    const timer = setTimeout(() => setArmedAt(null), Math.max(0, armedAt + ARM_EXPIRY_MS - Date.now()))
+    return () => clearTimeout(timer)
+  }, [armedAt])
   const anyway = () => {
-    if (!armed) return setArmed(true)
-    setArmed(false)
-    onSendAnyway()
+    const press = pressArmed(armedAt, Date.now())
+    setArmedAt(press.armedAt)
+    if (press.fire) onSendAnyway()
   }
   return (
     <div class="j-to">
@@ -52,7 +60,7 @@ export function ToLine({ entity, to, contact, formUrl, decided, busy, onSendAnyw
       {decided ? null : (
         <div class="j-to-acts">
           {controls.sendAnyway === 'hidden' ? null : (
-            <button type="button" class={`btn sm${armed ? ' primary' : ''}`} disabled={busy || controls.sendAnyway === 'off'} onClick={anyway}>
+            <button type="button" class={`btn sm${armed ? ' primary' : ''}`} disabled={busy || controls.sendAnyway === 'off'} onClick={anyway} onBlur={() => setArmedAt(null)}>
               {armed ? 'Click again to send anyway' : 'Send anyway'}
             </button>
           )}
