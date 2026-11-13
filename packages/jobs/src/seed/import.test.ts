@@ -145,12 +145,14 @@ test('without identity.phone the real import refuses and writes nothing; the dry
   db.close()
 })
 
-test('without any profile the real import refuses too', async () => {
+test('without any profile the real import refuses too, saying missing-profile rather than missing-phone', async () => {
   using base = tempBase()
   const opened = await openDb({ dir: base.dir, now: () => NOW })
   assert.ok(opened.ok)
   const real = await importSeed(opened.value, context(), { dryRun: false })
-  assert.deepEqual(real, { ok: false, error: { code: 'blocked', reason: 'missing-phone' } })
+  assert.deepEqual(real, { ok: false, error: { code: 'blocked', reason: 'missing-profile' } })
+  const dry = reportOf(await importSeed(opened.value, context(), { dryRun: true }))
+  assert.equal(dry.blocked, 'missing-profile')
   opened.value.close()
 })
 

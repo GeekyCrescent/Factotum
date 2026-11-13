@@ -36,10 +36,10 @@ export interface PlannedEntry {
   readonly byHand: PlannedByHand | null
 }
 
-export interface PlannedByHand {
-  readonly at: string | null
-  readonly result: ByHandResult
-}
+/** A valid mark has its instant; an `invalid` one has none. */
+export type PlannedByHand =
+  | { readonly at: string; readonly result: Exclude<ByHandResult, 'invalid'> }
+  | { readonly at: null; readonly result: 'invalid' }
 
 export interface PlanClock {
   readonly now: Date
@@ -79,7 +79,7 @@ function companyFromEntry(entry: PackageEntry): SeedCompany {
 function byHandOf(raw: string | null, existing: Application | undefined, clock: PlanClock): PlannedByHand | null {
   if (raw === null) return null
   const at = byHandAt(raw, clock.timeZone, clock.now)
-  if (at === null) return { at, result: 'invalid' }
+  if (at === null) return { at: null, result: 'invalid' }
   return { at, result: existing === undefined ? 'sent' : resultFor(existing, clock.now) }
 }
 

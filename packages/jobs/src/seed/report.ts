@@ -32,10 +32,13 @@ export interface EntryRef {
 
 export type PlaceholderPlace = 'to' | 'subject' | 'letter' | 'form' | 'linkedin'
 
+/** Why the real import refuses: no profile at all, or a profile without `identity.phone`. */
+export type Blocked = 'missing-phone' | 'missing-profile'
+
 export interface ImportReport {
   readonly dryRun: boolean
   /** The real import refuses without `identity.phone`; the dry run says it here, on top. */
-  readonly blocked: 'missing-phone' | null
+  readonly blocked: Blocked | null
   readonly companies: {
     readonly read: number
     /** Made by this import (or that it would make, in a dry run). */
