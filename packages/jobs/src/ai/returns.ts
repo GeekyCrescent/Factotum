@@ -153,8 +153,11 @@ const isFound = (w: Warning): boolean => FOUND_CODES.has(w.code)
 /**
  * The application with the handler's warnings of this return: those of a text this version rewrote
  * (`cv`, `letter`) are replaced by `found`; those of a text it did not touch stay, `overridden` and all.
+ * `found === undefined` is a return that DID NOT VERIFY (D15 «Lo que se vio es lo que se aprueba»): a
+ * verifier's warnings are only replaced by another verification, never by omission — all of them stay.
  */
-function withFound(app: Application, patch: ArtifactsPatch, found: readonly Warning[]): Application {
+function withFound(app: Application, patch: ArtifactsPatch, found: readonly Warning[] | undefined): Application {
+  if (found === undefined) return app
   const redone = new Set<Warning['where']>()
   if (patch.cv !== undefined) redone.add('cv')
   if (patch.letter !== undefined) redone.add('letter')
@@ -189,7 +192,7 @@ function saveVersion(q: Queries, app: Application, patch: ArtifactsPatch, now: D
   return { ...app, version }
 }
 
-export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatch, deps: ReturnDeps, now: Date, found: readonly Warning[] = []): Result<void> {
+export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatch, deps: ReturnDeps, now: Date, found?: readonly Warning[]): Result<void> {
   const before = getApplication(q, work.ref)
   if (before === undefined) return fail('not-found', 'no such application')
   const app = withFound(saveVersion(q, before, patch, now), patch, found)
@@ -400,7 +403,7 @@ function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, 
   }
   const written =
     output.type === 'application'
-      ? applicationReturned(q, work, output.artifacts, deps, now, output.warnings ?? [])
+      ? applicationReturned(q, work, output.artifacts, deps, now, output.warnings)
       : output.type === 'followup'
         ? followupReturned(q, work, output.version, deps, now)
         : output.apply(q, now)

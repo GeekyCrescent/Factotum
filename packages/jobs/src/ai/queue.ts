@@ -76,7 +76,9 @@ export type JobOutput =
   /**
    * A new version of the application's artifacts (cv, letter, rewrite, reprint). `warnings`: what the
    * handler found that no linter can see — the verifier's `unsupported-claim`, `cv-overflow` (D5 steps
-   * 7–8) — added to the linter's at the return.
+   * 7–8) — added to the linter's at the return. ABSENT means «nothing was verified»: the found
+   * warnings the application carries all stay (D15); `[]` means «verified, and clean» for the texts
+   * the patch brings (`cv`, `letter`).
    */
   | { readonly type: 'application'; readonly artifacts: ArtifactsPatch; readonly warnings?: readonly Warning[] }
   /** A new version of a follow-up (its `rewrite`). */

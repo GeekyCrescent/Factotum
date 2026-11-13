@@ -62,3 +62,20 @@ test('a rewrite that brings a new CV replaces the CV’s warnings of the verifie
   assert.deepEqual(app.warnings, [checked])
   assert.equal(app.state, 'ready')
 })
+
+test('a return that did not verify (no `warnings`) keeps the found warnings of the texts it brings: still blocked', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const overflow: Warning = { code: 'cv-overflow', where: 'cv', detail: 'the CV prints on 2 pages', blocks: true, overridden: null }
+  insertApp(db, { state: 'rewriting', rewriteFrom: 'in-review', warnings: [claim('letter', 'won an award'), overflow] })
+  const rewrite = controlled()
+  const { queue } = rig(db, { handlers: { rewrite: rewrite.handler } })
+  valueOf(db.tx((q) => queue.enqueue(q, { kind: 'rewrite', ref: 'app-1' })))
+  queue.pump()
+  rewrite.finish(rewrite.started()[0]!, back({ letter: { subject: null, body: 'New {signature}' } }))
+  await queue.settled()
+
+  const app = appOf(db, 'app-1')
+  assert.deepEqual(app.warnings, [claim('letter', 'won an award'), overflow])
+  assert.equal(app.state, 'in-review', 'nothing checked the new texts: the block stays')
+})
