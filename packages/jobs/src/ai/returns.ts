@@ -62,9 +62,11 @@ export interface RewriteFailed {
 /** What a failure written here asks the queue to do after its `tx`. */
 export interface Aftermath {
   readonly rewriteFailed: RewriteFailed | null
+  /** Something the queue should log (warn): never a word of the prompt or the answer. */
+  readonly warning: string | null
 }
 
-const NOTHING: Aftermath = { rewriteFailed: null }
+const NOTHING: Aftermath = { rewriteFailed: null, warning: null }
 
 /** The version an application had before any generation: nothing but its profile. */
 const EMPTY: Omit<Artifacts, 'version'> = {
@@ -231,7 +233,7 @@ function applicationRewriteFailed(q: Queries, app: Application, work: Work, now:
   if (!moved.ok) return moved
   const data = { instruction: instructionOf(q, app.id, null), reason: work.reason }
   const saved = saveApplication(q, moved.value, { kind: 'rewrite-failed', data }, now)
-  return saved.ok ? ok({ rewriteFailed: { kind: 'application', id: app.id } }) : saved
+  return saved.ok ? ok({ rewriteFailed: { kind: 'application', id: app.id }, warning: null }) : saved
 }
 
 function followupRewriteFailed(q: Queries, row: Followup, work: Work, now: Date): Result<Aftermath> {
@@ -240,7 +242,7 @@ function followupRewriteFailed(q: Queries, row: Followup, work: Work, now: Date)
   if (!moved.ok) return moved
   const data = { instruction: instructionOf(q, row.applicationId, row.id), reason: work.reason }
   const saved = saveFollowup(q, moved.value, { kind: 'rewrite-failed', data }, now)
-  return saved.ok ? ok({ rewriteFailed: { kind: 'followup', id: row.id } }) : saved
+  return saved.ok ? ok({ rewriteFailed: { kind: 'followup', id: row.id }, warning: null }) : saved
 }
 
 function rewriteFailed(q: Queries, work: Work, now: Date): Result<Aftermath> {
@@ -271,21 +273,51 @@ export const RETRY_DELAYS_MS: readonly number[] = [2 * 60_000, 10 * 60_000]
 export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1
 /** A limit without an hour pauses this long (D10). */
 export const LIMIT_PAUSE_MS = 30 * 60_000
+/**
+ * A limit adds no attempt — until the same work has hit one this many times in a row: by then (≈ 3 h
+ * of 30-min pauses) it is more likely an error misread as a limit, looping forever. It counts.
+ */
+export const LIMIT_STREAK_MAX = 6
+/** `meta` key: `{ workId, count }` of the limits hit in a row by one work. */
+const LIMIT_STREAK = 'limitStreak'
 /** `meta` key: while it is in the future, no Claude work leaves the queue. */
 export const PAUSED_UNTIL = 'pausedUntil'
 
-/** An answer that is not a limit, after the pause ran out: the limit is gone, the concurrency opens. */
+/** An answer that is not a limit: the streak of limits ends; after the pause ran out, the concurrency opens. */
 function liftPause(q: Queries, work: Work, now: Date): void {
   if (work.kind === 'reprint') return
+  deleteMeta(q, LIMIT_STREAK)
   const until = getMeta(q, PAUSED_UNTIL)
   if (until !== undefined && until <= now.toISOString()) deleteMeta(q, PAUSED_UNTIL)
 }
 
-/** A limit adds no attempt (D10): back to the queue, and the queue pauses until the reset. */
-function limited(q: Queries, work: Work, result: Extract<RunFailure, { kind: 'limit' }>, now: Date): Result<Aftermath> {
+/** The limits `workId` hit in a row before this one (0 when the streak is another work's, or none). */
+function limitStreakOf(q: Queries, workId: string): number {
+  try {
+    const streak = JSON.parse(getMeta(q, LIMIT_STREAK) ?? 'null') as { workId?: unknown; count?: unknown } | null
+    return streak?.workId === workId && typeof streak.count === 'number' ? streak.count : 0
+  } catch {
+    // A value that is not ours to read: the streak starts again.
+    return 0
+  }
+}
+
+/**
+ * A limit adds no attempt (D10): back to the queue, and the queue pauses until the reset. The
+ * `LIMIT_STREAK_MAX`-th in a row of the same work counts as a failed attempt, said in `warning`.
+ */
+function limited(q: Queries, work: Work, result: Extract<RunFailure, { kind: 'limit' }>, deps: ReturnDeps, now: Date): Result<Aftermath> {
   const until = result.resetsAt ?? new Date(now.getTime() + LIMIT_PAUSE_MS).toISOString()
   const already = getMeta(q, PAUSED_UNTIL)
   setMeta(q, PAUSED_UNTIL, already !== undefined && already > until ? already : until)
+  const streak = limitStreakOf(q, work.id) + 1
+  if (streak >= LIMIT_STREAK_MAX) {
+    deleteMeta(q, LIMIT_STREAK)
+    const counted = failedRun(q, work, `${result.reason}, ${streak} times in a row`, deps, now)
+    if (!counted.ok) return counted
+    return ok({ ...counted.value, warning: `${work.kind} ${work.id} hit the usage limit ${streak} times in a row: counted as a failed attempt` })
+  }
+  setMeta(q, LIMIT_STREAK, JSON.stringify({ workId: work.id, count: streak }))
   const saved = saveWork(q, { ...work, state: 'queued', notBefore: null, reason: result.reason, updatedAt: now.toISOString() })
   return saved.ok ? ok(NOTHING) : saved
 }
@@ -353,6 +385,6 @@ function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, 
 export function writeReturn(q: Queries, work: Work, result: JobResult, deps: ReturnDeps, now: Date): Result<Aftermath> {
   const current = getWork(q, work.id) ?? work
   if (result.ok) return succeeded(q, current, result.output, deps, now)
-  if (result.kind === 'limit') return limited(q, current, result, now)
+  if (result.kind === 'limit') return limited(q, current, result, deps, now)
   return failedRun(q, current, result.reason, deps, now)
 }

@@ -43,6 +43,7 @@ export {
   classesOf,
   instructionEvent,
   LIMIT_PAUSE_MS,
+  LIMIT_STREAK_MAX,
   MAX_ATTEMPTS,
   PAUSED_UNTIL,
   RETRY_DELAYS_MS,
@@ -275,6 +276,7 @@ export function createQueue(deps: QueueDeps): Queue {
     if (stopped) return
     const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
     if (written.ok) {
+      if (written.value.warning !== null) log.warn(`jobs queue: ${written.value.warning}`)
       if (written.value.rewriteFailed !== null) tell(written.value.rewriteFailed)
     } else {
       notWritten(work, written.error.reason)
