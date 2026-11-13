@@ -11,7 +11,10 @@ import { addressSearch, applyAddressOutcome, checkAddress, MAX_EXTRA_PAGES, sear
 
 const EMAIL = 'ada@acme.example'
 /** Generous for linear work on 1 MiB, even under coverage; the quadratic regexes took seconds. */
-const LINEAR_BOUND_MS = 500
+/** Linear: 4× the input costs ~4× the time; the old regexes cost ~16× (quadratic). */
+const MAX_GROWTH = 8
+/** A loose ceiling for the full 1 MiB under coverage and a loaded machine; the old regexes took minutes. */
+const CEILING_MS = 5_000
 const HOME = 'https://acme.example/'
 
 type Route = string | { readonly status: number; readonly body?: string } | Error
@@ -172,24 +175,32 @@ describe('searchAddress (N2, design D9 «La re-búsqueda»)', () => {
   })
 
   describe('reads a hostile 1 MiB page in linear time (the 60 s deadline cannot interrupt a regex)', () => {
-    const size = BODY_CAP_BYTES - 64
-    const fill = (unit: string, tail = ''): string => unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
-    const bodies: Readonly<Record<string, string>> = {
-      'unclosed tags': fill('<'),
-      'anchors that never close': fill('<a href="x">'),
-      'anchors sharing one far </a>': fill('<a href="/contact">', '</a>'),
-      'a whitespace run': `ada${fill(' ', 'acme.example')}`,
-      'a whitespace run before a bracket': fill(' ', '['),
-      'an unclosed href': fill('<a href="', '>'),
-      'nested-looking entities': fill('&#1'),
+    const full = BODY_CAP_BYTES - 64
+    const fill = (size: number, unit: string, tail = ''): string =>
+      unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
+    const bodies: Readonly<Record<string, (size: number) => string>> = {
+      'unclosed tags': (size) => fill(size, '<'),
+      'anchors that never close': (size) => fill(size, '<a href="x">'),
+      'anchors sharing one far </a>': (size) => fill(size, '<a href="/contact">', '</a>'),
+      'a whitespace run': (size) => `ada${fill(size, ' ', 'acme.example')}`,
+      'a whitespace run before a bracket': (size) => fill(size, ' ', '['),
+      'an unclosed href': (size) => fill(size, '<a href="', '>'),
+      'nested-looking entities': (size) => fill(size, '&#1'),
+    }
+    const timed = async (body: string): Promise<{ readonly ms: number; readonly kind: string }> => {
+      const started = performance.now()
+      const outcome = await search({ [HOME]: body })
+      return { ms: performance.now() - started, kind: outcome.kind }
     }
     for (const [name, body] of Object.entries(bodies)) {
       test(name, async () => {
-        const started = performance.now()
-        const outcome = await search({ [HOME]: body })
-        const elapsed = performance.now() - started
-        assert.ok(elapsed < LINEAR_BOUND_MS, `${name}: ${Math.round(elapsed)} ms`)
-        assert.notEqual(outcome.kind, 'found')
+        const quarter = await timed(body(full / 4))
+        const whole = await timed(body(full))
+        // A floor of 5 ms on the small run keeps timer noise from inflating the ratio.
+        const growth = whole.ms / Math.max(quarter.ms, 5)
+        assert.ok(growth < MAX_GROWTH, `${name}: ${Math.round(quarter.ms)} ms → ${Math.round(whole.ms)} ms (×${growth.toFixed(1)})`)
+        assert.ok(whole.ms < CEILING_MS, `${name}: ${Math.round(whole.ms)} ms`)
+        assert.notEqual(whole.kind, 'found')
       })
     }
   })
