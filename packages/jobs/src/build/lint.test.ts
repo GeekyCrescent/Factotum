@@ -97,7 +97,7 @@ test('a slot without its field gives its own code with the field, never placehol
 test('{signature} without a name or email is missing-profile-field; without a phone, missing-phone', () => {
   const profile = withIdentity({ email: '', phone: '' })
   const warnings = lint({ ...letter('Thanks. {signature}'), contactHash: contactHashOf(profile) }, { ...CTX, profile })
-  assert.deepEqual(only(warnings, 'missing-profile-field'), [block('missing-profile-field', 'letter', 'email')])
+  assert.deepEqual(only(warnings, 'missing-profile-field'), [block('missing-profile-field', 'letter', 'email'), block('missing-profile-field', 'cv', 'email')])
   assert.deepEqual(only(warnings, 'missing-phone'), [block('missing-phone', 'letter', 'phone'), block('missing-phone', 'cv', 'phone')])
 })
 
@@ -177,6 +177,16 @@ test('phone: an empty phone blocks the CV, whose contact needs it', () => {
   const profile = withIdentity({ phone: '' })
   const artifacts: Artifacts = { ...CLEAN, letter: null, contactHash: contactHashOf(profile) }
   assert.deepEqual(only(lint(artifacts, { ...CTX, profile, letterPending: true }), 'missing-phone'), [block('missing-phone', 'cv', 'phone')])
+})
+
+test('an empty name or email blocks the CV, whose contact prints them — on every channel', () => {
+  const profile = withIdentity({ name: ' ', email: '' })
+  const artifacts: Artifacts = { ...CLEAN, letter: null, contactHash: contactHashOf(profile) }
+  for (const channel of ['email', 'form', 'platform', 'linkedin'] as const) {
+    const warnings = lint(artifacts, { ...CTX, profile, channel, letterPending: true })
+    assert.deepEqual(only(warnings, 'missing-profile-field'), [block('missing-profile-field', 'cv', 'name'), block('missing-profile-field', 'cv', 'email')], channel)
+  }
+  assert.deepEqual(only(lint({ ...artifacts, cv: null }, { ...CTX, profile, letterPending: true }), 'missing-profile-field'), [])
 })
 
 // — cv-stale —

@@ -172,12 +172,23 @@ function tooLongIn(artifacts: Artifacts, texts: readonly Text[], channel: Channe
 
 // — The CV and the letter —
 
+/** The identity fields the CV's contact prints (D5) that have no slot code of their own. */
+const CV_CONTACT_FIELDS = ['name', 'email'] as const
+
+/** Empty fields of the CV's contact: never print an empty `<h1>` or a blank address (D6 «Huecos»). */
+function cvContactWarnings(artifacts: Artifacts, profile: Profile): readonly Warning[] {
+  if (artifacts.cv === null) return []
+  const isEmpty = (value: string): boolean => value.trim() === ''
+  const fields = CV_CONTACT_FIELDS.filter((field) => isEmpty(profile.identity[field])).map((field) => warn('missing-profile-field', 'cv', field))
+  return [...fields, ...(isEmpty(profile.identity.phone) ? [warn('missing-phone', 'cv', 'phone')] : [])]
+}
+
 function cvWarnings(artifacts: Artifacts, ctx: LintContext): readonly Warning[] {
-  const phone = artifacts.cv !== null && ctx.profile.identity.phone.trim() === '' ? [warn('missing-phone', 'cv', 'phone')] : []
+  const contact = cvContactWarnings(artifacts, ctx.profile)
   const missing =
     artifacts.cv === null ? 'no CV' : artifacts.pdf === null ? 'no PDF' : ctx.pdfExists ? null : 'the PDF is not on disk'
   const stale = missing === null && artifacts.contactHash !== contactHashOf(ctx.profile) ? [warn('cv-stale', 'cv', 'printed with another contact')] : []
-  return [...phone, ...stale, ...(missing === null ? [] : [warn('missing-cv', 'cv', missing)])]
+  return [...contact, ...stale, ...(missing === null ? [] : [warn('missing-cv', 'cv', missing)])]
 }
 
 /** D6 «Carta ausente»: a state predicate, and only on `email` — the manual channels never send a letter. */
