@@ -12,6 +12,8 @@
  *   fail       what the real one does with a file it cannot open: one line on stderr, exit 1
  *   hang       never answers, and starts a grandchild that hangs too (the group must die whole)
  *   stubborn   never answers and ignores SIGTERM (writes `fake-poppler.ready` once it does): only SIGKILL ends it
+ *   args       like ok, and writes its arguments (NUL-separated) to `fake-pdfinfo.args`
+ *   killed     SIGKILLs itself: a child that ends by a signal, with no exit code
  *   escape     never answers, and starts a grandchild IN ANOTHER GROUP that holds its stdout open: killing
  *              the group never brings `close` (the test kills the grandchild itself)
  * Every call appends its pid to `fake-poppler.calls` in that folder; `hang` and `escape` append the grandchild's.
@@ -26,6 +28,8 @@ appendFileSync(join(dir, 'fake-poppler.calls'), `${process.pid}\n`)
 const modeFile = join(dir, 'fake-poppler.mode')
 const mode = existsSync(modeFile) ? readFileSync(modeFile, 'utf8').trim() : 'ok'
 
+if (mode === 'args') writeFileSync(join(dir, 'fake-pdfinfo.args'), process.argv.slice(2).join('\0'))
+if (mode === 'killed') process.kill(process.pid, 'SIGKILL')
 if (mode === 'stubborn') {
   process.on('SIGTERM', () => undefined)
   writeFileSync(join(dir, 'fake-poppler.ready'), '')

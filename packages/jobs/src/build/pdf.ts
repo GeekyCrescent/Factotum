@@ -7,7 +7,7 @@
  * counting by `pdfinfo` is reliable; p95 0.010 s and 0.20 s against a 15 s timeout.
  */
 
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { Timers } from '@factotum/core'
@@ -41,23 +41,33 @@ export function pagesOf(stdout: string): Result<number> {
   return pages >= 1 ? ok(pages) : fail('module-error', 'pdfinfo printed no Pages: line')
 }
 
+const DIR_MODE = 0o700
+
+const codeOf = (error: unknown): string => {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : 'error'
+}
+
+/** `--` ends the options (Poppler 26 accepts it): a path can never be read as one. */
 export async function countPages(run: PopplerRun, pdf: string): Promise<Result<number>> {
-  const info = await runProcess({ name: 'pdfinfo', bin: run.poppler.pdfinfo, args: [pdf], ...processOf(run) })
+  const info = await runProcess({ name: 'pdfinfo', bin: run.poppler.pdfinfo, args: ['--', pdf], ...processOf(run) })
   return info.ok ? pagesOf(info.value) : info
 }
 
-/** Page 1 of `pdf` as `<dir>/preview.png`; the path. */
+/** Page 1 of `pdf` as `<dir>/preview.png` (`dir` 0700); the path. A preview left there before is removed first. */
 export async function renderPreview(run: PopplerRun, pdf: string, dir: string): Promise<Result<string>> {
-  try {
-    mkdirSync(dir, { recursive: true })
-  } catch {
-    return fail('module-error', 'the preview folder could not be made')
-  }
   const prefix = join(dir, PREVIEW_NAME)
-  const args = ['-png', '-r', String(PREVIEW_DPI), '-f', '1', '-l', '1', '-singlefile', pdf, prefix]
+  const png = `${prefix}.png`
+  try {
+    mkdirSync(dir, { recursive: true, mode: DIR_MODE })
+    // So an exit 0 that wrote nothing is never taken for a preview (as `printPdf` does with the PDF).
+    rmSync(png, { force: true })
+  } catch (error) {
+    return fail('module-error', `the preview folder could not be made (${codeOf(error)})`)
+  }
+  const args = ['-png', '-r', String(PREVIEW_DPI), '-f', '1', '-l', '1', '-singlefile', '--', pdf, prefix]
   const done = await runProcess({ name: 'pdftoppm', bin: run.poppler.pdftoppm, args, ...processOf(run) })
   if (!done.ok) return done
-  const png = `${prefix}.png`
   return existsSync(png) ? ok(png) : fail('module-error', `pdftoppm wrote no ${PREVIEW_NAME}.png`)
 }
 

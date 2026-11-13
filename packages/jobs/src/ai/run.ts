@@ -127,8 +127,10 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
       grace ??= input.timers.setTimeout(() => {
         try {
           if (child.pid !== undefined) killGroup(child.pid, 'SIGKILL')
-        } catch {
-          // Already gone (ESRCH): what was wanted.
+        } catch (error) {
+          // ESRCH: already gone, what was wanted. Anything else (EPERM) left the group alive: said.
+          const code = codeOf(error)
+          if (code !== 'ESRCH') input.log?.warn(`jobs claude: the SIGKILL of its group failed (${code})`)
         }
         // `close` waits for every holder of stdout; one outside the group may never let go.
         last = input.timers.setTimeout(() => {
@@ -365,9 +367,9 @@ function usageOf(parsed: CliResult): RunUsage {
   }
 }
 
-function codeOf(error: Error): string {
-  const code = (error as { code?: unknown }).code
-  return typeof code === 'string' ? code : error.message
+function codeOf(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : messageOf(error)
 }
 
 function messageOf(error: unknown): string {

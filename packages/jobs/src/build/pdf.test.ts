@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -184,7 +184,41 @@ test('renderPreview: pdftoppm -png -r 110 page 1 only, single file, to <dir>/pre
   assert.deepEqual(result, { ok: true, value: join(out, 'preview.png') })
   assert.equal(readFileSync(join(out, 'preview.png')).subarray(1, 4).toString('latin1'), 'PNG')
   const args = readFileSync(join(base.dir, 'fake-pdftoppm.args'), 'utf8').trim().split('\0')
-  assert.deepEqual(args, ['-png', '-r', '110', '-f', '1', '-l', '1', '-singlefile', pdf, join(out, 'preview')])
+  assert.deepEqual(args, ['-png', '-r', '110', '-f', '1', '-l', '1', '-singlefile', '--', pdf, join(out, 'preview')])
+  assert.equal(statSync(out).mode & 0o777, 0o700, 'the preview folder is 0700')
+})
+
+test('pdfinfo gets -- before the path: a file name can never be read as an option', async () => {
+  using base = tempBase()
+  const pdf = join(base.dir, 'cv.pdf')
+  writeFileSync(pdf, '%PDF-fake\n')
+  writeFileSync(join(base.dir, 'fake-poppler.mode'), 'args')
+  assert.equal((await countPages(run(), pdf)).ok, true)
+  assert.deepEqual(readFileSync(join(base.dir, 'fake-pdfinfo.args'), 'utf8').trim().split('\0'), ['--', pdf])
+})
+
+test('a preview.png left by an earlier run never passes for this one', async () => {
+  using base = tempBase()
+  const pdf = join(base.dir, 'cv.pdf')
+  writeFileSync(pdf, '%PDF-fake\n')
+  writeFileSync(join(base.dir, 'preview.png'), 'an old preview')
+  writeFileSync(join(base.dir, 'fake-poppler.mode'), 'no-output')
+  assert.deepEqual(await renderPreview(run(), pdf, base.dir), { ok: false, error: { code: 'module-error', reason: 'pdftoppm wrote no preview.png' } })
+})
+
+test('a preview folder that cannot be made says why', async () => {
+  using base = tempBase()
+  const pdf = join(base.dir, 'cv.pdf')
+  writeFileSync(pdf, '%PDF-fake\n')
+  assert.deepEqual(await renderPreview(run(), pdf, join(pdf, 'v1')), { ok: false, error: { code: 'module-error', reason: 'the preview folder could not be made (ENOTDIR)' } })
+})
+
+test('a child killed by a signal says the signal, not «code null»', async () => {
+  using base = tempBase()
+  const pdf = join(base.dir, 'cv.pdf')
+  writeFileSync(pdf, '%PDF-fake\n')
+  writeFileSync(join(base.dir, 'fake-poppler.mode'), 'killed')
+  assert.deepEqual(await countPages(run(), pdf), { ok: false, error: { code: 'module-error', reason: 'pdfinfo was killed by SIGKILL' } })
 })
 
 test('a pdftoppm that exits 0 without writing the PNG is a failure, not a missing preview later', async () => {

@@ -42,6 +42,8 @@ export interface ProcessInput {
 
 interface Outcome {
   readonly code: number | null
+  /** The signal that ended it, when one did (then `code` is null). */
+  readonly killedBy: NodeJS.Signals | null
   readonly stdout: string
   readonly spawnError: Error | undefined
   readonly timedOut: boolean
@@ -102,14 +104,14 @@ function settleOn(child: ChildProcess, input: ProcessInput, resolve: (result: Re
   }
   input.signal?.addEventListener('abort', onAbort, { once: true })
 
-  const settle = (code: number | null): void => {
+  const settle = (code: number | null, killedBy: NodeJS.Signals | null = null): void => {
     if (settled) return
     settled = true
     timer[Symbol.dispose]()
     grace?.[Symbol.dispose]()
     last?.[Symbol.dispose]()
     input.signal?.removeEventListener('abort', onAbort)
-    resolve(conclude({ code, stdout, spawnError, timedOut, aborted }, input))
+    resolve(conclude({ code, killedBy, stdout, spawnError, timedOut, aborted }, input))
   }
 
   child.stdout?.setEncoding('utf8')
@@ -122,13 +124,14 @@ function settleOn(child: ChildProcess, input: ProcessInput, resolve: (result: Re
     spawnError = error
     if (child.pid === undefined) settle(null)
   })
-  child.on('close', (code: number | null) => settle(code))
+  child.on('close', (code: number | null, signal: NodeJS.Signals | null) => settle(code, signal))
 }
 
 function conclude(outcome: Outcome, input: ProcessInput): Result<string> {
   if (outcome.aborted) return fail('module-error', 'stopped')
   if (outcome.timedOut) return fail('module-error', `${input.name} gave no answer within ${Math.round(input.timeoutMs / 1000)} s`)
   if (outcome.spawnError !== undefined) return fail('module-error', `${input.name} could not start (${codeOf(outcome.spawnError)})`)
+  if (outcome.killedBy !== null) return fail('module-error', `${input.name} was killed by ${outcome.killedBy}`)
   if (outcome.code !== 0) return fail('module-error', `${input.name} exited with code ${outcome.code}`)
   return ok(outcome.stdout)
 }
