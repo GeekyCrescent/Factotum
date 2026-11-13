@@ -51,6 +51,13 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * How long a killed group may take to disappear. Alone it is milliseconds; with the whole suite in
+ * parallel (hundreds of tests, many spawning processes) the same check missed the default 10 s —
+ * the flake `packages/tasks` has on `main` (§M Bloque 0), copied here with the code.
+ */
+const PROCESS_GONE_MS = 30_000
+
 test('a good answer is the structured output with its usage, the cache counted apart; the prompt went by stdin', async () => {
   const { input, cwd } = await rig()
   const result = await runClaude(input)
@@ -182,7 +189,7 @@ test('hang: killed at the timeout, on the injected timers, and the group dies', 
   manual.fire(TIMEOUT_MS)
   assert.deepEqual(await pending, { ok: false, kind: 'failed', reason: 'claude gave no answer within 30 s' })
   const [pid] = await pids()
-  await eventually(() => !alive(pid!), 'the claude process gone')
+  await eventually(() => !alive(pid!), 'the claude process gone', PROCESS_GONE_MS)
 })
 
 test('the signal aborted mid-run kills the group and answers stopped; already aborted never spawns', async () => {
@@ -193,7 +200,7 @@ test('the signal aborted mid-run kills the group and answers stopped; already ab
   run.abort()
   assert.deepEqual(await pending, { ok: false, kind: 'failed', reason: 'stopped' })
   const [pid] = await pids()
-  await eventually(() => !alive(pid!), 'the claude process gone')
+  await eventually(() => !alive(pid!), 'the claude process gone', PROCESS_GONE_MS)
 
   const done = new AbortController()
   done.abort()
@@ -234,7 +241,7 @@ test('a descendant in another group holding stdout: close never comes, and a las
   const [pid, grandchild] = await pids()
   try {
     manual.fire(TIMEOUT_MS)
-    await eventually(() => !alive(pid!), 'the claude process gone')
+    await eventually(() => !alive(pid!), 'the claude process gone', PROCESS_GONE_MS)
     manual.fire(KILL_GRACE_MS)
     assert.deepEqual(manual.pending(), [SETTLE_GRACE_MS], 'a last timer, since close may never come')
     manual.fire(SETTLE_GRACE_MS)
