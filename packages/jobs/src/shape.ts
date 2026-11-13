@@ -39,8 +39,12 @@ export const MAX_PATH_CHARS = 1024
 export const HOST_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/
 /** An id we hand out or the owner names (a goal): lowercase, digits and dashes. */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
-/** design D6, the rule of `to` (v5, X11): no brackets, braces or spaces, and a dotted domain. */
-export const SENDABLE_ADDRESS = /^[^\s@[\]{}]+@[^\s@[\]{}]+\.[a-z]{2,}$/i
+/**
+ * design D6, the rule of `to` (v5, X11): no brackets, braces or spaces, and a dotted domain. Nor
+ * `, ; < > " ( )`: the mail package's `isOneRecipient` refuses them at send time (one bare address
+ * only), so an address with one is never offered as sendable here to fail there.
+ */
+export const SENDABLE_ADDRESS = /^[^\s@[\]{},;<>"()]+@[^\s@[\]{},;<>"()]+\.[a-z]{2,}$/i
 /** design D6, the placeholder rule: ANY bracket token, with no word list. */
 export const BRACKET_TOKEN = /\[[^\]\n]{1,80}\]/
 const DEBRIS_WORDS = /\b(?:TODO|TBD)\b/

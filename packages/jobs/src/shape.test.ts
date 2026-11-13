@@ -44,6 +44,12 @@ test('the address rule of D6 takes a real address and refuses brackets, braces a
   assert.equal(isSendableAddress('nobody@localhost'), false)
 })
 
+test('the address rule refuses what SMTP would refuse as more than one bare recipient: , ; < > " ( )', () => {
+  for (const address of ['a,b@acme.com', 'a@acme.com,b@evil.com', 'a;b@acme.com', 'a@acme.com;x.io', '<a@acme.com>', 'a@acme.com>', '"a"@acme.com', 'a(c)@acme.com', 'a@acme(c).com']) {
+    assert.equal(isSendableAddress(address), false, address)
+  }
+})
+
 test('template debris is a bracket token, TODO or TBD', () => {
   assert.equal(hasTemplateDebris('Hi {greetingName}'), false)
   assert.equal(hasTemplateDebris('Hi [Name]'), true)
