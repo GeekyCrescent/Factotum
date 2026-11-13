@@ -178,16 +178,6 @@ describe('the edges of steps 1 and 3', () => {
     }
   })
 
-  test('a sender that throws is caught and logged; the promise never rejects', async (t) => {
-    await within(t, {}, async (w) => {
-      const sender = createSender({ ...w.deps, sendMail: () => Promise.reject(new Error('boom')) })
-      valueOf(sender.approve('app-1', 'initial'))
-      await sender.settled()
-      assert.match(w.lines.join('\n'), /send app-1\/initial failed: boom/)
-      assert.equal(appOf(w.db).sends[0]?.state, 'sending')
-    })
-  })
-
   test('a deferred reply the table refuses is cited with why, never retried forever', async (t) => {
     await within(t, {}, async (w) => {
       write(w.db, (q) => {

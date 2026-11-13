@@ -35,6 +35,8 @@ import { recipientOf } from './recipient.ts'
 export const MESSAGE_ID_HOST = 'jobs.factotum.local'
 /** The reason `stop()` aborts with: never classified, never written (D9 step 5). */
 export const STOPPING = 'stopping'
+/** The reason of a step 2 that threw (D9, revisión de E). */
+export const INTERNAL_ERROR = 'internal-error'
 const DAY_MS = 86_400_000
 /** Every zone is within ±14 h of UTC, so today's rows changed in the last two days. */
 const CAP_WINDOW_MS = 2 * DAY_MS
@@ -203,15 +205,31 @@ export function createSender(deps: SenderDeps): Sender {
     })
   }
 
-  async function transmit(message: Outgoing, signal: AbortSignal): Promise<SendResult> {
+  /** Logs and never throws: a broken logger must not turn a send into an unobserved rejection. */
+  function report(message: string): void {
+    try {
+      log.error(message)
+    } catch {
+      // The logger itself failed: there is nowhere left to say it, and the send's state is already decided.
+    }
+  }
+
+  /** Everything step 2 does before SMTP: the message from the store, the password, the input. */
+  async function prepare(id: string, kind: SendKind, signal: AbortSignal): Promise<Result<SendInput>> {
+    const message = db.read((q) => outgoingFor(q, id, kind))
+    if (!message.ok) return message
     const password = await deps.readPassword(deps.mail.passwordFile)
-    if (!password.ok) return refused(password.reason)
-    if (signal.aborted) return refused(STOPPING)
+    if (!password.ok) return fail('blocked', password.reason)
+    if (signal.aborted) return fail('conflict', STOPPING)
+    return ok(inputFor(message.value, password.password, signal))
+  }
+
+  function inputFor(message: Outgoing, password: string, signal: AbortSignal): SendInput {
     const { address, displayName, smtpHost } = deps.mail
-    return deps.sendMail({
+    return {
       host: smtpHost,
       user: address,
-      password: password.password,
+      password,
       from: { name: displayName, address },
       to: message.to,
       subject: message.subject,
@@ -222,7 +240,30 @@ export function createSender(deps: SenderDeps): Sender {
       ...(message.attachment === undefined ? {} : { attachment: { ...message.attachment, path: resolvePath(message.attachment.path) } }),
       timers: deps.timers,
       signal,
-    })
+    }
+  }
+
+  /**
+   * Step 2, never throwing. A throw BEFORE `sendMail` reached nothing on the wire: `before-data`
+   * `internal-error` (the row `failed`, `send-failed`). A throw FROM `sendMail` may come after DATA:
+   * `after-data` (the row `send-unknown`), never a failure that would invite a duplicate.
+   * The log carries the error's name only: its message may quote the address or the body.
+   */
+  async function transmit(id: string, kind: SendKind, signal: AbortSignal): Promise<SendResult> {
+    let input: Result<SendInput>
+    try {
+      input = await prepare(id, kind, signal)
+    } catch (error) {
+      report(`send ${id}/${kind}: ${faultOf(error)} before SMTP; the send failed (${INTERNAL_ERROR})`)
+      return refused(INTERNAL_ERROR)
+    }
+    if (!input.ok) return refused(input.error.reason)
+    try {
+      return await deps.sendMail(input.value)
+    } catch (error) {
+      report(`send ${id}/${kind}: ${faultOf(error)} from SMTP; it may have gone out (send-unknown)`)
+      return { ok: false, phase: 'after-data', reason: INTERNAL_ERROR }
+    }
   }
 
   /**
@@ -233,25 +274,24 @@ export function createSender(deps: SenderDeps): Sender {
   function applyDeferredAfter(id: string, at: Date): void {
     const applied = db.tx((q) => applyDeferred(q, id, at))
     if (applied.ok) return
-    log.error(`send ${id}/initial: the deferred replies were not applied (${applied.error.code} ${applied.error.reason}); they stay pending until the restart`)
+    report(`send ${id}/initial: the deferred replies were not applied (${applied.error.code} ${applied.error.reason}); they stay pending until the restart`)
     const recorded = db.tx((q) => {
       const companyId = repo.getApplication(q, id)?.companyId ?? null
       return ok(repo.appendEvent(q, { kind: 'deferred-replies-failed', data: { kind: 'initial', code: applied.error.code }, applicationId: id, companyId }, at))
     })
-    if (!recorded.ok) log.error(`send ${id}/initial: the deferred-replies-failed event was not written (${recorded.error.code})`)
+    if (!recorded.ok) report(`send ${id}/initial: the deferred-replies-failed event was not written (${recorded.error.code})`)
   }
 
   /** Step 3 in its own `tx`; for the initial, then the deferred replies in another. */
   function record(id: string, kind: SendKind, result: SendResult): void {
     const at = deps.now()
     const written = db.tx((q) => finish(q, id, kind, result, at))
-    if (!written.ok) return log.error(`send ${id}/${kind}: step 3 was not written (${written.error.code} ${written.error.reason}); the row stays sending until the restart`)
+    if (!written.ok) return report(`send ${id}/${kind}: step 3 was not written (${written.error.code} ${written.error.reason}); the row stays sending until the restart`)
     if (kind === 'initial') applyDeferredAfter(id, at)
   }
 
   async function deliver(id: string, kind: SendKind, signal: AbortSignal): Promise<void> {
-    const message = db.read((q) => outgoingFor(q, id, kind))
-    const result = message.ok ? await transmit(message.value, signal) : refused(message.error.reason)
+    const result = await transmit(id, kind, signal)
     if (signal.aborted) return // stop(): no step 3, the row stays `sending` (D9 step 5)
     record(id, kind, result)
   }
@@ -262,7 +302,7 @@ export function createSender(deps: SenderDeps): Sender {
     const entry = {
       controller,
       done: deliver(id, kind, controller.signal)
-        .catch((error: unknown) => log.error(`send ${id}/${kind} failed: ${error instanceof Error ? error.message : String(error)}`))
+        .catch((error: unknown) => report(`send ${id}/${kind}: ${faultOf(error)} after SMTP; the row stays sending until the restart`))
         .finally(() => inFlight.delete(entry)),
     }
     inFlight.add(entry)
@@ -297,6 +337,9 @@ export function createSender(deps: SenderDeps): Sender {
     },
   }
 }
+
+/** The name of what was thrown, never its message (which may quote the address, the body or a path). */
+const faultOf = (error: unknown): string => (error instanceof Error ? error.name : typeof error)
 
 const refused = (reason: string): SendResult => ({ ok: false, phase: 'before-data', reason })
 
