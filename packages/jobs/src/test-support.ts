@@ -120,6 +120,37 @@ export function tempBase(prefix = 'jobs-test-'): TempBase {
   return { dir, [Symbol.dispose]: () => rmSync(dir, { recursive: true, force: true }) }
 }
 
+/** 4× the input may cost at most this many times the time: linear is ~4×, quadratic ~16×. */
+const MAX_GROWTH = 8
+/** Below this, a run is timer and scheduler noise: the small run counts as at least this long. */
+const NOISE_FLOOR_MS = 20
+/** A loose ceiling for the full size under coverage and a loaded machine; quadratic code takes minutes. */
+const CEILING_MS = 5_000
+const RUNS = 3
+
+/**
+ * Asserts that `run(size)` grows linearly from `full / 4` to `full`, taking the best of three runs per
+ * size so a load spike from the parallel suite cannot fail it. The ReDoS guards use it: a wall-clock
+ * bound alone failed under coverage with the whole suite running (§M).
+ */
+export async function assertLinearTime(what: string, full: number, run: (size: number) => Promise<unknown>): Promise<void> {
+  const best = async (size: number): Promise<number> => {
+    let fastest = Number.POSITIVE_INFINITY
+    for (let i = 0; i < RUNS; i += 1) {
+      const started = performance.now()
+      await run(size)
+      fastest = Math.min(fastest, performance.now() - started)
+    }
+    return fastest
+  }
+  const quarter = await best(Math.floor(full / 4))
+  const whole = await best(full)
+  const growth = whole / Math.max(quarter, NOISE_FLOOR_MS)
+  if (growth >= MAX_GROWTH || whole >= CEILING_MS) {
+    throw new Error(`${what}: ${Math.round(quarter)} ms → ${Math.round(whole)} ms (×${growth.toFixed(1)}), not linear`)
+  }
+}
+
 export async function eventually(check: () => boolean | Promise<boolean>, what: string, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms
   while (!(await check())) {

@@ -5,7 +5,7 @@ import { BODY_CAP_BYTES, createNet, type FetchLike, type Net } from '../scout/ne
 import { openDb, type Db, type Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { application, errorOf, NOW, valueOf } from '../test-state.ts'
-import { manualClock, manualTimers, tempBase, type TempBase } from '../test-support.ts'
+import { assertLinearTime, manualClock, manualTimers, tempBase, type TempBase } from '../test-support.ts'
 import { ok, type Application, type Opportunity, type Warning } from '../types.ts'
 import { AD_STALE_MS, classifyAd, revalidateAd } from './revalidate.ts'
 
@@ -62,21 +62,19 @@ describe('classifyAd (N3, design D9 «El anuncio vivo», markers of A6)', () => 
   })
 
   test('a hostile 1 MiB SEEK page is read in linear time (the regexes run synchronously)', async () => {
-    const size = BODY_CAP_BYTES - 64
-    const fill = (unit: string, tail = ''): string => unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
-    const bodies = [
-      `SEEK_REDUX_DATA${fill(' ')}`,
-      fill('SEEK_REDUX_DATA = {'),
-      `SEEK_REDUX_DATA = ${fill('{"a":"\\"')}`,
-      fill('data-automation = '),
-      `data-automation${fill(' ', '=')}`,
-      fill('this job is no longer '),
+    const full = BODY_CAP_BYTES - 64
+    const fill = (size: number, unit: string, tail = ''): string =>
+      unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
+    const bodies: readonly ((size: number) => string)[] = [
+      (size) => `SEEK_REDUX_DATA${fill(size, ' ')}`,
+      (size) => fill(size, 'SEEK_REDUX_DATA = {'),
+      (size) => `SEEK_REDUX_DATA = ${fill(size, '{"a":"\\"')}`,
+      (size) => fill(size, 'data-automation = '),
+      (size) => `data-automation${fill(size, ' ', '=')}`,
+      (size) => fill(size, 'this job is no longer '),
     ]
     for (const body of bodies) {
-      const started = performance.now()
-      await verdictOf(SEEK, { [SEEK]: body })
-      const elapsed = performance.now() - started
-      assert.ok(elapsed < 500, `${body.slice(0, 20)}…: ${Math.round(elapsed)} ms`)
+      await assertLinearTime(body(64).slice(0, 20), full, (size) => verdictOf(SEEK, { [SEEK]: body(size) }))
     }
   })
 

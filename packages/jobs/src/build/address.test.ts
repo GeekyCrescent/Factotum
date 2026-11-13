@@ -5,16 +5,12 @@ import { BODY_CAP_BYTES, createNet, type FetchLike, type Net } from '../scout/ne
 import { openDb, type Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { ADDRESSES, application, contact, NOW, valueOf, errorOf } from '../test-state.ts'
-import { manualClock, manualTimers, tempBase, type TempBase } from '../test-support.ts'
+import { assertLinearTime, manualClock, manualTimers, tempBase, type TempBase } from '../test-support.ts'
 import { ok, type Address, type Opportunity } from '../types.ts'
 import { addressSearch, applyAddressOutcome, checkAddress, MAX_EXTRA_PAGES, searchAddress, type AddressOutcome } from './address.ts'
 
 const EMAIL = 'ada@acme.example'
 /** Generous for linear work on 1 MiB, even under coverage; the quadratic regexes took seconds. */
-/** Linear: 4× the input costs ~4× the time; the old regexes cost ~16× (quadratic). */
-const MAX_GROWTH = 8
-/** A loose ceiling for the full 1 MiB under coverage and a loaded machine; the old regexes took minutes. */
-const CEILING_MS = 5_000
 const HOME = 'https://acme.example/'
 
 type Route = string | { readonly status: number; readonly body?: string } | Error
@@ -187,20 +183,10 @@ describe('searchAddress (N2, design D9 «La re-búsqueda»)', () => {
       'an unclosed href': (size) => fill(size, '<a href="', '>'),
       'nested-looking entities': (size) => fill(size, '&#1'),
     }
-    const timed = async (body: string): Promise<{ readonly ms: number; readonly kind: string }> => {
-      const started = performance.now()
-      const outcome = await search({ [HOME]: body })
-      return { ms: performance.now() - started, kind: outcome.kind }
-    }
     for (const [name, body] of Object.entries(bodies)) {
       test(name, async () => {
-        const quarter = await timed(body(full / 4))
-        const whole = await timed(body(full))
-        // A floor of 5 ms on the small run keeps timer noise from inflating the ratio.
-        const growth = whole.ms / Math.max(quarter.ms, 5)
-        assert.ok(growth < MAX_GROWTH, `${name}: ${Math.round(quarter.ms)} ms → ${Math.round(whole.ms)} ms (×${growth.toFixed(1)})`)
-        assert.ok(whole.ms < CEILING_MS, `${name}: ${Math.round(whole.ms)} ms`)
-        assert.notEqual(whole.kind, 'found')
+        await assertLinearTime(name, full, (size) => search({ [HOME]: body(size) }))
+        assert.notEqual((await search({ [HOME]: body(full) })).kind, 'found')
       })
     }
   })
