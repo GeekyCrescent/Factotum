@@ -47,19 +47,28 @@ export function Settings({ props, anchor }: { readonly props: ViewProps; readonl
   const lock = useMemo(createLock, [])
 
   useEffect(() => {
+    // Left the page before the answer: it draws nothing.
+    let alive = true
     api
       .get<ProfileVersion>('profile')
       .then((version) => {
+        if (!alive) return
         setBase(version)
         setForm(formOf(version.profile))
       })
-      .catch((cause: unknown) => setLoadError(refusalOf(cause).text))
+      .catch((cause: unknown) => {
+        if (alive) setLoadError(refusalOf(cause).text)
+      })
+    return () => {
+      alive = false
+    }
   }, [api])
 
-  // The exit of a block lands on its field once the page has it.
+  // The exit of a block lands on its field once the page has it — once, not on every keystroke.
+  const hasForm = form !== null
   useEffect(() => {
-    if (form !== null && anchor !== null) scrollTo(anchor)
-  }, [form === null, anchor])
+    if (hasForm && anchor !== null) scrollTo(anchor)
+  }, [hasForm, anchor])
 
   /** Each change applies to the form as it is NOW (a functional update): two keystrokes in one frame both land. */
   const edit = useCallback((change: Change): void => {

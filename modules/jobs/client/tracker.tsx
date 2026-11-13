@@ -9,7 +9,7 @@
  * through this screen's one lock, as in the review.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchAnswer, Overview, ViewProps } from './contract.ts'
 import { createLock, runOrSay } from './guard.ts'
 import { refusalOf } from './model.ts'
@@ -26,14 +26,24 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
   const sends = useSends(api, lock)
   const { seed } = sends
 
+  /** Unmounted: a read that answers later draws nothing. */
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
   const load = useCallback(async () => {
     try {
       const read = await api.get<Overview>('overview')
+      if (!alive.current) return
       setOverview(read)
       seed(read.sends)
       setError(null)
     } catch (cause) {
-      setError(refusalOf(cause).text)
+      if (alive.current) setError(refusalOf(cause).text)
     }
   }, [api, seed])
   useEffect(() => void load(), [load])
@@ -82,8 +92,8 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
           </div>
         )}
         {overview?.missingPhone === true ? (
-          <div class="notice err" role="alert">
-            <p>Your profile has no phone: nothing becomes ready to send, and the package is not imported.</p>
+          <div class="notice err">
+            <p role="alert">Your profile has no phone: nothing becomes ready to send, and the package is not imported.</p>
             <div class="acts">
               <button type="button" class="btn sm" onClick={() => navigate('settings#phone')}>
                 Add your phone

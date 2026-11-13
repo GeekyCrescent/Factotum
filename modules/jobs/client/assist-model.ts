@@ -78,3 +78,22 @@ export function assistOf(item: ReviewItem): AssistView | null {
 export function closesOpenPanel<T extends object>(open: T | undefined, closing: T): boolean {
   return open === closing
 }
+
+export type CopyState = 'idle' | 'copied' | 'failed'
+
+export interface CopyButton {
+  readonly text: string
+  /** Its accessible name: every Copy on the panel says what it copies. */
+  readonly label: string
+  /** For the live region: what happened, once. */
+  readonly announce: string
+  /** Goes back to «Copy» after a moment — a failure too, so the owner can try again. */
+  readonly resets: boolean
+}
+
+const COPY_TEXT: Readonly<Record<CopyState, string>> = { idle: 'Copy', copied: 'Copied', failed: 'Could not copy' }
+
+export function copyButton(state: CopyState, label: string): CopyButton {
+  const announce = state === 'copied' ? `${label} copied` : state === 'failed' ? `Could not copy ${label}` : ''
+  return { text: COPY_TEXT[state], label: `Copy: ${label}`, announce, resets: state !== 'idle' }
+}

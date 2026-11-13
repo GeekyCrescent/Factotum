@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ReviewItem } from './contract.ts'
-import { assistOf, closesOpenPanel } from './assist-model.ts'
+import { assistOf, closesOpenPanel, copyButton } from './assist-model.ts'
 import { appItem, followup } from './test-fixtures.ts'
 
 const FORM_ANSWER = { question: 'Work rights?', answer: 'Student visa, 48 h per fortnight', ok: true, hint: 'choose the temporary-visa option' }
@@ -99,4 +99,10 @@ test('a panel closes once: a late close (after «Later», or a «Mark as sent» 
   assert.equal(closesOpenPanel(panel, panel), true)
   assert.equal(closesOpenPanel(undefined, panel), false, 'already closed')
   assert.equal(closesOpenPanel({ from: 5 }, panel), false, 'another panel is open now')
+})
+
+test('each Copy button is named by what it copies, and what happened is announced, then reset', () => {
+  assert.deepEqual(copyButton('idle', 'Letter'), { text: 'Copy', label: 'Copy: Letter', announce: '', resets: false })
+  assert.deepEqual(copyButton('copied', 'Letter'), { text: 'Copied', label: 'Copy: Letter', announce: 'Letter copied', resets: true })
+  assert.deepEqual(copyButton('failed', 'Letter'), { text: 'Could not copy', label: 'Copy: Letter', announce: 'Could not copy Letter', resets: true })
 })

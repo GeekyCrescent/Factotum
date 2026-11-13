@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks'
-import type { AssistCopy, AssistView } from './assist-model.ts'
+import { copyButton, type AssistCopy, type AssistView, type CopyState } from './assist-model.ts'
 import type { Api } from './contract.ts'
 import { Icon, Sheet } from './sheet.tsx'
 
@@ -82,12 +82,13 @@ export function AssistPanel({ api, view, busy, onMark, onClose }: AssistPanelPro
 }
 
 function CopyRow({ copy }: { readonly copy: AssistCopy }) {
-  const [done, setDone] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [done, setDone] = useState<CopyState>('idle')
+  const button = copyButton(done, copy.label)
   useEffect(() => {
-    if (done !== 'copied') return
+    if (!button.resets) return
     const timer = setTimeout(() => setDone('idle'), COPIED_MS)
     return () => clearTimeout(timer)
-  }, [done])
+  }, [button.resets, done])
   const onCopy = async () => {
     try {
       if (navigator.clipboard === undefined) copyByHand(copy.text)
@@ -101,10 +102,13 @@ function CopyRow({ copy }: { readonly copy: AssistCopy }) {
     <li class="j-copy">
       <div class="j-copy-head">
         <p class="j-question">{copy.label}</p>
-        <button type="button" class="btn sm" onClick={() => void onCopy()}>
+        <button type="button" class="btn sm" aria-label={button.label} onClick={() => void onCopy()}>
           <Icon name="copy" size={14} />
-          {done === 'copied' ? 'Copied' : done === 'failed' ? 'Could not copy' : 'Copy'}
+          {button.text}
         </button>
+        <span class="sr-only" role="status">
+          {button.announce}
+        </span>
       </div>
       <p class="j-text">{copy.text}</p>
       {copy.hint === null ? null : <p class="j-quiet">Note: {copy.hint}</p>}

@@ -229,6 +229,7 @@ function Blocks({ subject, onExit, busy }: { readonly subject: Reviewable; reado
                     type="button"
                     class="btn sm"
                     disabled={busy || (exit.kind === 'switch-to-form' && !exit.enabled)}
+                    aria-label={`${exit.label}: ${warning.code}`}
                     onClick={() => onExit(exit)}
                   >
                     {exit.label}

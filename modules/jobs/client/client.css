@@ -528,6 +528,11 @@
   color: var(--text-2);
 }
 
+.j-field-label {
+  display: grid;
+  gap: var(--space-1);
+}
+
 .j-input {
   min-height: var(--hit);
   padding: var(--space-1h) var(--space-2);

@@ -344,8 +344,8 @@ function Shell({ busy, missingPhone, batch, index, notices, onDismiss, sends, ch
         <SendLines sends={sends} busy={busy} />
       </header>
       {missingPhone === undefined ? null : (
-        <div class="notice err j-notice" role="alert">
-          <p>Your profile has no phone: nothing becomes ready to send, and the package is not imported.</p>
+        <div class="notice err j-notice">
+          <p role="alert">Your profile has no phone: nothing becomes ready to send, and the package is not imported.</p>
           <div class="acts">
             <button type="button" class="btn sm" onClick={missingPhone.onFix}>
               Add your phone
@@ -354,8 +354,8 @@ function Shell({ busy, missingPhone, batch, index, notices, onDismiss, sends, ch
         </div>
       )}
       {notices.map((notice) => (
-        <div key={notice.text} class={`notice ${notice.tone} j-notice`} role={notice.tone === 'err' ? 'alert' : 'status'}>
-          <p>{notice.text}</p>
+        <div key={notice.text} class={`notice ${notice.tone} j-notice`}>
+          <p role={notice.tone === 'err' ? 'alert' : 'status'}>{notice.text}</p>
           <button type="button" class="btn sm quiet" onClick={onDismiss}>
             Dismiss
           </button>

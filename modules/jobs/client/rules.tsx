@@ -5,7 +5,7 @@
  * What is posted is `rules-model.ts`'s.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Api, Rule, RuleEdit, RuleScope, RulesAnswer, SavedRule } from './contract.ts'
 import { createLock, runOrSay } from './guard.ts'
 import { refusalOf } from './model.ts'
@@ -18,11 +18,21 @@ export function Rules({ api }: { readonly api: Api }) {
   const [editing, setEditing] = useState<string | null>(null)
   const lock = useMemo(createLock, [])
 
+  /** Unmounted: a read that answers later draws nothing. */
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
   const load = useCallback(async () => {
     try {
-      setRules((await api.get<RulesAnswer>('rules')).rules)
+      const read = await api.get<RulesAnswer>('rules')
+      if (alive.current) setRules(read.rules)
     } catch (cause) {
-      setError(refusalOf(cause).text)
+      if (alive.current) setError(refusalOf(cause).text)
     }
   }, [api])
   useEffect(() => void load(), [load])

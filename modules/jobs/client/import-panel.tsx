@@ -54,8 +54,8 @@ export function ImportPanel({ api }: { readonly api: Api }) {
         </p>
       )}
       {view === null || report === null ? null : (
-        <div class="j-report" role="status">
-          <h3 class="j-doc-title">{report.dryRun ? 'Dry run: nothing written' : 'Imported'}</h3>
+        <div class="j-report">
+          <h3 class="j-doc-title" role="status">{report.dryRun ? 'Dry run: nothing written' : 'Imported'}</h3>
           {view.blocked === null ? null : (
             <p class="j-error">
               {view.blocked} <ToPhone />
