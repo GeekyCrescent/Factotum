@@ -26,6 +26,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { Logger, Timers } from '@factotum/core'
+import type { z } from 'zod'
 
 import { buildCvPrompt, type CvPromptInput } from '../ai/prompts/cv.ts'
 import { writeSystemFile } from '../ai/prompts/fixed.ts'
@@ -71,14 +72,10 @@ export interface ClaudeSettings {
   readonly bin?: string | undefined
 }
 
-export interface CvBuilderDeps extends PrintDeps {
+export interface CvBuilderDeps extends PrintDeps, FixedRunDeps {
   readonly db: Db
-  readonly now: () => Date
-  readonly timers: Timers
-  readonly log: Logger
   /** Read at the start of every run: a changed master CV is the next run's (and a new system file). */
   readonly sources: () => Result<CvSources>
-  readonly claude: ClaudeSettings
   readonly verify: VerifyFn
 }
 
@@ -125,9 +122,22 @@ export function promptInput(job: CvJob, sources: CvSources, previous?: CvPromptI
   }
 }
 
-/** Steps 1–3: one run of Claude for this input, a `CvDoc` that passed the schema. */
-export async function writeCvDoc(deps: CvBuilderDeps, input: CvPromptInput, ctx: JobContext): Promise<RunResult<CvDoc>> {
-  const prompt = buildCvPrompt(input)
+/** What a run with the fixed part needs: where to write it and run, and how to call Claude. */
+export interface FixedRunDeps {
+  readonly stateDir: string
+  readonly now: () => Date
+  readonly timers: Timers
+  readonly log: Logger
+  readonly claude: ClaudeSettings
+}
+
+/** One `claude -p` with `prompt.system` as the system file and `prompt.stdin` by stdin, in `<stateDir>/run`. */
+export async function runFixed<T>(
+  deps: FixedRunDeps,
+  prompt: { readonly system: string; readonly stdin: string },
+  schema: { readonly json: string; readonly output: z.ZodType<T> },
+  ctx: JobContext,
+): Promise<RunResult<T>> {
   const systemFile = writeSystemFile(deps.stateDir, prompt.system)
   if (!systemFile.ok) return failed(systemFile.error.reason)
   const cwd = join(deps.stateDir, 'run')
@@ -139,8 +149,8 @@ export async function writeCvDoc(deps: CvBuilderDeps, input: CvPromptInput, ctx:
   return runClaude({
     prompt: prompt.stdin,
     systemFile: systemFile.value,
-    jsonSchema: CV_DOC_JSON_SCHEMA,
-    output: CV_DOC_OUTPUT,
+    jsonSchema: schema.json,
+    output: schema.output,
     model: deps.claude.model,
     effort: deps.claude.effort,
     cwd,
@@ -151,6 +161,11 @@ export async function writeCvDoc(deps: CvBuilderDeps, input: CvPromptInput, ctx:
     log: deps.log,
     ...(deps.claude.bin === undefined ? {} : { bin: deps.claude.bin }),
   })
+}
+
+/** Steps 1–3: one run of Claude for this input, a `CvDoc` that passed the schema. */
+export function writeCvDoc(deps: CvBuilderDeps, input: CvPromptInput, ctx: JobContext): Promise<RunResult<CvDoc>> {
+  return runFixed(deps, buildCvPrompt(input), { json: CV_DOC_JSON_SCHEMA, output: CV_DOC_OUTPUT }, ctx)
 }
 
 /** Two runs' usage as one: the counters and the cost added, the first run's model. */

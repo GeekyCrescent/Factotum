@@ -60,3 +60,23 @@ export const cvDocSchema = z.object({
 export const CV_DOC_OUTPUT: z.ZodType<CvDoc> = cvDocSchema
 
 export const CV_DOC_JSON_SCHEMA = JSON.stringify(z.toJSONSchema(cvDocSchema, { target: 'draft-7', io: 'input' }))
+
+// ── The verifier (design D6, tasks L3) ─────────────────────────────────────────────────────────────
+
+/** design D6: at most 10 unsupported claims, each claim and why ≤ 200. */
+export const MAX_UNSUPPORTED = 10
+export const MAX_CLAIM_CHARS = 200
+
+const claimText = z.string().trim().min(1).max(MAX_CLAIM_CHARS)
+
+/**
+ * What a check comes back as. `where` is ours, on top of D6's `{ claim, why }`: one run checks the CV
+ * and the letter together, and the warning has to say which text the claim is in.
+ */
+export const verifySchema = z.object({
+  unsupported: z.array(z.object({ where: z.enum(['cv', 'letter']), claim: claimText, why: claimText })).max(MAX_UNSUPPORTED),
+})
+
+export type VerifyOutput = z.infer<typeof verifySchema>
+
+export const VERIFY_JSON_SCHEMA = JSON.stringify(z.toJSONSchema(verifySchema, { target: 'draft-7', io: 'input' }))
