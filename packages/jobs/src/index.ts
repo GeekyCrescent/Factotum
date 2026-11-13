@@ -31,6 +31,8 @@ export type {
   JobStatus,
   Overview,
   PathState,
+  PrintedCvs,
+  ProfileAnswer,
   ReplyCard,
   RetryJob,
   ReviewItem,

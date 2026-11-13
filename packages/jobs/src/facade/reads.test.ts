@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { insertApp, queueStore } from '../ai/test-queue.ts'
+import { contactHashOf } from '../build/render.ts'
 import { ARTIFACTS, PROFILE } from '../build/test-cv.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -213,6 +214,26 @@ test('review 1a: an undecided item whose application left its batch state is not
   assert.equal(overview.batchOpen, true)
   assert.equal(overview.batchUndecided, 0)
   assert.equal(overview.reviewable, 1)
+})
+
+test('review 1a: the printed CVs not sent — those a contact change would mark, and those already out of date', async () => {
+  // Arrange: two printed with today's contact, one with another, one approved, one sent, one not printed.
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  const current = { ...ARTIFACTS, contactHash: contactHashOf(PROFILE) }
+  insertApp(db, { id: 'a-ready', state: 'ready' }, current)
+  insertApp(db, { id: 'a-review', state: 'in-review' }, current)
+  insertApp(db, { id: 'a-stale', state: 'in-review' }, { ...ARTIFACTS, contactHash: 'printed-with-another-phone' })
+  insertApp(db, { id: 'a-approved', state: 'approved' }, current)
+  insertApp(db, { id: 'a-sent', state: 'sent', sends: [send({ messageId: '<a-sent@jobs.factotum.local>', state: 'sent' })] }, current)
+  insertApp(db, { id: 'a-unprinted', state: 'in-review' }, { ...ARTIFACTS, pdf: null, contactHash: null })
+
+  // Act
+  const printed = readsOf(db).printedCvs()
+
+  // Assert
+  assert.deepEqual(printed, { current: 2, stale: 1 })
 })
 
 test('R6 batch answer: says the profile has no phone, so the review warns on top (crit. 15)', async () => {

@@ -7,6 +7,9 @@
  * A BLOCK'S EXIT LANDS HERE: `settings#portfolio` scrolls to that field once the profile is read.
  * What the form means is `settings-model.ts`'s; the engine is the judge, and its `400 { field }` is
  * shown beside the field it names.
+ *
+ * THE CONTACT PRINTED ON THE CV warns above its fields while printed CVs wait to be sent: changing it
+ * marks them out of date, and in this cut nothing reprints them (review 1a; `contactNotices`).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'
@@ -16,7 +19,7 @@ import { createLock, runOrSay } from './guard.ts'
 import { ImportPanel } from './import-panel.tsx'
 import { refusalOf } from './model.ts'
 import { Rules } from './rules.tsx'
-import { afterSave, anchorOfField, fieldOf, formOf, profileOf, savedLine, type GoalForm, type ProfileForm } from './settings-model.ts'
+import { afterSave, anchorOfField, contactNotices, fieldOf, formOf, isOnCv, profileOf, savedLine, type GoalForm, type ProfileForm } from './settings-model.ts'
 
 /** A change to the form: the fields, or how to make them from the form as it is now. */
 type Change = Partial<ProfileForm> | ((now: ProfileForm) => Partial<ProfileForm>)
@@ -120,7 +123,7 @@ export function Settings({ props, anchor }: { readonly props: ViewProps; readonl
         {form === null || base === null ? (
           loadError === null ? <p class="j-loading">Loading…</p> : null
         ) : (
-          <ProfileSections form={form} edit={edit} errorAt={errorAt} />
+          <ProfileSections form={form} edit={edit} errorAt={errorAt} notices={contactNotices(base.printedCvs)} />
         )}
         {form === null ? null : (
           <div class="j-save-bar">
@@ -145,19 +148,24 @@ interface SectionsProps {
   readonly errorAt: (id: string) => string | null
 }
 
-function ProfileSections({ form, edit, errorAt }: SectionsProps) {
+function ProfileSections({ form, edit, errorAt, notices }: SectionsProps & { readonly notices: readonly string[] }) {
   const text = (key: 'situation' | 'availability' | 'level' | 'redLinesText' | 'preferencesText') => (value: string) => edit({ [key]: value })
   return (
     <>
       <section class="j-section" id="identity">
         <h2>Identity</h2>
+        {notices.map((line) => (
+          <div key={line} class="notice ask">
+            <p>{line}</p>
+          </div>
+        ))}
         {IDENTITY.map((field) => (
           <LineField
             key={field.key}
             id={field.id}
             label={field.label}
             value={form.identity[field.key]}
-            hint={field.hint}
+            hint={notices.length > 0 && isOnCv(field.key) ? [field.hint, 'Printed on your CVs.'].filter((part) => part !== undefined).join(' ') : field.hint}
             error={errorAt(field.id)}
             onInput={(value) => edit((now) => ({ identity: { ...now.identity, [field.key]: value } }))}
           />

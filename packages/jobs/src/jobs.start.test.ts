@@ -174,6 +174,18 @@ test('review 1a: a wrong guide path is named in health and in the import\'s dry 
   }
 })
 
+test('review 1a: GET /profile and its save carry the printed CVs a contact change would mark', async () => {
+  using base = tempBase()
+  const jobs = await started(depsOf(rigIn(base.dir)))
+  try {
+    const read = jobs.profile()
+    assert.deepEqual(read.printedCvs, { current: 0, stale: 0 })
+    assert.deepEqual(valueOf(jobs.saveProfile(read.profile)).printedCvs, { current: 0, stale: 0 })
+  } finally {
+    await jobs.stop()
+  }
+})
+
 test('C1 start: fits in 10 s with a store of 100 companies and 80 applications', async () => {
   using base = tempBase()
   const rig = rigIn(base.dir)

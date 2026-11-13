@@ -241,9 +241,12 @@ function facade(parts: Parts): Jobs {
     profile: () => {
       const current = db.read((q) => repo.latestProfileVersion(q))
       if (current === undefined) throw new Error('jobs: the profile is gone')
-      return current
+      return { ...current, printedCvs: reads.printedCvs() }
     },
-    saveProfile: (input) => saveProfileRelinting(db, input, relintDeps),
+    saveProfile: (input) => {
+      const saved = saveProfileRelinting(db, input, relintDeps)
+      return saved.ok ? ok({ ...saved.value, printedCvs: reads.printedCvs() }) : saved
+    },
     rules: () => db.read((q) => repo.listRules(q)),
     saveRule: (input, id) => saveRuleRelinting(db, input, relintDeps, id),
     startBatch: () => {

@@ -418,11 +418,22 @@ export interface Profile {
   readonly followup: { readonly subject: string; readonly first: string; readonly second: string; readonly linkedin: string }
 }
 
-/** `GET /profile` answers the current version. */
+/**
+ * The printed CVs of applications not sent (`in-review`, `ready`), by the contact they carry (D6
+ * `cv-stale`): `current` go out of date if a contact field printed on the CV changes — nothing reprints
+ * them until H5c —; `stale` are out of date already, and saving their contact back undoes it.
+ */
+export interface PrintedCvs {
+  readonly current: number
+  readonly stale: number
+}
+
+/** `GET /profile` answers the current version, with its printed CVs (absent from an older engine). */
 export interface ProfileVersion {
   readonly version: number
   readonly createdAt: string
   readonly profile: Profile
+  readonly printedCvs?: PrintedCvs
 }
 
 /**

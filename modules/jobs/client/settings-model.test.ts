@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Profile } from './contract.ts'
-import { afterSave, anchorOfField, fieldOf, formOf, profileOf, savedLine, type ProfileForm } from './settings-model.ts'
+import { afterSave, anchorOfField, contactNotices, fieldOf, formOf, isOnCv, profileOf, savedLine, type ProfileForm } from './settings-model.ts'
 
 const PROFILE: Profile = {
   identity: {
@@ -115,4 +115,27 @@ test('a save that comes back takes the saved profile, unless the owner typed mea
   const typed: ProfileForm = { ...posted, situation: 'typed during the save' }
   assert.equal(afterSave(typed, posted, saved), typed)
   assert.equal(afterSave(null, posted, saved).situation, 'saved by the engine')
+})
+
+test('review 1a: with printed CVs not sent, the contact fields warn that a change marks them out of date — and how to undo it', () => {
+  // Act
+  const one = contactNotices({ current: 1, stale: 0 })
+  const many = contactNotices({ current: 12, stale: 3 })
+
+  // Assert
+  assert.deepEqual(one, ['Changing your name, email, phone, LinkedIn, city or CV availability line marks 1 printed CV as out of date; it can\u2019t be reprinted until the next update. Change it back to undo.'])
+  assert.deepEqual(many, [
+    'Changing your name, email, phone, LinkedIn, city or CV availability line marks 12 printed CVs as out of date; they can\u2019t be reprinted until the next update. Change it back to undo.',
+    '3 printed CVs are out of date: they carry another contact than the one saved. Saving the contact they were printed with undoes it.',
+  ])
+})
+
+test('review 1a: nothing printed, or a profile answer from before the count, says nothing', () => {
+  assert.deepEqual(contactNotices({ current: 0, stale: 0 }), [])
+  assert.deepEqual(contactNotices(undefined), [])
+})
+
+test('review 1a: the fields printed on the CV are the ones the CV hash covers', () => {
+  const printed = (['name', 'email', 'phone', 'linkedin', 'city', 'suburb', 'timezone', 'portfolioUrl', 'cvAvailabilityLine'] as const).filter(isOnCv)
+  assert.deepEqual(printed, ['name', 'email', 'phone', 'linkedin', 'city', 'cvAvailabilityLine'])
 })

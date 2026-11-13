@@ -112,6 +112,20 @@ export interface Health {
 }
 
 /**
+ * The printed CVs of applications not sent that a profile save re-lints (`in-review`, `ready`), by the
+ * contact they carry (D6 `cv-stale`; review 1a): `current` ones go out of date if a CV contact field
+ * changes — and until H5c nothing reprints them —; `stale` ones are out of date already, and changing
+ * the field back undoes it (the next save's re-lint compares the hash again).
+ */
+export interface PrintedCvs {
+  readonly current: number
+  readonly stale: number
+}
+
+/** `GET /profile`: the current version and its printed CVs (settings warns next to the contact fields). */
+export type ProfileAnswer = ProfileVersion & { readonly printedCvs: PrintedCvs }
+
+/**
  * A send that needs the owner: «did it go?», failed, or `sending` for more than 2 minutes (its step 3
  * never written: «not confirmed — check Sent before sending again», review 1a). One card per send.
  */
@@ -331,12 +345,12 @@ export interface Jobs {
   readonly overview: () => Overview
   readonly application: (id: string) => Result<ApplicationDetail>
   readonly importSeed: (input: { readonly dryRun: boolean }) => Promise<Result<ImportReport>>
-  readonly profile: () => ProfileVersion
+  readonly profile: () => ProfileAnswer
   /**
    * D6 «Re-lint» in the same `tx`; `relinted`: how many changed; `skipped`: how many could not be
    * linted (the master CV unreadable, the vault offline) and kept their warnings — never a failed save.
    */
-  readonly saveProfile: (input: unknown) => Result<ProfileVersion & { readonly relinted: number; readonly skipped: number }>
+  readonly saveProfile: (input: unknown) => Result<ProfileAnswer & { readonly relinted: number; readonly skipped: number }>
   readonly rules: () => readonly Rule[]
   /** A new rule, or an edit of `id`; re-lints as `saveProfile`. */
   readonly saveRule: (input: unknown, id?: string) => Result<Rule & { readonly relinted: number; readonly skipped: number }>

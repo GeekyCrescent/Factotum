@@ -5,6 +5,7 @@
 
 import type { Queue } from '../ai/queue.ts'
 import { BACKUP_FAILING, WAVE2_FAILING } from '../clock.ts'
+import { contactHashOf } from '../build/render.ts'
 import type { MailHealth } from '../mail-health.ts'
 import type { ReviewItemRef } from '../review/batch.ts'
 import { isLive, newBatchCount } from '../review/open.ts'
@@ -15,7 +16,7 @@ import type { Queries } from '../store/db.ts'
 import { APP_STATES, fail, ok, type Application, type Profile, type Result, type Send } from '../types.ts'
 import { ADS_FAILING } from './ads.ts'
 import { confinedArtifact, pathWarnings } from './sources.ts'
-import type { BatchAnswer, Health, Overview, SendNeed } from './types.ts'
+import type { BatchAnswer, Health, Overview, PrintedCvs, SendNeed } from './types.ts'
 import { batchView, readyOutside } from './views.ts'
 
 /** A `sending` row older than this has lost its step 3 (an SMTP exchange takes seconds): the owner checks Sent. */
@@ -42,6 +43,7 @@ export interface Reads {
   readonly overview: () => Overview
   readonly answer: (batch: SeenBatch | null) => BatchAnswer
   readonly file: (id: string, version: number, kind: 'pdf' | 'png') => Result<string>
+  readonly printedCvs: () => PrintedCvs
 }
 
 export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone }: ReadsDeps): Reads {
@@ -106,7 +108,28 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
     return real === null ? fail('not-found', `no ${kind} for this version`) : ok(real)
   }
 
-  return { health, overview, answer, file }
+  function printedCvs(): PrintedCvs {
+    return db.read((q) => {
+      const profile = repo.latestProfileVersion(q)?.profile
+      return profile === undefined ? { current: 0, stale: 0 } : printedCvsOf(q, profile)
+    })
+  }
+
+  return { health, overview, answer, file, printedCvs }
+}
+
+/** The states a profile save re-lints (`relint.ts`): where a printed CV can go `cv-stale`. */
+const RELINTED: readonly Application['state'][] = ['in-review', 'ready']
+
+/** Their printed CVs, by whether today's contact is the one printed (D6 `cv-stale`, review 1a). */
+function printedCvsOf(q: Queries, profile: Profile): PrintedCvs {
+  const hash = contactHashOf(profile)
+  const printed = repo
+    .applicationsByState(q, [...RELINTED])
+    .map((app) => repo.getArtifacts(q, app.id, app.version))
+    .filter((artifacts) => artifacts?.pdf !== null && artifacts?.pdf !== undefined)
+  const current = printed.filter((artifacts) => artifacts?.contactHash === hash).length
+  return { current, stale: printed.length - current }
 }
 
 /**

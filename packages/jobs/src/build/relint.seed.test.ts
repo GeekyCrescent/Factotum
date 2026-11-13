@@ -149,6 +149,25 @@ test('L4 (2): a contact change asks for a reprint — another phone, every ready
   assert.equal(w.runs(), runsBefore, 'no Claude run')
 })
 
+test('review 1a: changing the phone back clears cv-stale on the next save — the re-lint recomputes the hash; they are ready again', async () => {
+  // Arrange
+  using base = tempBase()
+  const w = await world(base, seedProfile(), immediate)
+  w.queue.pump()
+  await w.queue.settled()
+  const ready = byState(w.db, 'ready').map((a) => a.id).sort()
+  assert.ok(ready.length >= 3)
+  valueOf(w.save(seedProfile({ phone: '+61 400 111 222' })))
+  assert.equal(byState(w.db, 'ready').length, 0, 'stale')
+
+  // Act
+  valueOf(w.save(seedProfile()))
+
+  // Assert
+  assert.deepEqual(byState(w.db, 'ready').map((a) => a.id).sort(), ready)
+  for (const app of [...byState(w.db, 'ready'), ...byState(w.db, 'in-review')]) assert.ok(!app.warnings.some((x) => x.code === 'cv-stale'), `${app.id} is not stale`)
+})
+
 test('L4 (3): the phone deleted from the profile takes the ready ones to in-review with missing-phone', async () => {
   using base = tempBase()
   const w = await world(base, seedProfile(), immediate)

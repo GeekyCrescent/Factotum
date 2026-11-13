@@ -11,7 +11,7 @@
  * What the form does not show (a goal's id) is taken from the version it was read from.
  */
 
-import type { Profile } from './contract.ts'
+import type { PrintedCvs, Profile } from './contract.ts'
 
 type Identity = Profile['identity']
 type Goal = Profile['goals'][number]
@@ -193,4 +193,31 @@ export function anchorOfField(field: string): string {
   const [head, next] = field.split('.')
   const anchor = head === 'identity' ? next : head
   return anchor !== undefined && /^[A-Za-z]{1,40}$/.test(anchor) ? anchor : 'identity'
+}
+
+// ── The contact printed on the CV (D6 `cv-stale`; review 1a) ──────────────────────────────────────
+
+/** The identity fields printed on the CV: what the engine's `contactHashOf` covers. */
+const ON_CV: ReadonlySet<keyof Identity> = new Set<keyof Identity>(['name', 'email', 'phone', 'linkedin', 'city', 'cvAvailabilityLine'])
+
+export const isOnCv = (key: keyof Identity): boolean => ON_CV.has(key)
+
+/**
+ * What the contact fields warn while printed CVs wait to be sent: a change to one marks them out of
+ * date, and until H5c nothing reprints them. Changing it back undoes it (the next save re-lints them
+ * against the hash again). None when nothing is printed, or the engine did not count.
+ */
+export function contactNotices(printed: PrintedCvs | undefined): readonly string[] {
+  if (printed === undefined) return []
+  const current =
+    printed.current === 0
+      ? []
+      : [
+          `Changing your name, email, phone, LinkedIn, city or CV availability line marks ${plural(printed.current, 'printed CV')} as out of date; ${printed.current === 1 ? 'it' : 'they'} can\u2019t be reprinted until the next update. Change it back to undo.`,
+        ]
+  const stale =
+    printed.stale === 0
+      ? []
+      : [`${plural(printed.stale, 'printed CV')} ${printed.stale === 1 ? 'is' : 'are'} out of date: ${printed.stale === 1 ? 'it carries' : 'they carry'} another contact than the one saved. Saving the contact ${printed.stale === 1 ? 'it was' : 'they were'} printed with undoes it.`]
+  return [...current, ...stale]
 }
