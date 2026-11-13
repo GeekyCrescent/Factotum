@@ -11,7 +11,7 @@
  * went is exactly what is unknown.
  */
 
-import type { SendState, SendView } from './contract.ts'
+import type { SendKind, SendState, SendView, UnknownAnswer } from './contract.ts'
 import { sendLine, type SendKey, type SendLine } from './model.ts'
 
 /** The bar shows this many lines when it can drop ok ones. */
@@ -26,6 +26,8 @@ export interface TrackedSend {
   readonly failures: number
   /** Gave up reading: «status unknown — check the tracker», with «Retry polling». */
   readonly lost: boolean
+  /** The last state read; null when none is known (lost). What the card offers comes from it. */
+  readonly state: SendState | null
 }
 
 export const sendIdOf = (key: SendKey): string => `${key.applicationId}/${key.kind}`
@@ -45,6 +47,7 @@ const sending = (key: SendKey, state: SendState = 'sending'): TrackedSend => ({
   line: sendLine({ kind: key.kind, state, at: '', reason: null }, key.company),
   failures: 0,
   lost: false,
+  state,
 })
 
 const evictable = (send: TrackedSend): boolean => send.line.final && send.line.tone === 'ok'
@@ -80,8 +83,8 @@ export function tracked(sends: readonly TrackedSend[], key: SendKey, state: Send
 export function polled(sends: readonly TrackedSend[], key: SendKey, view: SendView): readonly TrackedSend[] {
   return replaced(sends, key, (send) => {
     const line = sendLine(view, send.key.company)
-    if (sameLine(line, send.line) && send.failures === 0 && !send.lost) return send
-    return { key: send.key, line, failures: 0, lost: false }
+    if (sameLine(line, send.line) && send.failures === 0 && !send.lost && send.state === view.state) return send
+    return { key: send.key, line, failures: 0, lost: false, state: view.state }
   })
 }
 
@@ -91,7 +94,7 @@ export function pollFailed(sends: readonly TrackedSend[], key: SendKey): readonl
     const failures = send.failures + 1
     if (failures < MAX_POLL_FAILURES) return { ...send, failures }
     const line: SendLine = { text: `${send.key.company}: status unknown — check the tracker`, tone: 'ask', final: true, retry: false }
-    return { key: send.key, line, failures, lost: true }
+    return { key: send.key, line, failures, lost: true, state: null }
   })
 }
 
@@ -107,7 +110,38 @@ export function retryRefused(sends: readonly TrackedSend[], key: SendKey, reason
     line: { text: `${send.key.company}: ${reason}`, tone: 'err', final: true, retry: true },
     failures: 0,
     lost: false,
+    state: 'failed',
   }))
+}
+
+/** An answer to «did it go?» (or «Mark as sent») was refused: why, in red, and the same choices. */
+export function answerRefused(sends: readonly TrackedSend[], key: SendKey, reason: string): readonly TrackedSend[] {
+  return replaced(sends, key, (send) => ({ ...send, line: { ...send.line, text: `${send.key.company}: ${reason}`, tone: 'err', final: true } }))
+}
+
+// ── What a send's card offers (D9; v6 M2) ────────────────────────────────────────────────────────
+
+export type SendAction = UnknownAnswer | 'retry'
+
+const KIND_LABELS: Readonly<Record<SendKind, string>> = { 'initial': 'Initial email', 'followup-1': 'Follow-up 1', 'followup-2': 'Follow-up 2' }
+
+/** «Initial email», «Follow-up 1»: which send a card is about. */
+export const kindLabel = (kind: SendKind): string => KIND_LABELS[kind]
+
+/**
+ * A failed send: «Retry». One whose fate is unknown: «It went», «Send again», and on the initial «It
+ * didn't go» (a follow-up's is the tracker's, only once the application has a reply, v5 X9). A line
+ * that lost its reads offers none: whether it went is exactly what is unknown.
+ */
+export function actionsOf(send: TrackedSend): readonly { readonly action: SendAction; readonly label: string }[] {
+  if (send.lost) return []
+  if (send.state === 'failed') return [{ action: 'retry', label: 'Retry' }]
+  if (send.state !== 'send-unknown') return []
+  const both = [
+    { action: 'went', label: 'It went' },
+    { action: 'again', label: 'Send again' },
+  ] as const
+  return send.key.kind === 'initial' ? [...both, { action: 'not-went', label: 'It didn’t go' }] : both
 }
 
 /** «Dismiss»: the owner has read it. */

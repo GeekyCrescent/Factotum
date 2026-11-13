@@ -180,6 +180,14 @@ export interface ApplicationCard {
   readonly warnings: readonly Warning[]
   readonly jobs: { readonly cv: JobStatus; readonly letter: JobStatus; readonly reprint: JobStatus }
   readonly sends: readonly SendView[]
+  // ── Added for the assist panel (R5b; D8 paso 4, D9 «El panel de asistencia»). Optional, so an
+  // older server still type-checks; absent reads as null.
+  /** Where a `form` or `platform` application is submitted (`target.url`); null for email and LinkedIn. */
+  readonly targetUrl?: string | null
+  /** `target.instruction` of a LinkedIn application: «LinkedIn message to Tom Crawford (first)». */
+  readonly instruction?: string | null
+  /** The package's «Skills to tick / Do not tick» (D8 paso 4); null when the entry has none. */
+  readonly skills?: { readonly tick: readonly string[]; readonly doNotTick: readonly string[] } | null
 }
 
 export interface FollowupCard {
@@ -286,3 +294,23 @@ export interface DecideAnswer {
   readonly ok: true
   readonly state?: string
 }
+
+// ── One send, by the owner (R5b; D9, D13 `POST /a/:id/sends/:kind/…`) ────────────────────────────
+
+/**
+ * `POST /a/:id/sends/:kind/unknown { answer }`: «It went» (`went`), «Send again» (`again`), «It didn't
+ * go» (`not-went`: the initial, v6 M2, T-A31). Answers the `SendView` of that row after it: `sent`,
+ * `sending` (again: the client polls it as an approve) or `failed` (not-went: «Retry» from there).
+ */
+export type UnknownAnswer = 'went' | 'again' | 'not-went'
+
+export interface UnknownRequest {
+  readonly answer: UnknownAnswer
+}
+
+/**
+ * `POST /a/:id/sends/:kind/mark` (no body): «Mark as sent» of a `form`, `platform` or `linkedin`
+ * application (`markSent`, channel `manual`). Answers the `SendView` of that row, `sent`.
+ * `POST /a/:id/sends/:kind/retry` (no body, R4a) answers the same shape; the screen polls after it.
+ */
+export type MarkAnswer = SendView

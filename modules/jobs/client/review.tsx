@@ -16,13 +16,16 @@
 
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
+import { AssistPanel } from './assist-panel.tsx'
+import { assistOf, type AssistView } from './assist-model.ts'
+import type { BatchView, Decision, MarkAnswer, ReviewItem, ViewProps } from './contract.ts'
 import { confirmedLocal, createLock, decisionOn, localResultOf, viewOf, withLocal, type LocalResults } from './guard.ts'
-import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice } from './model.ts'
+import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice, type SendKey } from './model.ts'
 import { stillRewriting } from './rewrite-model.ts'
 import { isDialogOpen } from './sheet.tsx'
 import { SkipSheet } from './skip-sheet.tsx'
-import { sendIdOf, sendStateOf } from './sends-model.ts'
+import { SendLines } from './send-lines.tsx'
+import { sendStateOf } from './sends-model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
 import { useSends, type SendsState } from './use-sends.ts'
@@ -44,7 +47,9 @@ function isField(target: EventTarget | null): boolean {
 export function Review({ props }: { readonly props: ViewProps }) {
   const { api, navigate } = props
   const { answer, error, clearError, reload, start, decide } = useBatch(api)
-  const sends = useSends(api)
+  /** One decision, one send answer, one «Mark as sent» at a time: a synchronous lock (D15). */
+  const lock = useMemo(createLock, [])
+  const sends = useSends(api, lock)
   const daemonBatch = answer?.batch ?? null
   /** Decided here, not yet read back (`guard.ts`): a ref, read synchronously by `send`, and a redraw. */
   const local = useRef<LocalResults>(new Map())
@@ -66,10 +71,11 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const [notice, setNotice] = useState<Notice | undefined>(undefined)
   /** For drawing only; the guard is `lock`, read synchronously by every decision (D15). */
   const [busy, setBusy] = useState(false)
-  const lock = useMemo(createLock, [])
   const box = useRef<HTMLTextAreaElement>(null)
   /** The skip sheet is open on this card (`viewOf`): a card changed under it closes it. */
   const [skipping, setSkipping] = useState<string | undefined>(undefined)
+  /** The assist panel of the item just approved, as it was approved; the review moves on from `from` when it closes. */
+  const [assist, setAssist] = useState<{ readonly view: AssistView; readonly from: number } | undefined>(undefined)
 
   // A batch seen for the first time opens on its first undecided item from the cursor.
   useEffect(() => {
@@ -121,7 +127,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
           const key = decision.kind === 'approve' ? sendKeyOf(item) : null
           // Whatever the engine answered — `sending`, or `failed` at once — the bar follows it.
           if (key !== null) sends.track(key, sendStateOf(outcome.state))
-          if (moveOn) setAdvanceFrom(index)
+          // A manual channel, or an email with a LinkedIn note: the panel first, then the next item.
+          const panel = decision.kind === 'approve' ? assistOf(item) : null
+          if (panel !== null) setAssist({ view: panel, from: index })
+          else if (moveOn) setAdvanceFrom(index)
           return true
         } finally {
           setBusy(false)
@@ -190,12 +199,33 @@ export function Review({ props }: { readonly props: ViewProps }) {
     skip,
   }
 
+  /** «Mark as sent» through the same lock; the refusal's text, or null when it went through. */
+  const markSent = async (key: SendKey): Promise<string | null> => {
+    const running = lock.run(async (): Promise<string | null> => {
+      setBusy(true)
+      try {
+        await api.post<MarkAnswer>(`a/${encodeURIComponent(key.applicationId)}/sends/${key.kind}/mark`)
+        setNotice({ text: `${key.company}: marked as sent ✓`, tone: 'ask' })
+        return null
+      } catch (cause) {
+        return refusalOf(cause).text
+      } finally {
+        setBusy(false)
+      }
+    })
+    return (await running) ?? 'another action is still running'
+  }
+  const closeAssist = (): void => {
+    if (assist !== undefined) setAdvanceFrom(assist.from)
+    setAssist(undefined)
+  }
+
   const notices = noticesOf(error, notice)
   const dismiss = () => (clearError(), setNotice(undefined))
-  if (answer === undefined) return <Shell notices={notices} onDismiss={dismiss} sends={sends} />
+  if (answer === undefined) return <Shell busy={busy} notices={notices} onDismiss={dismiss} sends={sends} />
   if (batch === null) {
     return (
-      <Shell notices={notices} onDismiss={dismiss} sends={sends}>
+      <Shell busy={busy} notices={notices} onDismiss={dismiss} sends={sends}>
         <div class="j-empty">
           <p>No batch open.</p>
           <button type="button" class="btn primary" disabled={answer.ready === 0} onClick={() => void start()}>
@@ -207,7 +237,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   return (
-    <Shell batch={batch} index={index} notices={notices} onDismiss={dismiss} sends={sends}>
+    <Shell busy={busy} batch={batch} index={index} notices={notices} onDismiss={dismiss} sends={sends}>
       {item === undefined ? (
         <End batch={batch} ready={answer.ready} onStart={() => void start()} />
       ) : (
@@ -226,6 +256,15 @@ export function Review({ props }: { readonly props: ViewProps }) {
           {skipping === view ? <SkipFor item={item} busy={busy} onChoose={(decision) => send(decision, true)} onClose={() => setSkipping(undefined)} /> : null}
         </>
       )}
+      {assist === undefined ? null : (
+        <AssistPanel
+          api={api}
+          view={assist.view}
+          busy={busy}
+          onMark={() => (assist.view.mark === null ? Promise.resolve(null) : markSent(assist.view.mark))}
+          onClose={closeAssist}
+        />
+      )}
     </Shell>
   )
 }
@@ -238,6 +277,7 @@ function SkipFor({ item, busy, onChoose, onClose }: { readonly item: ReviewItem 
 }
 
 interface ShellProps {
+  readonly busy: boolean
   readonly batch?: BatchView
   readonly index?: number
   readonly notices: readonly Notice[]
@@ -246,36 +286,7 @@ interface ShellProps {
   readonly children?: ComponentChildren
 }
 
-/** The send lines: «Retry» resends a failed one; «Retry polling» reads a lost one again; the rest of what needs the owner stays until «Dismiss». */
-function SendLines({ sends }: { readonly sends: SendsState }) {
-  if (sends.sends.length === 0) return null
-  return (
-    <ul class="j-sends" role="status">
-      {sends.sends.map((send) => (
-        <li key={sendIdOf(send.key)} class={`j-send ${send.line.tone}`}>
-          {send.line.text}
-          {send.line.retry ? (
-            <button type="button" class="btn sm quiet" onClick={() => void sends.retry(send.key)}>
-              Retry
-            </button>
-          ) : null}
-          {send.lost ? (
-            <button type="button" class="btn sm quiet" onClick={() => sends.repoll(send.key)}>
-              Retry polling
-            </button>
-          ) : null}
-          {send.line.final && send.line.tone !== 'ok' ? (
-            <button type="button" class="btn sm quiet" onClick={() => sends.dismiss(send.key)}>
-              Dismiss
-            </button>
-          ) : null}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function Shell({ batch, index, notices, onDismiss, sends, children }: ShellProps) {
+function Shell({ busy, batch, index, notices, onDismiss, sends, children }: ShellProps) {
   const header = batch === undefined || index === undefined ? undefined : headerOf(batch, index < 0 ? batch.items.length : index)
   return (
     <div class="j-screen">
@@ -302,7 +313,7 @@ function Shell({ batch, index, notices, onDismiss, sends, children }: ShellProps
             {stillRewriting(batch.rewriting)}
           </p>
         )}
-        <SendLines sends={sends} />
+        <SendLines sends={sends} busy={busy} />
       </header>
       {notices.map((notice) => (
         <div key={notice.text} class={`notice ${notice.tone} j-notice`} role={notice.tone === 'err' ? 'alert' : 'status'}>
