@@ -17,8 +17,8 @@ export interface SkipSheetProps {
   readonly entity: 'application' | 'followup'
   readonly company: string
   readonly busy: boolean
-  /** Posts the skip; resolves with whether it went through. */
-  readonly onChoose: (decision: Omit<Decision, 'itemId' | 'seen'>) => Promise<boolean>
+  /** Posts the skip; resolves with whether it went through. A refusal is told to `say`, shown IN the sheet. */
+  readonly onChoose: (decision: Omit<Decision, 'itemId' | 'seen'>, say: (text: string) => void) => Promise<boolean>
   readonly onClose: () => void
 }
 
@@ -31,7 +31,9 @@ export function SkipSheet({ entity, company, busy, onChoose, onClose }: SkipShee
       setWhy(outcome.why)
       return
     }
-    if (await onChoose(outcome.decision)) onClose()
+    setWhy(null)
+    // Refused (stale, the lock held…): said here, not behind the scrim; the sheet stays open.
+    if (await onChoose(outcome.decision, setWhy)) onClose()
   }
   return (
     <Sheet id="j-skip-title" title={`Skip ${company}`} onClose={onClose}>

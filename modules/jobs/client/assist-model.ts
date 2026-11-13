@@ -69,3 +69,12 @@ export function assistOf(item: ReviewItem): AssistView | null {
   }
   return null
 }
+
+/**
+ * Whether closing `closing` closes the panel open now. A close that arrives late — «Mark as sent»
+ * answered after «Later», a second Escape — finds it already gone (or another one open) and must not
+ * move the review on a second time, past an item never seen.
+ */
+export function closesOpenPanel<T extends object>(open: T | undefined, closing: T): boolean {
+  return open === closing
+}

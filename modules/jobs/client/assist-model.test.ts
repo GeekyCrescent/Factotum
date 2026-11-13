@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ReviewItem } from './contract.ts'
-import { assistOf } from './assist-model.ts'
+import { assistOf, closesOpenPanel } from './assist-model.ts'
 import { appItem, followup } from './test-fixtures.ts'
 
 const FORM_ANSWER = { question: 'Work rights?', answer: 'Student visa, 48 h per fortnight', ok: true, hint: 'choose the temporary-visa option' }
@@ -92,4 +92,11 @@ test('a LinkedIn follow-up: its body to copy and Mark as sent on its own send; a
 test('a CV path that is not a plain module path is not offered for download', () => {
   const view = assistOf(appItem({ channel: 'form', cv: { base: 'A', png: null, pdf: '../../etc/passwd', tailored: null } }))
   assert.equal(view?.pdf, null)
+})
+
+test('a panel closes once: a late close (after «Later», or a «Mark as sent» answered after it) moves the review on nothing', () => {
+  const panel = { from: 2 }
+  assert.equal(closesOpenPanel(panel, panel), true)
+  assert.equal(closesOpenPanel(undefined, panel), false, 'already closed')
+  assert.equal(closesOpenPanel({ from: 5 }, panel), false, 'another panel is open now')
 })

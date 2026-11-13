@@ -17,7 +17,7 @@
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AssistPanel } from './assist-panel.tsx'
-import { assistOf, type AssistView } from './assist-model.ts'
+import { assistOf, closesOpenPanel, type AssistView } from './assist-model.ts'
 import type { BatchView, Decision, MarkAnswer, ReviewItem, ViewProps } from './contract.ts'
 import { confirmedLocal, createLock, decisionOn, LOCK_HELD, localResultOf, runOrSay, viewOf, withLocal, type LocalResults } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice, type SendKey } from './model.ts'
@@ -78,7 +78,13 @@ export function Review({ props }: { readonly props: ViewProps }) {
   /** The skip sheet is open on this card (`viewOf`): a card changed under it closes it. */
   const [skipping, setSkipping] = useState<string | undefined>(undefined)
   /** The assist panel of the item just approved, as it was approved; the review moves on from `from` when it closes. */
-  const [assist, setAssist] = useState<{ readonly view: AssistView; readonly from: number } | undefined>(undefined)
+  const [assist, setAssistState] = useState<OpenPanel | undefined>(undefined)
+  /** The panel open now, read synchronously by a close that may arrive late (`closesOpenPanel`). */
+  const openPanel = useRef<OpenPanel | undefined>(undefined)
+  const setAssist = useCallback((next: OpenPanel | undefined): void => {
+    openPanel.current = next
+    setAssistState(next)
+  }, [])
 
   // A batch seen for the first time opens on its first undecided item from the cursor.
   useEffect(() => {
@@ -109,9 +115,12 @@ export function Review({ props }: { readonly props: ViewProps }) {
     if (skipping !== undefined && skipping !== view) setSkipping(undefined)
   }, [skipping, view])
 
-  /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
+  /**
+   * Posts one decision on the item on screen; `moveOn` advances when it went through. A refusal goes
+   * to `say` when given — the sheet the choice was made in — and above the card otherwise.
+   */
   const send = useCallback(
-    async (decision: Omit<Decision, 'itemId' | 'seen'>, moveOn: boolean): Promise<boolean> => {
+    async (decision: Omit<Decision, 'itemId' | 'seen'>, moveOn: boolean, say: (notice: Notice) => void = setNotice): Promise<boolean> => {
       // Decided here already: the card on screen may be one render behind the decision.
       if (item === undefined || local.current.has(item.itemId)) return false
       // Held by a send answer or another decision: said, never dropped in silence.
@@ -123,7 +132,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
           // again, the new `seen` changes the view and the settle starts over on the repainted card.
           const outcome = await decide(decisionOn(item, decision))
           if (isRefusal(outcome)) {
-            setNotice(noticeOf(outcome))
+            say(noticeOf(outcome))
             return false
           }
           const decided = localResultOf(decision.kind)
@@ -139,10 +148,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
         } finally {
           setBusy(false)
         }
-      }, sayLocked)
+      }, (text) => say({ text, tone: 'ask' }))
       return running ?? false
     },
-    [item, lock, decide, sends, index, setLocal, sayLocked],
+    [item, lock, decide, sends, index, setLocal, setAssist],
   )
 
   const approve = useCallback(() => {
@@ -222,8 +231,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
     })
     return (await running) ?? LOCK_HELD
   }
-  const closeAssist = (): void => {
-    if (assist !== undefined) setAdvanceFrom(assist.from)
+  /** Closes `panel` once: a late second close (Later, then Mark's answer) moves the review on nothing. */
+  const closeAssist = (panel: OpenPanel): void => {
+    if (!closesOpenPanel(openPanel.current, panel)) return
+    setAdvanceFrom(panel.from)
     setAssist(undefined)
   }
 
@@ -261,7 +272,9 @@ export function Review({ props }: { readonly props: ViewProps }) {
             onApprove={approve}
             onForward={forward}
           />
-          {skipping === view ? <SkipFor item={item} busy={busy} onChoose={(decision) => send(decision, true)} onClose={() => setSkipping(undefined)} /> : null}
+          {skipping === view ? (
+            <SkipFor item={item} busy={busy} onChoose={(decision, say) => send(decision, true, (notice) => say(notice.text))} onClose={() => setSkipping(undefined)} />
+          ) : null}
         </>
       )}
       {assist === undefined ? null : (
@@ -270,11 +283,16 @@ export function Review({ props }: { readonly props: ViewProps }) {
           view={assist.view}
           busy={busy}
           onMark={() => (assist.view.mark === null ? Promise.resolve(null) : markSent(assist.view.mark))}
-          onClose={closeAssist}
+          onClose={() => closeAssist(assist)}
         />
       )}
     </Shell>
   )
+}
+
+interface OpenPanel {
+  readonly view: AssistView
+  readonly from: number
 }
 
 function SkipFor({ item, busy, onChoose, onClose }: { readonly item: ReviewItem } & Omit<Parameters<typeof SkipSheet>[0], 'entity' | 'company'>) {
