@@ -21,9 +21,10 @@
  * AN ITEM IS ITS `itemId`. One not in the open batch is `not-found`; one already decided is
  * `conflict already-decided`. A decision with a result moves the cursor past its item.
  *
- * WHAT WAS SEEN IS WHAT IS DECIDED (D15): a decision that carries the item's `seen` (`seen.ts`) and
- * finds the item changed since — a rewrite back, an address checked, a warning overridden — answers
- * `conflict stale` and decides nothing.
+ * WHAT WAS SEEN IS WHAT IS DECIDED (D15): every decision carries the item's `seen` (`seen.ts`) —
+ * REQUIRED, `invalid` on `seen` without it (D9, revisión del corte 1a) — and one that finds the item
+ * changed since — a rewrite back, an address checked, a warning overridden — answers `conflict stale`
+ * and decides nothing.
  */
 
 import type { Logger } from '@factotum/core'
@@ -55,9 +56,9 @@ export interface Decision {
   readonly warningCodes?: readonly WarningCode[]
   /**
    * The item's `seen` when its card was painted (`seen.ts`, D15 «Lo que se vio es lo que se aprueba»).
-   * Present and no longer the item's → `conflict stale`, nothing decided. Absent → not checked.
+   * No longer the item's → `conflict stale`, nothing decided. Required: absent → `invalid` on `seen`.
    */
-  readonly seen?: string
+  readonly seen: string
 }
 
 /** A `seen` is a sha256 in hex; anything longer is not one. */
@@ -129,7 +130,7 @@ function targetOf(q: Queries, itemId: string): Result<Target> {
 /** The item the owner decided on, as long as it is still what the card showed (`seen`, D15). */
 function seenTarget(q: Queries, decision: Decision): Result<Target> {
   const target = targetOf(q, decision.itemId)
-  if (!target.ok || decision.seen === undefined) return target
+  if (!target.ok) return target
   return seenOf(q, target.value.item) === decision.seen ? target : fail('conflict', 'stale')
 }
 
@@ -220,7 +221,7 @@ function invalid(decision: Decision): Result<never> | null {
   if (!DECISION_KINDS.includes(decision.kind)) return fail('invalid', 'unknown decision', 'kind')
   if (decision.kind === 'skip' && skipReasonOf(decision.reason) === null) return fail('invalid', `a skip needs a reason: ${SKIP_REASONS.join(', ')}`, 'reason')
   if (decision.kind === 'skip' && text(decision.text).length > MAX_REASON_CHARS) return fail('invalid', `a skip's text is at most ${MAX_REASON_CHARS} characters`, 'text')
-  if (decision.seen !== undefined && (typeof decision.seen !== 'string' || decision.seen === '' || decision.seen.length > MAX_SEEN_CHARS)) {
+  if (typeof decision.seen !== 'string' || decision.seen === '' || decision.seen.length > MAX_SEEN_CHARS) {
     return fail('invalid', 'seen is the fingerprint the batch gave the item', 'seen')
   }
   if (decision.kind === 'instruct' && (text(decision.text) === '' || text(decision.text).length > MAX_INSTRUCTION_CHARS)) {

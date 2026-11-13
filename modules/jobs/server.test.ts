@@ -275,7 +275,7 @@ test('blocked is a 422 (address-unverified: «Send anyway» or «Switch to form�
 
 test('limit is a 429', async () => {
   const { routes } = await started({ retrySend: failing('limit', 'daily cap reached') })
-  const response = await call(routes, 'POST /a/:id/sends/:kind/retry', { params: { id: ID, kind: 'initial' } })
+  const response = await call(routes, 'POST /a/:id/sends/:kind/retry', { params: { id: ID, kind: 'initial' }, body: { expect: { state: 'failed', at: SEND.at } } })
   assert.equal(response.status, 429)
   assert.deepEqual(errorOf(response), { code: 'limit', message: 'daily cap reached' })
 })
@@ -324,14 +324,31 @@ test('mark, retry and unknown hand the send over; unknown checks its answer', as
   const { routes, calls } = await started()
   const params = { id: ID, kind: 'followup-1' }
   assert.equal((await call(routes, 'POST /a/:id/sends/:kind/mark', { params })).status, 200)
-  const retried = await call(routes, 'POST /a/:id/sends/:kind/retry', { params })
+  const expect = { state: 'send-unknown', at: SEND.at }
+  const retried = await call(routes, 'POST /a/:id/sends/:kind/retry', { params, body: { expect: { ...expect, state: 'failed' } } })
   assert.deepEqual(retried.body, { kind: 'initial', state: 'sending', at: SEND.at, reason: null })
-  const resolved = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer: 'not-went' } })
+  const resolved = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer: 'not-went', expect } })
   assert.equal((resolved.body as SendView).state, 'sent')
-  const bad = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer: 'maybe' } })
+  const bad = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer: 'maybe', expect } })
   assert.equal(bad.status, 400)
   assert.equal(errorOf(bad)?.field, 'answer')
-  assert.deepEqual(calls.log, [`markSent ["${ID}","followup-1"]`, `retrySend ["${ID}","followup-1"]`, `resolveUnknown ["${ID}","followup-1","not-went"]`])
+  assert.deepEqual(calls.log.map((line) => line.split(',{')[0]), [`markSent ["${ID}","followup-1"]`, `retrySend ["${ID}","followup-1"`, `resolveUnknown ["${ID}","followup-1","not-went"`])
+})
+
+test('D9 (revisión 1a): an answer to a send without `expect` is a 400 on expect, and the engine is never asked', async () => {
+  const { routes, calls } = await started()
+  const params = { id: ID, kind: 'initial' }
+  for (const answer of ['went', 'again', 'not-went']) {
+    const response = await call(routes, 'POST /a/:id/sends/:kind/unknown', { params, body: { answer } })
+    assert.equal(response.status, 400, answer)
+    assert.equal(errorOf(response)?.field, 'expect', answer)
+  }
+  for (const body of [undefined, {}]) {
+    const response = await call(routes, 'POST /a/:id/sends/:kind/retry', { params, body })
+    assert.equal(response.status, 400)
+    assert.equal(errorOf(response)?.field, 'expect')
+  }
+  assert.deepEqual(calls.log, [])
 })
 
 test('retry and unknown pass the row the screen saw (`expect`) to the engine; a malformed one is a 400 on expect', async () => {

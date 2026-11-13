@@ -300,7 +300,8 @@ export interface DecisionInput {
   readonly text?: string
   readonly addressOverride?: boolean
   readonly warningCodes?: readonly WarningCode[]
-  readonly seen?: string
+  /** The item's fingerprint as the card showed it: required (D9, revisión del corte 1a). */
+  readonly seen: string
 }
 
 /** What a decision did; an email's approve answers `send.state: 'sending'` without waiting for SMTP (D9). */

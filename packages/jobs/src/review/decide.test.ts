@@ -58,6 +58,7 @@ async function world(approveResult: Result<Approved> = ok({ state: 'sending', ki
       return ok(undefined)
     },
   }
+  current = db
   return { db, deps, approvals, relinted, letters, start: () => valueOf(opened.startBatch()), batch: () => valueOf(opened.batch()) }
 }
 
@@ -67,7 +68,14 @@ const itemOf = (batch: Batch, applicationId: string): ReviewItemRef => {
   return item
 }
 
-const decision = (item: ReviewItemRef, kind: Decision['kind'], extra: Partial<Decision> = {}): Decision => ({ itemId: item.itemId, kind, ...extra })
+/** The store of the last `world()`: a decision the test gives no `seen` carries the item's as it is now (the card just painted). */
+let current: Db | undefined
+const decision = (item: ReviewItemRef, kind: Decision['kind'], extra: Partial<Decision> = {}): Decision => ({
+  itemId: item.itemId,
+  kind,
+  seen: extra.seen ?? current?.read((q) => seenOf(q, item)) ?? '',
+  ...extra,
+})
 
 function errorOf(result: Result<unknown>, code: string, reason?: string): void {
   assert.equal(result.ok, false)
@@ -79,10 +87,10 @@ function errorOf(result: Result<unknown>, code: string, reason?: string): void {
 describe('decide — which item', () => {
   test('without an open batch, or an itemId not in it: not-found', async () => {
     const w = await world()
-    errorOf(decide(w.deps, { itemId: 'nope', kind: 'approve' }), 'not-found')
+    errorOf(decide(w.deps, { itemId: 'nope', kind: 'approve', seen: 'f'.repeat(64) }), 'not-found')
     insertApp(w.db, { id: 'a1', state: 'ready' })
     w.start()
-    errorOf(decide(w.deps, { itemId: 'nope', kind: 'approve' }), 'not-found')
+    errorOf(decide(w.deps, { itemId: 'nope', kind: 'approve', seen: 'f'.repeat(64) }), 'not-found')
   })
 
   test('a follow-up item is R2b: conflict followups-not-ready', async () => {
@@ -99,7 +107,7 @@ describe('decide — which item', () => {
     const w = await world()
     insertApp(w.db, { id: 'a1', state: 'ready' })
     const item = itemOf(w.start(), 'a1')
-    errorOf(decide(w.deps, { itemId: item.itemId, kind: 'explode' as Decision['kind'] }), 'invalid')
+    errorOf(decide(w.deps, { itemId: item.itemId, kind: 'explode' as Decision['kind'], seen: 'f'.repeat(64) }), 'invalid')
   })
 
   test('switch-channel is a follow-up decision: conflict on an application', async () => {
@@ -208,6 +216,22 @@ describe('decide with seen (D15 «Lo que se vio es lo que se aprueba»)', () => 
     errorOf(decide(w.deps, decision(item, 'switch-to-form', { seen })), 'conflict', 'stale')
     assert.equal(eventsOf(w.db, 'a1').length, before)
     assert.equal(appOf(w.db, 'a1').state, 'in-review')
+  })
+
+  test('D9 (revisión 1a): a decision without seen is invalid on seen, whatever its kind: nothing approved, nothing decided', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    const before = eventsOf(w.db, 'a1').length
+    for (const kind of ['approve', 'skip', 'instruct', 'override', 'switch-to-form', 'switch-channel'] as const) {
+      const unseen = { itemId: item.itemId, kind, reason: 'not-now', text: 'Shorter', warningCodes: ['unsupported-claim'] } as unknown as Decision
+      const refused = decide(w.deps, unseen)
+      errorOf(refused, 'invalid')
+      assert.equal(!refused.ok && refused.error.field, 'seen', kind)
+    }
+    assert.deepEqual(w.approvals, [])
+    assert.deepEqual(w.batch()?.results, {})
+    assert.equal(eventsOf(w.db, 'a1').length, before)
   })
 
   test('a seen that is not a fingerprint is invalid', async () => {

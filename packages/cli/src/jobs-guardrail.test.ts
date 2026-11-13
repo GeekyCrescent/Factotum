@@ -184,7 +184,7 @@ interface Item {
 }
 
 /** Every body shape a route reads, the send-shaped ones included, built from what the screen sees now. */
-async function bodies(w: World): Promise<readonly unknown[]> {
+async function bodies(w: World, ids: readonly string[]): Promise<readonly unknown[]> {
   const batch = bodyOf<{ batch: { items: readonly Item[] } | null }>(await call(w, 'GET /batch')).batch
   const profile = bodyOf<{ profile: unknown }>(await call(w, 'GET /profile')).profile
   const decisions = (batch?.items ?? []).flatMap(({ itemId, seen }) => [
@@ -195,6 +195,11 @@ async function bodies(w: World): Promise<readonly unknown[]> {
     { itemId, seen, kind: 'switch-to-form' },
     { itemId, seen, kind: 'skip', reason: 'not-now' },
   ])
+  // A send answer carries the row as the screen read it (`expect`, required): one per application with a row.
+  const expects = (await Promise.all(ids.map((id) => call(w, 'GET /a/:id/sends/:kind', { id, kind: 'initial' }))))
+    .filter((read) => read.status === 200)
+    .map((read) => bodyOf<{ state: string; at: string }>(read))
+    .map(({ state, at }) => ({ state, at }))
   return [
     undefined,
     {},
@@ -203,6 +208,7 @@ async function bodies(w: World): Promise<readonly unknown[]> {
     { answer: 'again' },
     { answer: 'went' },
     { answer: 'not-went' },
+    ...expects.flatMap((expect) => [{ answer: 'again', expect }, { answer: 'went', expect }, { answer: 'not-went', expect }, { expect }]),
     { job: 'cv' },
     { job: 'letter' },
     { job: 'reprint' },
@@ -216,7 +222,7 @@ async function bodies(w: World): Promise<readonly unknown[]> {
 /** Every route of the real table with every body, except the three send requests: not one SMTP call. */
 async function walkRoutes(w: World, ids: readonly string[], when: string): Promise<void> {
   const before = w.calls.length
-  const shapes = await bodies(w)
+  const shapes = await bodies(w, ids)
   let requests = 0
   for (const route of Object.keys(w.table)) {
     for (const params of paramSets(route, ids)) {
@@ -272,6 +278,12 @@ async function sendState(w: World, id: string): Promise<string> {
   return bodyOf<{ state: string }>(await call(w, 'GET /a/:id/sends/:kind', { id, kind: 'initial' })).state
 }
 
+/** The row as the screen read it: what every send answer carries (`expect`, required). */
+async function expectOf(w: World, id: string): Promise<{ readonly state: string; readonly at: string }> {
+  const { state, at } = bodyOf<{ state: string; at: string }>(await call(w, 'GET /a/:id/sends/:kind', { id, kind: 'initial' }))
+  return { state, at }
+}
+
 /** «Approve» then «Send anyway» once its address check has finished (`check-pending` until then). */
 async function approve(w: World, id: string): Promise<void> {
   let answer: ModuleResponse | undefined
@@ -316,14 +328,14 @@ test('guardrail 1: only approve, «Send again» and «Retry» reach SMTP — eve
     // «Send again» reaches it; refused before the body → failed.
     const second = await testApplication(w, first)
     await reaches(w, 'unknown', second, 'send-unknown', () => approve(w, second))
-    await reaches(w, 'failed', second, 'failed', () => call(w, 'POST /a/:id/sends/:kind/unknown', { id: second, kind: 'initial' }, { answer: 'again' }))
+    await reaches(w, 'failed', second, 'failed', async () => call(w, 'POST /a/:id/sends/:kind/unknown', { id: second, kind: 'initial' }, { answer: 'again', expect: await expectOf(w, second) }))
     await walkClock(w, 'with a failed send')
     await walkRoutes(w, [...ids, second], 'with a failed send')
 
     // «Retry» reaches it → sent.
     const third = await testApplication(w, second)
     await reaches(w, 'failed', third, 'failed', () => approve(w, third))
-    await reaches(w, 'ok', third, 'sent', () => call(w, 'POST /a/:id/sends/:kind/retry', { id: third, kind: 'initial' }, {}))
+    await reaches(w, 'ok', third, 'sent', async () => call(w, 'POST /a/:id/sends/:kind/retry', { id: third, kind: 'initial' }, { expect: await expectOf(w, third) }))
 
     // Wave 2 comes due and the daily copy is taken: the clock's tasks really ran.
     w.setNow(WAVE2_DUE)

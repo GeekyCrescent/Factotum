@@ -37,7 +37,7 @@ import type { CreateJobsResult, DecisionInput, Jobs, JobsDeps, RetryJob } from '
 import { applicationCard, sendView } from './facade/views.ts'
 import { closeApplication } from './owner/close.ts'
 import { ensureProfile } from './profile.ts'
-import { decide, DECISION_KINDS } from './review/decide.ts'
+import { decide, DECISION_KINDS, MAX_SEEN_CHARS } from './review/decide.ts'
 import { openReview } from './review/open.ts'
 import { importSeed } from './seed/import.ts'
 import type { ImportReport } from './seed/report.ts'
@@ -61,7 +61,7 @@ const decisionSchema = z.strictObject({
   text: z.string().max(4000).optional(),
   addressOverride: z.boolean().optional(),
   warningCodes: z.array(z.string().max(40)).max(20).optional(),
-  seen: z.string().max(128).optional(),
+  seen: z.string().min(1).max(MAX_SEEN_CHARS),
 })
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))

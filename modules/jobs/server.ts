@@ -106,10 +106,12 @@ function oneOf<T extends string>(list: readonly T[], value: unknown): value is T
 /** The longest `expect.at` taken: an ISO instant is 24 characters. */
 const MAX_AT_LENGTH = 64
 
-/** A send answer's `expect`: absent → no options; well formed → `{ expect }`; anything else → null. */
+/**
+ * A send answer's `expect`, REQUIRED (D9, revisión del corte 1a): well formed → `{ expect }`; absent or
+ * anything else → null, a `400` on `expect`. Without it nothing could tell a stale card from a fresh one.
+ */
 function answerOptions(body: unknown): AnswerOptions | null {
   const expect = fieldOf(body, 'expect')
-  if (expect === undefined) return {}
   const state = fieldOf(expect, 'state')
   const at = fieldOf(expect, 'at')
   if (!oneOf(SEND_STATES, state) || typeof at !== 'string' || at.length > MAX_AT_LENGTH) return null
@@ -176,12 +178,12 @@ function routeTable(holder: Holder, log: Logger): RouteTable {
       const options = answerOptions(req.body)
       if (options === null) return BAD_EXPECT()
       // `409 stale` when the row moved since the screen read it (D15): nothing is sent.
-      return answer(options.expect === undefined ? jobs.resolveUnknown(appId, kind, reply) : jobs.resolveUnknown(appId, kind, reply, options), sendView)
+      return answer(jobs.resolveUnknown(appId, kind, reply, options), sendView)
     }),
     'POST /a/:id/sends/:kind/retry': withSend((jobs, appId, kind, req) => {
       const options = answerOptions(req.body)
       if (options === null) return BAD_EXPECT()
-      return answer(options.expect === undefined ? jobs.retrySend(appId, kind) : jobs.retrySend(appId, kind, options), sendView)
+      return answer(jobs.retrySend(appId, kind, options), sendView)
     }),
 
     // Not in D13: the client's «Retry» (`missing-cv`, `missing-letter`) and «Retry print» (`cv-stale`).

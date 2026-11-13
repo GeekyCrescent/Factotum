@@ -146,7 +146,9 @@ export function useSends(api: Api, lock: Lock): SendsState {
       const send = latest.current.find((line) => sendIdOf(line.key) === sendIdOf(key))
       if (send === undefined) return
       const expect = expectOf(send)
-      const seen: RetryRequest = expect === null ? {} : { expect }
+      // No row read yet: no card to answer (it offers nothing), and the server would refuse it anyway.
+      if (expect === null) return
+      const seen: RetryRequest = { expect }
       const refused = (text: string): void => setSends((now) => answerRefused(now, key, text))
       await runOrSay(lock, async () => {
         setActing(true)
