@@ -271,29 +271,69 @@ function checkUrl(raw: string, base?: URL): NetResult<URL> {
   return ok(url)
 }
 
-type Step = { readonly kind: 'redirect'; readonly location: string } | ({ readonly kind: 'page' } & Omit<Page, 'url' | 'redirects'>)
+const ABORTED: unique symbol = Symbol('aborted')
+
+/** `promise`, or `ABORTED` as soon as `signal` aborts; the listener is removed either way. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T | typeof ABORTED> {
+  if (signal === undefined) return promise
+  if (signal.aborted) return Promise.resolve(ABORTED)
+  return new Promise((resolve) => {
+    const onAbort = (): void => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+    void promise.then((value) => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(value)
+    })
+  })
+}
+
+type Step ={ readonly kind: 'redirect'; readonly location: string } | ({ readonly kind: 'page' } & Omit<Page, 'url' | 'redirects'>)
 
 export function createNet(deps: NetDeps): Net {
   const { fetch, lookup, timers, now, politeMs } = deps
 
-  const sleep = (ms: number): Promise<void> =>
-    ms <= 0 ? Promise.resolve() : new Promise((resolve) => void timers.setTimeout(resolve, ms))
+  /** Resolves `true` after `ms`, or `false` as soon as `signal` aborts (its timer disarmed). */
+  const sleep = (ms: number, signal?: AbortSignal): Promise<boolean> =>
+    new Promise((resolve) => {
+      if (signal?.aborted === true) return resolve(false)
+      if (ms <= 0) return resolve(true)
+      const onAbort = (): void => {
+        timer[Symbol.dispose]()
+        resolve(false)
+      }
+      const timer = timers.setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve(true)
+      }, ms)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
 
   /**
    * One request at a time per host, `politeMs` after the previous one ENDED. Each host keeps the
    * promise of its last turn; the map grows by one small entry per host ever visited.
+   *
+   * The caller's `signal` cuts the wait short. A turn given up still ends only once the previous
+   * one has: whoever comes next waits for the request actually in flight, not for the one that left.
    */
   const lastTurn = new Map<string, Promise<number>>()
-  async function courtesy<T>(host: string, work: () => Promise<T>): Promise<T> {
+  async function courtesy<T>(host: string, signal: AbortSignal | undefined, work: () => Promise<NetResult<T>>): Promise<NetResult<T>> {
     const previous = lastTurn.get(host)
     let release: (endedAt: number) => void = () => undefined
     lastTurn.set(host, new Promise((resolve) => (release = resolve)))
     try {
-      if (previous !== undefined) await sleep((await previous) + politeMs - now().getTime())
+      if (previous !== undefined && !(await waitTurn(previous, signal))) return fail('aborted', 'the request was cancelled')
       return await work()
     } finally {
-      release(now().getTime())
+      const ended = (): void => release(now().getTime())
+      if (previous === undefined) ended()
+      else void previous.then(ended)
     }
+  }
+
+  /** The previous turn's end, then `politeMs`; false when `signal` aborts first. */
+  async function waitTurn(previous: Promise<number>, signal: AbortSignal | undefined): Promise<boolean> {
+    const endedAt = await abortable(previous, signal)
+    return endedAt !== ABORTED && (await sleep(endedAt + politeMs - now().getTime(), signal))
   }
 
   async function checkHost(hostname: string): Promise<NetResult<void>> {
@@ -330,8 +370,11 @@ export function createNet(deps: NetDeps): Net {
         resolve(timedOut ? fail('timeout', `no answer within ${TIMEOUT_MS / 1000} s`) : fail('aborted', 'the request was cancelled')),
       )
     })
+    // A bug inside `work` becomes a `network` failure — also when it comes AFTER the deadline won the
+    // race, where an unobserved rejection would otherwise take the daemon down.
+    const running = work(controller.signal).catch((error: unknown) => fail('network', `the request failed: ${describe(error)}`))
     try {
-      return await Promise.race([work(controller.signal), stopped])
+      return await Promise.race([running, stopped])
     } finally {
       timer[Symbol.dispose]()
       outer?.removeEventListener('abort', onOuterAbort)
@@ -359,7 +402,7 @@ export function createNet(deps: NetDeps): Net {
   }
 
   async function follow(url: URL, redirects: readonly string[], options: GetOptions): Promise<NetResult<Page>> {
-    const step = await courtesy(url.hostname, () => withDeadline((signal) => fetchOnce(url, signal), options.signal))
+    const step = await courtesy(url.hostname, options.signal, () => withDeadline((signal) => fetchOnce(url, signal), options.signal))
     if (!step.ok) return step
     if (step.value.kind === 'page') {
       const { kind: _kind, ...page } = step.value

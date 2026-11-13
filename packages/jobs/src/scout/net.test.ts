@@ -511,6 +511,66 @@ describe('courtesy per host', () => {
     assert.equal((await two).ok, true)
   })
 
+  test('the caller\'s signal cuts the courtesy wait short, and disarms its timer', async () => {
+    const h = harness({ 'https://example.com/a': () => new Response('a') })
+    await h.get('https://example.com/a')
+    const controller = new AbortController()
+    const waiting = h.get('https://example.com/a', { signal: controller.signal })
+    await eventually(() => h.timers.pending().includes(POLITE_MS), 'the courtesy wait is armed')
+    controller.abort()
+    const result = await waiting
+    assert.equal(result.ok ? null : result.error.kind, 'aborted')
+    assert.deepEqual(h.timers.pending(), [])
+    assert.equal(h.calls.length, 1)
+  })
+
+  test('a caller waiting for a request still in flight can give up, and the next one still waits for that request', async () => {
+    let finish: (response: Response) => void = () => undefined
+    const h = harness({ 'https://example.com/slow': () => new Promise<Response>((resolve) => (finish = resolve)), 'https://example.com/next': () => new Response('next') }, {}, 0)
+    const slow = h.get('https://example.com/slow')
+    await eventually(() => h.calls.length === 1, 'the slow request is in flight')
+    const controller = new AbortController()
+    const giving = h.get('https://example.com/next', { signal: controller.signal })
+    controller.abort()
+    const gaveUp = await giving
+    assert.equal(gaveUp.ok ? null : gaveUp.error.kind, 'aborted')
+    const next = h.get('https://example.com/next')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(h.calls.length, 1, 'still one request at a time to the host')
+    finish(new Response('slow'))
+    assert.equal((await slow).ok, true)
+    assert.equal((await next).ok, true)
+    assert.equal(h.calls.length, 2)
+  })
+
+  test('a request that throws after losing to the deadline is observed, not an unhandled rejection', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      // A Response that is not one: reading its headers throws inside the request, after fetch.
+      const notAResponse = { status: 200, headers: null } as unknown as Response
+      let breakIt: () => void = () => undefined
+      const fetch: FetchLike = () => new Promise<Response>((resolve) => (breakIt = () => resolve(notAResponse)))
+      const timers = manualTimers()
+      const broken: FetchLike = async () => notAResponse
+      const net = createNet({ fetch, lookup: async () => [PUBLIC_V4], timers: timers.timers, now: manualClock().now, politeMs: 0 })
+      const controller = new AbortController()
+      const pending = net.get('https://example.com/', { signal: controller.signal })
+      await eventually(() => timers.pending().includes(TIMEOUT_MS), 'the request started')
+      controller.abort()
+      assert.equal((await pending).ok, false)
+      const brokenNet = createNet({ fetch: broken, lookup: async () => [PUBLIC_V4], timers: timers.timers, now: manualClock().now, politeMs: 0 })
+      const thrown = await brokenNet.get('https://example.com/')
+      assert.equal(thrown.ok ? null : thrown.error.kind, 'network')
+      breakIt()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.deepEqual(unhandled, [])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
   test('a failed request still frees the turn', async () => {
     const h = harness({}, { 'a.example': [] }, 0)
     const first = await h.get('https://a.example/')
