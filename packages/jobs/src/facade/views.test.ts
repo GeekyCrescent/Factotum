@@ -94,3 +94,25 @@ test('C1 views: ready outside the open batch, never the test one', async () => {
   assert.equal(db.read((q) => readyOutside(q, batch.items)), 1)
   assert.equal(db.read((q) => readyOutside(q, [])), 2)
 })
+
+test('C1 views: ready outside the batch as the store keeps it — its items read as they are, a malformed one holds nothing', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  insertApp(db, { id: 'in-batch', state: 'ready' })
+  insertApp(db, { id: 'rewritten', state: 'ready' })
+  insertApp(db, { id: 'outside', state: 'ready' })
+  valueOf(
+    db.tx((q) => {
+      const items = [
+        { itemId: 'i1', kind: 'application', applicationId: 'in-batch' },
+        { itemId: 'i2', kind: 'rewritten', target: 'application', id: 'rewritten', fromVersion: 1, failed: false },
+        { itemId: 'i3', kind: 'application', applicationId: 42 },
+      ]
+      repo.insertBatch(q, { id: 'b', items, cursor: 0, results: {} }, NOW)
+      return ok(undefined)
+    }),
+  )
+
+  // The stored items, no cast: `readyOutside` reads what the store answers.
+  assert.equal(db.read((q) => readyOutside(q, repo.openBatch(q)?.items ?? [])), 1)
+})

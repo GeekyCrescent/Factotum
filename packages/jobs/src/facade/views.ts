@@ -7,7 +7,6 @@
  */
 
 import { fillSlots } from '../build/slots.ts'
-import type { ReviewItemRef } from '../review/batch.ts'
 import type { SeenBatch, SeenItem } from '../review/seen.ts'
 import { cvFileName } from '../send/message.ts'
 import type { Queries } from '../store/db.ts'
@@ -203,8 +202,18 @@ export function batchView(q: Queries, batch: SeenBatch, profile: Profile): Batch
   }
 }
 
-/** `ready` applications (not the test one) that the open batch does not hold: «Start next batch». */
-export function readyOutside(q: Queries, items: readonly ReviewItemRef[]): number {
-  const held = new Set(items.flatMap((item) => (item.kind === 'application' ? [item.applicationId] : item.kind === 'rewritten' ? [item.id] : [])))
+/** The application an item of the batch holds, read from any shape — a `review/batch.ts` `ReviewItemRef`, or the store's untyped item. */
+function heldApplication(item: Readonly<Record<string, unknown>>): readonly string[] {
+  const id = item.kind === 'application' ? item.applicationId : item.kind === 'rewritten' ? item.id : undefined
+  return typeof id === 'string' ? [id] : []
+}
+
+/**
+ * `ready` applications (not the test one) that the open batch does not hold: «Start next batch».
+ * Takes the items structurally, so `repo.openBatch(q).items` (the store does not import the review)
+ * comes in without a cast.
+ */
+export function readyOutside(q: Queries, items: readonly Readonly<Record<string, unknown>>[]): number {
+  const held = new Set(items.flatMap(heldApplication))
   return repo.applicationsByState(q, ['ready']).filter((app) => !app.test && !held.has(app.id)).length
 }

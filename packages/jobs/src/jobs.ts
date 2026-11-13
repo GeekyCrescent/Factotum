@@ -42,7 +42,6 @@ import { createPasswordHealth } from './mail-health.ts'
 import { closeApplication } from './owner/close.ts'
 import { ensureProfile } from './profile.ts'
 import { decide, DECISION_KINDS } from './review/decide.ts'
-import type { ReviewItemRef } from './review/batch.ts'
 import { openReview } from './review/open.ts'
 import { createRewriteHandler } from './review/rewrite.ts'
 import type { SeenBatch } from './review/seen.ts'
@@ -266,7 +265,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
       const apps = repo.applicationsByState(q, [...APP_STATES]).filter((app) => !app.test)
       const counts: Partial<Record<(typeof APP_STATES)[number], number>> = {}
       for (const app of apps) counts[app.state] = (counts[app.state] ?? 0) + 1
-      const open = (repo.openBatch(q)?.items ?? []) as unknown as readonly ReviewItemRef[]
+      const open = repo.openBatch(q)?.items ?? []
       return { counts, ready: readyOutside(q, open), warnings: health().warnings }
     })
   }
