@@ -12,7 +12,7 @@
  */
 
 import type { SendKind, SendNeed, SendState, SendView, UnknownAnswer } from './contract.ts'
-import { sendLine, type SendKey, type SendLine } from './model.ts'
+import { sendLine, statusOf, type SendKey, type SendLine } from './model.ts'
 
 /** The bar shows this many lines when it can drop ok ones. */
 export const MAX_LINES = 3
@@ -132,6 +132,32 @@ export function retryRefused(sends: readonly TrackedSend[], key: SendKey, reason
 /** An answer to «did it go?» (or «Mark as sent») was refused: why, in red, and the same choices. */
 export function answerRefused(sends: readonly TrackedSend[], key: SendKey, reason: string): readonly TrackedSend[] {
   return replaced(sends, key, (send) => ({ ...send, line: { ...send.line, text: `${send.key.company}: ${reason}`, tone: 'err', final: true } }))
+}
+
+/**
+ * A send answer the ENGINE refused: a 4xx with its `{ error }` body. Anything else — no network, a
+ * timeout, a 5xx, a proxy's plain text — says nothing about the send: the request may have gone
+ * through and the email may be `sending` or `sent` (review finding 1).
+ */
+export function isSendRefusal(cause: unknown): boolean {
+  const status = statusOf(cause)
+  if (status === undefined || status < 400 || status >= 500) return false
+  const body = (cause as { readonly body?: unknown }).body
+  return typeof body === 'object' && body !== null && typeof (body as { readonly error?: unknown }).error === 'object'
+}
+
+/**
+ * A send answer whose response was lost: NOT a refusal. «couldn't confirm — checking…», no button to
+ * press, and the line polls `GET …/sends/:kind` again until the read says where the send is.
+ */
+export function answerUnconfirmed(sends: readonly TrackedSend[], key: SendKey): readonly TrackedSend[] {
+  return replaced(sends, key, (send) => ({
+    key: send.key,
+    line: { text: `${send.key.company}: couldn’t confirm — checking…`, tone: 'pending', final: false, retry: false },
+    failures: 0,
+    lost: false,
+    state: null,
+  }))
 }
 
 // ── What a send's card offers (D9; v6 M2) ────────────────────────────────────────────────────────

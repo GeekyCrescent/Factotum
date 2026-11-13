@@ -10,7 +10,9 @@
  * lock (`guard.ts`), the same that holds a decision: never two at once, and a double tap posts once.
  * Each acts on THAT send (`kind`), and the engine accepts it only from the state it was asked in
  * (`failed` for Retry, `send-unknown` for the rest), so an answer to a line already moved on is refused,
- * shown, and changes nothing.
+ * shown, and changes nothing. ONLY a 4xx with the engine's error body is a refusal: an answer whose
+ * response is lost (network, timeout, 5xx) may have started the send, so the line says «couldn't
+ * confirm — checking…» and polls the send again (`answerUnconfirmed`), never offering «Retry» blind.
  *
  * ONE LOOP: it runs while some line polls, and reads the lines from a ref, so an answer never restarts
  * it and never drops the reads still in flight. One request per send at a time: a slow read is not
@@ -21,7 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import type { Api, SendNeed, SendState, SendView, UnknownRequest } from './contract.ts'
 import type { Lock } from './guard.ts'
 import { refusalOf, type SendKey } from './model.ts'
-import { answerRefused, dismissed, isPolling, pollFailed, polled, repolled, retryRefused, seeded, sendIdOf, tracked, type SendAction, type TrackedSend } from './sends-model.ts'
+import { answerRefused, answerUnconfirmed, dismissed, isSendRefusal, isPolling, pollFailed, polled, repolled, retryRefused, seeded, sendIdOf, tracked, type SendAction, type TrackedSend } from './sends-model.ts'
 
 export const SEND_POLL_MS = 1_000
 
@@ -91,6 +93,11 @@ export function useSends(api: Api, lock: Lock): SendsState {
           const view = await api.post<SendView>(`${pathOf(key)}/unknown`, body)
           setSends((now) => polled(now, key, view))
         } catch (cause) {
+          // A lost response is not a refusal: the send may be going out. Read it again, never «Retry».
+          if (!isSendRefusal(cause)) {
+            setSends((now) => answerUnconfirmed(now, key))
+            return
+          }
           const reason = refusalOf(cause).text
           setSends((now) => (action === 'retry' ? retryRefused(now, key, reason) : answerRefused(now, key, reason)))
         }

@@ -5,6 +5,8 @@ import type { SendKey } from './model.ts'
 import {
   actionsOf,
   answerRefused,
+  answerUnconfirmed,
+  isSendRefusal,
   kindLabel,
   MAX_LINES,
   MAX_POLL_FAILURES,
@@ -172,4 +174,32 @@ test('each send is named by its kind: «Initial email», «Follow-up 1»', () =>
   assert.equal(kindLabel('initial'), 'Initial email')
   assert.equal(kindLabel('followup-1'), 'Follow-up 1')
   assert.equal(kindLabel('followup-2'), 'Follow-up 2')
+})
+
+// ── An answer whose response was lost is not a refusal (review finding 1) ────────────────────────
+
+const failure = (status: number | undefined, body: unknown = undefined): Error => Object.assign(new Error(status === undefined ? 'boom' : `${status}`), { status, body })
+
+test('only a 4xx with an error body is a refusal; a lost network, a timeout or a 5xx is not', () => {
+  assert.equal(isSendRefusal(failure(409, { error: { code: 'conflict', message: 'stale' } })), true)
+  assert.equal(isSendRefusal(failure(422, { error: { code: 'blocked', message: 'address-unverified' } })), true)
+  assert.equal(isSendRefusal(failure(0)), false, 'no network: status 0')
+  assert.equal(isSendRefusal(failure(undefined)), false, 'no status at all')
+  assert.equal(isSendRefusal(failure(500, { error: { code: 'module-error', message: 'x' } })), false)
+  assert.equal(isSendRefusal(failure(502)), false, 'the proxy, plain text')
+  assert.equal(isSendRefusal(failure(404)), false, 'a 4xx with no error body is not the engine answering')
+  assert.equal(isSendRefusal(new TypeError('Failed to fetch')), false)
+  assert.equal(isSendRefusal('nope'), false)
+})
+
+test('an answer that could not be confirmed keeps polling, says so, and offers nothing to press', () => {
+  const failed = polled(tracked([], key('a', 'Acme')), key('a'), view('failed'))
+  const sends = answerUnconfirmed(failed, key('a'))
+  assert.deepEqual(sends[0]?.line, { text: 'Acme: couldn’t confirm — checking…', tone: 'pending', final: false, retry: false })
+  assert.equal(isPolling(sends[0] as TrackedSend), true, 'the email may be sending: read it again')
+  assert.deepEqual(actions(sends[0]), [], 'never «Retry» while whether it went is unknown')
+  const read = polled(sends, key('a'), view('sending'))
+  assert.equal(read[0]?.line.text, 'Sending to Acme…')
+  const unknown = answerUnconfirmed(polled(tracked([], key('b', 'Beta')), key('b'), view('send-unknown')), key('b'))
+  assert.equal(polled(unknown, key('b'), view('sent'))[0]?.line.text, 'Sent to Beta ✓')
 })
