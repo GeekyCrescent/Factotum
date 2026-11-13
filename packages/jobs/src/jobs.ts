@@ -14,50 +14,43 @@
  * 5. launch, WITHOUT WAITING, the `lstat` of the password file (`mail-health.ts`): never its content.
  * The clock is armed LAST of steps 4–5; a step that throws stops whatever is live, then closes the store.
  *
- * `stop`: the clock, the ad walk, the checks, the queue (its runs aborted), the sends in flight
- * (aborted WITHOUT their step 3: they stay `sending`, the next start makes them `send-unknown`) — all
- * awaited — then the store closes.
+ * `stop`: the imports in flight, the clock, the ad walk, the checks, the queue (its runs aborted), the
+ * sends in flight (aborted WITHOUT their step 3: they stay `sending`, the next start makes them
+ * `send-unknown`) — all awaited — then the store closes (`facade/lifecycle.ts`).
+ *
+ * THE LAYERS are built in `facade/layers.ts`, the reads in `facade/reads.ts`; `compose` is the glue.
  */
 
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 
-import { sendMail as smtpSend } from '@factotum/mail'
 import { z } from 'zod'
 
-import { createQueue, type JobHandler } from './ai/queue.ts'
-import { addressSearch } from './build/address.ts'
-import { createCheckQueue } from './build/checks.ts'
-import { createCvHandler, type ClaudeSettings } from './build/cv.ts'
-import { createLinter, saveProfileRelinting, saveRuleRelinting } from './build/relint.ts'
-import { createVerifier } from './build/verify.ts'
-import { BACKUP_FAILING, createClock } from './clock.ts'
+import type { Queue } from './ai/queue.ts'
+import type { CheckQueue } from './build/checks.ts'
+import { createLinter, saveProfileRelinting, saveRuleRelinting, type Linter } from './build/relint.ts'
 import { parseJobsConfig, type HostConfig } from './config.ts'
-import { createAdRevalidator } from './facade/ads.ts'
-import { stopInOrder } from './facade/lifecycle.ts'
-import { checkPaths, confinedArtifact, pathWarnings, printer, readFont, vaultReader } from './facade/sources.ts'
-import type { BatchAnswer, CreateJobsResult, DecisionInput, Health, Jobs, JobsDeps, Overview, RetryJob } from './facade/types.ts'
-import { applicationCard, batchView, readyOutside, sendView } from './facade/views.ts'
-import { createPasswordHealth } from './mail-health.ts'
+import { buildCheckLayer, buildClock, buildGeneration, buildSendLayer, failing, type Base } from './facade/layers.ts'
+import { inFlight, lifecycle, type InFlight, type Lifecycle } from './facade/lifecycle.ts'
+import { views, type Reads } from './facade/reads.ts'
+import { checkPaths, readFont, vaultReader } from './facade/sources.ts'
+import type { CreateJobsResult, DecisionInput, Jobs, JobsDeps, RetryJob } from './facade/types.ts'
+import { applicationCard, sendView } from './facade/views.ts'
 import { closeApplication } from './owner/close.ts'
 import { ensureProfile } from './profile.ts'
 import { decide, DECISION_KINDS } from './review/decide.ts'
 import { openReview } from './review/open.ts'
-import { createRewriteHandler } from './review/rewrite.ts'
-import type { SeenBatch } from './review/seen.ts'
-import { createNet, systemLookup } from './scout/net.ts'
-import { NO_LETTER_YET } from './state.ts'
 import { importSeed } from './seed/import.ts'
 import type { ImportReport } from './seed/report.ts'
-import { createAssist } from './send/assist.ts'
 import { applyDeferredRepliesOnStart } from './send/deferred.ts'
-import { createSender } from './send/send.ts'
+import { NO_LETTER_YET } from './state.ts'
 import { openDb, type Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
-import { APP_STATES, fail, ok, type Profile, type Result, type Send, type SendKind } from './types.ts'
+import { fail, ok, type Result, type Send, type SendKind } from './types.ts'
 
 /** The `letter` handler's reason until T1 (§M); its `missing-letter` says it (`state.ts`). */
 export { NO_LETTER_YET }
+/** A handler that always fails with its reason (`facade/layers.ts`). */
+export { failing }
 /** Until H5c, nothing reprints a CV: «Retry print» says so. */
 export const NO_REPRINT_YET = 'reprint arrives with H5c'
 
@@ -72,10 +65,6 @@ const decisionSchema = z.strictObject({
 })
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-
-export const failing =
-  (reason: string): JobHandler =>
-  async () => ({ ok: false, kind: 'failed', reason })
 
 /** Step 2: the store, the startup write in one `tx`, and the profile. */
 async function openStore(deps: JobsDeps): Promise<Result<Db>> {
@@ -105,8 +94,6 @@ async function openStore(deps: JobsDeps): Promise<Result<Db>> {
   }
   return ok(db)
 }
-
-const claudeOf = (model: string, deps: JobsDeps): ClaudeSettings => ({ model, effort: undefined, bin: deps.claudeBin })
 
 export async function createJobs(deps: JobsDeps): Promise<CreateJobsResult> {
   const parsed = parseJobsConfig(deps.config)
@@ -143,7 +130,8 @@ interface Composed {
 }
 
 function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): Composed {
-  const { log, now, timers, stateDir } = deps
+  const { log, now, stateDir } = deps
+  const base: Base = { db, deps, config, timeZone }
 
   // Step 3: what is on disk.
   const font = readFont()
@@ -151,175 +139,89 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
   const vault = vaultReader(config.vault)
   const linter = createLinter({ master: vault.master, pdfExists: existsSync })
 
-  // The network of the address checks and the live ad: https only, private ranges refused (N1).
-  const net = createNet({ fetch: deps.fetch ?? globalThis.fetch, lookup: deps.lookup ?? systemLookup, timers, now, politeMs: config.scout.politeMs })
-  const checks = createCheckQueue({ db, timers, now, search: addressSearch(net), log })
-  const enqueueCheck = (contactId: string, options: { readonly front: true }): unknown => checks.enqueueCheck(contactId, options)
-  const ads = createAdRevalidator({ db, net, now, log })
-
-  // Step 5's cache; every real read refreshes it.
-  const password = createPasswordHealth({ file: config.mail.passwordFile, now, ...(deps.lstat === undefined ? {} : { lstat: deps.lstat }), ...(deps.readPassword === undefined ? {} : { readPassword: deps.readPassword }) })
-
-  const sender = createSender({
-    db,
-    now,
-    timers,
-    timeZone,
-    mail: { address: config.mail.address, displayName: config.mail.displayName, passwordFile: config.mail.passwordFile, smtpHost: config.mail.smtpHost, maxSendsPerDay: config.mail.maxSendsPerDay },
-    readPassword: password.readPassword,
-    sendMail: deps.sendMail ?? smtpSend,
-    enqueueCheck,
-    log,
-    stateDir,
-  })
-  const assist = createAssist({ db, now, timeZone, maxSendsPerDay: config.mail.maxSendsPerDay, sender, enqueueCheck })
-
-  // The generation queue and its handlers (G2a, H5a/H5b, R2), the real linter as its guard (L4).
-  const printDeps = { stateDir, timers, log, font: font ?? new Uint8Array(), chromium: config.chromium, poppler: config.poppler }
-  const verify = createVerifier({ stateDir, now, timers, log, claude: claudeOf(config.claude.models.verify, deps), sources: vault.fixed })
-  const cv = font === null ? failing('the CV font could not be read') : createCvHandler({ db, ...printDeps, now, sources: vault.sources, claude: claudeOf(config.claude.models.write, deps), verify })
-  const rewrite = createRewriteHandler({
-    db,
-    now,
-    timers,
-    stateDir,
-    runDir: join(stateDir, 'run'),
-    claude: { model: config.claude.models.write, effort: undefined, ...(deps.claudeBin === undefined ? {} : { bin: deps.claudeBin }) },
-    readFixed: vault.fixed,
-    print: printer(db, printDeps),
-    verify,
-    log,
-  })
-  const queue = createQueue({
-    db,
-    now,
-    concurrency: config.claude.concurrency,
-    handlers: { cv, rewrite, letter: failing(NO_LETTER_YET) },
-    log,
-    lint: linter.lint,
-    relintOne: linter.relintOne,
-    pdfExists: existsSync,
-  })
+  const { checks, ads, enqueueCheck } = buildCheckLayer(base)
+  const { password, sender, assist } = buildSendLayer(base, enqueueCheck)
+  const { queue } = buildGeneration(base, { font, vault, linter })
+  const clock = buildClock(base, { queue, ads, checks })
   const review = openReview({ db, now, timeZone, enqueueChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log })
+  const reads = views({ db, queue, mail: password.current, paths, stateDir })
+  const imports = inFlight()
 
-  const profileNow = (): Profile => {
-    const current = db.read((q) => repo.latestProfileVersion(q))
-    if (current === undefined) throw new Error('jobs: the profile is gone')
-    return current.profile
-  }
-  const seedFiles = (): readonly string[] => config.vault.seed.packages.filter((p) => p.byHand !== true).map((p) => p.file.split('/').at(-1) ?? p.file)
-  const clock = createClock({
-    db,
-    timers,
-    now,
-    timeZone,
+  const life = lifecycle({
+    start: [
+      // Step 4: the contacts the startup write took out of `checking`, in front.
+      checks.enqueueRestarted,
+      // Step 5: the password file's `lstat`, never awaited.
+      () => void password.check().catch((error: unknown) => log.error(`jobs: the password file check failed (${messageOf(error)})`)),
+      // Step 4: the tick, without waiting for it — LAST, after everything that can throw.
+      clock.start,
+    ],
+    stop: [
+      // An import writes into the store and the queue: it ends before either stops.
+      [{ name: 'the imports', stop: imports.settled }],
+      [{ name: 'the clock', stop: clock.stop }],
+      [
+        { name: 'the ad walk', stop: ads.stop },
+        { name: 'the check queue', stop: checks.stop },
+        { name: 'the generation queue', stop: queue.stop },
+        { name: 'the sender', stop: sender.stop },
+      ],
+    ],
+    close: db.close,
     log,
-    stateDir,
-    pump: queue.pump,
-    prepareTick: () => {
-      ads.kick() // D9 «El anuncio vivo», in the background (crit. 24, 46b)
-      return checks.prepareTick({ batchSize: profileNow().batchSize })
-    },
-    enqueueCv: queue.enqueueCv,
-    seedFiles,
   })
 
-  /**
-   * Steps 4–5. THE CLOCK IS ARMED LAST, after everything that can throw: an interval armed before a
-   * step that throws would tick on the closed store.
-   */
-  function start(): void {
-    // Step 4: the contacts the startup write took out of `checking`, in front.
-    checks.enqueueRestarted()
-    // Step 5: the password file's `lstat`, never awaited.
-    password.check().catch((error: unknown) => log.error(`jobs: the password file check failed (${messageOf(error)})`))
-    // Step 4: the tick, without waiting for it.
-    clock.start()
-  }
+  const jobs = facade({ base, linter, queue, checks, sender, assist, review, reads, imports, life })
+  return { jobs, start: life.start }
+}
 
+type SendLayer = ReturnType<typeof buildSendLayer>
+
+/** What the `Jobs` methods call into. */
+interface Parts {
+  readonly base: Base
+  readonly linter: Linter
+  readonly queue: Queue
+  readonly checks: CheckQueue
+  readonly sender: SendLayer['sender']
+  readonly assist: SendLayer['assist']
+  readonly review: ReturnType<typeof openReview>
+  readonly reads: Reads
+  readonly imports: InFlight
+  readonly life: Lifecycle
+}
+
+const viewSend = (result: Result<Send>): Result<ReturnType<typeof sendView>> => (result.ok ? ok(sendView(result.value)) : result)
+
+/** The seed import, then a pump for the CVs it queued. */
+async function importNow({ base, queue, checks }: Parts, input: { readonly dryRun: boolean }): Promise<Result<ImportReport>> {
+  const { db, deps, config, timeZone } = base
+  const report = await importSeed(
+    db,
+    { now: deps.now, timeZone, vault: config.vault, enqueueCv: queue.enqueueCv, enqueueSeedChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log: deps.log },
+    { dryRun: input.dryRun === true },
+  )
+  queue.pump()
+  return report
+}
+
+function retryOf({ base, queue }: Parts, id: string, job: RetryJob): Result<{ readonly queued: readonly ('cv' | 'letter')[] }> {
+  if (job === 'reprint') return fail('conflict', NO_REPRINT_YET)
+  const done = base.db.tx((q) => queue.retry(q, id))
+  if (!done.ok) return done
+  queue.pump()
+  return ok({ queued: done.value })
+}
+
+/** The `Jobs` object: each method a call into a part. */
+function facade(parts: Parts): Jobs {
+  const { base, linter, queue, sender, assist, review, reads, imports, life } = parts
+  const { db } = base
+  const { now, log } = base.deps
   const relintDeps = { now, linter, log, enqueueReprint: (): void => undefined } // H5c connects the reprint
-
-  function health(): Health {
-    const mail = password.current()
-    const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
-    const pausedUntil = queue.pausedUntil()
-    const warnings = [
-      ...(mail.state === 'bad' && mail.reason !== null ? [mail.reason] : []),
-      ...pathWarnings(paths),
-      ...(pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
-      ...(backupFailing === null ? [] : ['The daily copy of jobs.db keeps failing']),
-    ]
-    return { mail, queue: { pausedUntil, running: queue.running().length }, paths, backupFailing, warnings }
-  }
-
-  function answer(batch: SeenBatch | null): BatchAnswer {
-    return db.read((q) => {
-      const profile = repo.latestProfileVersion(q)?.profile
-      return { batch: batch === null || profile === undefined ? null : batchView(q, batch, profile), ready: readyOutside(q, batch?.items ?? []) }
-    })
-  }
-
-  const viewSend = (result: Result<Send>): Result<ReturnType<typeof sendView>> => (result.ok ? ok(sendView(result.value)) : result)
-
-  function overview(): Overview {
-    return db.read((q) => {
-      const apps = repo.applicationsByState(q, [...APP_STATES]).filter((app) => !app.test)
-      const counts: Partial<Record<(typeof APP_STATES)[number], number>> = {}
-      for (const app of apps) counts[app.state] = (counts[app.state] ?? 0) + 1
-      const open = repo.openBatch(q)?.items ?? []
-      return { counts, ready: readyOutside(q, open), warnings: health().warnings }
-    })
-  }
-
-  function retry(id: string, job: RetryJob): Result<{ readonly queued: readonly ('cv' | 'letter')[] }> {
-    if (job === 'reprint') return fail('conflict', NO_REPRINT_YET)
-    const done = db.tx((q) => queue.retry(q, id))
-    if (!done.ok) return done
-    queue.pump()
-    return ok({ queued: done.value })
-  }
-
-  function file(id: string, version: number, kind: 'pdf' | 'png'): Result<string> {
-    const artifacts = db.read((q) => repo.getArtifacts(q, id, version))
-    const stored = kind === 'pdf' ? artifacts?.pdf : artifacts?.png
-    if (stored === null || stored === undefined) return fail('not-found', `no ${kind} for this version`)
-    const real = confinedArtifact(stateDir, stored, kind === 'pdf' ? '.pdf' : '.png')
-    return real === null ? fail('not-found', `no ${kind} for this version`) : ok(real)
-  }
-
-  /** The imports in flight: `stop` waits for them before anything else, and refuses new ones. */
-  const imports = new Set<Promise<unknown>>()
-  async function importNow(input: { readonly dryRun: boolean }): Promise<Result<ImportReport>> {
-    const report = await importSeed(
-      db,
-      { now, timeZone, vault: config.vault, enqueueCv: queue.enqueueCv, enqueueSeedChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log },
-      { dryRun: input.dryRun === true },
-    )
-    queue.pump()
-    return report
-  }
-
-  let stopping: Promise<void> | null = null
-  const stop = (): Promise<void> =>
-    stopInOrder(
-      [
-        // An import writes into the store and the queue: it ends before either stops.
-        [{ name: 'the imports', stop: async () => void (await Promise.allSettled([...imports])) }],
-        [{ name: 'the clock', stop: clock.stop }],
-        [
-          { name: 'the ad walk', stop: ads.stop },
-          { name: 'the check queue', stop: checks.stop },
-          { name: 'the generation queue', stop: queue.stop },
-          { name: 'the sender', stop: sender.stop },
-        ],
-      ],
-      db.close,
-      log,
-    )
-
-  const jobs: Jobs = {
+  return {
     where: () => ({ mode: 'host' }),
-    overview,
+    overview: reads.overview,
     application: (id) =>
       db.read((q) => {
         const app = repo.getApplication(q, id)
@@ -327,16 +229,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
         if (app === undefined || profile === undefined) return fail('not-found', 'no such application')
         return ok({ application: applicationCard(q, app, profile), events: repo.eventsOf(q, id) })
       }),
-    importSeed: async (input) => {
-      if (stopping !== null) return fail('conflict', 'stopping')
-      const running = importNow(input)
-      imports.add(running)
-      try {
-        return await running
-      } finally {
-        imports.delete(running)
-      }
-    },
+    importSeed: async (input) => (life.stopping() ? fail('conflict', 'stopping') : imports.track(importNow(parts, input))),
     profile: () => {
       const current = db.read((q) => repo.latestProfileVersion(q))
       if (current === undefined) throw new Error('jobs: the profile is gone')
@@ -347,29 +240,25 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     saveRule: (input, id) => saveRuleRelinting(db, input, relintDeps, id),
     startBatch: () => {
       const started = review.startBatch()
-      return started.ok ? ok(answer(started.value)) : started
+      return started.ok ? ok(reads.answer(started.value)) : started
     },
     batch: () => {
       const open = review.batch()
-      return open.ok ? ok(answer(open.value)) : open
+      return open.ok ? ok(reads.answer(open.value)) : open
     },
     decide: (input) => {
       const parsed = decisionSchema.safeParse(input)
       if (!parsed.success) return fail('invalid', parsed.error.issues[0]?.message ?? 'invalid', parsed.error.issues[0]?.path.join('.') || 'body')
       return decide({ db, now, approve: sender.approve, queue, pdfExists: existsSync, relintOne: linter.relintOne, log }, parsed.data as DecisionInput)
     },
-    retry,
+    retry: (id, job) => retryOf(parts, id, job),
     send: (id, kind: SendKind) => viewSend(sender.send(id, kind)),
     markSent: (id, kind) => assist.markSent(id, kind),
     resolveUnknown: (id, kind, answer) => viewSend(assist.resolveUnknown(id, kind, answer)),
     retrySend: (id, kind) => viewSend(assist.retrySend(id, kind)),
     close: (id, input) => closeApplication(db, { now }, id, input),
-    health,
-    file,
-    stop: () => {
-      stopping ??= stop()
-      return stopping
-    },
+    health: reads.health,
+    file: reads.file,
+    stop: life.stop,
   }
-  return { jobs, start }
 }

@@ -58,6 +58,33 @@ test('C1 start: the startup write runs in the opening tx (sending → send-unkno
   reopened.close()
 })
 
+test('C1 start: deferred replies that cannot be applied wait for the next start, logged; the recovery still runs alone', async () => {
+  using base = tempBase()
+  const rig = rigIn(base.dir)
+  const db = await queueStore({ dir: rig.stateDir, [Symbol.dispose]: () => undefined })
+  insertApp(db, { id: 'in-flight', state: 'sending', sends: [send()] })
+  insertApp(db, { id: 'damaged', state: 'sent' })
+  valueOf(
+    db.tx((q) => {
+      repo.insertProfileVersion(q, { version: 2, createdAt: NOW.toISOString(), profile: seedProfile() }, { kind: 'profile-saved' }, NOW)
+      // A deferred reply for an application whose row no longer parses: applying it throws.
+      q.run(`UPDATE applications SET warnings = 'not json' WHERE id = 'damaged'`)
+      q.run(`INSERT INTO events (id, at, recorded_at, application_id, kind, data) VALUES ('r1', ?, ?, 'damaged', 'reply', '{"deferred":true,"class":"interview"}')`, NOW.toISOString(), NOW.toISOString())
+      return ok(undefined)
+    }),
+  )
+  db.close()
+  const deps = depsOf(rig)
+
+  const jobs = await started(deps)
+  try {
+    assert.equal(valueOf(jobs.application('in-flight')).application.state, 'send-unknown', 'the recovery ran')
+    assert.ok(deps.captured.lines.some((line) => line.startsWith('error jobs: the deferred replies were not applied at start')))
+  } finally {
+    await jobs.stop()
+  }
+})
+
 test('C1 start: an empty store gets the seed profile as version 1', async () => {
   using base = tempBase()
   const jobs = await started(depsOf(rigIn(base.dir)))
