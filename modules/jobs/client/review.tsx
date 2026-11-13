@@ -153,7 +153,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
         <End batch={batch} ready={answer.ready} onStart={() => void start()} />
       ) : (
         <>
-          <ReviewItemView props={props} item={item} result={result} actions={actions} box={box} busy={busy} />
+          <ReviewItemView key={item.itemId} props={props} item={item} result={result} actions={actions} box={box} busy={busy} />
           <Buttons
             item={item}
             result={result}

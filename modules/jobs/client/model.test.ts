@@ -16,6 +16,7 @@ import {
   labelsOf,
   nextOpen,
   refusalOf,
+  safeHref,
   sendKeyOf,
   statusOf,
   sendLine,
@@ -471,6 +472,16 @@ test('a refused decision says why, in the owner\'s words', () => {
   assert.deepEqual(refusalOf('boom'), { text: 'Something went wrong.', retryLater: false })
   assert.equal(statusOf({ status: 404 }), 404)
   assert.equal(statusOf(null), undefined)
+})
+
+test('a link is drawn only when it is http(s); Gmail only to Gmail', () => {
+  assert.equal(safeHref('https://acme.io/job'), 'https://acme.io/job')
+  assert.equal(safeHref('http://acme.io'), 'http://acme.io')
+  assert.equal(safeHref('javascript:alert(1)'), null)
+  assert.equal(safeHref(' https://x.io'), null)
+  assert.equal(safeHref(null), null)
+  assert.equal(safeHref('https://mail.google.com/mail/u/0/#inbox/1', 'https://mail.google.com/'), 'https://mail.google.com/mail/u/0/#inbox/1')
+  assert.equal(safeHref('https://evil.io/mail.google.com/', 'https://mail.google.com/'), null)
 })
 
 test('no key acts while typing in a field or with a modifier', () => {

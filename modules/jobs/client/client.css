@@ -172,3 +172,247 @@
   margin: 0;
   color: var(--ask);
 }
+
+/* --- The card: labels, the two columns, the form, notes, gaps ------------- */
+
+.j-item {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.j-rewrite {
+  margin: var(--space-1) 0 0;
+  color: var(--p2);
+  font-size: var(--text-small);
+}
+
+.j-rewrite.failed {
+  color: var(--err);
+}
+
+.j-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-label {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+}
+
+.j-label.amber {
+  background: var(--ask-bg);
+  color: var(--ask);
+}
+
+.j-label.red {
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.j-ad {
+  justify-self: start;
+  font-size: var(--text-small);
+  color: var(--accent-text);
+}
+
+.j-columns {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (min-width: 900px) {
+  .j-columns {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+.j-column {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.j-doc,
+.j-form,
+.j-gaps,
+.j-blocks {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-doc-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.j-subject {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.j-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.j-quiet {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
+.j-cv-png {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+}
+
+.j-cv .btn {
+  justify-self: start;
+}
+
+.j-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.j-to-line {
+  margin: 0;
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.j-address.verified,
+.j-address.sentanyway {
+  color: var(--ok);
+}
+
+.j-address.checking,
+.j-address.rechecking {
+  color: var(--text-3);
+}
+
+.j-address.unverified,
+.j-address.noaddress {
+  color: var(--ask);
+}
+
+.j-to-acts,
+.j-exits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.j-form ul,
+.j-gaps ul,
+.j-blocks ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-answer {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2);
+}
+
+.j-mark {
+  color: var(--ok);
+}
+
+.j-answer.warn .j-mark {
+  color: var(--ask);
+}
+
+.j-question {
+  margin: 0;
+  font-weight: 600;
+}
+
+.j-notes summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.j-gaps {
+  border-color: var(--ask-border);
+  background: var(--ask-bg);
+}
+
+.j-gaps .j-doc-title,
+.j-gaps li {
+  color: var(--ask);
+}
+
+/* --- What blocks Approve, and the box ------------------------------------ */
+
+.j-blocks {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+
+.j-blocks .j-doc-title {
+  color: var(--err);
+}
+
+.j-block p {
+  margin: 0 0 var(--space-1h);
+  overflow-wrap: anywhere;
+}
+
+.j-ask {
+  display: grid;
+  gap: var(--space-1h);
+}
+
+.j-ask-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.j-ask-box {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-6);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+  resize: vertical;
+}
+
+.j-ask-box:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.j-rule {
+  margin: 0;
+}

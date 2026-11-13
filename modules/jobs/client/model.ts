@@ -346,6 +346,17 @@ export function refusalOf(cause: unknown): Refusal {
   return { text: REASONS[message] ?? message, retryLater: false }
 }
 
+// ── Links ────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A URL that came from data (an ad, a package) as an `href`: only `http(s)`, so a tampered row can
+ * never draw a `javascript:` link; with `prefix`, only under it (Gmail's links go to Gmail).
+ */
+export function safeHref(url: string | null, prefix?: string): string | null {
+  if (url === null || !/^https?:\/\//i.test(url)) return null
+  return prefix === undefined || url.startsWith(prefix) ? url : null
+}
+
 // ── The keys (crit. 36) ──────────────────────────────────────────────────────────────────────────
 
 export type KeyAction = 'approve' | 'skip' | 'back' | 'focus'
