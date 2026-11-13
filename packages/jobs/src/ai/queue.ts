@@ -1,0 +1,247 @@
+/**
+ * The generation queue over `claude -p` (tasks G2a–G4, design D10), on the `work` table: it survives
+ * a restart.
+ *
+ * LANES: `interactive` (rewrites, classifying replies, a pasted link) goes before `bulk` (the seed's
+ * CVs, the scout, the keeper). `concurrency` runs in total, and when a slot frees up an interactive
+ * waiting takes it: interactive first, always. Within a lane the pump CHAINS WORKS OF THE SAME KIND
+ * (all the `cv`, then the `verify`): each kind is its own prompt cache, and the cache lives 5 min (A4).
+ * `reprint` runs no Claude: it takes no slot, and only one runs at a time.
+ *
+ * THE PUMP runs on `add` and on every tick (D16), NEVER inside a `tx`: `enqueue` is the piece a caller
+ * puts in its own `tx`, and it pumps after. Each run is marked `running` in a `tx` of its own, runs
+ * outside any (the handler: Claude, the PDF), and its return is written in another.
+ *
+ * WHAT A WORK DOES IS ITS HANDLER'S (`handlers[kind]`, injected: H5a/H5b, the verifier, the scout…):
+ * it gets the row, an abort signal and the timeout of its kind, and answers a `JobResult` — never
+ * throws past here (a throw is a failed run).
+ */
+
+import type { Logger } from '@factotum/core'
+import { uuidv7 } from '@factotum/sessions'
+import { appTransition } from '../state.ts'
+import type { Db, Queries } from '../store/db.ts'
+import { dueWork, getApplication, getWork, insertWork, saveApplication, saveWork, setGenRequest, type GenRequestKind, type Lane, type Work, type WorkKind } from '../store/repo.ts'
+import { fail, ok, type Artifacts, type FollowupVersion, type Result, type Warning } from '../types.ts'
+import type { RunFailure } from './run.ts'
+
+export type { Lane, Work, WorkKind } from '../store/repo.ts'
+
+/** design D10 «Timeouts», by kind. `reprint` and `score` are not Claude writing: a minute. */
+export const TIMEOUT_MS: Readonly<Record<WorkKind, number>> = {
+  cv: 180_000,
+  letter: 120_000,
+  rewrite: 120_000,
+  verify: 120_000,
+  classify: 60_000,
+  extract: 60_000,
+  score: 60_000,
+  keeper: 300_000,
+  reprint: 60_000,
+}
+
+/** design D10 «Carriles»: what the owner is waiting for is interactive. */
+const INTERACTIVE_KINDS: ReadonlySet<WorkKind> = new Set<WorkKind>(['rewrite', 'classify', 'extract'])
+export const defaultLane = (kind: WorkKind): Lane => (INTERACTIVE_KINDS.has(kind) ? 'interactive' : 'bulk')
+
+/** What a generation brought back for an application: the fields it produced, the rest stays (G4). */
+export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'contactHash' | 'letter' | 'form' | 'skills' | 'linkedin'>> &
+  Pick<Artifacts, 'profileVersion' | 'rules' | 'usage' | 'origin'>
+
+export type JobOutput =
+  /** A new version of the application's artifacts (cv, letter, rewrite, reprint). */
+  | { readonly type: 'application'; readonly artifacts: ArtifactsPatch }
+  /** A new version of a follow-up (its `rewrite`). */
+  | { readonly type: 'followup'; readonly version: Omit<FollowupVersion, 'version' | 'origin' | 'instruction'> }
+  /** Anything else (verify, classify, score…): written by the handler's own function, in the queue's `tx`. */
+  | { readonly type: 'apply'; readonly apply: (q: Queries, now: Date) => Result<void> }
+
+export type JobResult = { readonly ok: true; readonly output: JobOutput } | RunFailure
+
+export interface JobContext {
+  /** Aborted by `stop()`: the handler hands it to `runClaude`, which kills the group. */
+  readonly signal: AbortSignal
+  readonly timeoutMs: number
+}
+
+export type JobHandler = (work: Work, ctx: JobContext) => Promise<JobResult>
+
+/** What a returned generation is linted with: L1, injected (H4). */
+export type LintTarget =
+  | { readonly kind: 'application'; readonly application: import('../types.ts').Application; readonly artifacts: Artifacts }
+  | { readonly kind: 'followup'; readonly followup: import('../types.ts').Followup; readonly version: FollowupVersion }
+export type LintFn = (q: Queries, target: LintTarget, now: Date) => readonly Warning[]
+/** Re-lints one entity in `in-review`/`ready` (or a follow-up `draft`/`ready`) and writes it: L4, injected. */
+export type RelintFn = (q: Queries, entity: { readonly kind: 'application' | 'followup'; readonly id: string }, now: Date) => Result<void>
+
+export interface QueueDeps {
+  readonly db: Db
+  readonly now: () => Date
+  /** `claude.concurrency` (2). */
+  readonly concurrency: number
+  readonly handlers: Readonly<Partial<Record<WorkKind, JobHandler>>>
+  readonly log: Logger
+  readonly lint: LintFn
+  readonly relintOne: RelintFn
+  /** Whether the printed CV is on disk (T-A2); `existsSync` in production. */
+  readonly pdfExists: (path: string) => boolean
+}
+
+export interface EnqueueSpec {
+  readonly kind: WorkKind
+  readonly ref: string
+  /** By kind when absent (`defaultLane`). */
+  readonly lane?: Lane
+}
+
+export interface Queue {
+  /** Writes the work row, inside the caller's `tx`. The caller pumps after its `tx` (`pump`). */
+  readonly enqueue: (q: Queries, spec: EnqueueSpec) => Result<Work>
+  /** The seed's seam (S6): T-A1 — `draft → generating`, `gen_requests(id, 'cv')`, a bulk `cv`. Inside the caller's `tx`. */
+  readonly enqueueCv: (q: Queries, applicationId: string) => Result<void>
+  /** `enqueue` in a `tx` of its own, then the pump. */
+  readonly add: (spec: EnqueueSpec) => Result<Work>
+  /** Starts what can start. Never inside a `tx`; never throws. */
+  readonly pump: () => void
+  /** The ids running now, in the order they started. */
+  readonly running: () => readonly string[]
+  /** Resolves when nothing is running (what was started meanwhile included). */
+  readonly settled: () => Promise<void>
+}
+
+/** The classes a work writes in `gen_requests` (D3 «La guarda»). */
+export function classesOf(kind: WorkKind): readonly GenRequestKind[] {
+  if (kind === 'cv' || kind === 'reprint') return ['cv']
+  if (kind === 'letter') return ['letter']
+  return []
+}
+
+interface Running {
+  readonly work: Work
+  readonly controller: AbortController
+  readonly done: Promise<void>
+}
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/** Interactive first; within a lane, the kind that ran last first; then the oldest. */
+function byPriority(lastKind: WorkKind | null): (a: Work, b: Work) => number {
+  const rank = (work: Work): number => (work.lane === 'interactive' ? 0 : 2) + (work.kind === lastKind ? 0 : 1)
+  return (a, b) => rank(a) - rank(b)
+}
+
+export function createQueue(deps: QueueDeps): Queue {
+  const { db, now, log } = deps
+  const inFlight = new Map<string, Running>()
+  let lastKind: WorkKind | null = null
+
+  function enqueue(q: Queries, spec: EnqueueSpec): Result<Work> {
+    const at = now().toISOString()
+    const work: Work = {
+      id: uuidv7(now().getTime()),
+      kind: spec.kind,
+      ref: spec.ref,
+      lane: spec.lane ?? defaultLane(spec.kind),
+      state: 'queued',
+      attempts: 0,
+      notBefore: null,
+      reason: null,
+      createdAt: at,
+      updatedAt: at,
+    }
+    insertWork(q, work)
+    for (const kind of classesOf(spec.kind)) setGenRequest(q, spec.ref, kind, work.id)
+    return ok(Object.freeze(work))
+  }
+
+  function enqueueCv(q: Queries, applicationId: string): Result<void> {
+    const app = getApplication(q, applicationId)
+    if (app === undefined) return fail('not-found', 'no such application')
+    const moved = appTransition(app, { type: 'enqueue' }, now()) // T-A1
+    if (!moved.ok) return moved
+    const work = enqueue(q, { kind: 'cv', ref: applicationId, lane: 'bulk' })
+    if (!work.ok) return work
+    return saveApplication(q, moved.value, { kind: 'prepared', data: { queued: ['cv'], workId: work.value.id } }, now())
+  }
+
+  const claudeRunning = (): number => [...inFlight.values()].filter((r) => r.work.kind !== 'reprint').length
+  const printing = (): boolean => [...inFlight.values()].some((r) => r.work.kind === 'reprint')
+
+  function canStart(work: Work): boolean {
+    if (work.kind === 'reprint') return !printing()
+    return claudeRunning() < deps.concurrency
+  }
+
+  function next(): Work | undefined {
+    const due = db.read((q) => dueWork(q, now().toISOString())).filter((work) => !inFlight.has(work.id))
+    return [...due].sort(byPriority(lastKind)).find(canStart)
+  }
+
+  /** Marks it running in its own `tx`, then runs it outside any. */
+  function start(work: Work): boolean {
+    const at = now().toISOString()
+    const marked = db.tx((q) => saveWork(q, { ...work, state: 'running', updatedAt: at }))
+    if (!marked.ok) {
+      log.error(`jobs queue: ${work.kind} ${work.id} could not start (${marked.error.reason})`)
+      return false
+    }
+    const controller = new AbortController()
+    const running: Work = { ...work, state: 'running', updatedAt: at }
+    const done = execute(running, controller.signal).then((result) => conclude(running, result))
+    inFlight.set(work.id, { work: running, controller, done })
+    lastKind = work.kind
+    return true
+  }
+
+  async function execute(work: Work, signal: AbortSignal): Promise<JobResult> {
+    const handler = deps.handlers[work.kind]
+    if (handler === undefined) return { ok: false, kind: 'failed', reason: `no handler for ${work.kind}` }
+    try {
+      return await handler(work, { signal, timeoutMs: TIMEOUT_MS[work.kind] })
+    } catch (error) {
+      return { ok: false, kind: 'failed', reason: `the ${work.kind} handler threw: ${messageOf(error)}` }
+    }
+  }
+
+  /** Writes what came back, in its own `tx`, and pumps again. */
+  function conclude(work: Work, result: JobResult): void {
+    inFlight.delete(work.id)
+    const at = now()
+    const written = db.tx((q) => {
+      const current = getWork(q, work.id) ?? work
+      if (!result.ok) return saveWork(q, { ...current, state: 'failed', reason: result.reason, updatedAt: at.toISOString() })
+      const applied = result.output.type === 'apply' ? result.output.apply(q, at) : ok(undefined)
+      if (!applied.ok) return applied
+      return saveWork(q, { ...current, state: 'done', reason: null, updatedAt: at.toISOString() })
+    })
+    if (!written.ok) log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${written.error.reason})`)
+    pump()
+  }
+
+  function pump(): void {
+    try {
+      for (let work = next(); work !== undefined && start(work); work = next()) {
+        // `start` took it; look for the next.
+      }
+    } catch (error) {
+      log.error(`jobs queue: the pump failed (${messageOf(error)})`)
+    }
+  }
+
+  async function settled(): Promise<void> {
+    while (inFlight.size > 0) await Promise.all([...inFlight.values()].map((r) => r.done))
+  }
+
+  return {
+    enqueue,
+    enqueueCv,
+    add: (spec) => {
+      const added = db.tx((q) => enqueue(q, spec))
+      if (added.ok) pump()
+      return added
+    },
+    pump,
+    running: () => [...inFlight.keys()],
+    settled,
+  }
+}
