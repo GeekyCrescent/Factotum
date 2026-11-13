@@ -118,8 +118,9 @@ function quarantine<T>(file: string, now: () => Date, reason: string): Result<T>
 async function loadSqlite(load: () => Promise<Sqlite>): Promise<Result<Sqlite>> {
   try {
     return ok(await load())
-  } catch {
-    return fail('module-error', `node:sqlite is not available in Node ${process.versions.node}; jobs needs >= ${MIN_NODE}`)
+  } catch (error) {
+    // Usually an old Node, but not always (a broken install, a sandbox): the real error goes along.
+    return fail('module-error', `node:sqlite is not available in Node ${process.versions.node}; jobs needs >= ${MIN_NODE} (${messageOf(error)})`)
   }
 }
 
@@ -144,6 +145,10 @@ function unreadable(error: unknown): Inspection {
     : { kind: 'bad', reason: `jobs.db does not open: ${messageOf(error)}` }
 }
 
+/** `integrity_check` can list a hundred problems: the reason keeps the start of the list. */
+const VERDICT_MAX = 200
+const truncated = (text: string): string => (text.length <= VERDICT_MAX ? text : `${text.slice(0, VERDICT_MAX - 1)}…`)
+
 /** The version, then `integrity_check`: either one failing means the store is not ours to touch. */
 function inspect(handle: Handle, target: number): Inspection {
   let version: number
@@ -156,7 +161,7 @@ function inspect(handle: Handle, target: number): Inspection {
   try {
     const rows = handle.prepare('PRAGMA integrity_check').all()
     const verdict = rows.map((row) => String(row.integrity_check)).join('; ')
-    if (verdict !== 'ok') return { kind: 'bad', reason: 'jobs.db fails integrity_check' }
+    if (verdict !== 'ok') return { kind: 'bad', reason: `jobs.db fails integrity_check: ${truncated(verdict)}` }
   } catch (error) {
     return unreadable(error)
   }

@@ -358,6 +358,30 @@ test('a state folder that cannot be made is a Result, never a throw', async () =
   if (!opened.ok) assert.match(opened.error.reason, /the jobs state folder could not be prepared \(ENOTDIR\)/)
 })
 
+test('the integrity_check verdict is in the reason, cut to a readable length', async () => {
+  using base = tempBase()
+  const file = join(base.dir, 'jobs.db')
+  const db = await open(base.dir)
+  db.tx((q) => {
+    q.run('CREATE INDEX meta_value ON meta (value)')
+    for (let i = 0; i < 50; i += 1) q.run('INSERT INTO meta (key, value) VALUES (?, ?)', `k${i}`, `v${i}`)
+    return ok(undefined)
+  })
+  db.close()
+  // Drift the index from its table without touching a page header: integrity_check names the rows.
+  const { DatabaseSync } = await import('node:sqlite')
+  const raw = new DatabaseSync(file, { defensive: false } as ConstructorParameters<typeof DatabaseSync>[1])
+  raw.exec("PRAGMA writable_schema = ON; UPDATE sqlite_master SET sql = 'CREATE INDEX meta_value ON meta (key)' WHERE name = 'meta_value'; PRAGMA writable_schema = OFF;")
+  raw.close()
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
+  assert.equal(opened.ok, false)
+  if (!opened.ok) {
+    const verdict = /fails integrity_check: (.*); a copy is at/.exec(opened.error.reason)?.[1] ?? ''
+    assert.match(verdict, /meta_value/)
+    assert.ok(verdict.length <= 201, `verdict of ${verdict.length} chars`)
+  }
+})
+
 test('a file that is not a database is copied aside and refused, without a throw', async () => {
   using base = tempBase()
   const file = join(base.dir, 'jobs.db')
@@ -385,7 +409,7 @@ test('a damaged page fails integrity_check: copied aside and refused', async () 
   writeFileSync(file, bytes)
   const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
   assert.equal(opened.ok, false)
-  if (!opened.ok) assert.match(opened.error.reason, /integrity|does not open/)
+  if (!opened.ok) assert.match(opened.error.reason, /fails integrity_check: \S|does not open: \S/)
   assert.ok(existsSync(join(base.dir, 'jobs.db.bad-2026-11-14T03-04-05.000Z')))
 })
 
@@ -395,7 +419,7 @@ test('a Node without node:sqlite gives a Result with the reason and does not thr
   assert.equal(opened.ok, false)
   if (!opened.ok) {
     assert.equal(opened.error.code, 'module-error')
-    assert.equal(opened.error.reason, `node:sqlite is not available in Node ${process.versions.node}; jobs needs >= 22.13`)
+    assert.equal(opened.error.reason, `node:sqlite is not available in Node ${process.versions.node}; jobs needs >= 22.13 (No such built-in module: node:sqlite)`)
   }
   assert.equal(existsSync(join(base.dir, 'jobs.db')), false)
 })
