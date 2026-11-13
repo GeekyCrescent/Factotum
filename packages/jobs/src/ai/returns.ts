@@ -17,8 +17,8 @@
  * leaves `reprint-failed { reason }` (D3, `cv-stale`).
  *
  * THE INSTRUCTION of a rewrite is read from the entity's last `instruction` event (`data.instruction`,
- * with `data.followupId` for a follow-up): the review writes it with T-A7/T-F3, and `work` has no
- * column for it.
+ * with `data.followupId` for a follow-up): the review writes it with T-A7/T-F3 THROUGH
+ * `instructionEvent` (the shape is `InstructionEventData`), and `work` has no column for it.
  */
 
 import { appTransition, followupTransition, type GeneratedKind } from '../state.ts'
@@ -196,10 +196,25 @@ export function followupReturned(q: Queries, work: Work, produced: Omit<Followup
 
 // ── Failing for the third time ───────────────────────────────────────────────────────────────────
 
+/**
+ * The `data` of an `instruction` event (T-A7, T-F3): THE ONE SHAPE the review writes and a rewrite
+ * reads back, since `work` has no column for it. A follow-up's event also carries `followupId`, which
+ * `saveFollowup` adds itself — never written by hand. (A `type`, not an `interface`: it must fit
+ * `EventSpec['data']`'s index signature.)
+ */
+export type InstructionEventData = {
+  readonly instruction: string
+}
+
+/** The event to save with T-A7/T-F3 (`saveApplication`/`saveFollowup`): build it here, never inline. */
+export function instructionEvent(instruction: string): { readonly kind: 'instruction'; readonly data: InstructionEventData } {
+  return { kind: 'instruction', data: { instruction } }
+}
+
 /** The text of the last instruction given to this entity (T-A7, T-F3); '' when none was written. */
 function instructionOf(q: Queries, applicationId: string, followupId: string | null): string {
   const given = eventsOf(q, applicationId).filter((e) => e.kind === 'instruction' && (e.data.followupId ?? null) === followupId)
-  const text = given.at(-1)?.data.instruction
+  const text: unknown = (given.at(-1)?.data as Partial<InstructionEventData> | undefined)?.instruction
   return typeof text === 'string' ? text : ''
 }
 

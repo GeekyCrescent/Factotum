@@ -11,7 +11,7 @@ import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
 import { manualTimers, tempBase } from '../test-support.ts'
 import type { CvDoc } from '../types.ts'
-import type { JobHandler, JobResult, Queue } from './queue.ts'
+import { instructionEvent, type JobHandler, type JobResult, type Queue } from './queue.ts'
 import { runClaude } from './run.ts'
 import { appOf, DONE, eventsOf, insertApp, insertFollowup, queueStore, rig, workOf } from './test-queue.ts'
 
@@ -41,12 +41,12 @@ function instruct(db: Db, queue: Queue, entity: { readonly application: string }
       if ('application' in entity) {
         const app = repo.getApplication(q, entity.application)!
         const moved = valueOf(appTransition(app, { type: 'instruction', hasLetter: true }, NOW))
-        const saved = repo.saveApplication(q, moved, { kind: 'instruction', data: { instruction: text } }, NOW)
+        const saved = repo.saveApplication(q, moved, instructionEvent(text), NOW)
         return saved.ok ? queue.enqueue(q, { kind: 'rewrite', ref: app.id }) : saved
       }
       const row = repo.getFollowup(q, entity.followup)!
       const moved = valueOf(followupTransition(row, { type: 'instruction' }, NOW))
-      const saved = repo.saveFollowup(q, moved, { kind: 'instruction', data: { instruction: text } }, NOW)
+      const saved = repo.saveFollowup(q, moved, instructionEvent(text), NOW)
       return saved.ok ? queue.enqueue(q, { kind: 'rewrite', ref: row.id }) : saved
     }),
   )

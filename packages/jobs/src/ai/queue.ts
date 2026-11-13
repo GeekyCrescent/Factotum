@@ -39,7 +39,16 @@ import { classesOf, markNotWritten, PAUSED_UNTIL, returnNotWritten, writeReturn,
 import type { RunFailure } from './run.ts'
 
 export type { Lane, Work, WorkKind } from '../store/repo.ts'
-export { classesOf, LIMIT_PAUSE_MS, MAX_ATTEMPTS, PAUSED_UNTIL, RETRY_DELAYS_MS, type RewriteFailed } from './returns.ts'
+export {
+  classesOf,
+  instructionEvent,
+  LIMIT_PAUSE_MS,
+  MAX_ATTEMPTS,
+  PAUSED_UNTIL,
+  RETRY_DELAYS_MS,
+  type InstructionEventData,
+  type RewriteFailed,
+} from './returns.ts'
 
 /** design D10 «Timeouts», by kind. `reprint` and `score` are not Claude writing: a minute. */
 export const TIMEOUT_MS: Readonly<Record<WorkKind, number>> = {

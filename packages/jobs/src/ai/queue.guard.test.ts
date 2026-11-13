@@ -6,7 +6,7 @@ import * as repo from '../store/repo.ts'
 import { BLOCKER, followupVersion, NOW, valueOf } from '../test-state.ts'
 import { eventually, tempBase } from '../test-support.ts'
 import { ok, type CvDoc } from '../types.ts'
-import type { JobResult, LintTarget } from './queue.ts'
+import { instructionEvent, type JobResult, type LintTarget } from './queue.ts'
 import { appOf, controlled, eventsOf, insertApp, insertFollowup, queueStore, rig, workOf } from './test-queue.ts'
 
 const cvDoc = (headline: string): CvDoc => ({ headline, summary: 's', experience: [], projects: [], education: [], certifications: [], skills: [], gaps: [] })
@@ -219,7 +219,7 @@ test('G4: a follow-up rewrite comes back as a new version of THAT row (T-F4); on
   const row = insertFollowup(db, { state: 'ready' })
   valueOf(
     db.tx((q) => {
-      const saved = repo.saveFollowup(q, valueOf(followupTransition(row, { type: 'instruction' }, NOW)), { kind: 'instruction', data: { instruction: 'warmer' } }, NOW)
+      const saved = repo.saveFollowup(q, valueOf(followupTransition(row, { type: 'instruction' }, NOW)), instructionEvent('warmer'), NOW)
       return saved.ok ? queue.enqueue(q, { kind: 'rewrite', ref: 'fu-1' }) : saved
     }),
   )
