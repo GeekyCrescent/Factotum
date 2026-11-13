@@ -14,7 +14,7 @@ import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
 import { capturedLog, realTimers, type CapturedLog, type TempBase } from '../test-support.ts'
 import { ok, type CvDoc } from '../types.ts'
-import { createCvHandler, type CvBuilderDeps } from './cv.ts'
+import { createCvHandler, type CvBuilderDeps, type VerifyFn, type VerifyTarget } from './cv.ts'
 import { DOC, MASTER, PROFILE } from './test-cv.ts'
 
 const FIXTURES = new URL('../../test/fixtures/', import.meta.url)
@@ -63,6 +63,26 @@ export function scriptChromium(stateDir: string, ...modes: string[]): void {
   writeFileSync(join(stateDir, 'chromium', 'fake-chromium.modes'), `${modes.join('\n')}\n`)
 }
 
+/** Not Geist: four bytes are enough for a `data:` URI the fake printer never reads. */
+export const FONT = new Uint8Array([0x77, 0x4f, 0x46, 0x32])
+
+export interface SpyVerify {
+  readonly verify: VerifyFn
+  readonly calls: VerifyTarget[]
+}
+
+/** A verifier that records what it was given and answers `outcome` (by default: nothing unsupported). */
+export function spyVerify(outcome: Awaited<ReturnType<VerifyFn>> = { ok: true, warnings: [], usage: null }): SpyVerify {
+  const calls: VerifyTarget[] = []
+  return {
+    calls,
+    verify: async (target) => {
+      calls.push(target)
+      return outcome
+    },
+  }
+}
+
 export const SHORT_DOC: CvDoc = { ...DOC, summary: 'Engineer.', experience: [] }
 
 export function builderDeps(db: Db, stateDir: string, over: Partial<CvBuilderDeps> = {}): CvBuilderDeps {
@@ -74,6 +94,10 @@ export function builderDeps(db: Db, stateDir: string, over: Partial<CvBuilderDep
     log: capturedLog().log,
     sources: () => ok({ master: MASTER, guide: GUIDE, bases: { A: 'Base CV A.' } }),
     claude: { model: 'sonnet', effort: undefined, bin: FAKE_CLAUDE },
+    font: FONT,
+    chromium: FAKE_CHROMIUM,
+    poppler: { pdfinfo: FAKE_PDFINFO, pdftoppm: FAKE_PDFTOPPM },
+    verify: spyVerify().verify,
     ...over,
   }
 }

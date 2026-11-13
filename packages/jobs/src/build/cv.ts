@@ -7,13 +7,19 @@
  * the PDF already on disk, in the `tx` that saves it — so a block never cuts the run here; the run
  * goes on, and the transition of step 8 (`in-review` with a block, `ready` without) is the return's.
  *
+ * STEPS 5–8 (H5b, `print.ts`): paint with the profile's contact, print, count the pages. More than one
+ * → «shorter» ONCE (back to step 1 with the previous CV and `SHORTER`); still more → `cv-overflow`,
+ * which blocks. The kept print goes to `<stateDir>/artifacts/<id>/v<k>/`, and THE VERIFIER (injected,
+ * L3) reads the CV this run wrote. Its `unsupported-claim`s and `cv-overflow` go back with the version
+ * (`JobOutput.warnings`); a verifier that could not run blocks too — a CV is never `ready` unchecked.
+ *
  * EVERYTHING THE RUN READS IS READ AT ITS START, IN ONE `read`: the application, its current version,
  * the opportunity, the company and its record, today's profile and the enabled rules of its channel.
  * What it brings back goes to the queue as an `application` output; the queue saves it as a new
  * version in its own `tx`, behind the guard of D3 (a newer request of the same class discards it).
  *
- * NOTHING THROWS OUT OF HERE: a missing row, a source that cannot be read, a run that fails — each is
- * `{ ok: false, kind, reason }`, and the queue counts it (D10).
+ * NOTHING THROWS OUT OF HERE: a missing row, a source that cannot be read, a run or a print that fails —
+ * each is `{ ok: false, kind, reason }`, and the queue counts it (D10).
  */
 
 import { mkdirSync } from 'node:fs'
@@ -29,7 +35,26 @@ import { CV_DOC_OUTPUT, CV_DOC_JSON_SCHEMA } from '../ai/schemas.ts'
 import { enabledRules } from '../rules.ts'
 import type { Db } from '../store/db.ts'
 import { companyRecord, getApplication, getArtifacts, getCompany, getOpportunity, latestProfileVersion, type Work } from '../store/repo.ts'
-import type { Application, Artifacts, Company, CvDoc, Opportunity, ProfileVersion, Result, Rule } from '../types.ts'
+import type { Application, Artifacts, Company, CvDoc, Opportunity, ProfileVersion, Result, Rule, RunUsage, Warning } from '../types.ts'
+import { clearRender, failed, keepPrint, printCv, type Found, type PrintDeps, type Printed } from './print.ts'
+
+export type { Found } from './print.ts'
+
+/** D5 step 7: the one instruction of the «shorter» pass. */
+export const SHORTER =
+  'This CV prints on more than one A4 page. Make it fit on one page: cut the weakest bullets, projects and skills first. Change nothing else, and add nothing.'
+
+/** What the verifier reads (L3): the texts of a version, and where they came from (the seed's are never checked). */
+export interface VerifyTarget {
+  readonly cv: CvDoc | null
+  readonly letter: string | null
+  readonly origin: Artifacts['origin']
+}
+
+export type VerifyOutcome = { readonly ok: true; readonly warnings: readonly Warning[]; readonly usage: RunUsage | null } | RunFailure
+
+/** The verifier of D6 (`createVerifier`, L3), injected. */
+export type VerifyFn = (target: VerifyTarget, ctx: JobContext) => Promise<VerifyOutcome>
 
 /** What is read from the vault for every CV: the master CV, the guide and the base versions of `01-cvs.md` (D8). */
 export interface CvSources {
@@ -46,15 +71,15 @@ export interface ClaudeSettings {
   readonly bin?: string | undefined
 }
 
-export interface CvBuilderDeps {
+export interface CvBuilderDeps extends PrintDeps {
   readonly db: Db
-  readonly stateDir: string
   readonly now: () => Date
   readonly timers: Timers
   readonly log: Logger
   /** Read at the start of every run: a changed master CV is the next run's (and a new system file). */
   readonly sources: () => Result<CvSources>
   readonly claude: ClaudeSettings
+  readonly verify: VerifyFn
 }
 
 /** Everything one run reads of the store, at its start. */
@@ -66,11 +91,6 @@ export interface CvJob {
   readonly profile: ProfileVersion
   readonly rules: readonly Rule[]
 }
-
-/** A value, or the failed run it makes. */
-export type Found<T> = { readonly ok: true; readonly value: T } | RunFailure
-
-const failed = (reason: string): RunFailure => ({ ok: false, kind: 'failed', reason })
 
 /** The store's part of a run, or why it cannot run. */
 export function readJob(db: Db, applicationId: string): Found<CvJob> {
@@ -133,9 +153,69 @@ export async function writeCvDoc(deps: CvBuilderDeps, input: CvPromptInput, ctx:
   })
 }
 
-/** What a CV run brings back to the queue (the fields it produced; the rest stays). */
-function patchOf(job: CvJob, doc: CvDoc, usage: ArtifactsPatch['usage']): ArtifactsPatch {
-  return { cv: doc, profileVersion: job.profile.version, rules: job.rules.map((rule) => rule.id), usage, origin: 'generated' }
+/** Two runs' usage as one: the counters and the cost added, the first run's model. */
+export function addUsage(a: RunUsage | null, b: RunUsage | null): RunUsage | null {
+  if (a === null || b === null) return a ?? b
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    costUsd: a.costUsd + b.costUsd,
+    ms: a.ms + b.ms,
+    model: a.model ?? b.model,
+  }
+}
+
+/** A CV written and printed: the doc kept, what it cost, its print. */
+interface Fitted {
+  readonly doc: CvDoc
+  readonly usage: RunUsage | null
+  readonly printed: Printed
+}
+
+/** Steps 1–7a: write and print; on more than one page, «shorter» once and print again. */
+async function fitOnePage(deps: CvBuilderDeps, job: CvJob, sources: CvSources, renderId: string, ctx: JobContext): Promise<Found<Fitted>> {
+  const first = await writeCvDoc(deps, promptInput(job, sources), ctx)
+  if (!first.ok) return first
+  const printed = await printCv(deps, renderId, first.value, job.profile.profile, ctx.signal)
+  if (!printed.ok) return printed
+  if (printed.value.pages <= 1) return { ok: true, value: { doc: first.value, usage: first.usage, printed: printed.value } }
+  const shorter = await writeCvDoc(deps, promptInput(job, sources, { doc: first.value, instruction: SHORTER }), ctx)
+  if (!shorter.ok) return shorter
+  const again = await printCv(deps, renderId, shorter.value, job.profile.profile, ctx.signal)
+  if (!again.ok) return again
+  return { ok: true, value: { doc: shorter.value, usage: addUsage(first.usage, shorter.usage), printed: again.value } }
+}
+
+const blocking = (code: Warning['code'], detail: string): Warning => ({ code, where: 'cv', detail, blocks: true, overridden: null })
+
+/** Step 8's check: the verifier's warnings, or one that blocks because it could not run. */
+async function verifyCv(deps: CvBuilderDeps, doc: CvDoc, ctx: JobContext): Promise<{ readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }> {
+  const checked = await deps.verify({ cv: doc, letter: null, origin: 'generated' }, ctx)
+  if (checked.ok) return checked
+  deps.log.warn(`jobs cv: the verifier did not run (${checked.reason})`)
+  return { warnings: [blocking('unsupported-claim', `the check did not run: ${checked.reason}`)], usage: null }
+}
+
+/** Steps 7b–8: the kept print in its version folder, verified; what goes back to the queue. */
+async function keepAndVerify(deps: CvBuilderDeps, job: CvJob, fitted: Fitted, ctx: JobContext): Promise<JobResult> {
+  const { doc, printed } = fitted
+  const kept = await keepPrint(deps, job.app.id, job.app.version + 1, printed, ctx.signal)
+  if (!kept.ok) return kept
+  const checked = await verifyCv(deps, doc, ctx)
+  const overflow = printed.pages > 1 ? [blocking('cv-overflow', `the CV prints on ${printed.pages} pages`)] : []
+  const artifacts: ArtifactsPatch = {
+    cv: doc,
+    pdf: kept.value.pdf,
+    png: kept.value.png,
+    contactHash: printed.contactHash,
+    profileVersion: job.profile.version,
+    rules: job.rules.map((rule) => rule.id),
+    usage: addUsage(fitted.usage, checked.usage),
+    origin: 'generated',
+  }
+  return { ok: true, output: { type: 'application', artifacts, warnings: [...checked.warnings, ...overflow] } }
 }
 
 async function build(deps: CvBuilderDeps, work: Work, ctx: JobContext): Promise<JobResult> {
@@ -143,9 +223,13 @@ async function build(deps: CvBuilderDeps, work: Work, ctx: JobContext): Promise<
   if (!job.ok) return job
   const sources = deps.sources()
   if (!sources.ok) return failed(sources.error.reason)
-  const written = await writeCvDoc(deps, promptInput(job.value, sources.value), ctx)
-  if (!written.ok) return written
-  return { ok: true, output: { type: 'application', artifacts: patchOf(job.value, written.value, written.usage) } }
+  try {
+    const fitted = await fitOnePage(deps, job.value, sources.value, work.id, ctx)
+    return fitted.ok ? await keepAndVerify(deps, job.value, fitted.value, ctx) : fitted
+  } finally {
+    // Whatever came of the run, its render folder goes.
+    clearRender(deps, work.id)
+  }
 }
 
 /** The handler of `cv` works: `createQueue({ handlers: { cv: createCvHandler(deps) } })`. */

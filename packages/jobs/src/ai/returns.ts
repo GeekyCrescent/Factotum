@@ -43,7 +43,7 @@ import {
   type Work,
   type WorkKind,
 } from '../store/repo.ts'
-import { fail, ok, type Application, type Artifacts, type Followup, type Result } from '../types.ts'
+import { fail, ok, type Application, type Artifacts, type Followup, type Result, type Warning } from '../types.ts'
 import type { ArtifactsPatch, JobOutput, JobResult, LintFn, RelintFn } from './queue.ts'
 import type { RunFailure } from './run.ts'
 
@@ -142,11 +142,37 @@ function pdfOn(artifacts: Artifacts | undefined, deps: ReturnDeps): boolean {
   return artifacts?.pdf !== null && artifacts?.pdf !== undefined && deps.pdfExists(artifacts.pdf)
 }
 
+/**
+ * What a handler finds that no linter can see (D5 steps 7–8): the verifier's `unsupported-claim` and
+ * `cv-overflow`. They live in `Application.warnings` — also while `generating`, so a CV that came back
+ * before its letter keeps them until the return that settles the application.
+ */
+const FOUND_CODES: ReadonlySet<Warning['code']> = new Set<Warning['code']>(['unsupported-claim', 'cv-overflow'])
+const isFound = (w: Warning): boolean => FOUND_CODES.has(w.code)
+
+/**
+ * The application with the handler's warnings of this return: those of a text this version rewrote
+ * (`cv`, `letter`) are replaced by `found`; those of a text it did not touch stay, `overridden` and all.
+ */
+function withFound(app: Application, patch: ArtifactsPatch, found: readonly Warning[]): Application {
+  const redone = new Set<Warning['where']>()
+  if (patch.cv !== undefined) redone.add('cv')
+  if (patch.letter !== undefined) redone.add('letter')
+  const kept = app.warnings.filter((w) => !isFound(w) || !redone.has(w.where))
+  return { ...app, warnings: [...kept, ...found] }
+}
+
+/** The linter's warnings on the current version, then the handler's own the application carries. */
+function lintCurrent(q: Queries, app: Application, artifacts: Artifacts | undefined, deps: ReturnDeps, now: Date): readonly Warning[] {
+  const linted = artifacts === undefined ? [] : deps.lint(q, { kind: 'application', application: app, artifacts }, now)
+  return [...linted, ...app.warnings.filter(isFound)]
+}
+
 /** T-A2/T-A3 once nothing of its own is pending: lint what there is, and say which classes failed. */
 function settleGeneration(q: Queries, app: Application, event: EventSpec, deps: ReturnDeps, now: Date): Result<void> {
   const artifacts = currentArtifacts(q, app)
   const failed = failedClasses(q, app.id)
-  const warnings = artifacts === undefined ? [] : deps.lint(q, { kind: 'application', application: app, artifacts }, now)
+  const warnings = lintCurrent(q, app, artifacts, deps, now)
   const moved = appTransition(app, { type: 'generation-returned', pending: false, failed, pdfExists: pdfOn(artifacts, deps), warnings, version: app.version }, now)
   if (!moved.ok) return moved
   const data = failed.length === 0 ? { ...event.data } : { ...event.data, failed: true, kinds: failed }
@@ -163,15 +189,15 @@ function saveVersion(q: Queries, app: Application, patch: ArtifactsPatch, now: D
   return { ...app, version }
 }
 
-export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatch, deps: ReturnDeps, now: Date): Result<void> {
+export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatch, deps: ReturnDeps, now: Date, found: readonly Warning[] = []): Result<void> {
   const before = getApplication(q, work.ref)
   if (before === undefined) return fail('not-found', 'no such application')
-  const app = saveVersion(q, before, patch, now)
+  const app = withFound(saveVersion(q, before, patch, now), patch, found)
   const event: EventSpec = { kind: 'prepared', data: { kind: work.kind, version: app.version, workId: work.id } }
   if (app.state === 'generating' && !pendingBesides(q, app.id, work.id)) return settleGeneration(q, app, event, deps, now)
   if (app.state === 'rewriting') {
     const artifacts = currentArtifacts(q, app)
-    const warnings = artifacts === undefined ? [] : deps.lint(q, { kind: 'application', application: app, artifacts }, now)
+    const warnings = lintCurrent(q, app, artifacts, deps, now)
     const moved = appTransition(app, { type: 'rewrite-returned', pdfExists: pdfOn(artifacts, deps), warnings, version: app.version }, now) // T-A8
     return moved.ok ? saveApplication(q, moved.value, { kind: 'rewritten', data: { version: app.version, workId: work.id } }, now) : moved
   }
@@ -374,7 +400,7 @@ function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, 
   }
   const written =
     output.type === 'application'
-      ? applicationReturned(q, work, output.artifacts, deps, now)
+      ? applicationReturned(q, work, output.artifacts, deps, now, output.warnings ?? [])
       : output.type === 'followup'
         ? followupReturned(q, work, output.version, deps, now)
         : output.apply(q, now)

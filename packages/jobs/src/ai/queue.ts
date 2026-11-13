@@ -73,8 +73,12 @@ export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'con
   Pick<Artifacts, 'profileVersion' | 'rules' | 'usage' | 'origin'>
 
 export type JobOutput =
-  /** A new version of the application's artifacts (cv, letter, rewrite, reprint). */
-  | { readonly type: 'application'; readonly artifacts: ArtifactsPatch }
+  /**
+   * A new version of the application's artifacts (cv, letter, rewrite, reprint). `warnings`: what the
+   * handler found that no linter can see — the verifier's `unsupported-claim`, `cv-overflow` (D5 steps
+   * 7–8) — added to the linter's at the return.
+   */
+  | { readonly type: 'application'; readonly artifacts: ArtifactsPatch; readonly warnings?: readonly Warning[] }
   /** A new version of a follow-up (its `rewrite`). */
   | { readonly type: 'followup'; readonly version: Omit<FollowupVersion, 'version' | 'origin' | 'instruction'> }
   /** Anything else (verify, classify, score…): written by the handler's own function, in the queue's `tx`. */
