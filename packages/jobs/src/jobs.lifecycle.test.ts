@@ -12,7 +12,7 @@ import { queueStore } from './ai/test-queue.ts'
 import { createJobs } from './jobs.ts'
 import { seedProfile } from './seed/test-seed.ts'
 import * as repo from './store/repo.ts'
-import { depsOf, NOW, rigIn } from './test-jobs.ts'
+import { depsOf, NOW, rigIn, started } from './test-jobs.ts'
 import { valueOf } from './test-state.ts'
 import { manualTimers, tempBase } from './test-support.ts'
 import { ok } from './types.ts'
@@ -41,5 +41,21 @@ test('C1 start: a step that throws after the store opened → off with its reaso
   assert.match(created.ok ? '' : created.reason, /^jobs could not start \(/)
   assert.equal(manual.tick(), 0, 'no interval left armed')
   assert.equal(existsSync(join(rig.stateDir, 'jobs.db-wal')), false, 'the store is closed')
+  assert.deepEqual(deps.captured.lines.filter((line) => /not open|is closed/.test(line)), [], 'nothing ran on the closed store')
+})
+
+test('C1 stop: waits for an import in flight before closing the store; an import asked once stopping is refused', async () => {
+  using base = tempBase()
+  const deps = depsOf(rigIn(base.dir))
+  const jobs = await started(deps)
+
+  const importing = jobs.importSeed({ dryRun: false }) // reads the vault first: nothing written yet
+  const stopping = jobs.stop()
+  const late = await jobs.importSeed({ dryRun: false })
+  const report = await importing
+  await stopping
+
+  assert.ok(report.ok, report.ok ? '' : report.error.reason)
+  assert.deepEqual(late.ok ? null : late.error, { code: 'conflict', reason: 'stopping' })
   assert.deepEqual(deps.captured.lines.filter((line) => /not open|is closed/.test(line)), [], 'nothing ran on the closed store')
 })

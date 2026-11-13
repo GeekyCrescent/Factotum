@@ -48,6 +48,7 @@ import { createRewriteHandler } from './review/rewrite.ts'
 import type { SeenBatch } from './review/seen.ts'
 import { createNet, systemLookup } from './scout/net.ts'
 import { importSeed } from './seed/import.ts'
+import type { ImportReport } from './seed/report.ts'
 import { createAssist } from './send/assist.ts'
 import { applyDeferredRepliesOnStart } from './send/deferred.ts'
 import { createSender } from './send/send.ts'
@@ -286,10 +287,24 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     return real === null ? fail('not-found', `no ${kind} for this version`) : ok(real)
   }
 
+  /** The imports in flight: `stop` waits for them before anything else, and refuses new ones. */
+  const imports = new Set<Promise<unknown>>()
+  async function importNow(input: { readonly dryRun: boolean }): Promise<Result<ImportReport>> {
+    const report = await importSeed(
+      db,
+      { now, timeZone, vault: config.vault, enqueueCv: queue.enqueueCv, enqueueSeedChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log },
+      { dryRun: input.dryRun === true },
+    )
+    queue.pump()
+    return report
+  }
+
   let stopping: Promise<void> | null = null
   const stop = (): Promise<void> =>
     stopInOrder(
       [
+        // An import writes into the store and the queue: it ends before either stops.
+        [{ name: 'the imports', stop: async () => void (await Promise.allSettled([...imports])) }],
         [{ name: 'the clock', stop: clock.stop }],
         [
           { name: 'the ad walk', stop: ads.stop },
@@ -313,13 +328,14 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
         return ok({ application: applicationCard(q, app, profile), events: repo.eventsOf(q, id) })
       }),
     importSeed: async (input) => {
-      const report = await importSeed(
-        db,
-        { now, timeZone, vault: config.vault, enqueueCv: queue.enqueueCv, enqueueSeedChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log },
-        { dryRun: input.dryRun === true },
-      )
-      queue.pump()
-      return report
+      if (stopping !== null) return fail('conflict', 'stopping')
+      const running = importNow(input)
+      imports.add(running)
+      try {
+        return await running
+      } finally {
+        imports.delete(running)
+      }
     },
     profile: () => {
       const current = db.read((q) => repo.latestProfileVersion(q))
