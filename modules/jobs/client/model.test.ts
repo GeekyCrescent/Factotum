@@ -86,8 +86,8 @@ function followup(over: Partial<FollowupCard> = {}): FollowupCard {
   }
 }
 
-const appItem = (over: Partial<ApplicationCard> = {}, itemId = 'i-1'): ReviewItem => ({ itemId, kind: 'application', application: application(over) })
-const followupItem = (over: Partial<FollowupCard> = {}, itemId = 'i-f'): ReviewItem => ({ itemId, kind: 'followup', followup: followup(over) })
+const appItem = (over: Partial<ApplicationCard> = {}, itemId = 'i-1'): ReviewItem => ({ itemId, seen: 's1', kind: 'application', application: application(over) })
+const followupItem = (over: Partial<FollowupCard> = {}, itemId = 'i-f'): ReviewItem => ({ itemId, seen: 's1', kind: 'followup', followup: followup(over) })
 
 function batch(items: readonly ReviewItem[], results: BatchView['results'] = {}, over: Partial<BatchView> = {}): BatchView {
   return { id: 'b-1', test: false, items, cursor: 0, results, rewriting: 0, ...over }
@@ -333,20 +333,21 @@ test('a follow-up draft with its block, and a ready one', () => {
 
 test('a rewritten item is approved like the item it carries', () => {
   const rewrite = { fromVersion: 1, failed: false, instruction: 'shorter', reason: null, before: 'a b' }
-  const item: ReviewItem = { itemId: 'r', kind: 'rewritten', target: 'application', application: application(), rewrite }
+  const item: ReviewItem = { itemId: 'r', seen: 's1', kind: 'rewritten', target: 'application', application: application(), rewrite }
   assert.deepEqual(approveGate(item, undefined, NOW), { enabled: true, why: null })
-  const back: ReviewItem = { itemId: 'r2', kind: 'rewritten', target: 'followup', followup: followup({ state: 'draft', warnings: [warning('placeholder')] }), rewrite }
+  const back: ReviewItem = { itemId: 'r2', seen: 's1', kind: 'rewritten', target: 'followup', followup: followup({ state: 'draft', warnings: [warning('placeholder')] }), rewrite }
   assert.equal(approveGate(back, undefined, NOW).enabled, false)
 })
 
 test('a reply or a proposal has no Approve', () => {
   const reply: ReviewItem = {
     itemId: 'r',
+    seen: 's1',
     kind: 'reply',
     reply: { applicationId: 'a', eventId: 'e', company: { id: 'c', name: 'Acme' }, from: 'x', subject: 's', summary: 'y', link: null },
   }
   assert.deepEqual(approveGate(reply, undefined, NOW), { enabled: false, why: null })
-  assert.deepEqual(approveGate({ itemId: 'p', kind: 'proposal', proposalId: 'p' }, undefined, NOW), { enabled: false, why: null })
+  assert.deepEqual(approveGate({ itemId: 'p', seen: 's1', kind: 'proposal', proposalId: 'p' }, undefined, NOW), { enabled: false, why: null })
 })
 
 // ── The labels, the form, the gaps ───────────────────────────────────────────────────────────────
@@ -442,7 +443,7 @@ test('the send an item makes: the initial for an application, followup-n for a f
   assert.deepEqual(sendKeyOf(followupItem({ n: 2 })), { applicationId: 'app-1', kind: 'followup-2', company: 'Acme' })
   assert.equal(sendKeyOf(appItem({ channel: 'form' })), null)
   assert.equal(sendKeyOf(followupItem({ channel: 'linkedin' })), null)
-  assert.equal(sendKeyOf({ itemId: 'p', kind: 'proposal', proposalId: 'p' }), null)
+  assert.equal(sendKeyOf({ itemId: 'p', seen: 's1', kind: 'proposal', proposalId: 'p' }), null)
 })
 
 // ── The keys (crit. 36) ──────────────────────────────────────────────────────────────────────────
@@ -470,6 +471,7 @@ test('a refused decision says why, in the owner\'s words', () => {
   assert.deepEqual(refusalOf(error(422, 'blocked by placeholder')), { text: 'blocked by placeholder', retryLater: false })
   assert.deepEqual(refusalOf(error(0, 'could not reach the daemon')), { text: 'could not reach the daemon', retryLater: false })
   assert.deepEqual(refusalOf('boom'), { text: 'Something went wrong.', retryLater: false })
+  assert.deepEqual(refusalOf(error(409, 'stale')), { text: 'This item changed — check it again', retryLater: false })
   assert.equal(statusOf({ status: 404 }), 404)
   assert.equal(statusOf(null), undefined)
 })

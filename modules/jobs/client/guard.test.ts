@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SETTLE_MS, canDecide, createLock, settleLeft } from './guard.ts'
+import type { ReviewItem } from './contract.ts'
+import { SETTLE_MS, canDecide, createLock, decisionOn, settleLeft, viewOf } from './guard.ts'
 
 // ── What was seen is what is approved (D15 «Lo que se vio es lo que se aprueba») ─────────────────
 
@@ -49,4 +50,20 @@ test('a callback that throws synchronously still releases the lock', async () =>
   const lock = createLock()
   await assert.rejects(lock.run(() => { throw new Error('sync') }) ?? Promise.resolve(), /sync/)
   assert.equal(lock.held(), false)
+})
+
+// ── The card that was seen (`seen`, D15) ─────────────────────────────────────────────────────────
+
+const proposal = (seen: string, itemId = 'i-1'): ReviewItem => ({ itemId, seen, kind: 'proposal', proposalId: 'p' })
+
+test('the view changes with the item AND with what its card shows', () => {
+  assert.equal(viewOf(proposal('v1')), viewOf(proposal('v1')))
+  assert.notEqual(viewOf(proposal('v1')), viewOf(proposal('v2')))
+  assert.notEqual(viewOf(proposal('v1', 'i-1')), viewOf(proposal('v1', 'i-2')))
+  assert.equal(viewOf(undefined), '')
+})
+
+test('every decision carries the item and the seen of the card on screen', () => {
+  assert.deepEqual(decisionOn(proposal('v7'), { kind: 'approve' }), { kind: 'approve', itemId: 'i-1', seen: 'v7' })
+  assert.deepEqual(decisionOn(proposal('v7'), { kind: 'skip', reason: 'not-now' }), { kind: 'skip', reason: 'not-now', itemId: 'i-1', seen: 'v7' })
 })

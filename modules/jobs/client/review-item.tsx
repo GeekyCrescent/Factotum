@@ -25,7 +25,7 @@ import { isRuleHint } from './rule-hint.ts'
 /** What the card can ask of the screen. */
 export interface ItemActions {
   /** Posts a decision on this item; resolves with whether it went through. An `instruct` moves on. */
-  readonly decide: (decision: Omit<Decision, 'itemId'>) => Promise<boolean>
+  readonly decide: (decision: Omit<Decision, 'itemId' | 'seen'>) => Promise<boolean>
   /** «Send anyway», its second click (T-D5). */
   readonly sendAnyway: () => void
   /** «Retry» of a generation or a reprint (D10). */

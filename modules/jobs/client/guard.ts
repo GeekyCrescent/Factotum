@@ -7,6 +7,8 @@
  * trip never decides the NEXT card without it being seen.
  */
 
+import type { Decision, ReviewItem } from './contract.ts'
+
 /** How long a card just shown refuses Approve and Skip. */
 export const SETTLE_MS = 700
 
@@ -20,6 +22,19 @@ export function settleLeft(shownAt: number, now: number): number {
   const elapsed = now - shownAt
   if (elapsed < 0) return SETTLE_MS
   return Math.max(0, SETTLE_MS - elapsed)
+}
+
+/**
+ * What the card on screen shows, for the settle: another item, or the same item whose `seen` changed
+ * (a rewrite came back, the address or a warning moved), is a new card. `''` when there is none.
+ */
+export function viewOf(item: ReviewItem | undefined): string {
+  return item === undefined ? '' : `${item.itemId}\u0000${item.seen}`
+}
+
+/** The decision as posted: on the item on screen, with the `seen` of the card the owner looked at. */
+export function decisionOn(item: ReviewItem, decision: Omit<Decision, 'itemId' | 'seen'>): Decision {
+  return { ...decision, itemId: item.itemId, seen: item.seen }
 }
 
 /**

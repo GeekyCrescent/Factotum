@@ -219,26 +219,28 @@ export interface ReplyCard {
   readonly link: string | null
 }
 
-/** One element of the batch (D15 `ReviewItemRef`), resolved for the screen. `itemId` is stable. */
-export type ReviewItem =
-  | { readonly itemId: string; readonly kind: 'application'; readonly application: ApplicationCard }
-  | { readonly itemId: string; readonly kind: 'followup'; readonly followup: FollowupCard }
-  | {
-      readonly itemId: string
-      readonly kind: 'rewritten'
-      readonly target: 'application'
-      readonly application: ApplicationCard
-      readonly rewrite: RewriteInfo
-    }
-  | {
-      readonly itemId: string
-      readonly kind: 'rewritten'
-      readonly target: 'followup'
-      readonly followup: FollowupCard
-      readonly rewrite: RewriteInfo
-    }
-  | { readonly itemId: string; readonly kind: 'reply'; readonly reply: ReplyCard }
-  | { readonly itemId: string; readonly kind: 'proposal'; readonly proposalId: string }
+/**
+ * What every element of the batch carries, whatever its kind. `itemId` is stable. `seen` is the
+ * engine's fingerprint of what the card shows (the artifact's version, the warnings and their
+ * `overridden`, the address's state): the screen sends it back with each decision, and the engine
+ * answers `409 conflict { reason: 'stale' }` without deciding when it changed since (D15 «Lo que se
+ * vio es lo que se aprueba»).
+ */
+interface ItemBase {
+  readonly itemId: string
+  readonly seen: string
+}
+
+/** One element of the batch (D15 `ReviewItemRef`), resolved for the screen. */
+export type ReviewItem = ItemBase &
+  (
+    | { readonly kind: 'application'; readonly application: ApplicationCard }
+    | { readonly kind: 'followup'; readonly followup: FollowupCard }
+    | { readonly kind: 'rewritten'; readonly target: 'application'; readonly application: ApplicationCard; readonly rewrite: RewriteInfo }
+    | { readonly kind: 'rewritten'; readonly target: 'followup'; readonly followup: FollowupCard; readonly rewrite: RewriteInfo }
+    | { readonly kind: 'reply'; readonly reply: ReplyCard }
+    | { readonly kind: 'proposal'; readonly proposalId: string }
+  )
 
 export type ItemResult = 'approved' | 'skipped' | 'instructed' | 'sent'
 
@@ -275,6 +277,8 @@ export interface Decision {
   readonly addressOverride?: boolean
   /** «I checked it»: the codes it covers. */
   readonly warningCodes?: readonly WarningCode[]
+  /** The `seen` of the card the owner decided on; a different one now → `409 stale`, nothing decided. */
+  readonly seen?: string
 }
 
 /** What `POST /batch/decide` answers; an email's approve does not wait for SMTP (D9). */

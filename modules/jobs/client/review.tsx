@@ -17,7 +17,7 @@
 import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
-import { createLock } from './guard.ts'
+import { createLock, decisionOn, viewOf } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf, type SendKey } from './model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
@@ -68,17 +68,19 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const item = batch === null || index < 0 ? undefined : batch.items[index]
   const result = item === undefined || batch === null ? undefined : batch.results[item.itemId]
   /** A card just shown takes no Approve and no Skip for a moment (D15 «Lo que se vio es lo que se aprueba»). */
-  const settle = useSettle(item?.itemId ?? '')
+  const settle = useSettle(viewOf(item))
 
   /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
   const send = useCallback(
-    async (decision: Omit<Decision, 'itemId'>, moveOn: boolean): Promise<boolean> => {
+    async (decision: Omit<Decision, 'itemId' | 'seen'>, moveOn: boolean): Promise<boolean> => {
       if (item === undefined) return false
       const running = lock.run(async (): Promise<boolean> => {
         setBusy(true)
         setNotice(undefined)
         try {
-          const outcome = await decide({ ...decision, itemId: item.itemId })
+          // A `409 stale` comes back as «This item changed — check it again»; `decide` reads the batch
+          // again, the new `seen` changes the view and the settle starts over on the repainted card.
+          const outcome = await decide(decisionOn(item, decision))
           if (isRefusal(outcome)) {
             setNotice(outcome.text)
             return false

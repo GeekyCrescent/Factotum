@@ -343,6 +343,8 @@ export function refusalOf(cause: unknown): Refusal {
   const message = cause instanceof Error ? cause.message : undefined
   if (message === undefined) return { text: 'Something went wrong.', retryLater: false }
   if (statusOf(cause) === 409 && message === 'check-pending') return { text: 'checking address… try again in a moment', retryLater: true }
+  // D15 «Lo que se vio es lo que se aprueba»: the card changed under the finger; nothing was decided.
+  if (statusOf(cause) === 409 && message === 'stale') return { text: 'This item changed — check it again', retryLater: false }
   return { text: REASONS[message] ?? message, retryLater: false }
 }
 
