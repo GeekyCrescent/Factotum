@@ -67,11 +67,17 @@ const HEALTH_FILE = new URL('../../assets/health-employers.json', import.meta.ur
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 const defaultRead = (path: string): Promise<string> => readFile(path, 'utf8')
 
+/** The system error code (`ENOENT`, `EACCES`…) of a failed read; never its message, which names the full path. */
+const codeOf = (error: unknown): string => {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+  return typeof code === 'string' && code !== '' ? code : 'unknown error'
+}
+
 async function readText(source: SeedSource, relative: string): Promise<Result<string>> {
   try {
     return ok(await (source.readText ?? defaultRead)(join(source.vault.root, relative)))
-  } catch {
-    return fail('module-error', `seed: cannot read ${relative}`)
+  } catch (error) {
+    return fail('module-error', `seed: cannot read ${relative} (${codeOf(error)})`)
   }
 }
 
