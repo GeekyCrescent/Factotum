@@ -135,16 +135,57 @@ test('a !ok from the body rolls the transaction back and is returned as is', asy
   db.close()
 })
 
-test('a throw inside the body rolls back and becomes a Result, never a throw', async () => {
+test('a throw inside the body rolls back and becomes a Result that keeps the error as its cause', async () => {
   using base = tempBase()
   const db = await open(base.dir)
+  const boom = new TypeError('boom')
   const result = db.tx((q) => {
     q.run("INSERT INTO meta (key, value) VALUES ('k', 'v')")
-    throw new Error('boom')
+    throw boom
   })
-  assert.deepEqual(result, { ok: false, error: { code: 'module-error', reason: 'boom' } })
+  assert.deepEqual(result, { ok: false, error: { code: 'module-error', reason: 'boom', cause: boom } })
+  if (!result.ok) assert.equal(result.error.cause, boom, 'the same error, with its stack')
   assert.equal(db.read((q) => q.get("SELECT value FROM meta WHERE key = 'k'")), undefined)
   db.close()
+})
+
+/** The real driver, with a `ROLLBACK` that fails while `failRollback.on` is set. */
+async function rollbackFailing(): Promise<{ readonly load: () => Promise<typeof import('node:sqlite')>; readonly failRollback: { on: boolean } }> {
+  const real = await import('node:sqlite')
+  const failRollback = { on: false }
+  class DatabaseSync extends real.DatabaseSync {
+    override exec(sql: string): void {
+      if (failRollback.on && sql === 'ROLLBACK') throw new Error('disk I/O error')
+      super.exec(sql)
+    }
+  }
+  return { load: () => Promise.resolve({ ...real, DatabaseSync }), failRollback }
+}
+
+test('a ROLLBACK that fails after a throw is still a Result naming both, never a throw', async () => {
+  using base = tempBase()
+  const { load, failRollback } = await rollbackFailing()
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now, load })
+  assert.ok(opened.ok)
+  if (!opened.ok) return
+  failRollback.on = true
+  const result = opened.value.tx(() => {
+    throw new Error('boom')
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.error.reason, 'boom; the rollback failed too: disk I/O error')
+  // The transaction it left open is undone before the next one, or the next one refuses.
+  const blocked = opened.value.tx(() => ok(1))
+  assert.equal(blocked.ok, false)
+  if (!blocked.ok) assert.equal(blocked.error.reason, 'a previous transaction is still open; the rollback failed too: disk I/O error')
+  failRollback.on = false
+  assert.deepEqual(opened.value.tx(() => ok(1)), { ok: true, value: 1 })
+  failRollback.on = true
+  const refused = opened.value.tx(() => fail('conflict', 'no'))
+  assert.equal(refused.ok, false)
+  if (!refused.ok) assert.deepEqual(refused.error, { code: 'conflict', reason: 'no; the rollback failed too: disk I/O error' })
+  failRollback.on = false
+  opened.value.close()
 })
 
 test('a committed body is visible, and rows come back frozen', async () => {

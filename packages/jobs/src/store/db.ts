@@ -163,6 +163,16 @@ function inspect(handle: Handle, target: number): Inspection {
   return { kind: 'ok', version }
 }
 
+/** Undoes an open transaction; null when done (or nothing to undo), else what went wrong. Never throws. */
+function rollback(handle: Handle): string | null {
+  try {
+    if (handle.isOpen && handle.isTransaction) handle.exec('ROLLBACK')
+    return null
+  } catch (error) {
+    return `the rollback failed too: ${messageOf(error)}`
+  }
+}
+
 function migrate(handle: Handle, from: number, migrations: readonly string[]): Result<void> {
   for (let version = from; version < migrations.length; version += 1) {
     try {
@@ -171,8 +181,9 @@ function migrate(handle: Handle, from: number, migrations: readonly string[]): R
       handle.exec(`PRAGMA user_version = ${version + 1}`)
       handle.exec('COMMIT')
     } catch (error) {
-      if (handle.isTransaction) handle.exec('ROLLBACK')
-      return fail('module-error', `jobs.db migration to v${version + 1} failed: ${messageOf(error)}`)
+      const rolledBack = rollback(handle)
+      const tail = rolledBack === null ? '' : `; ${rolledBack}`
+      return fail('module-error', `jobs.db migration to v${version + 1} failed: ${messageOf(error)}${tail}`)
     }
   }
   return ok(undefined)
@@ -206,16 +217,26 @@ function dbOver(handle: Handle): Db {
     tx: (fn) => {
       if (closed) return fail('module-error', 'jobs.db is closed')
       if (inTx) return fail('module-error', 'a transaction is already open')
+      // A transaction left open by a rollback that failed: undo it now, or refuse without writing.
+      const leftover = rollback(handle)
+      if (leftover !== null) return fail('module-error', `a previous transaction is still open; ${leftover}`)
       inTx = true
       try {
         handle.exec('BEGIN IMMEDIATE')
         const result = fn(queries)
-        handle.exec(result.ok ? 'COMMIT' : 'ROLLBACK')
-        return result
+        if (result.ok) {
+          handle.exec('COMMIT')
+          return result
+        }
+        const rolledBack = rollback(handle)
+        return rolledBack === null ? result : { ok: false, error: { ...result.error, reason: `${result.error.reason}; ${rolledBack}` } }
       } catch (error) {
-        // The body threw (a trigger, a constraint, a bug): undo whatever it wrote, and answer.
-        if (handle.isOpen && handle.isTransaction) handle.exec('ROLLBACK')
-        return fail('module-error', messageOf(error))
+        // The body threw (a trigger, a constraint, a bug): undo whatever it wrote, and answer. The
+        // error travels whole as `cause`, so the caller's log keeps its stack (CLAUDE.md §5: a fault
+        // inside one module degrades that module; precedent: tasks' board store answers the same way).
+        const rolledBack = rollback(handle)
+        const reason = rolledBack === null ? messageOf(error) : `${messageOf(error)}; ${rolledBack}`
+        return { ok: false, error: { code: 'module-error', reason, cause: error } }
       } finally {
         inTx = false
       }

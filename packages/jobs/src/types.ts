@@ -17,6 +17,8 @@ export interface JobsError {
   readonly code: ErrorCode
   readonly reason: string
   readonly field?: string
+  /** The error a `tx` body threw, kept whole (stack included) for the log; never shown to the owner. */
+  readonly cause?: unknown
 }
 
 export const ok = <T>(value: T): Result<T> => ({ ok: true, value })
