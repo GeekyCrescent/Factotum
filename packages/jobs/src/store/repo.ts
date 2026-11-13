@@ -37,6 +37,7 @@ export { deleteMeta, getMeta, setMeta } from './repo/meta.ts'
 export { getOpportunity, insertOpportunity, opportunityIdByDedupeKey, saveOpportunityCheck } from './repo/opportunities.ts'
 export { getRule, insertProfileVersion, insertRule, latestProfileVersion, listRules, profileVersionOf, updateRule } from './repo/profile.ts'
 export { recoverOnStart, type Recovered, type Skipped } from './repo/recover.ts'
+export * from './repo/review.ts'
 export { heldDraftsDue, seedDraftsWithoutCv } from './repo/seed.ts'
 export { smtpSendTimesSince } from './repo/sends.ts'
 export {
