@@ -25,5 +25,7 @@ export {
   type SendResult,
   type SmtpMessage,
   type SmtpOptions,
+  type SmtpPayload,
+  type SmtpReply,
   type SmtpTransport,
 } from './smtp.ts'

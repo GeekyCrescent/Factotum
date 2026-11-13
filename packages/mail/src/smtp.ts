@@ -11,7 +11,10 @@
  * `command` nor "DATA was written" can tell the two apart. What does: the body is a lazy stream that
  * nodemailer only reads after the server answered `354`, and reading it flips `bodyStarted`.
  * A 4xx/5xx reply anywhere is the server refusing the message, and a body that failed to read was
- * never finished: both are `before-data` wherever they come.
+ * never finished: both are `before-data` wherever they come. So is a recipient in `info.rejected`.
+ *
+ * WHAT CAN FAIL WITHOUT A SERVER FAILS FIRST: the `to` must be exactly one address with no CR/LF
+ * (`invalid-recipient`), and the MIME tree is composed before connecting — both `before-data`.
  *
  * EACH ATTEMPT ENDS WITHIN SEND_DEADLINE_MS, on the injected timers, well under the proxy's 60 s.
  */
@@ -20,6 +23,7 @@ import type { TcpNetConnectOpts } from 'node:net'
 import { Readable } from 'node:stream'
 import type { ConnectionOptions } from 'node:tls'
 import type { Timers } from '@factotum/core'
+import addressparser from 'nodemailer/lib/addressparser'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import SMTPConnection from 'nodemailer/lib/smtp-connection'
 import { reasonOf, untilAborted } from './imap/session.ts'
@@ -73,12 +77,25 @@ export interface SmtpOptions {
   readonly tls: ConnectionOptions & Pick<TcpNetConnectOpts, 'autoSelectFamilyAttemptTimeout'>
 }
 
+/** The message as it goes on the wire, composed BEFORE connecting (a compose error never meets a socket). */
+export interface SmtpPayload {
+  readonly envelope: { readonly from: string; readonly to: readonly string[] }
+  /** The raw message; opened once, when the server has answered DATA. */
+  readonly open: () => Readable
+}
+
+/** The server's last reply, and the recipients it turned down (nodemailer's `info.rejected`). */
+export interface SmtpReply {
+  readonly response: string
+  readonly rejected: readonly string[]
+}
+
 export interface SmtpTransport {
   /**
    * One message. Resolves with the server's last reply; rejects with nodemailer's error.
    * `onBody` fires when the server has taken DATA and the body starts to go out.
    */
-  readonly send: (message: SmtpMessage, onBody: () => void) => Promise<string>
+  readonly send: (payload: SmtpPayload, onBody: () => void) => Promise<SmtpReply>
   /** Drops the connection. Safe to call more than once. */
   readonly close: () => void
 }
@@ -107,18 +124,18 @@ export function smtpOptions(server: { readonly host: string; readonly user: stri
 export const connectNodemailer: ConnectSmtp = ({ auth, ...options }) => {
   const connection = new SMTPConnection({ ...options, tls: { ...options.tls } })
   return {
-    send: (message, onBody) =>
-      new Promise<string>((resolve, reject) => {
+    send: (payload, onBody) =>
+      new Promise<SmtpReply>((resolve, reject) => {
         // Every failure is also emitted; without a listener that is an uncaught 'error'.
         connection.on('error', reject)
         connection.connect((connectError) => {
           if (connectError) return reject(connectError)
           connection.login({ user: auth.user, pass: auth.pass }, (loginError) => {
             if (loginError) return reject(loginError)
-            const mime = new MailComposer(composed(message)).compile()
-            connection.send(mime.getEnvelope(), Readable.from(lazily(() => mime.createReadStream(), onBody)), (sendError, info) => {
+            const envelope = { from: payload.envelope.from, to: [...payload.envelope.to] }
+            connection.send(envelope, Readable.from(lazily(payload.open, onBody)), (sendError, info) => {
               if (sendError) return reject(sendError)
-              resolve(info?.response ?? '')
+              resolve({ response: info?.response ?? '', rejected: info?.rejected ?? [] })
             })
           })
         })
@@ -129,26 +146,34 @@ export const connectNodemailer: ConnectSmtp = ({ auth, ...options }) => {
 
 export async function sendMail(input: SendInput, connect: ConnectSmtp = connectNodemailer): Promise<SendResult> {
   if (input.signal.aborted) return { ok: false, phase: 'before-data', reason: STOPPED }
+  const secrets = { user: input.user, password: input.password }
+  // Everything that can fail without a server fails here, before a socket or a timer exists.
+  if (!isOneRecipient(input.to)) return { ok: false, phase: 'before-data', reason: INVALID_RECIPIENT }
+  const payload = compose(input)
+  if (!payload.ok) return { ok: false, phase: 'before-data', reason: reasonOf({ message: `the message could not be composed: ${payload.reason}` }, secrets) }
+
   const deadline = new AbortController()
   const timer = input.timers.setTimeout(() => deadline.abort(), SEND_DEADLINE_MS)
   const signal = AbortSignal.any([input.signal, deadline.signal])
-  const secrets = { user: input.user, password: input.password }
   let bodyStarted = false
-  const transport = connect(smtpOptions(input, input.password))
-  const onAbort = (): void => transport.close()
+  let transport: SmtpTransport | undefined
+  const onAbort = (): void => transport?.close()
   signal.addEventListener('abort', onAbort, { once: true })
 
   try {
-    const response = await untilAborted(
-      transport.send(input, () => {
+    transport = connect(smtpOptions(input, input.password))
+    const reply = await untilAborted(
+      transport.send(payload.value, () => {
         bodyStarted = true
       }),
       signal,
     )
-    if (!response.startsWith(ACCEPTED)) {
-      return { ok: false, phase: 'after-data', reason: reasonOf({ message: `unexpected answer: ${response}` }, secrets) }
+    // The server turned the one recipient down: it said it does not take the message (D4).
+    if (reply.rejected.length > 0) return { ok: false, phase: 'before-data', reason: RECIPIENT_REJECTED }
+    if (!reply.response.startsWith(ACCEPTED)) {
+      return { ok: false, phase: 'after-data', reason: reasonOf({ message: `unexpected answer: ${reply.response}` }, secrets) }
     }
-    return { ok: true, messageId: input.messageId, response }
+    return { ok: true, messageId: input.messageId, response: reply.response }
   } catch (error) {
     if (signal.aborted) {
       const reason = deadline.signal.aborted ? `no answer within ${SEND_DEADLINE_MS / 1000} s` : STOPPED
@@ -158,7 +183,33 @@ export async function sendMail(input: SendInput, connect: ConnectSmtp = connectN
   } finally {
     timer[Symbol.dispose]()
     signal.removeEventListener('abort', onAbort)
-    transport.close()
+    transport?.close()
+  }
+}
+
+const INVALID_RECIPIENT = 'invalid-recipient'
+const RECIPIENT_REJECTED = 'the server rejected the recipient'
+const SINGLE_ADDRESS = /^[^\s@,;<>]+@[^\s@,;<>]+$/
+
+/**
+ * Exactly one address, and no CR/LF anywhere: a `to` with a line break or a comma can parse into a
+ * DIFFERENT recipient (or several) than the one the owner approved.
+ */
+function isOneRecipient(to: string): boolean {
+  if (/[\r\n]/.test(to)) return false
+  const parsed = addressparser(to)
+  const only = parsed[0]
+  return parsed.length === 1 && only !== undefined && 'address' in only && SINGLE_ADDRESS.test(only.address ?? '')
+}
+
+/** The MIME tree and its envelope, built before any connection; a throw becomes a reason. */
+function compose(input: SendInput): { readonly ok: true; readonly value: SmtpPayload } | { readonly ok: false; readonly reason: string } {
+  try {
+    const mime = new MailComposer(composed(input)).compile()
+    const envelope = mime.getEnvelope()
+    return { ok: true, value: { envelope: { from: envelope.from === false ? '' : envelope.from, to: envelope.to }, open: () => mime.createReadStream() } }
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   }
 }
 

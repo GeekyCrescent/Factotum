@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startFakeSmtp, type FakeSmtpServer, type SmtpCut } from './test-smtp-server.ts'
 import { certificates, eventually, hasOpenssl, manualTimers, type ManualTimers } from './test-support.ts'
-import { connectNodemailer, SEND_DEADLINE_MS, sendMail, SMTP_PORT, type ConnectSmtp, type SendInput, type SmtpOptions } from './smtp.ts'
+import { connectNodemailer, SEND_DEADLINE_MS, sendMail, SMTP_PORT, type ConnectSmtp, type SendInput, type SmtpOptions, type SmtpReply } from './smtp.ts'
 
 const USER = 'owner.jobs@example.com'
 const PASSWORD = 'abcdefghijklmnop'
@@ -330,6 +330,85 @@ test('an attachment that cannot be read never finishes a body: before-data, and 
   if (result.ok) return
   assert.equal(result.phase, 'before-data')
   assert.match(result.reason, /ENOENT|ESTREAM/)
+})
+
+test('the caller aborting (stop) after the body went out is after-data: the server may have it', async (t) => {
+  const h = await harness(t, { at: 'message', how: 'silent' })
+  if (h === undefined) return
+  const stop = new AbortController()
+
+  const sending = sendMail(input(h.clock, { signal: stop.signal }), h.connect)
+  await eventually(() => h.server.messages.length === 1)
+  stop.abort()
+  const result = await sending
+
+  assert.deepEqual(result, { ok: false, phase: 'after-data', reason: 'stopped' })
+  assert.deepEqual(h.clock.pending(), [])
+})
+
+/** A seam that records what it is asked, for the steps that must happen before (or without) a connection. */
+function fakeConnect(behaviour: { readonly throwOnConnect?: Error; readonly reply?: SmtpReply }): { readonly connect: ConnectSmtp; readonly calls: string[] } {
+  const calls: string[] = []
+  const connect: ConnectSmtp = () => {
+    calls.push('connect')
+    if (behaviour.throwOnConnect !== undefined) throw behaviour.throwOnConnect
+    return {
+      send: (payload, onBody) => {
+        calls.push(`send ${payload.envelope.to.join(',')}`)
+        onBody()
+        return Promise.resolve(behaviour.reply ?? { response: '250 2.0.0 OK  1 x - gsmtp', rejected: [] })
+      },
+      close: () => calls.push('close'),
+    }
+  }
+  return { connect, calls }
+}
+
+test('a connect that throws at once is before-data, never a throw, and leaves no timer armed', async () => {
+  const clock = manualTimers()
+  const { connect } = fakeConnect({ throwOnConnect: new Error(`bad socket for ${USER}`) })
+
+  const result = await sendMail(input(clock), connect)
+
+  assert.deepEqual(result, { ok: false, phase: 'before-data', reason: 'bad socket for <user>' })
+  assert.deepEqual(clock.pending(), [])
+})
+
+test('a message that cannot be composed is before-data and never connects', async () => {
+  const clock = manualTimers()
+  const { connect, calls } = fakeConnect({})
+
+  const result = await sendMail(input(clock, { references: 7 as unknown as readonly string[] }), connect)
+
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.equal(result.phase, 'before-data')
+  assert.match(result.reason, /^the message could not be composed: /)
+  assert.deepEqual(calls, [])
+  assert.deepEqual(clock.pending(), [])
+})
+
+test('a recipient that is not exactly one address, or carries CR/LF, is invalid-recipient before connecting', async () => {
+  for (const to of ['hiring@clinic.example\r\nBcc: other@evil.example', 'a@clinic.example, b@clinic.example', 'not an address', '', 'hiring@clinic.example\n']) {
+    const clock = manualTimers()
+    const { connect, calls } = fakeConnect({})
+
+    const result = await sendMail(input(clock, { to }), connect)
+
+    assert.deepEqual(result, { ok: false, phase: 'before-data', reason: 'invalid-recipient' }, JSON.stringify(to))
+    assert.deepEqual(calls, [], JSON.stringify(to))
+  }
+  const { connect, calls } = fakeConnect({})
+  assert.equal((await sendMail(input(manualTimers(), { to: 'Hiring Team <hiring@clinic.example>' }), connect)).ok, true)
+  assert.deepEqual(calls.filter((c) => c.startsWith('send')), ['send hiring@clinic.example'])
+})
+
+test('a 250 with the recipient in info.rejected is not sent: before-data, the server said it did not take it', async () => {
+  const { connect } = fakeConnect({ reply: { response: '250 2.0.0 OK  1 x - gsmtp', rejected: ['hiring@clinic.example'] } })
+
+  const result = await sendMail(input(manualTimers()), connect)
+
+  assert.deepEqual(result, { ok: false, phase: 'before-data', reason: 'the server rejected the recipient' })
 })
 
 test('no file in this package switches certificate verification off', async () => {
