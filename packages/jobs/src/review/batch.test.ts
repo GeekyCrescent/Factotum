@@ -5,6 +5,7 @@ import { APP_STATES, FOLLOWUP_STATES } from '../types.ts'
 import {
   appendReturned,
   buildBatch,
+  malformedMarks,
   pendingRewrites,
   pruneBatch,
   skippedOn,
@@ -198,6 +199,20 @@ describe('pendingRewrites and skippedOn', () => {
   test('skippedOn reads the day in the zone', () => {
     const marks = [mark({ kind: 'skipped', applicationId: 'a1', at: AT_TODAY }), mark({ kind: 'skipped', applicationId: 'a2', at: AT_YESTERDAY })]
     assert.deepEqual([...skippedOn(marks, TODAY, TZ)], ['a1'])
+  })
+
+  test('a skip with a malformed instant is no skip of today, and never throws; malformedMarks names it', () => {
+    const marks = [mark({ kind: 'skipped', applicationId: 'a1', at: 'yesterday-ish' }), mark({ kind: 'skipped', applicationId: 'a2', at: AT_TODAY })]
+    assert.deepEqual([...skippedOn(marks, TODAY, TZ)], ['a2'])
+    assert.deepEqual(build(pool({ applications: [app('a1'), app('a2')], marks })).map(what), ['application:a1'])
+    assert.deepEqual(malformedMarks(marks), ['a skipped event of a1 has a malformed instant'])
+  })
+
+  test('a rewrite that came back without its version diffs from nothing invented: the current version; malformedMarks names it', () => {
+    const marks = [mark({ kind: 'rewritten', data: {} })]
+    const items = build(pool({ applications: [app('a1', { state: 'in-review', version: 4 })], marks }))
+    assert.deepEqual(items.map((i) => (i.kind === 'rewritten' ? i.fromVersion : -1)), [4])
+    assert.deepEqual(malformedMarks(marks), ['a rewritten event of a1 has no version'])
   })
 })
 

@@ -127,16 +127,31 @@ export function pendingRewrites(marks: readonly ReviewMark[]): readonly PendingR
     }))
 }
 
-/** `YYYY-MM-DD` of an instant in a zone. */
-const dayOf = (at: string, timeZone: string): string => new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date(at))
+const isInstant = (at: string): boolean => !Number.isNaN(Date.parse(at))
 
-/** The entities (application or follow-up ids) skipped on `day` in `timeZone` (S10: back the next day). */
+/** `YYYY-MM-DD` of an instant in a zone; null for a malformed one (never a `RangeError`). */
+const dayOf = (at: string, timeZone: string): string | null => (isInstant(at) ? new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date(at)) : null)
+
+/** The entities (application or follow-up ids) skipped on `day` in `timeZone` (S10: back the next day). A malformed instant is no skip. */
 export function skippedOn(marks: readonly ReviewMark[], day: string, timeZone: string): ReadonlySet<string> {
   return new Set(marks.filter((m) => m.kind === 'skipped' && dayOf(m.at, timeZone) === day).map(keyOf))
 }
 
-/** The version a rewritten item diffs from: the one before the return, or the current one when it failed. */
-const fromVersionOf = (r: PendingRewrite, current: number): number => (r.failed ? current : (r.version ?? current) - 1)
+/**
+ * The version a rewritten item diffs from: the one before the return, or the current one when it
+ * failed — and the current one too when the return's event lacks its version: no diff from a guessed
+ * version (`malformedMarks` says so, for the log).
+ */
+const fromVersionOf = (r: PendingRewrite, current: number): number => (r.failed || r.version === null ? current : r.version - 1)
+
+/** What the batch read but could not use as written, for the caller's log (pure). */
+export function malformedMarks(marks: readonly ReviewMark[]): readonly string[] {
+  return marks.flatMap((m) => {
+    if (m.kind === 'skipped' && !isInstant(m.at)) return [`a skipped event of ${keyOf(m)} has a malformed instant`]
+    if (m.kind === 'rewritten' && typeof m.data.version !== 'number') return [`a rewritten event of ${keyOf(m)} has no version`]
+    return []
+  })
+}
 
 const byScore = (a: AppCandidate, b: AppCandidate): number => {
   if (a.score === b.score) return 0

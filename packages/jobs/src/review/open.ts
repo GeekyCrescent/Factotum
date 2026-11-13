@@ -24,6 +24,7 @@ import {
   appendReturned,
   buildBatch,
   FOLLOWUP_IN_BATCH,
+  malformedMarks,
   pendingRewrites,
   pruneBatch,
   REVIEW_MARK_KINDS,
@@ -131,14 +132,17 @@ export function openReview(deps: OpenDeps): Opened {
     const at = now()
     const built = db.tx((q) => {
       const profile = repo.latestProfileVersion(q)?.profile
-      if (profile === undefined) return fail<{ batch: Batch; due: readonly string[] }>('conflict', 'no-profile')
+      if (profile === undefined) return fail<{ batch: Batch; due: readonly string[]; malformed: readonly string[] }>('conflict', 'no-profile')
       repo.closeBatches(q, at)
-      const items = buildBatch(poolOf(q), { today: todayIn(at, deps.timeZone), timeZone: deps.timeZone, batchSize: profile.batchSize, newId })
+      const pool = poolOf(q)
+      const items = buildBatch(pool, { today: todayIn(at, deps.timeZone), timeZone: deps.timeZone, batchSize: profile.batchSize, newId })
       const batch: Batch = { id: newId(), items, cursor: 0, results: {} }
       repo.insertBatch(q, batch as unknown as repo.StoredBatch, at)
-      return ok({ batch, due: dueContacts(q, items, at) })
+      return ok({ batch, due: dueContacts(q, items, at), malformed: malformedMarks(pool.marks) })
     })
     if (!built.ok) return built
+    // Once per batch, not on every poll: what the batch read but could not use as written.
+    for (const line of built.value.malformed) deps.log.warn(`jobs review: ${line}`)
     if (built.value.due.length > 0) queueChecks(built.value.due)
     return ok(built.value.batch)
   }

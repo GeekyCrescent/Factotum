@@ -180,6 +180,21 @@ describe('startBatch and batch (R1)', () => {
   })
 })
 
+describe('what the batch cannot read as written', () => {
+  test('a skip with a malformed instant does not break startBatch, and is logged once', async () => {
+    const db = await store()
+    insertApp(db, { id: 'a1', state: 'ready' })
+    db.tx((q) => {
+      repo.appendEvent(q, { kind: 'skipped', data: { reason: 'not-now' }, applicationId: 'a1', companyId: 'company-1', at: 'not a date' }, NOW)
+      return ok(undefined)
+    })
+    const log = capturedLog()
+    const r = review(db, { log: log.log })
+    assert.deepEqual(apps(valueOf(r.startBatch())), ['a1'])
+    assert.deepEqual(log.lines, ['warn jobs review: a skipped event of a1 has a malformed instant'])
+  })
+})
+
 describe('a reply (asks-something) in the open batch', () => {
   test('it leaves the open batch once it is marked done elsewhere (note { replyEventId })', async () => {
     const db = await store()
