@@ -106,3 +106,25 @@ test('form answers and the LinkedIn note are not the CV or the letter: their fig
 test('unknownNumbers lists the figures of a text that no source has, in order, once', () => {
   assert.deepEqual(unknownNumbers('13 and 40 and 13 and 7', SOURCES), ['13', '7'])
 })
+
+test('a duration in a request is not a claim: «Could we have a 15-minute call?» does not block', () => {
+  const artifacts: Artifacts = { ...CLEAN, letter: { subject: null, body: 'Could we have a 15-minute call? {signature}' } }
+  assert.deepEqual(unknown(lint(artifacts, CTX)), [])
+})
+
+test('durations: N-minute(s), N-min, N-hour(s), N minutes, N hours, N-day(s), N days, N-week(s) give no figure to check', () => {
+  const text = 'A 15-minute or 20-min chat, a 2-hour slot, 45 minutes, 3 hours, a 5-day trial, 10 days, a 6-week ramp, 2-weeks notice.'
+  assert.deepEqual(unknownNumbers(text, SOURCES), [])
+})
+
+test('a claim number next to a duration is still checked: «cut 37% of the time», «13 years», «13-month»', () => {
+  assert.deepEqual(unknownNumbers('Cut 37% of the time in a 15-minute standup.', SOURCES), ['37'])
+  assert.deepEqual(unknownNumbers('13 years of experience; a 14-month contract.', SOURCES), ['13', '14'])
+  const artifacts: Artifacts = { ...CLEAN, letter: { subject: null, body: 'I cut 37% of the time. {signature}' } }
+  assert.deepEqual(unknown(lint(artifacts, CTX)), [block('letter', '37')])
+})
+
+test('a duration is ignored only in the text checked, never removed from a source', () => {
+  const sources = { ...SOURCES, master: 'Ran a 33-hour migration.' }
+  assert.deepEqual(unknownNumbers('Ran it in 33 hours, then 33 more.', sources), [])
+})

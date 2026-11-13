@@ -11,6 +11,12 @@
  * `3.5`; a range `16–20` and a date `2026-02-05` give each of their numbers. A digit glued to a
  * letter is part of a name (`EC2`, `HL7`, `COMP8300`, `v2`) and is not a figure; so is a whole version
  * token (`v2.0`, `v3.10.1`), minor parts included.
+ *
+ * A DURATION IN THE TEXT CHECKED IS NOT A CLAIM: «Could we have a 15-minute call?» asks, it does not
+ * assert (R8). A figure directly followed by a minute, hour, day or week unit — hyphenated (`15-minute`,
+ * `20-min`, `2-hour`, `5-day`, `6-weeks`) or after one space (`45 minutes`, `3 hours`, `10 days`) — is
+ * not checked. Tight on purpose: months and years are not durations here (`13 years of experience` is a
+ * claim), and only the text checked loses them — every figure of a source stays a source.
  */
 
 import type { Opportunity, Profile } from '../types.ts'
@@ -27,6 +33,9 @@ const FIGURE = /(?<![\p{L}\p{N}])(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?/gu
 
 /** A version token, `v2.0` or `V3.10.1`: a name, not a figure — without this, its `.0` gave a `0`. */
 const VERSION = /(?<![\p{L}\p{N}])v\d+(?:\.\d+)*/giu
+
+/** A figure directly followed by a minute/hour/day/week unit (`15-minute`, `45 minutes`). */
+const DURATION = /(?<![\p{L}\p{N}.,])\d+(?:\.\d+)?(?:-|\s)(?:min(?:ute)?s?|hours?|hrs?|days?|weeks?)(?![\p{L}\p{N}])/giu
 
 const normalise = (figure: string): string => String(Number(figure.replace(/,/g, '')))
 
@@ -54,5 +63,5 @@ function allowed(sources: NumberSources): ReadonlySet<string> {
 /** The figures of `text` that no source has, in order, once each. */
 export function unknownNumbers(text: string, sources: NumberSources): readonly string[] {
   const known = allowed(sources)
-  return numbersIn(text).filter((figure) => !known.has(figure))
+  return numbersIn(text.replace(DURATION, ' ')).filter((figure) => !known.has(figure))
 }
