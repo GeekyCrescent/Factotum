@@ -47,7 +47,8 @@ function edit<T>(db: Db, id: string, fields: RuleFields, ctx: RuleContext<T>, da
     if (current === undefined) return fail('not-found', 'no such rule')
     const now = ctx.now()
     const saved: Rule = { ...current, ...fields, updatedAt: now.toISOString() }
-    updateRule(q, saved, { kind: 'rule-saved', data }, now)
+    const updated = updateRule(q, saved, { kind: 'rule-saved', data }, now)
+    if (!updated.ok) return updated
     return finish(q, saved, ctx.afterSave)
   })
 }

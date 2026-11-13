@@ -127,6 +127,26 @@ test('every function that writes state leaves exactly one event, in the same tra
   db.close()
 })
 
+test('an UPDATE writer on an id that is not there fails with not-found and appends no event', async () => {
+  using base = tempBase()
+  const db = await seeded(base)
+  const writers: readonly { readonly name: string; readonly run: (q: Queries) => Result<void> }[] = [
+    { name: 'saveContact', run: (q) => repo.saveContact(q, contact(ADDRESSES.checking, { id: 'nope' }), { kind: 'address-checked' }, NOW) },
+    { name: 'saveApplication', run: (q) => repo.saveApplication(q, application({ id: 'nope' }), { kind: 'relinted' }, NOW) },
+    { name: 'saveFollowup', run: (q) => repo.saveFollowup(q, followup({ id: 'nope', state: 'ready' }), { kind: 'relinted' }, NOW) },
+    { name: 'saveOpportunityCheck', run: (q) => repo.saveOpportunityCheck(q, { ...opportunity, id: 'nope' }, { kind: 'ad-checked' }, NOW) },
+    { name: 'updateRule', run: (q) => repo.updateRule(q, { id: 'nope', text: 'x', scope: 'all', enabled: true, createdAt: AT, updatedAt: AT }, { kind: 'rule-saved' }, NOW) },
+  ]
+  const before = eventCount(db)
+  for (const { name, run } of writers) {
+    const result = db.tx(run)
+    assert.equal(result.ok, false, name)
+    if (!result.ok) assert.equal(result.error.code, 'not-found', name)
+  }
+  assert.equal(eventCount(db), before)
+  db.close()
+})
+
 test('appendEvent carries the application, the company, the data and both times', async () => {
   using base = tempBase()
   const db = await seeded(base)

@@ -105,6 +105,9 @@ export const eventsOf = (q: Queries, applicationId: string): readonly JobEvent[]
 
 const withData = (spec: EventSpec, extra: Readonly<Record<string, unknown>>): EventSpec => ({ ...spec, data: { ...spec.data, ...extra } })
 
+/** An UPDATE that touched no row: nothing was there, so no event is appended either. */
+const notFound = (entity: string): Result<void> => fail('not-found', `no such ${entity}`)
+
 // ── Companies and contacts ──────────────────────────────────────────────────────────────────────
 
 /** A company as the seed or the scout creates it, without contacts (they have their own rows). */
@@ -190,14 +193,16 @@ export function insertContact(q: Queries, contact: Contact, event: EventSpec, no
 }
 
 /** Writes a contact moved by `addressTransition`, with its event. */
-export function saveContact(q: Queries, contact: Contact, event: EventSpec, now: Date): void {
-  q.run(
+export function saveContact(q: Queries, contact: Contact, event: EventSpec, now: Date): Result<void> {
+  const updated = q.run(
     `UPDATE contacts SET name = ?, role = ?, email = ?, source_url = ?, address_status = ?, verified_url = ?, checked_at = ?, override_at = ?
      WHERE id = ?`,
     ...contactColumns(contact),
     contact.id,
   )
+  if (updated.changes === 0) return notFound('contact')
   appendEvent(q, { ...withData(event, { contactId: contact.id }), applicationId: null, companyId: contact.companyId }, now)
+  return ok(undefined)
 }
 
 export function getCompany(q: Queries, id: string): Company | undefined {
@@ -308,9 +313,11 @@ export const opportunityIdByDedupeKey = (q: Queries, dedupeKey: string): string 
 }
 
 /** The live-ad check (N3): only `checked_at` and `status` change. */
-export function saveOpportunityCheck(q: Queries, opportunity: Opportunity, event: EventSpec, now: Date): void {
-  q.run('UPDATE opportunities SET checked_at = ?, status = ? WHERE id = ?', opportunity.checkedAt, opportunity.status, opportunity.id)
+export function saveOpportunityCheck(q: Queries, opportunity: Opportunity, event: EventSpec, now: Date): Result<void> {
+  const updated = q.run('UPDATE opportunities SET checked_at = ?, status = ? WHERE id = ?', opportunity.checkedAt, opportunity.status, opportunity.id)
+  if (updated.changes === 0) return notFound('opportunity')
   appendEvent(q, { ...withData(event, { opportunityId: opportunity.id }), applicationId: null, companyId: opportunity.companyId }, now)
+  return ok(undefined)
 }
 
 // ── Sends ────────────────────────────────────────────────────────────────────────────────────────
@@ -435,8 +442,8 @@ export function insertApplication(q: Queries, app: Application, extra: { readonl
 }
 
 /** Writes an application moved by `appTransition` — its row and every one of its sends — with its event. */
-export function saveApplication(q: Queries, app: Application, event: EventSpec, now: Date): void {
-  q.run(
+export function saveApplication(q: Queries, app: Application, event: EventSpec, now: Date): Result<void> {
+  const updated = q.run(
     `UPDATE applications SET contact_id = ?, channel = ?, target = ?, cv_base = ?, state = ?, outcome = ?, rewrite_from = ?, hold_until = ?,
        version = ?, notes = ?, warnings = ?, updated_at = ? WHERE id = ?`,
     app.target.contactId,
@@ -453,8 +460,10 @@ export function saveApplication(q: Queries, app: Application, event: EventSpec, 
     app.updatedAt,
     app.id,
   )
+  if (updated.changes === 0) return notFound('application')
   for (const send of app.sends) upsertSend(q, app.id, send)
   appendEvent(q, { ...event, applicationId: app.id, companyId: app.companyId }, now)
+  return ok(undefined)
 }
 
 // ── Artifacts ────────────────────────────────────────────────────────────────────────────────────
@@ -586,7 +595,7 @@ function sendMismatch(f: Followup, send: Send | undefined): string | null {
 export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Date, send?: Send): Result<void> {
   const mismatch = sendMismatch(f, send)
   if (mismatch !== null) return fail('conflict', mismatch)
-  q.run(
+  const updated = q.run(
     'UPDATE followups SET channel = ?, contact_id = ?, state = ?, rewrite_from = ?, version = ?, warnings = ?, data = ?, updated_at = ? WHERE id = ?',
     f.channel,
     f.contactId,
@@ -598,6 +607,7 @@ export function saveFollowup(q: Queries, f: Followup, event: EventSpec, now: Dat
     f.updatedAt,
     f.id,
   )
+  if (updated.changes === 0) return notFound('follow-up')
   if (send !== undefined) upsertSend(q, f.applicationId, send)
   appendEvent(q, { ...withData(event, { followupId: f.id }), applicationId: f.applicationId, companyId: companyOf(q, f.applicationId) }, now)
   return ok(undefined)
@@ -647,9 +657,11 @@ export function insertRule(q: Queries, rule: Rule, event: EventSpec, now: Date):
   appendEvent(q, { ...withData(event, { ruleId: rule.id }), applicationId: null, companyId: null }, now)
 }
 
-export function updateRule(q: Queries, rule: Rule, event: EventSpec, now: Date): void {
-  q.run('UPDATE rules SET text = ?, scope = ?, enabled = ?, updated_at = ? WHERE id = ?', rule.text, rule.scope, flag(rule.enabled), rule.updatedAt, rule.id)
+export function updateRule(q: Queries, rule: Rule, event: EventSpec, now: Date): Result<void> {
+  const updated = q.run('UPDATE rules SET text = ?, scope = ?, enabled = ?, updated_at = ? WHERE id = ?', rule.text, rule.scope, flag(rule.enabled), rule.updatedAt, rule.id)
+  if (updated.changes === 0) return notFound('rule')
   appendEvent(q, { ...withData(event, { ruleId: rule.id }), applicationId: null, companyId: null }, now)
+  return ok(undefined)
 }
 
 export const getMeta = (q: Queries, key: string): string | undefined => {
@@ -676,7 +688,7 @@ function recoverSend(q: Queries, applicationId: string, row: Send, now: Date): v
   if (row.kind === 'initial') {
     const app = getApplication(q, applicationId)
     const moved = app === undefined ? undefined : appTransition(app, { type: 'smtp-unknown' }, now) // T-A16 + T-S4
-    if (moved?.ok === true) return saveApplication(q, moved.value, { kind: 'send-unknown', data: restarted }, now)
+    if (moved?.ok === true && saveApplication(q, moved.value, { kind: 'send-unknown', data: restarted }, now).ok) return
   } else {
     const f = row.followupId === null ? undefined : getFollowup(q, row.followupId)
     const fMoved = f === undefined ? undefined : followupTransition(f, { type: 'smtp-unknown' }, now) // T-F8
