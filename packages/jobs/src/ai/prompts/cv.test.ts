@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { COMPANY, DOC, OPPORTUNITY, PROFILE } from '../../build/test-cv.ts'
 import { tempBase } from '../../test-support.ts'
 import { buildCvPrompt, type CvPromptInput } from './cv.ts'
-import { escapeXml, fixedSystem, writeSystemFile } from './fixed.ts'
+import { escapeXml, fixedSystem, PROMPT_KEEP_MS, writeSystemFile } from './fixed.ts'
 
 const INPUT: CvPromptInput = {
   master: '# Master CV',
@@ -128,6 +129,44 @@ test('the system file: <stateDir>/prompts/master-<sha256>.txt, 0600, written onc
 
   const other = writeSystemFile(base.dir, 'fixed two')
   assert.equal(other.ok && other.value !== path, true)
+})
+
+test('the prompts folder is made 0700 again even when it already existed wider', () => {
+  using base = tempBase()
+  mkdirSync(join(base.dir, 'prompts'), { mode: 0o755 })
+  chmodSync(join(base.dir, 'prompts'), 0o755)
+  assert.equal(writeSystemFile(base.dir, 'fixed').ok, true)
+  assert.equal(statSync(join(base.dir, 'prompts')).mode & 0o777, 0o700)
+})
+
+test('the partial file is created new (wx): a link planted at its name is never followed', () => {
+  using base = tempBase()
+  const dir = join(base.dir, 'prompts')
+  mkdirSync(dir, { mode: 0o700 })
+  const outside = join(base.dir, 'outside.txt')
+  writeFileSync(outside, 'untouched')
+  const path = join(dir, `master-${createHash('sha256').update('fixed').digest('hex')}.txt`)
+  symlinkSync(outside, `${path}.${process.pid}.partial`)
+  assert.deepEqual(writeSystemFile(base.dir, 'fixed'), { ok: true, value: path })
+  assert.equal(readFileSync(outside, 'utf8'), 'untouched')
+  assert.equal(readFileSync(path, 'utf8'), 'fixed')
+  assert.equal(lstatSync(path).isSymbolicLink(), false)
+})
+
+test(`a new system file prunes the master files older than ${PROMPT_KEEP_MS / 3_600_000} h; recent ones (a run may be reading) stay`, () => {
+  using base = tempBase()
+  const old = writeSystemFile(base.dir, 'old master')
+  const recent = writeSystemFile(base.dir, 'recent master')
+  const stray = join(base.dir, 'prompts', 'notes.txt')
+  writeFileSync(stray, 'not a master file')
+  const past = new Date(Date.now() - PROMPT_KEEP_MS - 60_000)
+  utimesSync(old.ok ? old.value : '', past, past)
+  utimesSync(stray, past, past)
+  const current = writeSystemFile(base.dir, 'new master')
+  assert.equal(current.ok, true)
+  assert.equal(existsSync(old.ok ? old.value : ''), false, 'the old one is gone')
+  assert.equal(existsSync(recent.ok ? recent.value : ''), true)
+  assert.equal(existsSync(stray), true, 'only master-*.txt is pruned')
 })
 
 test('a system file that cannot be written is a Result with its reason, never a throw', () => {
