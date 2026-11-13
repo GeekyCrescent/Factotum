@@ -124,7 +124,7 @@ test('the verifier’s usage is added to the version’s', async () => {
   assert.equal(built(db).usage?.costUsd, 0.5021)
 })
 
-test('a verifier that could not run blocks with `unsupported-claim` saying so — the CV is never ready unchecked', async () => {
+test('a verifier that could not run fails the attempt (the queue retries) — never an overridable warning, never a CV unchecked', async () => {
   using base = tempBase()
   const db = await builderStore(base)
   scriptClaude(base.dir, ['ok'])
@@ -132,11 +132,23 @@ test('a verifier that could not run blocks with `unsupported-claim` saying so �
   const { queue } = builderRig(db, builderDeps(db, base.dir, { verify }), { pdfExists: existsSync })
   await runQueue(queue)
 
+  const work = onlyWork(db)
+  assert.deepEqual([work.state, work.attempts, work.reason], ['queued', 1, 'the check did not run: claude gave no answer within 120 s'])
   const app = appOf(db, APP_ID)
-  assert.equal(app.state, 'in-review')
-  assert.deepEqual(app.warnings, [
-    { code: 'unsupported-claim', where: 'cv', detail: 'the check did not run: claude gave no answer within 120 s', blocks: true, overridden: null },
-  ])
+  assert.deepEqual([app.state, app.version, app.warnings], ['generating', 1, []])
+  assert.equal(existsSync(join(base.dir, 'artifacts', APP_ID, 'v2')), false, 'no version folder is kept for a CV that was not checked')
+})
+
+test('a verifier at the usage limit is a limit: no attempt counted', async () => {
+  using base = tempBase()
+  const db = await builderStore(base)
+  scriptClaude(base.dir, ['ok'])
+  const verify = spyVerify({ ok: false, kind: 'limit', reason: 'claude hit its usage limit' }).verify
+  const { queue } = builderRig(db, builderDeps(db, base.dir, { verify }), { pdfExists: existsSync })
+  await runQueue(queue)
+
+  const work = onlyWork(db)
+  assert.deepEqual([work.state, work.attempts, work.reason], ['queued', 0, 'claude hit its usage limit'])
 })
 
 test('Chromium failing is a failed attempt with its reason; nothing is saved', async () => {

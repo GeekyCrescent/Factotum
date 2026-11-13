@@ -28,7 +28,7 @@ import type { ArtifactsPatch, JobContext, JobHandler, JobResult } from '../ai/qu
 import { writeSystemFile } from '../ai/prompts/fixed.ts'
 import { buildRewritePrompt, REMOVE_PORTFOLIO_INSTRUCTION, REWRITE_JSON_SCHEMA, REWRITE_OUTPUT, type RewriteOutput, type RewritePromptInput } from '../ai/prompts/rewrite.ts'
 import { runClaude, type RunFailure, type RunResult } from '../ai/run.ts'
-import { addUsage, type VerifyFn } from '../build/cv.ts'
+import { addUsage, UNCHECKED_PREFIX, type VerifyFn } from '../build/cv.ts'
 import { slotsPreserved, type SlotFields, type SlotName } from '../build/slots.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -140,9 +140,6 @@ function refusal(context: Context, answer: RewriteOutput): string | null {
 }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
-
-/** The reason of a rewrite whose verifier did not run (D6: never a rewrite back unchecked). */
-export const UNCHECKED_PREFIX = 'the check did not run: '
 
 /** One `claude -p` with the rewrite prompt over what `context` read. */
 async function ask(deps: RewriteDeps, context: Context, ctx: JobContext): Promise<RunResult<RewriteOutput>> {

@@ -11,7 +11,7 @@
  * → «shorter» ONCE (back to step 1 with the previous CV and `SHORTER`); still more → `cv-overflow`,
  * which blocks. The kept print goes to `<stateDir>/artifacts/<id>/v<k>/`, and THE VERIFIER (injected,
  * L3) reads the CV this run wrote. Its `unsupported-claim`s and `cv-overflow` go back with the version
- * (`JobOutput.warnings`); a verifier that could not run blocks too — a CV is never `ready` unchecked.
+ * (`JobOutput.warnings`); a verifier that could not run fails the attempt — a CV is never `ready` unchecked.
  *
  * EVERYTHING THE RUN READS IS READ AT ITS START, IN ONE `read`: the application, its current version,
  * the opportunity, the company and its record, today's profile and the enabled rules of its channel.
@@ -205,20 +205,28 @@ async function fitOnePage(deps: CvBuilderDeps, job: CvJob, sources: CvSources, r
 
 const blocking = (code: Warning['code'], detail: string): Warning => ({ code, where: 'cv', detail, blocks: true, overridden: null })
 
-/** Step 8's check: the verifier's warnings, or one that blocks because it could not run. */
-async function verifyCv(deps: CvBuilderDeps, doc: CvDoc, ctx: JobContext): Promise<{ readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }> {
+/** The reason of a CV whose verifier did not run: the attempt fails, the queue retries (D10). */
+export const UNCHECKED_PREFIX = 'the check did not run: '
+
+/**
+ * Step 8's check. A verifier that does not run FAILS THE ATTEMPT (a limit stays a limit, with no
+ * attempt counted): the queue's retries at 2 and 10 min, and the third failure is T-A3's `missing-cv`
+ * with «Retry». Never an `unsupported-claim` «I checked it» could clear on a CV nobody checked.
+ */
+async function verifyCv(deps: CvBuilderDeps, doc: CvDoc, ctx: JobContext): Promise<Found<{ readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }>> {
   const checked = await deps.verify({ cv: doc, letter: null, origin: 'generated' }, ctx)
-  if (checked.ok) return checked
+  if (checked.ok) return { ok: true, value: checked }
   deps.log.warn(`jobs cv: the verifier did not run (${checked.reason})`)
-  return { warnings: [blocking('unsupported-claim', `the check did not run: ${checked.reason}`)], usage: null }
+  return checked.kind === 'limit' ? checked : failed(`${UNCHECKED_PREFIX}${checked.reason}`)
 }
 
-/** Steps 7b–8: the kept print in its version folder, verified; what goes back to the queue. */
+/** Steps 8 then 7b: verified first (nothing unchecked is kept), the print in its version folder; what goes back to the queue. */
 async function keepAndVerify(deps: CvBuilderDeps, job: CvJob, fitted: Fitted, ctx: JobContext): Promise<JobResult> {
   const { doc, printed } = fitted
+  const checked = await verifyCv(deps, doc, ctx)
+  if (!checked.ok) return checked
   const kept = await keepPrint(deps, job.app.id, job.app.version + 1, printed, ctx.signal)
   if (!kept.ok) return kept
-  const checked = await verifyCv(deps, doc, ctx)
   const overflow = printed.pages > 1 ? [blocking('cv-overflow', `the CV prints on ${printed.pages} pages`)] : []
   const artifacts: ArtifactsPatch = {
     cv: doc,
@@ -227,10 +235,10 @@ async function keepAndVerify(deps: CvBuilderDeps, job: CvJob, fitted: Fitted, ct
     contactHash: printed.contactHash,
     profileVersion: job.profile.version,
     rules: job.rules.map((rule) => rule.id),
-    usage: addUsage(fitted.usage, checked.usage),
+    usage: addUsage(fitted.usage, checked.value.usage),
     origin: 'generated',
   }
-  return { ok: true, output: { type: 'application', artifacts, warnings: [...checked.warnings, ...overflow] } }
+  return { ok: true, output: { type: 'application', artifacts, warnings: [...checked.value.warnings, ...overflow] } }
 }
 
 async function build(deps: CvBuilderDeps, work: Work, ctx: JobContext): Promise<JobResult> {
