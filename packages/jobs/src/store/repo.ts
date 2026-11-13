@@ -947,3 +947,23 @@ export const genRequestsOf = (q: Queries, entityId: string): readonly GenRequest
 export function deleteMeta(q: Queries, key: string): void {
   q.run('DELETE FROM meta WHERE key = ?', key)
 }
+
+/**
+ * Wave 2 (G5, D8 step 7): the `draft` applications of these seed files held to a day no later than
+ * `lastHoldDay` (= today + 7 d) whose CV was never requested, in the order of the files and the rows.
+ */
+export function heldDraftsDue(q: Queries, files: readonly string[], lastHoldDay: string): readonly string[] {
+  return files.flatMap((file) =>
+    q
+      .all<Row>(
+        `SELECT a.id FROM applications a
+         WHERE a.state = 'draft' AND a.hold_until IS NOT NULL AND a.hold_until <= ? AND substr(a.seed_key, 1, ?) = ?
+           AND NOT EXISTS (SELECT 1 FROM gen_requests g WHERE g.entity_id = a.id AND g.kind = 'cv')
+         ORDER BY a.rowid`,
+        lastHoldDay,
+        file.length + 1,
+        `${file}#`,
+      )
+      .map((row) => text(row, 'id')),
+  )
+}
