@@ -1,0 +1,174 @@
+/*
+ * The jobs module's own classes, all prefixed `j-` (spec 2026-11-12-postulaciones, design D15
+ * «Estilo»; mockup B v2 `maquetas/review-one-at-a-time-v2.html`). Colours, sizes and motion are the
+ * shell's Grafito tokens, by name: nothing here declares a colour value. The shell's `.btn`, `.chip`,
+ * `.notice` and `.sheet` are used as they are, never redefined.
+ */
+
+.j-screen {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.j-loading,
+.j-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-2);
+}
+
+.j-empty .btn {
+  margin-top: var(--space-3);
+}
+
+/* --- The batch bar: «Jobs › Review · 2 of 10», the dots, the send lines --- */
+
+.j-review-bar {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.j-crumb {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-test {
+  margin-right: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-6);
+  background: var(--ask-bg);
+  color: var(--ask);
+  font-weight: 600;
+}
+
+.j-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.j-dot.done {
+  background: var(--text-3);
+  border-color: var(--text-3);
+}
+
+.j-dot.current {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.j-sends {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-small);
+}
+
+.j-send {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+}
+
+.j-send.ok {
+  color: var(--ok);
+}
+
+.j-send.err {
+  color: var(--err);
+}
+
+.j-send.ask {
+  color: var(--ask);
+}
+
+.j-notice {
+  margin: var(--space-3) var(--space-4) 0;
+}
+
+/* --- The item and its buttons -------------------------------------------- */
+
+.j-review {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+}
+
+.j-company {
+  margin: 0;
+  font-size: var(--text-heading);
+}
+
+.j-role {
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+}
+
+.j-buttons {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.j-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.j-why {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+/* --- The end of the batch ------------------------------------------------- */
+
+.j-end {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) 0;
+}
+
+.j-end h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+}
+
+.j-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-still {
+  margin: 0;
+  color: var(--ask);
+}

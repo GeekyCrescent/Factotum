@@ -8,7 +8,19 @@
  * 34). So a rule here may lag the engine by one poll and nothing worse happens than a refusal shown.
  */
 
-import type { Address, ApplicationCard, BatchView, FormAnswer, ItemResult, ReviewItem, SendKind, SendView, Warning, WarningCode } from './contract.ts'
+import type {
+  Address,
+  ApplicationCard,
+  BatchView,
+  FormAnswer,
+  ItemResult,
+  RequestError,
+  ReviewItem,
+  SendKind,
+  SendView,
+  Warning,
+  WarningCode,
+} from './contract.ts'
 
 export { addressControls, ADDRESS_STALE_DAYS, isStaleCheck, type AddressControls, type Toggle } from './address.ts'
 import { addressControls, isStaleCheck } from './address.ts'
@@ -306,6 +318,32 @@ export function sendLine(send: SendView, company: string): SendLine {
     case 'send-unknown':
       return { text: `${company}: did it go?`, tone: 'ask', final: true, retry: false }
   }
+}
+
+// ── A refused decision (D3 «Qué responde el motor», crit. 34) ────────────────────────────────────
+
+/** The status of a failed request, read structurally (`apps/web/src/api.ts` `readResponse`). */
+export function statusOf(cause: unknown): number | undefined {
+  const status = (cause as RequestError | null)?.status
+  return typeof status === 'number' ? status : undefined
+}
+
+export interface Refusal {
+  readonly text: string
+  /** `409 check-pending`: the engine queued the check; the batch poll brings the answer. */
+  readonly retryLater: boolean
+}
+
+const REASONS: Readonly<Record<string, string>> = {
+  'address-unverified': 'The address was not found on their site: Send anyway, or Switch to form.',
+  'no-address': 'There is no address to send to.',
+}
+
+export function refusalOf(cause: unknown): Refusal {
+  const message = cause instanceof Error ? cause.message : undefined
+  if (message === undefined) return { text: 'Something went wrong.', retryLater: false }
+  if (statusOf(cause) === 409 && message === 'check-pending') return { text: 'checking address… try again in a moment', retryLater: true }
+  return { text: REASONS[message] ?? message, retryLater: false }
 }
 
 // ── The keys (crit. 36) ──────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,9 @@ import {
   keyAction,
   labelsOf,
   nextOpen,
+  refusalOf,
   sendKeyOf,
+  statusOf,
   sendLine,
   shouldPollBatch,
   type Exit,
@@ -452,6 +454,23 @@ test('A approves, S skips, ← goes back, / focuses the box', () => {
   assert.equal(key('ArrowLeft'), 'back')
   assert.equal(key('/'), 'focus')
   assert.equal(key('x'), null)
+})
+
+// ── What a refused decision says (D3 «Qué responde el motor», crit. 34) ──────────────────────────
+
+test('a refused decision says why, in the owner\'s words', () => {
+  const error = (status: number, message: string) => Object.assign(new Error(message), { status })
+  assert.deepEqual(refusalOf(error(409, 'check-pending')), { text: 'checking address… try again in a moment', retryLater: true })
+  assert.deepEqual(refusalOf(error(422, 'address-unverified')), {
+    text: 'The address was not found on their site: Send anyway, or Switch to form.',
+    retryLater: false,
+  })
+  assert.deepEqual(refusalOf(error(422, 'no-address')), { text: 'There is no address to send to.', retryLater: false })
+  assert.deepEqual(refusalOf(error(422, 'blocked by placeholder')), { text: 'blocked by placeholder', retryLater: false })
+  assert.deepEqual(refusalOf(error(0, 'could not reach the daemon')), { text: 'could not reach the daemon', retryLater: false })
+  assert.deepEqual(refusalOf('boom'), { text: 'Something went wrong.', retryLater: false })
+  assert.equal(statusOf({ status: 404 }), 404)
+  assert.equal(statusOf(null), undefined)
 })
 
 test('no key acts while typing in a field or with a modifier', () => {
