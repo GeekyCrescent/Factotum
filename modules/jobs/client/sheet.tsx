@@ -1,12 +1,25 @@
 /**
- * A sheet: its title (or a field marked `autofocus`) takes focus, Escape and the scrim close it, and
- * focus goes back where it was. The shell's `.sheet` and `.scrim`, shared by name — the pattern of
+ * A sheet: its title (or a field marked `autofocus`) takes focus, Escape and the scrim close it, Tab
+ * goes round its own controls and never reaches the review behind (`focus-trap.ts`), and focus goes
+ * back where it was. While it is open, the review's keys stand aside (`isDialogOpen`). The shell's `.sheet` and `.scrim`, shared by name — the pattern of
  * the tasks module's sheet, written again here because a module imports nothing from another.
  */
 
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
+import { trappedFocus } from './focus-trap.ts'
 import { ICONS, type JobsIcon } from './icons.ts'
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/** Tab inside `sheet`: round its controls. */
+function trapTab(event: KeyboardEvent, sheet: Element): void {
+  const controls = [...sheet.querySelectorAll<HTMLElement>(FOCUSABLE)]
+  const next = trappedFocus(controls.indexOf(document.activeElement as HTMLElement), controls.length, event.shiftKey)
+  if (next === null) return
+  event.preventDefault()
+  controls[next]?.focus()
+}
 
 export function Icon({ name, size = 18 }: { readonly name: JobsIcon; readonly size?: number }) {
   return (
@@ -32,10 +45,12 @@ export function Sheet({ id, title, onClose, children }: SheetProps) {
     const field = heading.current?.closest('.sheet')?.querySelector<HTMLElement>('[autofocus]')
     ;(field ?? heading.current)?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' && event.key !== 'Tab') return
       const sheets = document.querySelectorAll('.sheet')
-      if (sheets[sheets.length - 1] !== heading.current?.closest('.sheet')) return
-      close.current()
+      const mine = heading.current?.closest('.sheet')
+      if (mine === null || mine === undefined || sheets[sheets.length - 1] !== mine) return
+      if (event.key === 'Tab') trapTab(event, mine)
+      else close.current()
     }
     window.addEventListener('keydown', onKey)
     return () => {
