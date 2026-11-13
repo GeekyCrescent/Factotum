@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { openDb, type Db } from './db.ts'
@@ -272,6 +272,49 @@ test('a store still locked past busy_timeout is refused with the reason, and NOT
   assert.equal(opened.ok, false)
   if (!opened.ok) assert.match(opened.error.reason, /locked by another process past 2000 ms/)
   assert.deepEqual(readdirSync(base.dir).filter((name) => name.includes('.bad-')), [])
+})
+
+test('a v99 store refused at every start is copied aside ONCE: a restart loop does not fill the disk', async () => {
+  using base = tempBase()
+  await rawDb(join(base.dir, 'jobs.db'), 99)
+  const reasons: string[] = []
+  for (const at of [NOW, '2026-11-14T03:05:05.000Z', '2026-11-14T03:06:05.000Z']) {
+    const opened = await openDb({ dir: base.dir, now: manualClock(at).now })
+    assert.equal(opened.ok, false)
+    if (!opened.ok) reasons.push(opened.error.reason)
+  }
+  assert.deepEqual(readdirSync(base.dir).filter((name) => name.startsWith('jobs.db.bad-')), ['jobs.db.bad-2026-11-14T03-04-05.000Z'])
+  for (const reason of reasons) assert.match(reason, /newer than this code's 1; a copy is at jobs\.db\.bad-2026-11-14T03-04-05\.000Z/)
+})
+
+test('a store that changed since its last copy is copied again', async () => {
+  using base = tempBase()
+  const file = join(base.dir, 'jobs.db')
+  await rawDb(file, 99)
+  assert.equal((await openDb({ dir: base.dir, now: manualClock(NOW).now })).ok, false)
+  await rawDb(file, 99) // one more row: another size
+  assert.equal((await openDb({ dir: base.dir, now: manualClock('2026-11-14T03:05:05.000Z').now })).ok, false)
+  assert.equal(readdirSync(base.dir).filter((name) => name.startsWith('jobs.db.bad-')).length, 2)
+})
+
+test('a copy aside that cannot be written is a Result with both reasons, never a throw', async () => {
+  using base = tempBase()
+  await rawDb(join(base.dir, 'jobs.db'), 99)
+  mkdirSync(join(base.dir, 'jobs.db.bad-2026-11-14T03-04-05.000Z')) // the copy's path is taken by a folder
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
+  assert.equal(opened.ok, false)
+  if (!opened.ok) {
+    assert.equal(opened.error.code, 'module-error')
+    assert.match(opened.error.reason, /newer than this code's 1; it could not be copied aside \(E[A-Z]+\); it was left as it is/)
+  }
+})
+
+test('a state folder that cannot be made is a Result, never a throw', async () => {
+  using base = tempBase()
+  writeFileSync(join(base.dir, 'file'), 'x')
+  const opened = await openDb({ dir: join(base.dir, 'file', 'state'), now: manualClock(NOW).now })
+  assert.equal(opened.ok, false)
+  if (!opened.ok) assert.match(opened.error.reason, /the jobs state folder could not be prepared \(ENOTDIR\)/)
 })
 
 test('a file that is not a database is copied aside and refused, without a throw', async () => {

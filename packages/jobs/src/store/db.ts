@@ -6,7 +6,9 @@
  * with the reason (requirements §6). B7 greps for a static one. Types come from `typeof import(…)`.
  *
  * NOTHING HERE THROWS. `openDb`, `tx` and `backup` answer with a `Result`; a store that is newer,
- * unreadable or damaged is never touched — it is copied to `jobs.db.bad-<date>` and refused.
+ * unreadable or damaged is never touched — it is copied to `jobs.db.bad-<date>` and refused. The copy
+ * is taken ONCE per state of the file (a store refused at every restart does not fill the disk), and a
+ * copy that cannot be written is said in the reason, not thrown.
  *
  * `DatabaseSync` creates its files with the umask of the process, so every open ends with a
  * `chmod 0o600` of `jobs.db`, `-wal` and `-shm`, and every copy gets the same (R8).
@@ -15,7 +17,7 @@
  * daemon's, in `repo.ts`, never the CLI's (design D3, «La postulación de prueba»).
  */
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fail, ok, type Result } from '../types.ts'
 import { MIGRATIONS } from './schema.sql.ts'
@@ -64,19 +66,53 @@ function lockDown(path: string): void {
 
 const companions = (file: string): readonly string[] => [file, `${file}-wal`, `${file}-shm`]
 
-/** Copies the store (and its WAL) aside, untouched, and refuses with the reason. */
+const codeOf = (error: unknown): string =>
+  typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : messageOf(error)
+
+const BAD_PREFIX = `${DB_FILE}.bad-`
+const WAL = '-wal'
+
+/** The size of a file, or null when there is none. */
+const sizeOf = (path: string): number | null => (existsSync(path) ? statSync(path).size : null)
+
+/**
+ * A copy already taken of the store AS IT IS NOW: same size (and the same for its WAL), written after
+ * the store last changed. A store refused at every start (a newer schema, a damaged page) is copied
+ * once, not once per restart — a restart loop would fill the disk (D2 asks for the copy, not for many).
+ */
+function existingCopy(file: string): string | undefined {
+  const store = statSync(file)
+  const changedAt = Math.max(store.mtimeMs, existsSync(file + WAL) ? statSync(file + WAL).mtimeMs : 0)
+  const walSize = sizeOf(file + WAL)
+  const dir = dirname(file)
+  return readdirSync(dir)
+    .filter((name) => name.startsWith(BAD_PREFIX) && !name.endsWith(WAL))
+    .find((name) => {
+      const copy = statSync(join(dir, name))
+      return copy.isFile() && copy.size === store.size && copy.mtimeMs >= changedAt && sizeOf(join(dir, name + WAL)) === walSize
+    })
+}
+
+/** Copies the store (and its WAL) aside, untouched — or finds the copy already taken — and refuses. */
 function quarantine<T>(file: string, now: () => Date, reason: string): Result<T> {
-  const stamp = now().toISOString().replaceAll(':', '-')
-  const bad = `${file}.bad-${stamp}`
-  for (const [from, to] of [
-    [file, bad],
-    [`${file}-wal`, `${bad}-wal`],
-  ] as const) {
-    if (!existsSync(from)) continue
-    copyFileSync(from, to)
-    chmodSync(to, 0o600)
+  try {
+    if (!existsSync(file)) return fail('module-error', reason)
+    const known = existingCopy(file)
+    if (known !== undefined) return fail('module-error', `${reason}; a copy is at ${known}`)
+    const name = `${BAD_PREFIX}${now().toISOString().replaceAll(':', '-')}`
+    const bad = join(dirname(file), name)
+    for (const [from, to] of [
+      [file, bad],
+      [file + WAL, bad + WAL],
+    ] as const) {
+      if (!existsSync(from)) continue
+      copyFileSync(from, to)
+      chmodSync(to, 0o600)
+    }
+    return fail('module-error', `${reason}; a copy is at ${name}`)
+  } catch (error) {
+    return fail('module-error', `${reason}; it could not be copied aside (${codeOf(error)}); it was left as it is`)
   }
-  return fail('module-error', `${reason}; a copy is at ${DB_FILE}.bad-${stamp}`)
 }
 
 async function loadSqlite(load: () => Promise<Sqlite>): Promise<Result<Sqlite>> {
@@ -209,8 +245,12 @@ export async function openDb(options: OpenOptions): Promise<Result<Db>> {
   const migrations = options.migrations ?? MIGRATIONS
   const sqlite = await loadSqlite(options.load ?? (() => import('node:sqlite')))
   if (!sqlite.ok) return sqlite
-  mkdirSync(options.dir, { recursive: true, mode: 0o700 })
-  chmodSync(options.dir, 0o700)
+  try {
+    mkdirSync(options.dir, { recursive: true, mode: 0o700 })
+    chmodSync(options.dir, 0o700)
+  } catch (error) {
+    return fail('module-error', `the jobs state folder could not be prepared (${codeOf(error)})`)
+  }
   const file = join(options.dir, DB_FILE)
 
   let handle: Handle
@@ -221,7 +261,12 @@ export async function openDb(options: OpenOptions): Promise<Result<Db>> {
   }
   // The CLI and the daemon open the same file: the wait goes on BEFORE the first read, or a lock held
   // for a moment reads as damage. Setting it touches no page, so it cannot be busy itself.
-  handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+  try {
+    handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+  } catch (error) {
+    handle.close()
+    return fail('module-error', `jobs.db pragmas failed: ${messageOf(error)}`)
+  }
   const inspected = inspect(handle, migrations.length)
   if (inspected.kind !== 'ok') {
     handle.close()
@@ -239,6 +284,11 @@ export async function openDb(options: OpenOptions): Promise<Result<Db>> {
     handle.close()
     return migrated
   }
-  for (const path of companions(file)) lockDown(path)
+  try {
+    for (const path of companions(file)) lockDown(path)
+  } catch (error) {
+    handle.close()
+    return fail('module-error', `jobs.db could not be made 0600 (${codeOf(error)})`)
+  }
   return ok(dbOver(handle))
 }
