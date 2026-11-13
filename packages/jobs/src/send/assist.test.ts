@@ -9,7 +9,7 @@ import { describe, test } from 'node:test'
 
 import type { Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { errorOf, followup, valueOf } from '../test-state.ts'
+import { ADDRESSES, errorOf, followup, valueOf } from '../test-state.ts'
 import { appOf, eventsOf, sentWithFollowup, world, write, type World, type WorldOptions } from '../test-send.ts'
 import { ok, type AppState, type Followup, type SendState } from '../types.ts'
 import { createAssist, type AssistDeps } from './assist.ts'
@@ -21,7 +21,7 @@ async function within(t: { skip: (m: string) => void }, options: WorldOptions, b
   const w = await world(options)
   if (w === null) return t.skip('openssl is not installed: the send tests need it for a throwaway CA')
   const sender = createSender(w.deps)
-  const deps: AssistDeps = { db: w.db, now: w.clock.now, timeZone: w.deps.timeZone, maxSendsPerDay: 40, sender }
+  const deps: AssistDeps = { db: w.db, now: w.clock.now, timeZone: w.deps.timeZone, maxSendsPerDay: 40, sender, enqueueCheck: w.deps.enqueueCheck }
   try {
     await body(w, sender, deps)
   } finally {
@@ -220,6 +220,82 @@ describe('the follow-up row moves through the injected step (F2b connects it)', 
       assert.equal(w.db.read((q) => repo.getFollowup(q, 'fu-1'))?.state, 'sending')
       await sender.settled()
       assert.equal(w.db.read((q) => repo.getFollowup(q, 'fu-1'))?.state, 'sent')
+    })
+  })
+})
+
+/** A follow-up of app-1 whose row is in `state`, id F1. */
+function followupRowIn(q: Queries, state: 'send-unknown' | 'failed'): void {
+  sentWithFollowup(q, followup({ state }))
+  q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', ?, '2026-11-13T22:00:00.000Z', 1)", state)
+}
+
+const followupRow = (w: World) => appOf(w.db).sends.find((s) => s.kind === 'followup-1')
+
+describe('«Send again» and a follow-up «Retry» pass the address guard of «Approve» (D9 step 2, revisión de E)', () => {
+  test('«Send again» of the initial: unverified checked → blocked; checking → conflict + the check in front; nothing moves', async (t) => {
+    for (const [address, code, reason] of [
+      [ADDRESSES.unverifiedToday, 'blocked', 'address-unverified'],
+      [ADDRESSES.checking, 'conflict', 'check-pending'],
+    ] as const) {
+      await within(t, { address }, async (w, _sender, deps) => {
+        write(w.db, (q) => initialIn(q, 'send-unknown', 'send-unknown'))
+        errorOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again'), code, reason)
+        assert.equal(appOf(w.db).state, 'send-unknown')
+        assert.equal(appOf(w.db).sends[0]?.state, 'send-unknown')
+        assert.deepEqual(w.enqueued, code === 'conflict' ? [{ contactId: 'contact-1', front: true }] : [])
+        assert.equal(w.server.commands.length, 0)
+      })
+    }
+  })
+
+  test('«Send again» with «Send anyway» on a finished unverified check writes the contact override (T-D5) and goes', async (t) => {
+    await within(t, { address: ADDRESSES.unverifiedToday }, async (w, sender, deps) => {
+      write(w.db, (q) => initialIn(q, 'send-unknown', 'send-unknown'))
+      valueOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again', { addressOverride: true }))
+      assert.notEqual(w.db.read((q) => repo.getContact(q, 'contact-1'))?.address?.override ?? null, null)
+      await sender.settled()
+      assert.equal(appOf(w.db).state, 'sent')
+    })
+  })
+
+  test('«Send again» to a contact whose email was edited → blocked address-changed', async (t) => {
+    await within(t, {}, async (w, _sender, deps) => {
+      write(w.db, (q) => {
+        initialIn(q, 'send-unknown', 'send-unknown')
+        q.run("UPDATE contacts SET email = 'other@acme.example' WHERE id = 'contact-1'")
+      })
+      errorOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again'), 'blocked', 'address-changed')
+      assert.equal(appOf(w.db).state, 'send-unknown')
+    })
+  })
+
+  test('a follow-up «Send again» and «Retry»: unverified checked → blocked; checking → conflict + the check in front', async (t) => {
+    for (const [state, act] of [
+      ['send-unknown', (a: ReturnType<typeof createAssist>) => a.resolveUnknown('app-1', 'followup-1', 'again')],
+      ['failed', (a: ReturnType<typeof createAssist>) => a.retrySend('app-1', 'followup-1')],
+    ] as const) {
+      for (const [address, code, reason] of [
+        [ADDRESSES.unverifiedToday, 'blocked', 'address-unverified'],
+        [ADDRESSES.checking, 'conflict', 'check-pending'],
+      ] as const) {
+        await within(t, { address }, async (w, _sender, deps) => {
+          write(w.db, (q) => followupRowIn(q, state))
+          errorOf(act(createAssist(deps)), code, reason)
+          assert.equal(followupRow(w)?.state, state)
+          assert.equal(w.db.read((q) => repo.getFollowup(q, 'fu-1'))?.state, state)
+          assert.deepEqual(w.enqueued, code === 'conflict' ? [{ contactId: 'contact-1', front: true }] : [])
+        })
+      }
+    }
+  })
+
+  test('a follow-up «Retry» with an existing override goes and its row carries it', async (t) => {
+    await within(t, { address: ADDRESSES.unverifiedTodayOverride }, async (w, sender, deps) => {
+      write(w.db, (q) => followupRowIn(q, 'failed'))
+      assert.equal(valueOf(createAssist(deps).retrySend('app-1', 'followup-1')).addressOverride, true)
+      await sender.settled()
+      assert.equal(followupRow(w)?.state, 'sent')
     })
   })
 })

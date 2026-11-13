@@ -113,13 +113,28 @@ export function followupOf(q: Queries, app: Application, kind: SendKind): Follow
 }
 
 /** T-D5 beside T-A11/T-F6: «Send anyway» on a finished unverified check writes the override on the CONTACT. */
-function writeOverride(q: Queries, contactId: string | null, address: Address | null, sendAnyway: boolean, at: Date): Result<void> {
+export function writeOverride(q: Queries, contactId: string | null, address: Address | null, sendAnyway: boolean, at: Date): Result<void> {
   const gate = approvalGate(address, at, sendAnyway)
   if (!gate.ok || gate.value.override !== 'new' || contactId === null) return ok(undefined)
   const contact = repo.getContact(q, contactId)
   if (contact === undefined) return fail('not-found', 'no such contact')
   const moved = addressTransition(contact, { type: 'send-anyway' }, at)
   return moved.ok ? repo.saveContact(q, moved.value, { kind: 'address-override' }, at) : moved
+}
+
+/** The contact whose check `check-pending` waits for. */
+function contactOf(q: Queries, id: string, kind: SendKind): string | null {
+  const app = repo.getApplication(q, id)
+  if (app === undefined) return null
+  return kind === 'initial' ? app.target.contactId : (followupOf(q, app, kind)?.contactId ?? null)
+}
+
+/** X4: a refusal `check-pending` queues the contact's check in front, outside the `tx` (T-D2). Returns the refusal. */
+export function enqueueIfPending<T>(db: Db, enqueue: Enqueue, id: string, kind: SendKind, refused: Result<T>): Result<T> {
+  if (refused.ok || refused.error.reason !== 'check-pending') return refused
+  const contactId = db.read((q) => contactOf(q, id, kind))
+  if (contactId !== null) enqueue(contactId, { front: true })
+  return refused
 }
 
 const then = <T>(written: Result<void>, value: T): Result<T> => (written.ok ? ok(value) : written)
@@ -184,15 +199,6 @@ export function createSender(deps: SenderDeps): Sender {
     })
   }
 
-  /** The contact whose check `check-pending` waits for. */
-  function contactOf(id: string, kind: SendKind): string | null {
-    return db.read((q) => {
-      const app = repo.getApplication(q, id)
-      if (app === undefined) return null
-      return kind === 'initial' ? app.target.contactId : (followupOf(q, app, kind)?.contactId ?? null)
-    })
-  }
-
   async function transmit(message: Outgoing, signal: AbortSignal): Promise<SendResult> {
     const password = await deps.readPassword(deps.mail.passwordFile)
     if (!password.ok) return refused(password.reason)
@@ -246,9 +252,7 @@ export function createSender(deps: SenderDeps): Sender {
       const sendAnyway = options.addressOverride === true
       const begun = kind === 'initial' ? beginInitial(id, sendAnyway, at) : beginFollowup(id, kind, sendAnyway, at)
       if (!begun.ok) {
-        const contactId = begun.error.reason === 'check-pending' ? contactOf(id, kind) : null
-        if (contactId !== null) deps.enqueueCheck(contactId, { front: true }) // T-D2, outside the `tx` (X4)
-        return begun
+        return enqueueIfPending(db, deps.enqueueCheck, id, kind, begun)
       }
       if (begun.value === 'sending') launch(id, kind)
       return ok({ state: begun.value, kind })
