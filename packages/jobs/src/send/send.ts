@@ -83,6 +83,8 @@ export interface Sender {
   readonly send: (id: string, kind: SendKind) => Result<Send>
   /** Resolves when every send in flight has finished (tests, and `stop`). */
   readonly settled: () => Promise<void>
+  /** Aborts every SMTP attempt in flight (reason `stopping`) and waits; their step 3 is not written. Then refuses new ones. */
+  readonly stop: () => Promise<void>
 }
 
 export const newMessageId = (now: Date): string => `<${uuidv7(now.getTime())}@${MESSAGE_ID_HOST}>`
@@ -124,6 +126,7 @@ const then = <T>(written: Result<void>, value: T): Result<T> => (written.ok ? ok
 export function createSender(deps: SenderDeps): Sender {
   const { db, log } = deps
   const inFlight = new Set<{ readonly controller: AbortController; readonly done: Promise<void> }>()
+  let stopped = false
 
   const capOf = (q: Queries, at: Date): DailyCap => dailyCap(q, at, deps.timeZone, deps.mail.maxSendsPerDay)
   const resolvePath = (path: string): string => (isAbsolute(path) || deps.stateDir === undefined ? path : join(deps.stateDir, path))
@@ -216,6 +219,7 @@ export function createSender(deps: SenderDeps): Sender {
   }
 
   function launch(id: string, kind: SendKind): void {
+    if (stopped) return
     const controller = new AbortController()
     const entry = {
       controller,
@@ -232,6 +236,7 @@ export function createSender(deps: SenderDeps): Sender {
 
   return {
     approve: (id, kind, options = {}) => {
+      if (stopped) return fail('conflict', 'the sender is stopping')
       const at = deps.now()
       const sendAnyway = options.addressOverride === true
       const begun = kind === 'initial' ? beginInitial(id, sendAnyway, at) : beginFollowup(id, kind, sendAnyway, at)
@@ -249,6 +254,11 @@ export function createSender(deps: SenderDeps): Sender {
       return row === undefined ? fail('not-found', `no ${kind} send for this application`) : ok(row)
     },
     settled,
+    stop: async () => {
+      stopped = true
+      for (const entry of inFlight) entry.controller.abort(STOPPING)
+      await settled()
+    },
   }
 }
 
