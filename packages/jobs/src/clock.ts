@@ -1,7 +1,8 @@
 /**
  * The clock of `jobs` (task G5, design D16): one interval of 60 s on `ctx.timers` — NEVER a global
  * timer — whose first round runs at once, one round at a time (a tick that comes while a round runs
- * is skipped).
+ * is skipped). A task that answers a promise gets `TASK_TIMEOUT_MS` on the same timers: a hung one is
+ * logged and left behind, so it cannot hold every later round — the backup included.
  *
  * THE TASKS OF THIS CUT, in this order each round:
  * 1. WAVE 2 (hourly, D8 step 7): the CV of every held `draft` of a file the module sends whose
@@ -35,6 +36,8 @@ import { ok, type Result } from './types.ts'
 
 /** design D16. */
 export const CLOCK_MS = 60_000
+/** A task that has not settled by then is given up (logged), so it cannot hold every later round. */
+export const TASK_TIMEOUT_MS = 120_000
 /** design D2: the daily copies kept. */
 export const BACKUP_KEEP = 7
 /** After this many copies failed in a row, `meta[BACKUP_FAILING]` says so (for `health()`). */
@@ -84,7 +87,9 @@ const codeOf = (error: unknown): string => {
   return typeof code === 'string' ? code : messageOf(error)
 }
 
-const addDays = (day: string, days: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10)
+const TIMED_OUT: unique symbol = Symbol('timed out')
+
+const addDays =(day: string, days: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10)
 
 export function createClock(deps: ClockDeps): Clock {
   const { db, now, log } = deps
@@ -179,10 +184,26 @@ export function createClock(deps: ClockDeps): Clock {
     { name: 'backup', run: backup },
   ]
 
+  /** Waits for `task` at most `TASK_TIMEOUT_MS` on the injected timers; a hung one is logged and left. */
+  async function runTask(task: (typeof tasks)[number]): Promise<void> {
+    const result = task.run()
+    if (!(result instanceof Promise)) return
+    let timer: Disposable | undefined
+    const gaveUp = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = deps.timers.setTimeout(() => resolve(TIMED_OUT), TASK_TIMEOUT_MS)
+    })
+    try {
+      const outcome: unknown = await Promise.race([result, gaveUp])
+      if (outcome === TIMED_OUT) log.error(`jobs clock: ${task.name} gave no answer within ${TASK_TIMEOUT_MS / 1000} s; the round goes on without it`)
+    } finally {
+      timer?.[Symbol.dispose]()
+    }
+  }
+
   async function runRound(): Promise<void> {
     for (const task of tasks) {
       try {
-        await task.run()
+        await runTask(task)
       } catch (error) {
         log.error(`jobs clock: ${task.name} failed (${messageOf(error)})`)
       }

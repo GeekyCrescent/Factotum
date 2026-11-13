@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } f
 import { join } from 'node:path'
 import { createQueue } from './ai/queue.ts'
 import { queueStore } from './ai/test-queue.ts'
-import { BACKUP_FAILING, BACKUP_FAILURES_FLAG, BACKUP_KEEP, CLOCK_MS, createClock, type ClockDeps } from './clock.ts'
+import { BACKUP_FAILING, BACKUP_FAILURES_FLAG, BACKUP_KEEP, CLOCK_MS, createClock, TASK_TIMEOUT_MS, type ClockDeps } from './clock.ts'
 import type { Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
 import { application, NOW, valueOf } from './test-state.ts'
@@ -89,6 +89,29 @@ test('a task that throws is logged and the others still run; the round never thr
   await clock.idle()
   assert.deepEqual(calls, ['checks'])
   assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('pump') && line.includes('boom')))
+  await clock.stop()
+})
+
+test('a task that never settles is given up at its timeout (logged), and the round goes on to the backup', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const { clock, timers, calls, log } = clockRig(db, base.dir, {
+    prepareTick: () => {
+      calls.push('checks')
+      return new Promise<never>(() => undefined) as unknown as number
+    },
+  })
+  clock.start()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.ok(timers.pending().includes(TASK_TIMEOUT_MS), 'the hung task has its timer')
+  timers.fire(TASK_TIMEOUT_MS)
+  await clock.idle()
+  assert.ok(existsSync(join(base.dir, 'backups', 'jobs-2026-11-14.db')), 'the backup still ran')
+  assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('address checks') && line.includes(`${TASK_TIMEOUT_MS / 1000} s`)))
+  timers.tick(CLOCK_MS)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(calls, ['pump', 'checks', 'pump', 'checks'], 'the next round is not blocked')
+  timers.fire(TASK_TIMEOUT_MS)
   await clock.stop()
 })
 
