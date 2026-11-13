@@ -21,6 +21,7 @@ import { sessionsClient } from '../../../modules/sessions/client/index.tsx'
 import { inboxClient } from '../../../modules/inbox/client/index.tsx'
 import { tasksClient } from '../../../modules/tasks/client/index.tsx'
 import { mockupsClient } from '../../../modules/mockups/client/index.tsx'
+import { jobsClient } from '../../../modules/jobs/client/index.tsx'
 
 export interface ModuleViewProps {
   /** This module on the screen's host: every call of the screen goes there (design D12). */
@@ -125,7 +126,7 @@ export interface ModuleSetting {
 }
 
 /** `modules/example` is a template to copy, not a bundled module: its screen is not here either. */
-export const CLIENTS: readonly ModuleClient[] = [sessionsClient, inboxClient, tasksClient, mockupsClient]
+export const CLIENTS: readonly ModuleClient[] = [sessionsClient, inboxClient, tasksClient, mockupsClient, jobsClient]
 
 export function clientFor(id: string): ModuleClient | undefined {
   return CLIENTS.find((client) => client.id === id)

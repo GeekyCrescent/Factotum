@@ -60,7 +60,13 @@
     "and vercel). docsSiteId is the sessions project that contains vault.projectsDir; workRoot is",
     "where new work folders go; mapFile and model are optional. Stage sessions write outside their",
     "project: set crossWritesAllowed true only if sessions has allowOutside. EVERY URL it deploys is",
-    "PUBLIC. Read docs/mockups.md before turning it on."
+    "PUBLIC. Read docs/mockups.md before turning it on.",
+    "",
+    "jobs: job applications — a review screen that sends email from your address. It lives on ONE",
+    "host (mode host); relay mode is not built yet. vault paths after root are RELATIVE to it, without",
+    "'..'. mail.passwordFile is an ABSOLUTE path to a Google app password in a 0600 file, which can do",
+    "EVERYTHING with the account. timeZone is optional (the process's by default). chromium and",
+    "poppler are absolute paths to the binaries that print and check the CV."
   ],
   "environment": "prod",
   "listen": {
@@ -139,6 +145,33 @@
       },
       "workRoot": "~/Work/Projects",
       "crossWritesAllowed": false
+    },
+    "jobs": {
+      "enabled": false,
+      "mode": "host",
+      "timeZone": "Australia/Sydney",
+      "vault": {
+        "root": "/Users/you/notes",
+        "cvMaster": "career/cv-master.md",
+        "guide": "career/guide-for-the-agent.md",
+        "seed": {
+          "companies": "career/applications/companies.json",
+          "kit": "career/applications/kit.md",
+          "cvs": "career/applications/cvs.md",
+          "packages": [{ "file": "career/applications/wave-1.md" }]
+        }
+      },
+      "mail": {
+        "address": "you@gmail.com",
+        "displayName": "Your Name",
+        "passwordFile": "/Users/you/.factotum/secrets/gmail-jobs",
+        "maxSendsPerDay": 40
+      },
+      "chromium": "/usr/lib/chromium/chromium",
+      "poppler": {
+        "pdfinfo": "/usr/bin/pdfinfo",
+        "pdftoppm": "/usr/bin/pdftoppm"
+      }
     }
   }
 }
