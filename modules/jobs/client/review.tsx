@@ -221,11 +221,12 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   const notices = noticesOf(error, notice)
+  const missingPhone = answer?.missingPhone === true ? { onFix: () => navigate('settings#phone') } : undefined
   const dismiss = () => (clearError(), setNotice(undefined))
-  if (answer === undefined) return <Shell busy={busy} notices={notices} onDismiss={dismiss} sends={sends} />
+  if (answer === undefined) return <Shell busy={busy} missingPhone={missingPhone} notices={notices} onDismiss={dismiss} sends={sends} />
   if (batch === null) {
     return (
-      <Shell busy={busy} notices={notices} onDismiss={dismiss} sends={sends}>
+      <Shell busy={busy} missingPhone={missingPhone} notices={notices} onDismiss={dismiss} sends={sends}>
         <div class="j-empty">
           <p>No batch open.</p>
           <button type="button" class="btn primary" disabled={answer.ready === 0} onClick={() => void start()}>
@@ -237,7 +238,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   return (
-    <Shell busy={busy} batch={batch} index={index} notices={notices} onDismiss={dismiss} sends={sends}>
+    <Shell busy={busy} missingPhone={missingPhone} batch={batch} index={index} notices={notices} onDismiss={dismiss} sends={sends}>
       {item === undefined ? (
         <End batch={batch} ready={answer.ready} onStart={() => void start()} />
       ) : (
@@ -278,6 +279,8 @@ function SkipFor({ item, busy, onChoose, onClose }: { readonly item: ReviewItem 
 
 interface ShellProps {
   readonly busy: boolean
+  /** The profile has no phone (crit. 15): said on top, with the way to the field. */
+  readonly missingPhone?: { readonly onFix: () => void } | undefined
   readonly batch?: BatchView
   readonly index?: number
   readonly notices: readonly Notice[]
@@ -286,7 +289,7 @@ interface ShellProps {
   readonly children?: ComponentChildren
 }
 
-function Shell({ busy, batch, index, notices, onDismiss, sends, children }: ShellProps) {
+function Shell({ busy, missingPhone, batch, index, notices, onDismiss, sends, children }: ShellProps) {
   const header = batch === undefined || index === undefined ? undefined : headerOf(batch, index < 0 ? batch.items.length : index)
   return (
     <div class="j-screen">
@@ -315,6 +318,16 @@ function Shell({ busy, batch, index, notices, onDismiss, sends, children }: Shel
         )}
         <SendLines sends={sends} busy={busy} />
       </header>
+      {missingPhone === undefined ? null : (
+        <div class="notice err j-notice" role="alert">
+          <p>Your profile has no phone: nothing becomes ready to send, and the package is not imported.</p>
+          <div class="acts">
+            <button type="button" class="btn sm" onClick={missingPhone.onFix}>
+              Add your phone
+            </button>
+          </div>
+        </div>
+      )}
       {notices.map((notice) => (
         <div key={notice.text} class={`notice ${notice.tone} j-notice`} role={notice.tone === 'err' ? 'alert' : 'status'}>
           <p>{notice.text}</p>

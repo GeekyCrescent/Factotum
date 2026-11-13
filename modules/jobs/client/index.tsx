@@ -2,18 +2,23 @@
  * The jobs client (spec 2026-11-12-postulaciones, design D15 «Rutas del cliente»). The shell's bar
  * on top, no drawer of its own. C3 puts `jobsClient` in `apps/web/src/modules.ts`.
  *
- * WHAT `rest` MEANS: `review` is the batch (R4a). The tracker (`''`, R7), an application (`a/<id>`),
- * `companies`, `scout`, `settings` (R6) and `log` arrive with their tasks; until then they say so.
+ * WHAT `rest` MEANS (`settings-route.ts`): `''` is the tracker, `review` the batch, `settings` the
+ * profile, rules and import — `settings#<field>` lands on that field. An application (`a/<id>`),
+ * `companies`, `scout` and `log` arrive with their tasks; until then they say so.
  */
 
 import './client.css'
 import type { ViewProps } from './contract.ts'
 import { Review } from './review.tsx'
+import { routeOf } from './settings-route.ts'
+import { Settings } from './settings.tsx'
 
 const REVIEW = 'review'
 
 function JobsView(props: ViewProps) {
-  if (props.rest === REVIEW) return <Review props={props} />
+  const route = routeOf(props.rest)
+  if (route.screen === 'review') return <Review props={props} />
+  if (route.screen === 'settings') return <Settings props={props} anchor={route.anchor} />
   return <NotYet props={props} />
 }
 
@@ -30,4 +35,5 @@ function NotYet({ props }: { readonly props: ViewProps }) {
   )
 }
 
-export const jobsClient = { id: 'jobs', View: JobsView }
+/** `settings` also enters from the shell's Settings page (D15, `ModuleClient.settings`). */
+export const jobsClient = { id: 'jobs', View: JobsView, settings: [{ label: 'Jobs', rest: 'settings' }] }

@@ -600,6 +600,146 @@ textarea.j-input {
   gap: var(--space-2);
 }
 
+/* --- Settings: the profile, the rules, the import ------------------------- */
+
+.j-settings {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-5);
+}
+
+.j-section {
+  display: grid;
+  gap: var(--space-3);
+  scroll-margin-top: var(--space-6);
+}
+
+.j-section h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 600;
+}
+
+.j-field {
+  scroll-margin-top: var(--space-6);
+}
+
+.j-field-narrow {
+  flex: none;
+  min-width: 0;
+  max-width: 14rem;
+}
+
+.j-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  font-size: var(--text-small);
+}
+
+.j-check input {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent);
+}
+
+.j-goal {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+}
+
+.j-goal legend {
+  padding: 0 var(--space-1);
+  font-weight: 600;
+}
+
+.j-weights {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2);
+}
+
+.j-weights .j-field {
+  min-width: 0;
+}
+
+.j-save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2h) 0 calc(var(--space-2h) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.j-save-line {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--ok);
+}
+
+.j-save-line.err {
+  color: var(--err);
+}
+
+.j-rules {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-rule-row {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-rule-row.off .j-text {
+  color: var(--text-3);
+}
+
+.j-rule-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.j-report {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-report-lines {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
 /* --- A finger, not a pointer ---------------------------------------------- */
 
 /* The shell's small button is 36 px; on a touch screen every button of the review takes 44 px

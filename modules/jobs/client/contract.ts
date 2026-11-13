@@ -41,6 +41,8 @@ export interface ViewProps {
 export interface RequestError {
   readonly status?: number
   readonly message?: string
+  /** The parsed answer: `{ error: { code, message, field? } }` (R6 reads `field` of a `400`). */
+  readonly body?: unknown
 }
 
 // ── The domain, as far as the screen needs it (design D3, D6) ────────────────────────────────────
@@ -270,6 +272,8 @@ export interface BatchAnswer {
   readonly batch: BatchView | null
   /** `ready` applications outside the open batch: «Start next batch» (crit. 37). */
   readonly ready: number
+  /** R6 (crit. 15): the profile has no `identity.phone`; the review says so on top. Absent reads as false. */
+  readonly missingPhone?: boolean
 }
 
 export type SkipReason = 'not-now' | 'not-a-fit' | 'duplicate' | 'other'
@@ -314,3 +318,128 @@ export interface UnknownRequest {
  * `POST /a/:id/sends/:kind/retry` (no body, R4a) answers the same shape; the screen polls after it.
  */
 export type MarkAnswer = SendView
+
+// ── Settings: the profile, the rules, the import (R6; design D7, D8, D13) ─────────────────────────
+
+/** design D7 `Profile`, as `packages/jobs/src/types.ts` has it; `POST /profile` takes it WHOLE (strict). */
+export interface Profile {
+  readonly identity: {
+    readonly name: string
+    readonly email: string
+    readonly phone: string
+    readonly linkedin: string
+    readonly city: string
+    readonly suburb: string
+    readonly timezone: string
+    readonly portfolioUrl: string
+    readonly cvAvailabilityLine: string
+  }
+  readonly situation: string
+  readonly availability: string
+  readonly absences: readonly { readonly from: string; readonly to: string; readonly label: string }[]
+  readonly goals: readonly {
+    readonly id: string
+    readonly label: string
+    readonly enabled: boolean
+    readonly text: string
+    readonly payFloor: { readonly amount: number; readonly currency: string; readonly per: 'hour' | 'year' } | null
+    readonly sources: readonly string[]
+  }[]
+  readonly level: string
+  readonly redLines: {
+    readonly text: string
+    readonly titleWords: readonly string[]
+    readonly requirementWords: readonly string[]
+    readonly unpaid: boolean
+    readonly equityOnly: boolean
+  }
+  readonly preferences: { readonly text: string; readonly rateExpectation: string }
+  readonly forbiddenStacks: readonly string[]
+  readonly confidential: readonly string[]
+  readonly batchSize: number
+  readonly weights: Readonly<Record<string, number>>
+  readonly followup: { readonly subject: string; readonly first: string; readonly second: string; readonly linkedin: string }
+}
+
+/** `GET /profile` answers the current version. */
+export interface ProfileVersion {
+  readonly version: number
+  readonly createdAt: string
+  readonly profile: Profile
+}
+
+/**
+ * `POST /profile` (body: a whole `Profile`) answers the new version and how many unsent applications
+ * the re-lint changed (D6). A refusal is `400 { error: { code: 'invalid', message, field } }`, with
+ * `field` the dotted path of the first issue (`identity.phone`, `goals.0.payFloor.currency`).
+ */
+export type SavedProfile = ProfileVersion & { readonly relinted: number }
+
+export type RuleScope = 'all' | Channel
+
+export interface Rule {
+  readonly id: string
+  readonly text: string
+  readonly scope: RuleScope
+  readonly enabled: boolean
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+/** `GET /rules`. */
+export interface RulesAnswer {
+  readonly rules: readonly Rule[]
+}
+
+/** `POST /rules`: a new rule (crit. 17: text 1–300). */
+export interface NewRule {
+  readonly text: string
+  readonly scope: RuleScope
+  readonly enabled?: boolean
+}
+
+/** `POST /rules/:ruleId`: an edit; «Delete» is `{ enabled: false }` (D7: it switches off, the row stays). */
+export interface RuleEdit {
+  readonly text?: string
+  readonly scope?: RuleScope
+  readonly enabled?: boolean
+}
+
+/** `POST /rules` and `POST /rules/:ruleId` answer the rule as saved and the re-lint's count. */
+export type SavedRule = Rule & { readonly relinted: number }
+
+/** `POST /import { dryRun }` (D8). The real one without a phone: `422`, message `missing-phone`. */
+export interface ImportRequest {
+  readonly dryRun: boolean
+}
+
+interface EntryRef {
+  readonly file: string
+  readonly n: number
+}
+
+/** `ImportReport` of `packages/jobs/src/seed/report.ts`, as far as the screen reads it. */
+export interface ImportReport {
+  readonly dryRun: boolean
+  readonly blocked: 'missing-phone' | 'missing-profile' | null
+  readonly companies: { readonly read: number; readonly created: number; readonly suggestedHealth: readonly string[] }
+  readonly files: readonly {
+    readonly file: string
+    readonly entries: number
+    readonly channels: Readonly<Record<Channel, number>>
+    readonly new: number
+    readonly existing: number
+    readonly holdUntil: string | null
+    readonly byHand: boolean
+  }[]
+  readonly missing: readonly (EntryRef & { readonly missing: readonly string[] })[]
+  readonly unmatched: readonly (EntryRef & { readonly company: string })[]
+  readonly placeholders: readonly (EntryRef & { readonly where: string; readonly token: string })[]
+  readonly kitRefs: readonly (EntryRef & { readonly question: string; readonly section: number; readonly matched: string | null; readonly ambiguous: boolean })[]
+  readonly verified: readonly (EntryRef & { readonly email: string; readonly evidence: string })[]
+  readonly issues: readonly { readonly kind: string; readonly file: string; readonly n: number | null; readonly detail: string }[]
+  readonly byHand: readonly (EntryRef & { readonly at: string | null; readonly result: string })[]
+  readonly byHandPending: readonly (EntryRef & { readonly company: string })[]
+  readonly queued: { readonly cv: number; readonly checks: number }
+  readonly warnings: readonly string[]
+}
