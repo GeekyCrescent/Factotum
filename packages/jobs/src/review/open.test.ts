@@ -37,7 +37,7 @@ async function store(batchSize = 10): Promise<Db> {
 
 function review(db: Db, overrides: Partial<OpenDeps> = {}) {
   const checks: string[] = []
-  const opened = openReview({ db, now: () => NOW, timeZone: TZ, enqueueChecks: (ids) => void checks.push(...ids), newId: names(), ...overrides })
+  const opened = openReview({ db, now: () => NOW, timeZone: TZ, enqueueChecks: (ids) => void checks.push(...ids), newId: names(), log: capturedLog().log, ...overrides })
   return { ...opened, checks }
 }
 
@@ -180,6 +180,27 @@ describe('startBatch and batch (R1)', () => {
   })
 })
 
+describe('a reply (asks-something) in the open batch', () => {
+  test('it leaves the open batch once it is marked done elsewhere (note { replyEventId })', async () => {
+    const db = await store()
+    insertApp(db, { id: 'a1', state: 'sent' })
+    insertApp(db, { id: 'a2', state: 'ready' })
+    const replyId = valueOf(
+      db.tx((q) => {
+        const event = repo.appendEvent(q, { kind: 'reply', data: { class: 'asks-something' }, applicationId: 'a1', companyId: 'company-1' }, NOW)
+        return ok(event.id)
+      }),
+    )
+    const r = review(db)
+    assert.deepEqual(apps(valueOf(r.startBatch())), ['reply', 'a2'])
+    db.tx((q) => {
+      repo.appendEvent(q, { kind: 'note', data: { replyEventId: replyId }, applicationId: 'a1', companyId: 'company-1' }, NOW)
+      return ok(undefined)
+    })
+    assert.deepEqual(apps(valueOf(r.batch())), ['a2'])
+  })
+})
+
 describe('startBatch does not wait for the network (crit. 46b)', () => {
   test('with a fetch that never answers it returns at once, and the unchecked address is checked in front', async () => {
     const db = await store()
@@ -217,6 +238,27 @@ describe('startBatch does not wait for the network (crit. 46b)', () => {
     await new Promise((resolve) => setImmediate(resolve))
     assert.ok(fetches <= 1)
     await checks.stop()
+  })
+
+  test('a check queue that throws after the batch is written: the batch is still answered, and the fault logged', async () => {
+    const db = await store()
+    valueOf(
+      db.tx((q) => {
+        repo.insertContact(q, contact(ADDRESSES.checking, { id: 'contact-2', email: 'bo@acme.example' }), { kind: 'imported' }, NOW)
+        return ok(undefined)
+      }),
+    )
+    insertApp(db, { id: 'a1', state: 'ready', target: { ...application().target, contactId: 'contact-2' } })
+    const log = capturedLog()
+    const r = review(db, {
+      log: log.log,
+      enqueueChecks: () => {
+        throw new Error('check queue stopped')
+      },
+    })
+    const batch = valueOf(r.startBatch())
+    assert.deepEqual(apps(batch), ['a1'])
+    assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('check queue stopped')))
   })
 
   test('only email items with a due check are queued, each contact once', async () => {

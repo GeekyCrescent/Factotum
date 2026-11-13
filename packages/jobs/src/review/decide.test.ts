@@ -40,7 +40,7 @@ async function world(approveResult: Result<Approved> = ok({ state: 'sending', ki
   const relinted: string[] = []
   let n = 0
   const newId = (): string => `id-${(n += 1)}`
-  const opened = openReview({ db, now: () => NOW, timeZone: TZ, enqueueChecks: () => undefined, newId })
+  const opened = openReview({ db, now: () => NOW, timeZone: TZ, enqueueChecks: () => undefined, newId, log: capturedLog().log })
   const deps: DecideDeps = {
     db,
     now: () => NOW,

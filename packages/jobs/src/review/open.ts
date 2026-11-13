@@ -11,6 +11,7 @@
  * anyway, and its check is queued in front (N4) AFTER the `tx`, without awaiting it.
  */
 
+import type { Logger } from '@factotum/core'
 import { uuidv7 } from '@factotum/sessions'
 
 import { todayIn } from '../seed/by-hand.ts'
@@ -38,6 +39,8 @@ export interface OpenDeps {
   readonly timeZone: string
   /** N4's `enqueueContacts(ids, { front: true })`, injected (the check queue is built elsewhere): in front, in this order. */
   readonly enqueueChecks: (contactIds: readonly string[]) => unknown
+  /** Where a check queue that fails after the batch was written goes. */
+  readonly log: Logger
   /** UUIDv7 unless a test names the items. */
   readonly newId?: () => string
 }
@@ -54,8 +57,8 @@ function poolOf(q: Queries): Pool {
   }
 }
 
-/** Whether the entity of an item is still in a batch state. A reply stays until it is marked done elsewhere. */
-function isLive(q: Queries, item: ReviewItemRef): boolean {
+/** Whether the entity of an item is still in a batch state. A reply stays until it is marked done (`pendingAsks`). */
+function isLive(q: Queries, item: ReviewItemRef, asks: ReadonlySet<string>): boolean {
   const appLive = (id: string): boolean => APP_IN_BATCH.includes(repo.getApplication(q, id)?.state ?? 'closed')
   const followupLive = (id: string): boolean => FOLLOWUP_IN_BATCH.includes(repo.getFollowup(q, id)?.state ?? 'cancelled')
   switch (item.kind) {
@@ -68,7 +71,7 @@ function isLive(q: Queries, item: ReviewItemRef): boolean {
     case 'proposal':
       return repo.proposalState(q, item.proposalId) === 'pending'
     case 'reply':
-      return true
+      return asks.has(item.eventId)
   }
 }
 
@@ -83,8 +86,9 @@ function liveVersions(pool: Pool): Readonly<Record<string, number>> {
 function synced(q: Queries, stored: repo.StoredBatch, newId: () => string): Batch {
   const batch = asBatch(stored)
   const pool = poolOf(q)
+  const asks = new Set(pool.replies.map((reply) => reply.eventId))
   const next = appendReturned(
-    pruneBatch(batch, (item) => isLive(q, item)),
+    pruneBatch(batch, (item) => isLive(q, item, asks)),
     pendingRewrites(pool.marks),
     liveVersions(pool),
     newId,
@@ -135,8 +139,17 @@ export function openReview(deps: OpenDeps): Opened {
       return ok({ batch, due: dueContacts(q, items, at) })
     })
     if (!built.ok) return built
-    if (built.value.due.length > 0) deps.enqueueChecks(built.value.due)
+    if (built.value.due.length > 0) queueChecks(built.value.due)
     return ok(built.value.batch)
+  }
+
+  /** After the `tx`: the batch is written, so a check queue that fails is logged, never the batch's failure. */
+  function queueChecks(contactIds: readonly string[]): void {
+    try {
+      deps.enqueueChecks(contactIds)
+    } catch (error) {
+      deps.log.error(`jobs review: the address checks of the new batch were not queued: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   function batch(): Result<Batch | null> {
