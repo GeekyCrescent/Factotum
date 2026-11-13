@@ -16,11 +16,13 @@ import { fileURLToPath } from 'node:url'
 import {
   ALL_MODULES,
   inboxModule,
+  jobsModule,
   mockupsModule,
   sessionsModule,
   tasksModule,
   type CreateEngine,
   type CreateInbox,
+  type CreateJobs,
   type CreateMockups,
   type CreateTasks,
   type MockupsLink,
@@ -30,6 +32,7 @@ import { createEngine } from '@factotum/sessions'
 import { createInbox } from '@factotum/inbox'
 import { createTasks, createTasksLink } from '@factotum/tasks'
 import { createMockups, createMockupsLink } from '@factotum/mockups'
+import { createJobs } from '@factotum/jobs'
 import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum/kernel'
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
@@ -166,6 +169,12 @@ const newTasksLink: () => TasksLink = createTasksLink
 const mockupsFactory: CreateMockups = createMockups
 const newMockupsLink: () => MockupsLink = createMockupsLink
 
+/**
+ * And for job applications (spec 2026-11-12-postulaciones, D1; tasks C3): `modules/jobs/types.ts`
+ * declares by hand what `@factotum/jobs` exports, and this is where the compiler checks they agree.
+ */
+const jobsFactory: CreateJobs = createJobs
+
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
   // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
@@ -209,6 +218,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
         inboxModule(inboxFactory),
         tasksModule(tasksFactory, tasksLink, { nowOffsetMs: tasksNowOffset(env, process.env, (message) => console.warn(message)) }),
         mockupsModule(mockupsFactory, mockupsLink),
+        jobsModule(jobsFactory),
       ],
       version: VERSION,
       site: createStaticSite(siteRoot()),

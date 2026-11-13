@@ -91,7 +91,7 @@ export interface Jobs {
   /** From `failed`. */
   readonly retrySend: (id: string, kind: SendKind) => Result<Send>
   /** «Retry» of a `missing-cv`/`missing-letter`, «Retry print» of a `cv-stale` (client contract). */
-  readonly retryJob: (id: string, job: RetryJob) => Result<unknown>
+  readonly retry: (id: string, job: RetryJob) => Result<unknown>
   /** «Close» (T-A26, T-A21). In cut 1a with no route: T1 gives it one (tasks C1). */
   readonly close: (id: string, input: { readonly reason: string }) => Result<unknown>
   readonly profile: () => ProfileVersion
@@ -119,7 +119,18 @@ export interface JobsSetup {
   readonly notify: Notifier
 }
 
-export type CreateJobsResult = { readonly ok: true; readonly jobs: Jobs } | { readonly ok: false; readonly reason: string }
+/**
+ * A host in `relay` mode (D13; the Mac, block Y): jobs lives on another host. Cut 1a only stops it —
+ * the module treats it as «off, with a reason» until block Y gives it `GET /where`.
+ */
+export interface JobsRelay {
+  readonly stop: () => Promise<void>
+}
+
+export type CreateJobsResult =
+  | { readonly ok: true; readonly jobs: Jobs }
+  | { readonly ok: true; readonly relay: JobsRelay }
+  | { readonly ok: false; readonly reason: string }
 
 /** The engine's `start` (D13): parse, open the base, check, arm the tick — and nothing that waits. */
 export type CreateJobs = (setup: JobsSetup) => Promise<CreateJobsResult>

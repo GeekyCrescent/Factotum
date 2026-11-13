@@ -75,3 +75,11 @@ export type { BoardView, CreateTasks, Task, Tasks, TasksLink, TasksSetup } from 
  */
 export { mockupsModule } from './mockups/server.ts'
 export type { CreateMockups, Mockups, MockupsLink } from './mockups/types.ts'
+
+/**
+ * Job applications (spec 2026-11-12-postulaciones, design D1, D13): a factory, like `inboxModule` —
+ * the store, the queue and the sender live in `@factotum/jobs`, which only the composition root may
+ * import, and are handed in as `createJobs`.
+ */
+export { jobsModule } from './jobs/server.ts'
+export type { CreateJobs, CreateJobsResult, Jobs, JobsSetup } from './jobs/types.ts'

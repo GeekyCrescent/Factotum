@@ -15,7 +15,8 @@
  * ADR-0012). The download's name is the last part of the URL, so it is held to a closed alphabet
  * (D5 «Servir»), and the id and the version are checked before the engine is asked.
  *
- * Cut 1a: no `relay` mode and no `GET /where` (block Y, cut 1b).
+ * Cut 1a: no `relay` mode and no `GET /where` (block Y, cut 1b); a host the engine answers `relay`
+ * for is off, with that reason.
  */
 
 import type { FactotumModule, Logger, ModuleContext, ModuleRequest, ModuleResponse, RouteTable } from '@factotum/core'
@@ -35,6 +36,9 @@ import {
 } from './types.ts'
 
 const NO_STORE: Readonly<Record<string, string>> = { 'cache-control': 'no-store' }
+
+/** The reason a `relay` host's module is off in cut 1a (block Y turns it on). */
+const RELAY_NOT_YET = 'relay mode arrives with block Y'
 
 const STARTING: ModuleResponse = {
   status: 503,
@@ -160,7 +164,7 @@ function routeTable(holder: Holder, log: Logger): RouteTable {
     'POST /a/:id/retry': withJobs((jobs, req) => {
       const job = fieldOf(req.body, 'job')
       if (!oneOf<RetryJob>(RETRY_JOBS, job)) return invalid('job', `one of ${RETRY_JOBS.join(', ')}`)
-      return answer(jobs.retryJob(id(req), job))
+      return answer(jobs.retry(id(req), job))
     }),
 
     'POST /import': withJobs(async (jobs, req) => {
@@ -211,6 +215,12 @@ export function jobsModule(createJobs: CreateJobs): FactotumModule<unknown> {
         // The kernel keeps a failed start's reason and does NOT log it (`registry.ts`, `startAll`).
         ctx.log.error(`jobs is off: ${created.reason}`)
         throw new Error(created.reason)
+      }
+      if ('relay' in created) {
+        // Cut 1a has no relay mode (block Y): off, with a reason, and nothing of it left running.
+        await created.relay.stop()
+        ctx.log.error(`jobs is off: ${RELAY_NOT_YET}`)
+        throw new Error(RELAY_NOT_YET)
       }
       // LAST: the routes answer only once nothing above can throw.
       holder.jobs = created.jobs

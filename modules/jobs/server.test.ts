@@ -37,7 +37,7 @@ function fakeJobs(calls: Calls, over: Partial<Jobs> = {}): Jobs {
     markSent: record('markSent', { ok: true, value: { id: ID, state: 'sent' } }),
     resolveUnknown: record('resolveUnknown', { ok: true, value: { ...SEND_ROW, state: 'sent' } }),
     retrySend: record('retrySend', { ok: true, value: SEND_ROW }),
-    retryJob: record('retryJob', { ok: true, value: { queued: true } }),
+    retry: record('retry', { ok: true, value: { queued: true } }),
     close: record('close', { ok: true, value: {} }),
     profile: record('profile', { version: 4, createdAt: 'a', profile: { level: 'junior' } }),
     saveProfile: record('saveProfile', { ok: true, value: { version: 5, createdAt: 'b', profile: {}, relinted: 2 } }),
@@ -145,6 +145,25 @@ test('a factory that refuses: start throws with the reason and logs it, and the 
   const routes = module.routes!(ctx)
   await assert.rejects(async () => await module.start!(ctx), /jobs\.timeZone: not a time zone/)
   assert.deepEqual(errors, ['jobs is off: jobs.timeZone: not a time zone'])
+  assert.equal((await call(routes, 'GET /batch')).status, 503)
+})
+
+test('a host in relay mode (block Y, not yet): the relay is stopped, start throws with a reason, and the routes stay 503', async () => {
+  const errors: string[] = []
+  let stopped = 0
+  const module = jobsModule(async () => ({
+    ok: true,
+    relay: {
+      stop: async () => {
+        stopped += 1
+      },
+    },
+  }))
+  const ctx = context(errors)
+  const routes = module.routes!(ctx)
+  await assert.rejects(async () => await module.start!(ctx), /relay mode arrives with block Y/)
+  assert.equal(stopped, 1)
+  assert.deepEqual(errors, ['jobs is off: relay mode arrives with block Y'])
   assert.equal((await call(routes, 'GET /batch')).status, 503)
 })
 
@@ -319,7 +338,7 @@ test('POST /a/:id/retry { job } asks the engine again; a job that is not one is 
   const { routes, calls } = await started()
   const response = await call(routes, 'POST /a/:id/retry', { params: { id: ID }, body: { job: 'reprint' } })
   assert.equal(response.status, 200)
-  assert.deepEqual(calls.log, [`retryJob ["${ID}","reprint"]`])
+  assert.deepEqual(calls.log, [`retry ["${ID}","reprint"]`])
   for (const body of [{ job: 'rewrite' }, {}, undefined, 'cv']) {
     const bad = await call(routes, 'POST /a/:id/retry', { params: { id: ID }, body })
     assert.equal(bad.status, 400, JSON.stringify(body))

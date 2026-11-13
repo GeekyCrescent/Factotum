@@ -9,6 +9,7 @@
     { "path": "../inbox" },
     { "path": "../tasks" },
     { "path": "../mockups" },
+    { "path": "../jobs" },
     { "path": "../../modules" }
   ]
 }

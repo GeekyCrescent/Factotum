@@ -54,6 +54,9 @@ importers:
       '@factotum/inbox':
         specifier: workspace:*
         version: link:../inbox
+      '@factotum/jobs':
+        specifier: workspace:*
+        version: link:../jobs
       '@factotum/kernel':
         specifier: workspace:*
         version: link:../kernel
