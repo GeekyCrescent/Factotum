@@ -21,6 +21,7 @@ import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf, ty
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
 import { useSends, type TrackedSend } from './use-sends.ts'
+import { useSettle } from './use-settle.ts'
 
 /** The focus is somewhere typing goes: the keys are the text's, not the screen's. */
 function isField(target: EventTarget | null): boolean {
@@ -63,6 +64,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const index = batch !== null && place?.batchId === batch.id ? place.index : -1
   const item = batch === null || index < 0 ? undefined : batch.items[index]
   const result = item === undefined || batch === null ? undefined : batch.results[item.itemId]
+  /** A card just shown takes no Approve and no Skip for a moment (D15 «Lo que se vio es lo que se aprueba»). */
+  const settle = useSettle(item?.itemId ?? '')
 
   /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
   const send = useCallback(
@@ -85,15 +88,15 @@ export function Review({ props }: { readonly props: ViewProps }) {
   )
 
   const approve = useCallback(() => {
-    if (item === undefined || !approveGate(item, result, new Date()).enabled) return
+    if (item === undefined || !settle.ready() || !approveGate(item, result, new Date()).enabled) return
     void send({ kind: 'approve' }, true)
-  }, [item, result, send])
+  }, [item, result, send, settle])
 
   // Skip asks for a reason in `skip-sheet.tsx` (R5a); until then, «not now».
   const skip = useCallback(() => {
-    if (item === undefined || result !== undefined) return
+    if (item === undefined || result !== undefined || !settle.ready()) return
     void send({ kind: 'skip', reason: 'not-now' }, true)
-  }, [item, result, send])
+  }, [item, result, send, settle])
 
   const back = useCallback(() => {
     if (batch === null) return
@@ -107,7 +110,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const action = keyAction({ key: event.key, inField: isField(event.target), modified: event.ctrlKey || event.metaKey || event.altKey })
+      const modified = event.ctrlKey || event.metaKey || event.altKey
+      const action = keyAction({ key: event.key, inField: isField(event.target), modified, repeat: event.repeat })
       if (action === null) return
       event.preventDefault()
       if (action === 'approve') approve()
@@ -157,7 +161,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
           <Buttons
             item={item}
             result={result}
-            busy={busy}
+            busy={busy || !settle.settled}
             canGoBack={index > 0}
             onBack={back}
             onSkip={skip}

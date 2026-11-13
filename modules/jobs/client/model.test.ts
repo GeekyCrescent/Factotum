@@ -489,3 +489,9 @@ test('no key acts while typing in a field or with a modifier', () => {
   assert.equal(keyAction({ key: '/', inField: true, modified: false }), null)
   assert.equal(keyAction({ key: 'a', inField: false, modified: true }), null)
 })
+
+test('a held key (auto-repeat) never approves or skips', () => {
+  assert.equal(keyAction({ key: 'a', inField: false, modified: false, repeat: true }), null)
+  assert.equal(keyAction({ key: 's', inField: false, modified: false, repeat: true }), null)
+  assert.equal(keyAction({ key: 'a', inField: false, modified: false, repeat: false }), 'approve')
+})

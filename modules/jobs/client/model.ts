@@ -367,11 +367,18 @@ export interface KeyPress {
   readonly inField: boolean
   /** Ctrl, Meta or Alt held. */
   readonly modified: boolean
+  /** The key is held and the system repeats it (`KeyboardEvent.repeat`). */
+  readonly repeat?: boolean
 }
 
 const KEYS: Readonly<Record<string, KeyAction>> = { a: 'approve', s: 'skip', arrowleft: 'back', '/': 'focus' }
 
+/** A held key decides nothing: one press, one decision (D15 «Lo que se vio es lo que se aprueba»). */
+const DECIDING: ReadonlySet<KeyAction> = new Set<KeyAction>(['approve', 'skip'])
+
 export function keyAction(press: KeyPress): KeyAction | null {
   if (press.inField || press.modified) return null
-  return KEYS[press.key.toLowerCase()] ?? null
+  const action = KEYS[press.key.toLowerCase()] ?? null
+  if (action !== null && press.repeat === true && DECIDING.has(action)) return null
+  return action
 }
