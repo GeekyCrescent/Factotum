@@ -119,6 +119,22 @@ async function readPackages(source: SeedSource, kit: Kit): Promise<Result<readon
   return ok(packages)
 }
 
+/**
+ * The companies file's issues: a `contact` that is not an email address, and a company listed again
+ * under the same `nameKey` (the plan keeps the first, `plan.ts`).
+ */
+function companiesIssues(file: string, companies: readonly SeededCompany[]): readonly SeedIssue[] {
+  const seen = new Set<string>()
+  return companies.flatMap(({ company, droppedContact }, index) => {
+    const repeated = seen.has(company.nameKey)
+    seen.add(company.nameKey)
+    return [
+      ...(droppedContact === null ? [] : [{ kind: 'contact-not-email' as const, file, n: null, detail: `${company.name}: ${droppedContact}` }]),
+      ...(repeated ? [{ kind: 'duplicate-company' as const, file, n: null, detail: `${company.name} (entry ${index + 1}; the first one wins)` }] : []),
+    ]
+  })
+}
+
 /** Every file of the seed, read and parsed; the first that fails is the answer. */
 export async function readSeed(source: SeedSource): Promise<Result<Seed>> {
   const { seed } = source.vault
@@ -146,6 +162,9 @@ export async function readSeed(source: SeedSource): Promise<Result<Seed>> {
     ...kit.unparsed.map((u) => ({ file: basename(seed.kit), ...u })),
     ...packages.value.flatMap(({ name, parsed }) => parsed.unparsed.map((u) => ({ file: name, ...u }))),
   ]
-  const issues = kit.issues.map(({ kind, section, detail }) => ({ kind, file: basename(seed.kit), n: section, detail }))
+  const issues = [
+    ...companiesIssues(basename(seed.companies), companies.value),
+    ...kit.issues.map(({ kind, section, detail }) => ({ kind, file: basename(seed.kit), n: section, detail })),
+  ]
   return ok({ issues, companiesFile: basename(seed.companies), companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
 }

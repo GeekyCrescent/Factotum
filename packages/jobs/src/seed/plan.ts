@@ -97,7 +97,8 @@ function plannedEntries(q: Queries, packages: readonly ReadPackage[], known: Rea
 export function planImport(q: Queries, seed: Seed, clock: PlanClock): Plan {
   const byKey = new Map<string, PlannedCompany>()
   for (const { company, opportunity } of seed.companies) {
-    // A second entry of the companies file with the same key is the same company: the first wins.
+    // A second entry of the companies file with the same key is the same company: the first wins
+    // (the report lists it as `duplicate-company`, source.ts).
     if (!byKey.has(company.nameKey)) byKey.set(company.nameKey, { key: company.nameKey, seed: company, opportunity, exists: companyByNameKey(q, company.nameKey) !== undefined })
   }
   const entries = plannedEntries(q, seed.packages, new Set(byKey.keys()), clock)

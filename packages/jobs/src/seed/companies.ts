@@ -61,6 +61,8 @@ export interface SeedOpportunity {
 export interface SeededCompany {
   readonly company: SeedCompany
   readonly opportunity: SeedOpportunity
+  /** A `contact` that is not an email address (a contact page URL…): no contact is made of it, the report says so. */
+  readonly droppedContact: string | null
 }
 
 const KIND_OF = {
@@ -249,6 +251,8 @@ export function parseCompanies(input: unknown, healthEmployers: readonly string[
   return input.map((entry, index) => {
     const parsed = rawCompanySchema.safeParse(entry)
     if (!parsed.success) throw new Error(`companies[${index}]: ${parsed.error.message}`)
-    return { company: companyOf(parsed.data, curated), opportunity: opportunityOf(parsed.data) }
+    const contact = parsed.data.contact?.trim() ?? ''
+    const droppedContact = contact !== '' && !EMAIL.test(contact) ? contact : null
+    return { company: companyOf(parsed.data, curated), opportunity: opportunityOf(parsed.data), droppedContact }
   })
 }

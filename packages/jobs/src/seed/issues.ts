@@ -14,6 +14,10 @@ export type SeedIssueKind =
   | 'kit-label-without-answer'
   /** A kit section number used twice: the first wins (`n` = the number). */
   | 'kit-duplicate-section'
+  /** A `contact` of the companies file that is not an email address: no contact is made of it. */
+  | 'contact-not-email'
+  /** A company listed twice in the companies file (same `nameKey`): the first wins. */
+  | 'duplicate-company'
 
 /** An issue of one package entry; the report adds its file and N. */
 export interface EntryIssue {
