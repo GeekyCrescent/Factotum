@@ -34,7 +34,7 @@ import {
   type WorkKind,
 } from '../store/repo.ts'
 import { fail, ok, type Application, type Artifacts, type Followup, type FollowupVersion, type Result, type Warning } from '../types.ts'
-import { classesOf, PAUSED_UNTIL, writeReturn, type RewriteFailed } from './returns.ts'
+import { classesOf, markNotWritten, PAUSED_UNTIL, returnNotWritten, writeReturn, type RewriteFailed } from './returns.ts'
 import type { RunFailure } from './run.ts'
 
 export type { Lane, Work, WorkKind } from '../store/repo.ts'
@@ -232,7 +232,9 @@ export function createQueue(deps: QueueDeps): Queue {
       return false
     }
     const controller = new AbortController()
-    const done = execute(running, controller.signal).then((result) => conclude(running, result))
+    const done = execute(running, controller.signal)
+      .then((result) => conclude(running, result))
+      .catch((error: unknown) => concludeThrew(running, error))
     inFlight.set(work.id, { work: running, controller, done })
     lastKind = work.kind
     return true
@@ -253,10 +255,33 @@ export function createQueue(deps: QueueDeps): Queue {
     inFlight.delete(work.id)
     if (stopped) return
     const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
-    if (!written.ok) {
-      log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${written.error.reason})`)
-    } else if (written.value.rewriteFailed !== null) {
-      tell(written.value.rewriteFailed)
+    if (written.ok) {
+      if (written.value.rewriteFailed !== null) tell(written.value.rewriteFailed)
+    } else {
+      notWritten(work, written.error.reason)
+    }
+    pump()
+  }
+
+  /**
+   * The return's `tx` rolled back, `done` with it: the run goes through the failure path in a second,
+   * small `tx` (an attempt, its retry, an event), or — when that rolls back too — the row alone.
+   */
+  function notWritten(work: Work, reason: string): void {
+    const failed = db.tx((q) => returnNotWritten(q, work, deps, now()))
+    const marked = failed.ok ? failed : db.tx((q) => markNotWritten(q, work, now()))
+    const outcome = failed.ok ? 'counted as a failed attempt' : marked.ok ? `counted as a failed attempt, without its entity (${failed.error.reason})` : `and the work could not be marked either (${marked.error.reason})`
+    if (failed.ok && failed.value.rewriteFailed !== null) tell(failed.value.rewriteFailed)
+    log.error(`jobs queue: the return of ${work.kind} ${work.id} could not be written (${reason}); ${outcome}`)
+  }
+
+  /** `conclude` itself threw (a logger, a seam): said if it can be, and the queue goes on. */
+  function concludeThrew(work: Work, error: unknown): void {
+    inFlight.delete(work.id)
+    try {
+      log.error(`jobs queue: concluding ${work.kind} ${work.id} failed (${messageOf(error)})`)
+    } catch {
+      // A logger that throws has nowhere left to say so; the pump below must still run.
     }
     pump()
   }

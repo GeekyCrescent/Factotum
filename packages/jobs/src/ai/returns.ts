@@ -1,6 +1,8 @@
 /**
  * What happens when a work comes back (tasks G2b, G4; design D10, D3 «La guarda»): written by the
- * queue in ONE `tx` with the work row, so the entity and its work never disagree.
+ * queue in ONE `tx` with the work row, so the entity and its work never disagree. WHEN THAT `tx` ROLLS
+ * BACK (a linter that throws, a refused transition) the run is a failed one (`returnNotWritten`): an
+ * attempt, the retries, an event — in a second `tx`, never a work left `running`.
  *
  * A GENERATION THAT COMES BACK (cv, letter, rewrite, reprint) is saved as a NEW VERSION ALWAYS, the
  * fields it did not produce taken from the current version, whatever state the entity is in now. The
@@ -273,19 +275,46 @@ function limited(q: Queries, work: Work, result: Extract<RunFailure, { kind: 'li
   return saved.ok ? ok(NOTHING) : saved
 }
 
-function failedRun(q: Queries, work: Work, reason: string, deps: ReturnDeps, now: Date): Result<Aftermath> {
-  liftPause(q, work, now)
+/** The row of `work` after one more failed attempt: back to the queue at 2 or 10 min, or failed for good. Pure. */
+function afterFailure(work: Work, reason: string, now: Date): Work {
   const attempts = work.attempts + 1
   const delay = RETRY_DELAYS_MS[attempts - 1]
+  const updatedAt = now.toISOString()
   if (attempts < MAX_ATTEMPTS && delay !== undefined) {
-    const notBefore = new Date(now.getTime() + delay).toISOString()
-    const saved = saveWork(q, { ...work, state: 'queued', attempts, notBefore, reason, updatedAt: now.toISOString() })
-    return saved.ok ? ok(NOTHING) : saved
+    return { ...work, state: 'queued', attempts, notBefore: new Date(now.getTime() + delay).toISOString(), reason, updatedAt }
   }
-  const failed: Work = { ...work, state: 'failed', attempts, notBefore: null, reason, updatedAt: now.toISOString() }
-  const saved = saveWork(q, failed)
-  if (!saved.ok) return saved
-  return superseded(q, failed) ? ok(NOTHING) : workFailed(q, failed, deps, now)
+  return { ...work, state: 'failed', attempts, notBefore: null, reason, updatedAt }
+}
+
+function failedRun(q: Queries, work: Work, reason: string, deps: ReturnDeps, now: Date): Result<Aftermath> {
+  liftPause(q, work, now)
+  const next = afterFailure(work, reason, now)
+  const saved = saveWork(q, next)
+  if (!saved.ok || next.state !== 'failed') return saved.ok ? ok(NOTHING) : saved
+  return superseded(q, next) ? ok(NOTHING) : workFailed(q, next, deps, now)
+}
+
+/** The reason of a run whose return could not be written (D10: a failure, so it counts an attempt). */
+export const NOT_WRITTEN = 'result-not-written'
+
+/**
+ * A return whose `tx` rolled back (a linter that threw, a transition refused): what came back is lost,
+ * so the run IS a failed one — an attempt, the retries of D10, the third failure by class — with a
+ * `prepared { notWritten }` event, in a `tx` of its own. Never a work left `running` that only a
+ * restart would requeue.
+ */
+export function returnNotWritten(q: Queries, work: Work, deps: ReturnDeps, now: Date): Result<Aftermath> {
+  const current = getWork(q, work.id) ?? work
+  const app = applicationOfRef(q, work.ref)
+  const followupId = app === undefined || app.id === work.ref ? {} : { followupId: work.ref }
+  const data = { kind: work.kind, workId: work.id, notWritten: true, reason: NOT_WRITTEN, ...followupId }
+  appendEvent(q, { kind: 'prepared', data, applicationId: app?.id ?? null, companyId: app?.companyId ?? null }, now)
+  return failedRun(q, current, NOT_WRITTEN, deps, now)
+}
+
+/** The last resort when even `returnNotWritten` rolled back (its third failure lints too): the row alone. */
+export function markNotWritten(q: Queries, work: Work, now: Date): Result<void> {
+  return saveWork(q, afterFailure(getWork(q, work.id) ?? work, NOT_WRITTEN, now))
 }
 
 function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, now: Date): Result<Aftermath> {
