@@ -374,6 +374,7 @@ export const EVENT_KINDS = [
   'test-created',
   'contact-edited',
   'reply-applied',
+  'deferred-replies-failed',
 ] as const
 export type EventKind = (typeof EVENT_KINDS)[number]
 

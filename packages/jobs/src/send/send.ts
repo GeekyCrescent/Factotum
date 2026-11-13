@@ -7,7 +7,8 @@
  * 2. Outside any `tx`: `readPassword`, the slots filled with the profile version the row recorded,
  *    and `sendMail` (the CV attached ONLY to the initial).
  * 3. `tx`: `sent` | `failed` | `send-unknown` with its event; for the initial, the deferred replies
- *    are applied in the same `tx` (v6.1).
+ *    (v6.1) are applied in a SECOND `tx` that cannot undo the first (revisión de E): a mail SMTP took
+ *    is never written back to `sending`.
  *
  * `approve` DOES STEP 1 AND RETURNS: steps 2–3 run in a registered promise that never rejects, which
  * `stop()` aborts and waits for — and then step 3 is NOT written (D9 step 5): the row stays `sending`
@@ -63,6 +64,8 @@ export interface SenderDeps {
   readonly log: Logger
   /** Where a relative artifact path is resolved (`<stateDir>`); absolute paths are taken as they are. */
   readonly stateDir?: string
+  /** Applying the initial's deferred replies after step 3 (v6.1); `applyDeferredReplies` unless a test replaces it. */
+  readonly applyDeferred?: typeof applyDeferredReplies
 }
 
 export interface ApproveOptions {
@@ -141,6 +144,7 @@ const then = <T>(written: Result<void>, value: T): Result<T> => (written.ok ? ok
 
 export function createSender(deps: SenderDeps): Sender {
   const { db, log } = deps
+  const applyDeferred = deps.applyDeferred ?? applyDeferredReplies
   const inFlight = new Set<{ readonly controller: AbortController; readonly done: Promise<void> }>()
   let stopped = false
 
@@ -221,12 +225,35 @@ export function createSender(deps: SenderDeps): Sender {
     })
   }
 
+  /**
+   * After step 3 of the initial, in A SECOND `tx` (D9 step 2, revisión de E): the replies deferred while
+   * it was `sending`. Its failure cannot undo the result already written; it is logged, recorded as an
+   * event, and the replies stay pending for the next opening `tx` (`applyDeferredRepliesOnStart`).
+   */
+  function applyDeferredAfter(id: string, at: Date): void {
+    const applied = db.tx((q) => applyDeferred(q, id, at))
+    if (applied.ok) return
+    log.error(`send ${id}/initial: the deferred replies were not applied (${applied.error.code} ${applied.error.reason}); they stay pending until the restart`)
+    const recorded = db.tx((q) => {
+      const companyId = repo.getApplication(q, id)?.companyId ?? null
+      return ok(repo.appendEvent(q, { kind: 'deferred-replies-failed', data: { kind: 'initial', code: applied.error.code }, applicationId: id, companyId }, at))
+    })
+    if (!recorded.ok) log.error(`send ${id}/initial: the deferred-replies-failed event was not written (${recorded.error.code})`)
+  }
+
+  /** Step 3 in its own `tx`; for the initial, then the deferred replies in another. */
+  function record(id: string, kind: SendKind, result: SendResult): void {
+    const at = deps.now()
+    const written = db.tx((q) => finish(q, id, kind, result, at))
+    if (!written.ok) return log.error(`send ${id}/${kind}: step 3 was not written (${written.error.code} ${written.error.reason}); the row stays sending until the restart`)
+    if (kind === 'initial') applyDeferredAfter(id, at)
+  }
+
   async function deliver(id: string, kind: SendKind, signal: AbortSignal): Promise<void> {
     const message = db.read((q) => outgoingFor(q, id, kind))
     const result = message.ok ? await transmit(message.value, signal) : refused(message.error.reason)
     if (signal.aborted) return // stop(): no step 3, the row stays `sending` (D9 step 5)
-    const written = db.tx((q) => finish(q, id, kind, result, deps.now()))
-    if (!written.ok) log.error(`send ${id}/${kind}: step 3 was not written (${written.error.code} ${written.error.reason}); the row stays sending until the restart`)
+    record(id, kind, result)
   }
 
   function launch(id: string, kind: SendKind): void {
@@ -298,10 +325,7 @@ function finish(q: Queries, id: string, kind: SendKind, result: SendResult, at: 
     const moved = appTransition(app, outcome, at)
     if (!moved.ok) return moved
     const row = moved.value.sends.find((s) => s.kind === 'initial')
-    const saved = repo.saveApplication(q, moved.value, eventFor(kind, row, result), at)
-    if (!saved.ok) return saved
-    const deferred = applyDeferredReplies(q, id, at)
-    return deferred.ok ? ok(undefined) : deferred
+    return repo.saveApplication(q, moved.value, eventFor(kind, row, result), at)
   }
   const row = app.sends.find((s) => s.kind === kind)
   const f = row?.followupId == null ? undefined : repo.getFollowup(q, row.followupId)

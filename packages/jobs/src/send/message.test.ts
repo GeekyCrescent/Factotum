@@ -8,6 +8,7 @@ import { describe, test } from 'node:test'
 import type { Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { errorOf, followup, followupVersion, valueOf } from '../test-state.ts'
+import { fail } from '../types.ts'
 import { appOf, artifacts, eventsOf, PHONE, sentWithFollowup, testProfile, world, write, type World, type WorldOptions } from '../test-send.ts'
 import { applyDeferredRepliesOnStart } from './deferred.ts'
 import { cvFileName, outgoingFor } from './message.ts'
@@ -160,6 +161,21 @@ describe('the edges of steps 1 and 3', () => {
       assert.match(w.lines.join('\n'), /step 3 was not written/)
       assert.ok(!w.lines.join('\n').includes('ada@acme.example'))
     })
+  })
+
+  test('applying the deferred replies fails after SMTP accepted: the row is still `sent`, the failure logged and an event', async (t) => {
+    for (const broken of [() => fail('module-error', 'boom'), () => { throw new Error('boom') }]) {
+      await within(t, {}, async (w) => {
+        const sender = createSender({ ...w.deps, applyDeferred: broken })
+        valueOf(sender.approve('app-1', 'initial'))
+        await sender.settled()
+        assert.equal(appOf(w.db).sends[0]?.state, 'sent')
+        assert.equal(appOf(w.db).state, 'sent')
+        assert.ok(eventsOf(w.db).some((e) => e.kind === 'sent'))
+        assert.deepEqual(eventsOf(w.db).filter((e) => e.kind === 'deferred-replies-failed').map((e) => e.data.kind), ['initial'])
+        assert.match(w.lines.join('\n'), /deferred replies were not applied/)
+      })
+    }
   })
 
   test('a sender that throws is caught and logged; the promise never rejects', async (t) => {
