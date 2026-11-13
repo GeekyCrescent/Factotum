@@ -15,6 +15,8 @@ import {
   keyAction,
   labelsOf,
   nextOpen,
+  noticeOf,
+  noticesOf,
   refusalOf,
   safeHref,
   sendKeyOf,
@@ -474,6 +476,20 @@ test('a refused decision says why, in the owner\'s words', () => {
   assert.deepEqual(refusalOf(error(409, 'stale')), { text: 'This item changed — check it again', retryLater: false })
   assert.equal(statusOf({ status: 404 }), 404)
   assert.equal(statusOf(null), undefined)
+})
+
+test('a refusal that clears by itself is a wait, not an error', () => {
+  const error = (status: number, message: string) => Object.assign(new Error(message), { status })
+  assert.deepEqual(noticeOf(refusalOf(error(409, 'check-pending'))), { text: 'checking address… try again in a moment', tone: 'ask' })
+  assert.deepEqual(noticeOf(refusalOf(error(422, 'no-address'))), { text: 'There is no address to send to.', tone: 'err' })
+})
+
+test('the batch error and the decision\'s notice are both shown, once each', () => {
+  const refused = { text: 'There is no address to send to.', tone: 'err' } as const
+  assert.deepEqual(noticesOf(undefined, undefined), [])
+  assert.deepEqual(noticesOf('could not reach the daemon', refused), [{ text: 'could not reach the daemon', tone: 'err' }, refused])
+  assert.deepEqual(noticesOf('There is no address to send to.', refused), [refused])
+  assert.deepEqual(noticesOf(undefined, refused), [refused])
 })
 
 test('a link is drawn only when it is http(s); Gmail only to Gmail', () => {

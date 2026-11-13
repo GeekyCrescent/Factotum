@@ -348,6 +348,23 @@ export function refusalOf(cause: unknown): Refusal {
   return { text: REASONS[message] ?? message, retryLater: false }
 }
 
+/** A line above the card: an error, or a wait that clears by itself (`ask`, the shell's amber). */
+export interface Notice {
+  readonly text: string
+  readonly tone: 'err' | 'ask'
+}
+
+/** A refusal as a notice: `retryLater` (the address is being checked) is a wait, not an error. */
+export function noticeOf(refusal: Refusal): Notice {
+  return { text: refusal.text, tone: refusal.retryLater ? 'ask' : 'err' }
+}
+
+/** The batch's error and the decision's notice, both — one never hides the other — and the same text once. */
+export function noticesOf(error: string | undefined, notice: Notice | undefined): readonly Notice[] {
+  const fromError: readonly Notice[] = error === undefined || error === notice?.text ? [] : [{ text: error, tone: 'err' }]
+  return notice === undefined ? fromError : [...fromError, notice]
+}
+
 // ── Links ────────────────────────────────────────────────────────────────────────────────────────
 
 /**

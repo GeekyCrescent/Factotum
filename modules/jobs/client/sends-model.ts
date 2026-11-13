@@ -11,7 +11,7 @@
  * went is exactly what is unknown.
  */
 
-import type { SendView } from './contract.ts'
+import type { SendState, SendView } from './contract.ts'
 import { sendLine, type SendKey, type SendLine } from './model.ts'
 
 /** The bar shows this many lines when it can drop ok ones. */
@@ -33,9 +33,16 @@ const same = (a: SendKey, b: SendKey): boolean => sendIdOf(a) === sendIdOf(b)
 
 export const isPolling = (send: TrackedSend): boolean => !send.line.final
 
-const sending = (key: SendKey): TrackedSend => ({
+const SEND_STATES: ReadonlySet<string> = new Set<SendState>(['sending', 'sent', 'send-unknown', 'failed'])
+
+/** The `state` a decision answered, when it is a send's; null otherwise. */
+export function sendStateOf(state: string | undefined): SendState | null {
+  return state !== undefined && SEND_STATES.has(state) ? (state as SendState) : null
+}
+
+const sending = (key: SendKey, state: SendState = 'sending'): TrackedSend => ({
   key,
-  line: sendLine({ kind: key.kind, state: 'sending', at: '', reason: null }, key.company),
+  line: sendLine({ kind: key.kind, state, at: '', reason: null }, key.company),
   failures: 0,
   lost: false,
 })
@@ -61,9 +68,12 @@ function replaced(sends: readonly TrackedSend[], key: SendKey, change: (send: Tr
 
 const sameLine = (a: SendLine, b: SendLine): boolean => a.text === b.text && a.tone === b.tone && a.final === b.final && a.retry === b.retry
 
-/** Starts following a send just approved (or retried): a fresh «Sending…», at the end. */
-export function tracked(sends: readonly TrackedSend[], key: SendKey): readonly TrackedSend[] {
-  return trimmed([...sends.filter((send) => !same(send.key, key)), sending(key)])
+/**
+ * Starts following a send just approved (or retried), at the end: with the state the decision answered
+ * — an approve may come back `failed` at once — or «Sending…» when it said none.
+ */
+export function tracked(sends: readonly TrackedSend[], key: SendKey, state: SendState | null = null): readonly TrackedSend[] {
+  return trimmed([...sends.filter((send) => !same(send.key, key)), sending(key, state ?? 'sending')])
 }
 
 /** What a read of `GET /a/:id/sends/:kind` does; the same list back when nothing changed. */

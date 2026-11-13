@@ -11,6 +11,7 @@ import {
   polled,
   repolled,
   retryRefused,
+  sendStateOf,
   tracked,
   type TrackedSend,
 } from './sends-model.ts'
@@ -94,4 +95,20 @@ test('a good read resets the failure count', () => {
 test('a refused retry shows why and offers Retry again', () => {
   const sends = retryRefused(polled(tracked([], key('a', 'Acme')), key('a'), view('failed')), key('a'), 'smtp down')
   assert.deepEqual(sends[0]?.line, { text: 'Acme: smtp down', tone: 'err', final: true, retry: true })
+})
+
+test('the state a decision answered is read as a send state, or not at all', () => {
+  assert.equal(sendStateOf('sending'), 'sending')
+  assert.equal(sendStateOf('failed'), 'failed')
+  assert.equal(sendStateOf('send-unknown'), 'send-unknown')
+  assert.equal(sendStateOf('sent'), 'sent')
+  assert.equal(sendStateOf('approved'), null)
+  assert.equal(sendStateOf(undefined), null)
+})
+
+test('an approve answered «failed» at once is tracked failed, with Retry, and not polled', () => {
+  const sends = tracked([], key('a', 'Acme'), 'failed')
+  assert.deepEqual(sends[0]?.line, { text: 'Acme: the send failed', tone: 'err', final: true, retry: true })
+  assert.equal(isPolling(sends[0] as TrackedSend), false)
+  assert.equal(tracked([], key('a', 'Acme'), null)[0]?.line.text, 'Sending to Acme…')
 })

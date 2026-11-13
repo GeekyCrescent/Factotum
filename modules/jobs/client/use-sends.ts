@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import type { Api, SendView } from './contract.ts'
+import type { Api, SendState, SendView } from './contract.ts'
 import type { SendKey } from './model.ts'
 import { dismissed, isPolling, pollFailed, polled, repolled, retryRefused, sendIdOf, tracked, type TrackedSend } from './sends-model.ts'
 
@@ -25,7 +25,7 @@ const pathOf = (key: SendKey): string => `a/${encodeURIComponent(key.application
 export interface SendsState {
   readonly sends: readonly TrackedSend[]
   /** Starts following a send just approved (or retried). */
-  readonly track: (key: SendKey) => void
+  readonly track: (key: SendKey, state?: SendState | null) => void
   /** `POST /a/:id/sends/:kind/retry`, then follows it again. */
   readonly retry: (key: SendKey) => Promise<void>
   /** «Retry polling» of a line that gave up reading. */
@@ -43,7 +43,7 @@ export function useSends(api: Api): SendsState {
   /** The sends whose «Retry» is being posted. */
   const retrying = useRef(new Set<string>())
 
-  const track = useCallback((key: SendKey): void => setSends((now) => tracked(now, key)), [])
+  const track = useCallback((key: SendKey, state: SendState | null = null): void => setSends((now) => tracked(now, key, state)), [])
 
   const polling = sends.some(isPolling)
   useEffect(() => {

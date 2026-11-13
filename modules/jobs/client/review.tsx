@@ -18,12 +18,19 @@ import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
 import { confirmedLocal, createLock, decisionOn, localResultOf, viewOf, withLocal, type LocalResults } from './guard.ts'
-import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf } from './model.ts'
-import { sendIdOf } from './sends-model.ts'
+import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, sendKeyOf, type Notice } from './model.ts'
+import { sendIdOf, sendStateOf } from './sends-model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
 import { useSends, type SendsState } from './use-sends.ts'
 import { useSettle } from './use-settle.ts'
+
+/** What a «Retry» of a generation or a reprint says once the engine took it. */
+const RETRYING: Readonly<Record<'cv' | 'letter' | 'reprint', string>> = {
+  cv: 'Generating the CV',
+  letter: 'Writing the letter',
+  reprint: 'Printing the CV',
+}
 
 /** The focus is somewhere typing goes: the keys are the text's, not the screen's. */
 function isField(target: EventTarget | null): boolean {
@@ -33,7 +40,7 @@ function isField(target: EventTarget | null): boolean {
 
 export function Review({ props }: { readonly props: ViewProps }) {
   const { api, navigate } = props
-  const { answer, error, clearError, start, decide } = useBatch(api)
+  const { answer, error, clearError, reload, start, decide } = useBatch(api)
   const sends = useSends(api)
   const daemonBatch = answer?.batch ?? null
   /** Decided here, not yet read back (`guard.ts`): a ref, read synchronously by `send`, and a redraw. */
@@ -53,7 +60,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const [place, setPlace] = useState<{ readonly batchId: string; readonly index: number } | undefined>(undefined)
   /** After a decision went through: move on from this index once the batch is read again. */
   const [advanceFrom, setAdvanceFrom] = useState<number | undefined>(undefined)
-  const [notice, setNotice] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<Notice | undefined>(undefined)
   /** For drawing only; the guard is `lock`, read synchronously by every decision (D15). */
   const [busy, setBusy] = useState(false)
   const lock = useMemo(createLock, [])
@@ -97,13 +104,14 @@ export function Review({ props }: { readonly props: ViewProps }) {
           // again, the new `seen` changes the view and the settle starts over on the repainted card.
           const outcome = await decide(decisionOn(item, decision))
           if (isRefusal(outcome)) {
-            setNotice(outcome.text)
+            setNotice(noticeOf(outcome))
             return false
           }
           const decided = localResultOf(decision.kind)
           if (decided !== null) setLocal(new Map([...local.current, [item.itemId, decided]]))
           const key = decision.kind === 'approve' ? sendKeyOf(item) : null
-          if (key !== null && outcome.state === 'sending') sends.track(key)
+          // Whatever the engine answered — `sending`, or `failed` at once — the bar follows it.
+          if (key !== null) sends.track(key, sendStateOf(outcome.state))
           if (moveOn) setAdvanceFrom(index)
           return true
         } finally {
@@ -157,21 +165,28 @@ export function Review({ props }: { readonly props: ViewProps }) {
     sendAnyway: () => {
       if (settle.ready()) void send({ kind: 'approve', addressOverride: true }, true)
     },
+    // One at a time, as a decision; then the batch is read again so the card shows «generating…».
     retryJob: async (applicationId, job) => {
-      try {
-        await api.post(`a/${encodeURIComponent(applicationId)}/retry`, { job })
-      } catch (cause) {
-        setNotice(cause instanceof Error ? cause.message : 'the retry failed')
-      }
+      await lock.run(async () => {
+        try {
+          await api.post(`a/${encodeURIComponent(applicationId)}/retry`, { job })
+          setNotice({ text: `${RETRYING[job]} again…`, tone: 'ask' })
+          await reload()
+        } catch (cause) {
+          setNotice(noticeOf(refusalOf(cause)))
+        }
+      })
     },
     settings: (anchor) => navigate(`settings#${anchor}`),
     skip,
   }
 
-  if (answer === undefined) return <Shell error={error} onDismiss={clearError} sends={sends} />
+  const notices = noticesOf(error, notice)
+  const dismiss = () => (clearError(), setNotice(undefined))
+  if (answer === undefined) return <Shell notices={notices} onDismiss={dismiss} sends={sends} />
   if (batch === null) {
     return (
-      <Shell error={error} onDismiss={clearError} sends={sends}>
+      <Shell notices={notices} onDismiss={dismiss} sends={sends}>
         <div class="j-empty">
           <p>No batch open.</p>
           <button type="button" class="btn primary" disabled={answer.ready === 0} onClick={() => void start()}>
@@ -183,7 +198,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   return (
-    <Shell batch={batch} index={index} error={error ?? notice} onDismiss={() => (clearError(), setNotice(undefined))} sends={sends}>
+    <Shell batch={batch} index={index} notices={notices} onDismiss={dismiss} sends={sends}>
       {item === undefined ? (
         <End batch={batch} ready={answer.ready} onStart={() => void start()} />
       ) : (
@@ -208,7 +223,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
 interface ShellProps {
   readonly batch?: BatchView
   readonly index?: number
-  readonly error: string | undefined
+  readonly notices: readonly Notice[]
   readonly onDismiss: () => void
   readonly sends: SendsState
   readonly children?: ComponentChildren
@@ -243,7 +258,7 @@ function SendLines({ sends }: { readonly sends: SendsState }) {
   )
 }
 
-function Shell({ batch, index, error, onDismiss, sends, children }: ShellProps) {
+function Shell({ batch, index, notices, onDismiss, sends, children }: ShellProps) {
   const header = batch === undefined || index === undefined ? undefined : headerOf(batch, index < 0 ? batch.items.length : index)
   return (
     <div class="j-screen">
@@ -267,14 +282,14 @@ function Shell({ batch, index, error, onDismiss, sends, children }: ShellProps) 
         )}
         <SendLines sends={sends} />
       </header>
-      {error === undefined ? null : (
-        <div class="notice err j-notice" role="alert">
-          <p>{error}</p>
+      {notices.map((notice) => (
+        <div key={notice.text} class={`notice ${notice.tone} j-notice`} role={notice.tone === 'err' ? 'alert' : 'status'}>
+          <p>{notice.text}</p>
           <button type="button" class="btn sm quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
-      )}
+      ))}
       <main class="j-review">{children ?? <p class="j-loading">Loading…</p>}</main>
     </div>
   )
