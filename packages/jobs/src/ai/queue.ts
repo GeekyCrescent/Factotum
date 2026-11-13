@@ -4,7 +4,8 @@
  *
  * LANES: `interactive` (rewrites, classifying replies, a pasted link) goes before `bulk` (the seed's
  * CVs, the scout, the keeper). `concurrency` runs in total, and when a slot frees up an interactive
- * waiting takes it: interactive first, always. Within a lane the pump CHAINS WORKS OF THE SAME KIND
+ * waiting takes it: interactive first, always. With `concurrency > 1`, `bulk` takes at most
+ * `concurrency − 1` slots, so an interactive never waits for a CV to finish (D10, 13-nov). Within a lane the pump CHAINS WORKS OF THE SAME KIND
  * (all the `cv`, then the `verify`): each kind is its own prompt cache, and the cache lives 5 min (A4).
  * `reprint` runs no Claude: it takes no slot, and only one runs at a time.
  *
@@ -202,7 +203,7 @@ export function createQueue(deps: QueueDeps): Queue {
     return saved.ok ? ok(kinds) : saved
   }
 
-  const claudeRunning = (): number => [...inFlight.values()].filter((r) => r.work.kind !== 'reprint').length
+  const claudeRuns = (): readonly Work[] => [...inFlight.values()].map((r) => r.work).filter((work) => work.kind !== 'reprint')
   const printing = (): boolean => [...inFlight.values()].some((r) => r.work.kind === 'reprint')
 
   /** Claude slots now: none while paused, ONE for the probe once the pause ran out (D10), else all. */
@@ -212,10 +213,19 @@ export function createQueue(deps: QueueDeps): Queue {
     return until > at ? 0 : 1
   }
 
+  /** D10: with more than one slot, `bulk` leaves one free for `interactive`; with one, it may take it. */
+  const bulkSlots = (slots: number): number => (slots > 1 ? slots - 1 : slots)
+
+  function canStartClaude(work: Work, slots: number): boolean {
+    const runs = claudeRuns()
+    if (runs.length >= slots) return false
+    return work.lane === 'interactive' || runs.filter((run) => run.lane === 'bulk').length < bulkSlots(slots)
+  }
+
   function next(): Work | undefined {
     const at = now().toISOString()
     const { due, slots } = db.read((q) => ({ due: dueWork(q, at), slots: claudeSlots(q, at) }))
-    const canStart = (work: Work): boolean => (work.kind === 'reprint' ? !printing() : claudeRunning() < slots)
+    const canStart = (work: Work): boolean => (work.kind === 'reprint' ? !printing() : canStartClaude(work, slots))
     return due
       .filter((work) => !inFlight.has(work.id))
       .sort(byPriority(lastKind))

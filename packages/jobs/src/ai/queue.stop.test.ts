@@ -40,7 +40,8 @@ test('criterion 27: stop() kills the hung runs and waits; the next start puts th
     const run = await runClaude({ prompt: work.ref, jsonSchema: '{}', output: z.object({ title: z.string() }), model: 'sonnet', effort: undefined, cwd, timers: realTimers, now: () => NOW, signal: ctx.signal, timeoutMs: ctx.timeoutMs, bin: FAKE })
     return run.ok ? DONE : run
   }
-  const { queue } = rig(db, { handlers: { cv: claude } })
+  // Concurrency 3: two bulk at once (D10 keeps the third slot for interactive).
+  const { queue } = rig(db, { concurrency: 3, handlers: { cv: claude } })
   const ids = ['a1', 'a2', 'a3'].map((ref) => valueOf(queue.add({ kind: 'cv', ref })).id)
   await eventually(async () => (await pids()).length === 2, 'two claudes started')
 

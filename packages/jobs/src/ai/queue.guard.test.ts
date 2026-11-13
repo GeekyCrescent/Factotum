@@ -26,7 +26,8 @@ test('G4: a cv superseded by a newer cv request is discarded (prepared { discard
   using base = tempBase()
   const db = await queueStore(base)
   const run = controlled()
-  const { queue } = rig(db, { handlers: { cv: run.handler } })
+  // Concurrency 3: two bulk at once (D10 keeps the third slot for interactive).
+  const { queue } = rig(db, { concurrency: 3, handlers: { cv: run.handler } })
   insertApp(db, { state: 'generating' })
   const old = enqueue(db, queue, 'cv')
   queue.pump()
@@ -51,7 +52,7 @@ for (const order of [['cv', 'letter'], ['letter', 'cv']] as const) {
     using base = tempBase()
     const db = await queueStore(base)
     const run = controlled()
-    const { queue } = rig(db, { handlers: { cv: run.handler, letter: run.handler } })
+    const { queue } = rig(db, { concurrency: 3, handlers: { cv: run.handler, letter: run.handler } })
     insertApp(db, { state: 'generating' }, null)
     const ids = { cv: enqueue(db, queue, 'cv'), letter: enqueue(db, queue, 'letter') }
     queue.pump()
@@ -72,7 +73,7 @@ test('G4: a newer cv discards the old cv but NOT the letter', async () => {
   using base = tempBase()
   const db = await queueStore(base)
   const run = controlled()
-  const { queue } = rig(db, { concurrency: 3, handlers: { cv: run.handler, letter: run.handler } })
+  const { queue } = rig(db, { concurrency: 4, handlers: { cv: run.handler, letter: run.handler } })
   insertApp(db, { state: 'generating' }, null)
   const oldCv = enqueue(db, queue, 'cv')
   const letter = enqueue(db, queue, 'letter')

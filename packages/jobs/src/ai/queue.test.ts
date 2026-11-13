@@ -53,32 +53,47 @@ test('enqueueCv refuses an application that is not draft, and one that does not 
   assert.equal(db.read((q) => repo.genRequestsOf(q, 'app-1')).length, 0)
 })
 
-test('add pumps at once: concurrency 2 starts two, the rest wait queued', async () => {
+test('add pumps at once: concurrency 3 starts two bulk (one slot kept for interactive), the rest wait queued', async () => {
   using base = tempBase()
   const db = await queueStore(base)
   const run = controlled()
-  const { queue } = rig(db, { handlers: { cv: run.handler } })
+  const { queue } = rig(db, { concurrency: 3, handlers: { cv: run.handler } })
   const ids = ['a1', 'a2', 'a3'].map((ref) => valueOf(queue.add({ kind: 'cv', ref })).id)
   assert.deepEqual(run.started(), ids.slice(0, 2))
   assert.deepEqual(queue.running(), ids.slice(0, 2))
   assert.deepEqual(ids.map((id) => workOf(db, id).state), ['running', 'running', 'queued'])
 })
 
-test('R25: 5 bulk and 1 interactive with concurrency 2 → the interactive takes the next free slot', async () => {
+test('R25: 5 bulk and 1 interactive with concurrency 2 → the interactive takes the slot kept for it, at once', async () => {
   using base = tempBase()
   const db = await queueStore(base)
   const run = controlled()
   const { queue } = rig(db, { handlers: { cv: run.handler, classify: run.handler } })
   const bulk = ['a1', 'a2', 'a3', 'a4', 'a5'].map((ref) => valueOf(queue.add({ kind: 'cv', ref })).id)
+  assert.deepEqual(run.started(), bulk.slice(0, 1), 'bulk takes at most concurrency − 1 slots (D10)')
   const interactive = valueOf(queue.add({ kind: 'classify', ref: 'mail-1' })).id
-  assert.deepEqual(run.started(), bulk.slice(0, 2), 'no slot was free: the interactive waits')
+  assert.deepEqual(run.started(), [bulk[0], interactive], 'the interactive starts at once')
+  run.finish(interactive)
+  await eventually(() => workOf(db, interactive).state === 'done', 'the interactive done')
+  assert.deepEqual(run.started(), [bulk[0], interactive], 'its slot stays free for the next interactive')
   run.finish(bulk[0]!)
   await eventually(() => run.started().length === 3, 'the next slot taken')
-  assert.deepEqual(run.started(), [...bulk.slice(0, 2), interactive])
   assert.equal(workOf(db, bulk[0]!).state, 'done')
-  run.finish(bulk[1]!)
-  await eventually(() => run.started().length === 4, 'the next slot taken')
-  assert.deepEqual(run.started().at(-1), bulk[2], 'then the bulk goes on in order')
+  assert.deepEqual(run.started().at(-1), bulk[1], 'then the bulk goes on in order')
+})
+
+test('interactive works may take every slot; with concurrency 1 a bulk still runs', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const run = controlled()
+  const { queue } = rig(db, { handlers: { classify: run.handler } })
+  const ids = ['m1', 'm2', 'm3'].map((ref) => valueOf(queue.add({ kind: 'classify', ref })).id)
+  assert.deepEqual(run.started(), ids.slice(0, 2))
+  using other = tempBase()
+  const single = controlled()
+  const one = rig(await queueStore(other), { concurrency: 1, handlers: { cv: single.handler } })
+  const cv = valueOf(one.queue.add({ kind: 'cv', ref: 'a1' })).id
+  assert.deepEqual(single.started(), [cv])
 })
 
 test('the pump chains works of the same kind (the cache lives 5 min): cv, cv before verify', async () => {

@@ -224,7 +224,8 @@ test('R26: a usage limit adds no attempt, pauses the queue until resetsAt, and t
     const run = await runClaude({ prompt: work.ref, jsonSchema: '{}', output: z.object({ title: z.string() }), model: 'sonnet', effort: undefined, cwd: fake.cwd, timers: timers.timers, now: () => now(), signal: ctx.signal, timeoutMs: ctx.timeoutMs, bin: FAKE })
     return run.ok ? DONE : run
   }
-  const { queue, clock } = rig(db, { handlers: { cv: claude } })
+  // Concurrency 3: two bulk at once (D10 keeps the third slot for interactive).
+  const { queue, clock } = rig(db, { concurrency: 3, handlers: { cv: claude } })
   now = clock.now
   const ids = ['a1', 'a2', 'a3'].map((ref) => valueOf(queue.add({ kind: 'cv', ref })).id)
   await queue.settled()
