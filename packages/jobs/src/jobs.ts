@@ -12,6 +12,7 @@
  * 4. arm the clock (D16) WITHOUT WAITING for its first round; the check queue takes back what the
  *    startup write took out of `checking` (T-D2);
  * 5. launch, WITHOUT WAITING, the `lstat` of the password file (`mail-health.ts`): never its content.
+ * The clock is armed LAST of steps 4–5; a step that throws stops whatever is live, then closes the store.
  *
  * `stop`: the clock, the ad walk, the checks, the queue (its runs aborted), the sends in flight
  * (aborted WITHOUT their step 3: they stay `sending`, the next start makes them `send-unknown`) — all
@@ -115,15 +116,31 @@ export async function createJobs(deps: JobsDeps): Promise<CreateJobsResult> {
   }
   const stored = await openStore(deps)
   if (!stored.ok) return { ok: false, reason: stored.error.reason }
+  let composed: Composed
   try {
-    return { ok: true, jobs: compose(deps, config, timeZone, stored.value) }
+    composed = compose(deps, config, timeZone, stored.value)
   } catch (error) {
+    // Nothing is live yet: building arms no timer and starts no run.
     stored.value.close()
     return { ok: false, reason: `jobs could not start (${messageOf(error)})` }
   }
+  try {
+    composed.start()
+  } catch (error) {
+    // Something may be live (the check queue, the clock): `stop` halts all of it, then closes the store.
+    await composed.jobs.stop()
+    return { ok: false, reason: `jobs could not start (${messageOf(error)})` }
+  }
+  return { ok: true, jobs: composed.jobs }
 }
 
-function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): Jobs {
+/** The facade, built but not started; `start` runs steps 4–5 (D13) and may throw. */
+interface Composed {
+  readonly jobs: Jobs
+  readonly start: () => void
+}
+
+function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): Composed {
   const { log, now, timers, stateDir } = deps
 
   // Step 3: what is on disk.
@@ -205,11 +222,18 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     seedFiles,
   })
 
-  // Step 4: the tick, without waiting for it; the contacts the startup write took out of `checking`.
-  clock.start()
-  checks.enqueueRestarted()
-  // Step 5: the password file's `lstat`, never awaited.
-  password.check().catch((error: unknown) => log.error(`jobs: the password file check failed (${messageOf(error)})`))
+  /**
+   * Steps 4–5. THE CLOCK IS ARMED LAST, after everything that can throw: an interval armed before a
+   * step that throws would tick on the closed store.
+   */
+  function start(): void {
+    // Step 4: the contacts the startup write took out of `checking`, in front.
+    checks.enqueueRestarted()
+    // Step 5: the password file's `lstat`, never awaited.
+    password.check().catch((error: unknown) => log.error(`jobs: the password file check failed (${messageOf(error)})`))
+    // Step 4: the tick, without waiting for it.
+    clock.start()
+  }
 
   const relintDeps = { now, linter, log, enqueueReprint: (): void => undefined } // H5c connects the reprint
 
@@ -268,7 +292,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     db.close()
   }
 
-  return {
+  const jobs: Jobs = {
     where: () => ({ mode: 'host' }),
     overview,
     application: (id) =>
@@ -321,4 +345,5 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
       return stopping
     },
   }
+  return { jobs, start }
 }
