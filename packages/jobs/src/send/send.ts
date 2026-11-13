@@ -146,7 +146,8 @@ const then = <T>(written: Result<void>, value: T): Result<T> => (written.ok ? ok
 export function createSender(deps: SenderDeps): Sender {
   const { db, log } = deps
   const applyDeferred = deps.applyDeferred ?? applyDeferredReplies
-  const inFlight = new Set<{ readonly controller: AbortController; readonly done: Promise<void> }>()
+  /** By `<id>\0<kind>`: the attempt of each row in flight. */
+  const inFlight = new Map<string, { readonly controller: AbortController; readonly done: Promise<void> }>()
   let stopped = false
 
   const capOf = (q: Queries, at: Date): DailyCap => dailyCap(q, at, deps.timeZone, deps.mail.maxSendsPerDay)
@@ -318,19 +319,19 @@ export function createSender(deps: SenderDeps): Sender {
       report(`send ${id}/${kind}: not launched, the sender is stopping; a row left sending becomes send-unknown at the restart`, 'warn')
       return false
     }
+    // One attempt per row at a time: a second launch (a double click, a retried request) would send twice.
+    const key = `${id}\u0000${kind}`
+    if (inFlight.has(key)) return false
     const controller = new AbortController()
-    const entry = {
-      controller,
-      done: deliver(id, kind, controller.signal)
-        .catch((error: unknown) => report(`send ${id}/${kind}: ${faultOf(error)} after SMTP; the row stays sending until the restart`))
-        .finally(() => inFlight.delete(entry)),
-    }
-    inFlight.add(entry)
+    const done = deliver(id, kind, controller.signal)
+      .catch((error: unknown) => report(`send ${id}/${kind}: ${faultOf(error)} after SMTP; the row stays sending until the restart`))
+      .finally(() => inFlight.delete(key))
+    inFlight.set(key, { controller, done })
     return true
   }
 
   async function settled(): Promise<void> {
-    while (inFlight.size > 0) await Promise.all([...inFlight].map((entry) => entry.done))
+    while (inFlight.size > 0) await Promise.all([...inFlight.values()].map((entry) => entry.done))
   }
 
   return {
@@ -353,7 +354,7 @@ export function createSender(deps: SenderDeps): Sender {
     settled,
     stop: async () => {
       stopped = true
-      for (const entry of inFlight) entry.controller.abort(STOPPING)
+      for (const entry of inFlight.values()) entry.controller.abort(STOPPING)
       await settled()
     },
   }

@@ -84,6 +84,19 @@ describe('approve does not wait for SMTP (E1b)', () => {
     }
   })
 
+  test('a second launch of the same (id, kind) while one is in flight is a no-op: the server gets ONE message', async (t) => {
+    await within(t, {}, async (w) => {
+      const sender = createSender(w.deps)
+      valueOf(sender.approve('app-1', 'initial'))
+      assert.equal(sender.launch('app-1', 'initial'), false)
+      assert.equal(sender.launch('app-1', 'initial'), false)
+      await sender.settled()
+      assert.equal(w.server.messages.length, 1)
+      assert.equal(w.inputs.length, 1)
+      assert.equal(appOf(w.db).sends[0]?.state, 'sent')
+    })
+  })
+
   test('after stop(), approve is refused and nothing launches; launch says so', async (t) => {
     await within(t, {}, async (w) => {
       const sender = createSender(w.deps)
