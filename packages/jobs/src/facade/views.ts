@@ -193,6 +193,33 @@ function entityState(q: Queries, item: SeenItem): { readonly test: boolean; read
   }
 }
 
+/** Whether what an item is about went out: the application's initial send, or the follow-up, reached `sent`. */
+function itemWent(q: Queries, item: SeenItem): boolean {
+  const appWent = (id: string): boolean => repo.getApplication(q, id)?.sends.some((s) => s.kind === 'initial' && s.state === 'sent') === true
+  const followupWent = (id: string): boolean => repo.getFollowup(q, id)?.state === 'sent'
+  switch (item.kind) {
+    case 'application':
+      return appWent(item.applicationId)
+    case 'followup':
+      return followupWent(item.followupId)
+    case 'rewritten':
+      return item.target === 'application' ? appWent(item.id) : followupWent(item.id)
+    default:
+      return false
+  }
+}
+
+/**
+ * The results as the end of the batch counts them (crit. 37; R8), at read time — nothing writes a
+ * `sent` result: an `approved` item whose send reached `sent` (SMTP, «it went», or «Mark as sent» on a
+ * form/platform/LinkedIn one) reads `sent`, and only `sent`; approved and not gone yet stays `approved`.
+ */
+function resultsNow(q: Queries, batch: SeenBatch): BatchView['results'] {
+  const went = new Set(batch.items.filter((item) => batch.results[item.itemId] === 'approved' && itemWent(q, item)).map((item) => item.itemId))
+  if (went.size === 0) return batch.results
+  return Object.fromEntries(Object.entries(batch.results).map(([itemId, result]) => [itemId, went.has(itemId) ? 'sent' : result]))
+}
+
 export function batchView(q: Queries, batch: SeenBatch, profile: Profile): BatchView {
   const states = batch.items.map((item) => entityState(q, item))
   return {
@@ -200,7 +227,7 @@ export function batchView(q: Queries, batch: SeenBatch, profile: Profile): Batch
     test: states.some((s) => s.test),
     items: batch.items.flatMap((item) => reviewItem(q, item, profile) ?? []),
     cursor: batch.cursor,
-    results: batch.results,
+    results: resultsNow(q, batch),
     rewriting: states.filter((s) => s.rewriting).length,
   }
 }

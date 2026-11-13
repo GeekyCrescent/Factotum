@@ -136,3 +136,38 @@ test('C1 views: a form card carries what the assist panel opens and ticks — ta
   assert.equal(card.instruction, 'the form on acme.example/apply')
   assert.deepEqual(card.skills, skills)
 })
+
+test('R8 batch view: an approved item whose send reached `sent` counts as sent, not approved; one not sent yet stays approved (crit. 37)', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  insertApp(db, { id: 'a-mail-sent', state: 'sent', sends: [send({ messageId: '<a-mail-sent@jobs.factotum.local>', state: 'sent' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-mail-sending', state: 'sending', sends: [send({ messageId: '<a-mail-sending@jobs.factotum.local>', state: 'sending' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-form-marked', state: 'sent', channel: 'form', sends: [send({ channel: 'manual', messageId: null, state: 'sent' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-platform-open', state: 'approved', channel: 'platform' }, ARTIFACTS)
+  insertApp(db, { id: 'a-rewritten-sent', state: 'sent', sends: [send({ messageId: '<a-rewritten-sent@jobs.factotum.local>', state: 'sent' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-skipped', state: 'sent', sends: [send({ messageId: '<a-skipped@jobs.factotum.local>', state: 'sent' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-base', state: 'sent', sends: [send({ messageId: '<a-base@jobs.factotum.local>', state: 'sent' })] }, ARTIFACTS)
+  insertFollowup(db, { id: 'fu-sent', applicationId: 'a-base', state: 'sent', channel: 'linkedin' })
+  insertFollowup(db, { id: 'fu-ready', n: 2, applicationId: 'a-base', state: 'ready' })
+  const app = (itemId: string, applicationId: string): SeenItem => ({ itemId, seen: SEEN, kind: 'application', applicationId })
+  const items: readonly SeenItem[] = [
+    app('i1', 'a-mail-sent'),
+    app('i2', 'a-mail-sending'),
+    app('i3', 'a-form-marked'),
+    app('i4', 'a-platform-open'),
+    { itemId: 'i5', seen: SEEN, kind: 'rewritten', target: 'application', id: 'a-rewritten-sent', fromVersion: 1, failed: false },
+    app('i6', 'a-skipped'),
+    { itemId: 'i7', seen: SEEN, kind: 'followup', followupId: 'fu-sent' },
+    { itemId: 'i8', seen: SEEN, kind: 'followup', followupId: 'fu-ready' },
+  ]
+  const results = { i1: 'approved', i2: 'approved', i3: 'approved', i4: 'approved', i5: 'approved', i6: 'skipped', i7: 'approved', i8: 'approved' } as const
+  const batch: SeenBatch = { id: 'b', items, cursor: 8, results }
+
+  // Act
+  const view = db.read((q) => batchView(q, batch, PROFILE))
+
+  // Assert
+  assert.deepEqual(view.results, { i1: 'sent', i2: 'approved', i3: 'sent', i4: 'approved', i5: 'sent', i6: 'skipped', i7: 'sent', i8: 'approved' })
+  assert.deepEqual(batch.results, results, 'the stored results are read, never rewritten')
+})
