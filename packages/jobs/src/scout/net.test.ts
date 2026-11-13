@@ -311,6 +311,24 @@ describe('get', () => {
     })
   }
 
+  test('an allow() of the caller is asked before every hop, the first included, and a refused hop is never fetched', async () => {
+    const h = harness({ 'https://a.example/': redirect('https://b.example/x'), 'https://b.example/x': new Response('b') })
+    const asked: string[] = []
+    const allow = (url: URL): boolean => {
+      asked.push(url.href)
+      return url.hostname === 'a.example'
+    }
+    const result = await h.get('https://a.example/', { allow })
+    assert.equal(result.ok ? null : result.error.kind, 'not-allowed')
+    assert.equal(result.ok ? null : result.error.code, 'blocked')
+    assert.deepEqual(asked, ['https://a.example/', 'https://b.example/x'])
+    assert.deepEqual(h.calls.map((call) => call.url), ['https://a.example/'])
+    assert.deepEqual(h.lookups, ['a.example'])
+    const first = await h.get('https://b.example/x', { allow })
+    assert.equal(first.ok ? null : first.error.kind, 'not-allowed')
+    assert.equal(h.calls.length, 1)
+  })
+
   test(`follows ${MAX_REDIRECTS} redirects and refuses the next one`, async () => {
     assert.equal(MAX_REDIRECTS, 5)
     const routes: Record<string, Reply> = {}

@@ -45,6 +45,8 @@ export type NetFailure =
   | 'not-https'
   | 'linkedin'
   | 'private-address'
+  /** The caller's `allow` refused a hop (`GetOptions.allow`). */
+  | 'not-allowed'
   | 'dns'
   | 'network'
   | 'timeout'
@@ -66,6 +68,7 @@ const CODE_OF: Readonly<Record<NetFailure, NetError['code']>> = {
   'not-https': 'invalid',
   linkedin: 'blocked',
   'private-address': 'blocked',
+  'not-allowed': 'blocked',
   dns: 'module-error',
   network: 'module-error',
   timeout: 'module-error',
@@ -245,6 +248,12 @@ export interface Page {
 export interface GetOptions {
   /** Lets a caller with its own deadline (a check, a paste) give up early. */
   readonly signal?: AbortSignal
+  /**
+   * Asked before EVERY hop is resolved or fetched, the first URL and each redirect target: false
+   * refuses it (`not-allowed`) without a request. The address search keeps to the company's domain
+   * with it, so an off-domain redirect is never fetched nor its body read.
+   */
+  readonly allow?: (url: URL) => boolean
 }
 
 export interface Net {
@@ -402,6 +411,7 @@ export function createNet(deps: NetDeps): Net {
   }
 
   async function follow(url: URL, redirects: readonly string[], options: GetOptions): Promise<NetResult<Page>> {
+    if (options.allow?.(url) === false) return fail('not-allowed', `the caller does not fetch ${url.host}`)
     const step = await courtesy(url.hostname, options.signal, () => withDeadline((signal) => fetchOnce(url, signal), options.signal))
     if (!step.ok) return step
     if (step.value.kind === 'page') {

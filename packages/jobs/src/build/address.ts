@@ -214,18 +214,20 @@ export async function searchAddress(net: Net, target: AddressTarget, signal?: Ab
   const home = homeOf(target.website)
   if (home === null) return { kind: 'no-website' }
   const domain = home.hostname.toLowerCase().replace(/^www\./, '')
-  const options = signal === undefined ? {} : { signal }
+  // Every hop, redirects included, is held to the domain BEFORE it is fetched: a page off it is never read.
+  const allow = (url: URL): boolean => onDomain(url.hostname, domain)
+  const options = signal === undefined ? { allow } : { allow, signal }
 
   const first = await net.get(home.href, options)
+  if (!first.ok && first.error.kind === 'not-allowed') return { kind: 'not-found' } // the home page redirects off the domain
   if (!first.ok) return { kind: 'unreachable', reason: first.error.kind }
   if (!isSuccess(first.value)) return { kind: 'unreachable', reason: `http-${first.value.status}` }
-  if (!onDomain(new URL(first.value.url).hostname, domain)) return { kind: 'not-found' }
   if (mentions(first.value.body, target.email)) return { kind: 'found', url: first.value.url }
 
   for (const url of candidatePages(first.value, domain)) {
     if (signal?.aborted === true) return { kind: 'unreachable', reason: 'aborted' }
     const next = await net.get(url, options)
-    if (!next.ok || !isSuccess(next.value) || !onDomain(new URL(next.value.url).hostname, domain)) continue
+    if (!next.ok || !isSuccess(next.value)) continue
     if (mentions(next.value.body, target.email)) return { kind: 'found', url: next.value.url }
   }
   return { kind: 'not-found' }

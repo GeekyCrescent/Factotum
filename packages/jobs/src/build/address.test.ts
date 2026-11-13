@@ -121,8 +121,25 @@ describe('searchAddress (N2, design D9 «La re-búsqueda»)', () => {
     })
     const redirecting: FetchLike = async (url, init) =>
       url === 'https://acme.example/contact' ? new Response(null, { status: 301, headers: { location: 'https://hosted.example/contact' } }) : fetch(url, init)
-    const net = createNet({ fetch: redirecting, lookup: async () => ['93.184.216.34'], timers: manualTimers().timers, now: manualClock().now, politeMs: 0 })
+    const asked: string[] = []
+    const recording: FetchLike = async (url, init) => {
+      asked.push(url)
+      return redirecting(url, init)
+    }
+    const net = createNet({ fetch: recording, lookup: async () => ['93.184.216.34'], timers: manualTimers().timers, now: manualClock().now, politeMs: 0 })
     assert.deepEqual(await searchAddress(net, { email: EMAIL, website: HOME }), { kind: 'not-found' })
+    assert.deepEqual(asked, [HOME, 'https://acme.example/contact'], 'the off-domain hop is never fetched')
+  })
+
+  test('a home page that redirects off the domain is not-found, and the other site is never fetched', async () => {
+    const asked: string[] = []
+    const fetch: FetchLike = async (url) => {
+      asked.push(url)
+      return url === HOME ? new Response(null, { status: 301, headers: { location: 'https://parked.example/' } }) : new Response(EMAIL)
+    }
+    const net = createNet({ fetch, lookup: async () => ['93.184.216.34'], timers: manualTimers().timers, now: manualClock().now, politeMs: 0 })
+    assert.deepEqual(await searchAddress(net, { email: EMAIL, website: HOME }), { kind: 'not-found' })
+    assert.deepEqual(asked, [HOME])
   })
 
   test('a sub-page that fails or is not 2xx is skipped', async () => {
