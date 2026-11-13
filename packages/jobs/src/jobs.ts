@@ -34,6 +34,7 @@ import { createVerifier } from './build/verify.ts'
 import { BACKUP_FAILING, createClock } from './clock.ts'
 import { parseJobsConfig, type HostConfig } from './config.ts'
 import { createAdRevalidator } from './facade/ads.ts'
+import { stopInOrder } from './facade/lifecycle.ts'
 import { checkPaths, confinedArtifact, pathWarnings, printer, readFont, vaultReader } from './facade/sources.ts'
 import type { BatchAnswer, CreateJobsResult, DecisionInput, Health, Jobs, JobsDeps, Overview, RetryJob } from './facade/types.ts'
 import { applicationCard, batchView, readyOutside, sendView } from './facade/views.ts'
@@ -286,11 +287,20 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
   }
 
   let stopping: Promise<void> | null = null
-  async function stop(): Promise<void> {
-    await clock.stop()
-    await Promise.all([ads.stop(), checks.stop(), queue.stop(), sender.stop()])
-    db.close()
-  }
+  const stop = (): Promise<void> =>
+    stopInOrder(
+      [
+        [{ name: 'the clock', stop: clock.stop }],
+        [
+          { name: 'the ad walk', stop: ads.stop },
+          { name: 'the check queue', stop: checks.stop },
+          { name: 'the generation queue', stop: queue.stop },
+          { name: 'the sender', stop: sender.stop },
+        ],
+      ],
+      db.close,
+      log,
+    )
 
   const jobs: Jobs = {
     where: () => ({ mode: 'host' }),
