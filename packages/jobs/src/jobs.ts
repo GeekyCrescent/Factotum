@@ -7,7 +7,8 @@
  * 2. open `jobs.db` with the startup write in ONE `tx`: `recoverOnStart` (`sending → send-unknown`,
  *    `work.running → queued`, `checking → unverified`), then `applyDeferredRepliesOnStart`; the seed
  *    profile becomes version 1 on an empty store (D7);
- * 3. look for the vault, the master CV, chromium and poppler, and read the CV font — a miss WARNS in
+ * 3. look for the vault, the master CV, the guide, the seed files, chromium, poppler and `claude` on PATH,
+ *    and read the CV font — a miss WARNS in
  *    `health()`, never switches the module off (the tracker serves without them);
  * 4. arm the clock (D16) WITHOUT WAITING for its first round; the check queue takes back what the
  *    startup write took out of `checking` (T-D2);
@@ -32,8 +33,8 @@ import { parseJobsConfig, type HostConfig } from './config.ts'
 import { buildCheckLayer, buildClock, buildGeneration, buildSendLayer, failing, type Base } from './facade/layers.ts'
 import { inFlight, lifecycle, type InFlight, type Lifecycle } from './facade/lifecycle.ts'
 import { views, type Reads } from './facade/reads.ts'
-import { checkPaths, readFont, vaultReader } from './facade/sources.ts'
-import type { CreateJobsResult, DecisionInput, Jobs, JobsDeps, RetryJob } from './facade/types.ts'
+import { checkPaths, generationWarnings, readFont, vaultReader } from './facade/sources.ts'
+import type { CreateJobsResult, DecisionInput, Health, Jobs, JobsDeps, RetryJob } from './facade/types.ts'
 import { applicationCard, sendView } from './facade/views.ts'
 import { closeApplication } from './owner/close.ts'
 import { ensureProfile } from './profile.ts'
@@ -135,7 +136,9 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
 
   // Step 3: what is on disk.
   const font = readFont()
-  const paths = checkPaths(config, font)
+  const lookup = { claudeBin: deps.claudeBin, envPath: process.env.PATH ?? '' }
+  const disk = (): Health['paths'] => checkPaths(config, font, lookup)
+  const paths = disk()
   const vault = vaultReader(config.vault)
   const linter = createLinter({ master: vault.master, pdfExists: existsSync })
 
@@ -171,7 +174,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     log,
   })
 
-  const jobs = facade({ base, linter, queue, checks, sender, assist, review, reads, imports, life })
+  const jobs = facade({ base, linter, queue, checks, sender, assist, review, reads, imports, life, disk })
   return { jobs, start: life.start }
 }
 
@@ -189,12 +192,14 @@ interface Parts {
   readonly reads: Reads
   readonly imports: InFlight
   readonly life: Lifecycle
+  /** What is on disk NOW (step 3's check, again): the import says what would fail its CVs. */
+  readonly disk: () => Health['paths']
 }
 
 const viewSend = (result: Result<Send>): Result<ReturnType<typeof sendView>> => (result.ok ? ok(sendView(result.value)) : result)
 
 /** The seed import, then a pump for the CVs it queued. */
-async function importNow({ base, queue, checks }: Parts, input: { readonly dryRun: boolean }): Promise<Result<ImportReport>> {
+async function importNow({ base, queue, checks, disk }: Parts, input: { readonly dryRun: boolean }): Promise<Result<ImportReport>> {
   const { db, deps, config, timeZone } = base
   const report = await importSeed(
     db,
@@ -202,7 +207,10 @@ async function importNow({ base, queue, checks }: Parts, input: { readonly dryRu
     { dryRun: input.dryRun === true },
   )
   queue.pump()
-  return report
+  if (!report.ok) return report
+  // A wrong guide path, or no `claude` on PATH, fails every CV the import queues: say it before (review 1a).
+  const gaps = generationWarnings(disk())
+  return gaps.length === 0 ? report : ok({ ...report.value, warnings: [...gaps, ...report.value.warnings] })
 }
 
 function retryOf({ base, queue }: Parts, id: string, job: RetryJob): Result<{ readonly queued: readonly ('cv' | 'letter')[] }> {

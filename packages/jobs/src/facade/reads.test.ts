@@ -10,7 +10,7 @@ import { tempBase } from '../test-support.ts'
 import { ok, type Profile } from '../types.ts'
 import { views } from './reads.ts'
 
-const PATHS = { vault: 'ok', cvMaster: 'ok', chromium: 'ok', pdfinfo: 'ok', pdftoppm: 'ok', font: 'ok' } as const
+const PATHS = { vault: 'ok', cvMaster: 'ok', guide: 'ok', seedCompanies: 'ok', seedKit: 'ok', seedCvs: 'ok', seedPackages: 'ok', chromium: 'ok', pdfinfo: 'ok', pdftoppm: 'ok', font: 'ok', claude: 'ok' } as const
 
 function readsOf(db: Db, mailReason: string | null = null) {
   return views({

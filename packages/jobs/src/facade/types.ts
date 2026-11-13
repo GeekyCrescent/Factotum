@@ -91,10 +91,19 @@ export interface Health {
   readonly paths: {
     readonly vault: PathState
     readonly cvMaster: PathState
+    /** The guide for the agent: every CV run reads it (review 1a). */
+    readonly guide: PathState
+    readonly seedCompanies: PathState
+    readonly seedKit: PathState
+    readonly seedCvs: PathState
+    /** Every `seed.packages[].file`. */
+    readonly seedPackages: PathState
     readonly chromium: PathState
     readonly pdfinfo: PathState
     readonly pdftoppm: PathState
     readonly font: PathState
+    /** The `claude` the queue spawns, found on the daemon's PATH (or `claudeBin`). */
+    readonly claude: PathState
   }
   /** Since when the daily copy keeps failing (D2); null while copies work. */
   readonly backupFailing: string | null

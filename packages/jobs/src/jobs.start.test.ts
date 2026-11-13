@@ -154,6 +154,26 @@ test('C1 health: a missing chromium or vault warns; the module still starts', as
   }
 })
 
+test('review 1a: a wrong guide path is named in health and in the import\'s dry run — not 43 silent «generation failed»', async () => {
+  // Arrange
+  using base = tempBase()
+  const rig = rigIn(base.dir)
+  const jobs = await started(depsOf(rig, { config: { ...rig.config, vault: { ...(rig.config.vault as object), guide: 'wrong/guide.md' } } }))
+  try {
+    // Act
+    const health = jobs.health()
+    const report = valueOf(await jobs.importSeed({ dryRun: true }))
+
+    // Assert
+    assert.equal(health.paths.guide, 'missing')
+    assert.ok(health.warnings.includes('Vault: the guide for the agent is missing; every CV generation fails until it is there'))
+    assert.ok(jobs.overview().notices.includes('Vault: the guide for the agent is missing; every CV generation fails until it is there'))
+    assert.ok(report.warnings.includes('Vault: the guide for the agent is missing; every CV generation fails until it is there'), 'the dry run says it before anything is queued')
+  } finally {
+    await jobs.stop()
+  }
+})
+
 test('C1 start: fits in 10 s with a store of 100 companies and 80 applications', async () => {
   using base = tempBase()
   const rig = rigIn(base.dir)

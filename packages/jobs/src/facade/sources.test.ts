@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
 
 import { queueStore } from '../ai/test-queue.ts'
-import { builderStore, FAKE_CHROMIUM, FAKE_PDFINFO, FAKE_PDFTOPPM, FONT, scriptChromium } from '../build/test-builder.ts'
+import { builderStore, FAKE_CHROMIUM, FAKE_CLAUDE, FAKE_PDFINFO, FAKE_PDFTOPPM, FONT, scriptChromium } from '../build/test-builder.ts'
 import { DOC } from '../build/test-cv.ts'
-import type { HostConfig } from '../config.ts'
+import { parseJobsConfig, type HostConfig } from '../config.ts'
+import { rigIn } from '../test-jobs.ts'
 import { errorOf, valueOf } from '../test-state.ts'
 import { capturedLog, realTimers, tempBase } from '../test-support.ts'
-import { confinedArtifact, pathWarnings, printer, readFont, vaultReader } from './sources.ts'
+import { checkPaths, confinedArtifact, pathWarnings, printer, readFont, vaultReader } from './sources.ts'
+
+const ALL_OK = { vault: 'ok', cvMaster: 'ok', guide: 'ok', seedCompanies: 'ok', seedKit: 'ok', seedCvs: 'ok', seedPackages: 'ok', chromium: 'ok', pdfinfo: 'ok', pdftoppm: 'ok', font: 'ok', claude: 'ok' } as const
+
+function hostOf(raw: unknown): HostConfig {
+  const parsed = parseJobsConfig(raw)
+  if (!parsed.ok || parsed.config.mode !== 'host') return assert.fail(parsed.ok ? 'not a host' : parsed.reason)
+  return parsed.config
+}
 
 const vaultIn = (root: string): HostConfig['vault'] => ({
   root,
@@ -42,9 +51,54 @@ test('C1 sources: the font that cannot be read is null; the path lines name no p
     null,
   )
   assert.ok((readFont()?.byteLength ?? 0) > 0, 'the real asset reads')
-  const lines = pathWarnings({ vault: 'ok', cvMaster: 'missing', chromium: 'ok', pdfinfo: 'missing', pdftoppm: 'ok', font: 'missing' })
+  const lines = pathWarnings({ ...ALL_OK, cvMaster: 'missing', pdfinfo: 'missing', font: 'missing' })
   assert.equal(lines.length, 3)
   assert.ok(lines.every((line) => !line.includes('/')))
+})
+
+test('review 1a: the guide, each seed file and the claude binary are checked; a missing one is named, without its path', () => {
+  // Arrange: a vault with only the master CV; claude on no PATH.
+  using base = tempBase()
+  writeFileSync(join(base.dir, 'cv-maestro.md'), '# Master')
+  const config = hostOf({ ...rigIn(base.dir).config, vault: { ...vaultIn(base.dir), seed: { companies: 'companies.json', kit: 'kit.md', cvs: 'cvs.md', packages: [{ file: 'p1.md' }] } } })
+  const bin = join(base.dir, 'bin')
+  mkdirSync(bin)
+
+  // Act
+  const missing = checkPaths(config, FONT, { claudeBin: undefined, envPath: bin })
+
+  // Assert
+  assert.equal(missing.cvMaster, 'ok')
+  for (const key of ['guide', 'seedCompanies', 'seedKit', 'seedCvs', 'seedPackages', 'claude'] as const) assert.equal(missing[key], 'missing', key)
+  const lines = pathWarnings(missing)
+  assert.ok(lines.includes('Vault: the guide for the agent is missing; every CV generation fails until it is there'))
+  assert.ok(lines.includes('Claude: the claude binary is not on the daemon\'s PATH; every CV generation fails'))
+  assert.ok(lines.includes('Vault: the base CVs file is missing'))
+  assert.ok(lines.includes('Vault: a seed package file is missing; the import cannot read it'))
+  assert.ok(lines.every((line) => !line.includes(base.dir)))
+
+  // Arrange: all of them there, claude an executable on PATH.
+  for (const name of ['guide.md', 'companies.json', 'kit.md', 'cvs.md', 'p1.md']) writeFileSync(join(base.dir, name), 'x')
+  writeFileSync(join(bin, 'claude'), '#!/bin/sh\n')
+  chmodSync(join(bin, 'claude'), 0o755)
+
+  // Act
+  const present = checkPaths(config, FONT, { claudeBin: undefined, envPath: `/nowhere${delimiter}${bin}` })
+
+  // Assert
+  for (const key of ['guide', 'seedCompanies', 'seedKit', 'seedCvs', 'seedPackages', 'claude'] as const) assert.equal(present[key], 'ok', key)
+  assert.equal(checkPaths(config, FONT, { claudeBin: FAKE_CLAUDE, envPath: '' }).claude, 'ok', 'a configured binary by its path')
+  assert.equal(checkPaths(config, FONT, { claudeBin: join(base.dir, 'guide.md'), envPath: '' }).claude, 'missing', 'not executable')
+})
+
+test('review 1a: a missing vault folder is one line, not one per file under it', () => {
+  using base = tempBase()
+  const config = hostOf({ ...rigIn(base.dir).config, vault: vaultIn(join(base.dir, 'gone')) })
+  const lines = pathWarnings(checkPaths(config, FONT, { claudeBin: FAKE_CLAUDE, envPath: '' }))
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith('Vault:')),
+    ['Vault: the vault folder is missing'],
+  )
 })
 
 test('C1 sources: a stored file is served only as a regular file of its kind under artifacts/', () => {

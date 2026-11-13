@@ -7,10 +7,10 @@
  * NOTHING HERE THROWS, and a reason never carries a path of the owner's or a value of a file.
  */
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { extname, isAbsolute, join, sep } from 'node:path'
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { delimiter, extname, isAbsolute, join, sep } from 'node:path'
 
-import { uuidv7 } from '@factotum/sessions'
+import { CLAUDE_BIN, uuidv7 } from '@factotum/sessions'
 
 import type { CvSources } from '../build/cv.ts'
 import { clearRender, keepPrint, printCv, type PrintDeps } from '../build/print.ts'
@@ -78,30 +78,86 @@ export function readFont(read: () => Uint8Array = () => readFileSync(FONT_FILE))
   }
 }
 
+const isExecutable = (path: string): boolean => {
+  try {
+    if (!statSync(path).isFile()) return false
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The binary the generation spawns, found as `spawn` finds it (`ai/run.ts`): a name with a `/` as is,
+ * a bare name on the daemon's `PATH` — a systemd unit's PATH is not the login shell's.
+ */
+export function findBinary(bin: string, envPath: string): string | null {
+  if (bin.includes('/')) return isExecutable(bin) ? bin : null
+  for (const dir of envPath.split(delimiter)) {
+    if (dir === '') continue
+    const candidate = join(dir, bin)
+    if (isExecutable(candidate)) return candidate
+  }
+  return null
+}
+
+export interface BinaryLookup {
+  /** `JobsDeps.claudeBin`; `CLAUDE_BIN` without it, as the queue. */
+  readonly claudeBin: string | undefined
+  /** The daemon's `PATH`. */
+  readonly envPath: string
+}
+
 /** D13 step 3: what is there, without opening anything. */
-export function checkPaths(config: HostConfig, font: Uint8Array | null): Health['paths'] {
+export function checkPaths(config: HostConfig, font: Uint8Array | null, lookup: BinaryLookup): Health['paths'] {
   const at = (path: string): PathState => (existsSync(path) ? 'ok' : 'missing')
+  const inVault = (relative: string): PathState => at(join(config.vault.root, relative))
+  const { seed } = config.vault
   return {
     vault: at(config.vault.root),
-    cvMaster: at(join(config.vault.root, config.vault.cvMaster)),
+    cvMaster: inVault(config.vault.cvMaster),
+    guide: inVault(config.vault.guide),
+    seedCompanies: inVault(seed.companies),
+    seedKit: inVault(seed.kit),
+    seedCvs: inVault(seed.cvs),
+    seedPackages: seed.packages.every((entry) => inVault(entry.file) === 'ok') ? 'ok' : 'missing',
     chromium: at(config.chromium),
     pdfinfo: at(config.poppler.pdfinfo),
     pdftoppm: at(config.poppler.pdftoppm),
     font: font === null ? 'missing' : 'ok',
+    claude: findBinary(lookup.claudeBin ?? CLAUDE_BIN, lookup.envPath) === null ? 'missing' : 'ok',
   }
 }
 
-const PATH_LINES: Readonly<Record<keyof Health['paths'], string>> = {
+type PathKey = keyof Health['paths']
+
+const PATH_LINES: Readonly<Record<PathKey, string>> = {
   vault: 'Vault: the vault folder is missing',
   cvMaster: 'Vault: the master CV is missing',
+  guide: 'Vault: the guide for the agent is missing; every CV generation fails until it is there',
+  seedCompanies: 'Vault: the companies file of the seed is missing',
+  seedKit: 'Vault: the kit file of the seed is missing',
+  seedCvs: 'Vault: the base CVs file is missing',
+  seedPackages: 'Vault: a seed package file is missing; the import cannot read it',
   chromium: 'Chromium: the configured binary is missing; no CV can print',
   pdfinfo: 'Poppler: pdfinfo is missing; no CV can print',
   pdftoppm: 'Poppler: pdftoppm is missing; no preview can be made',
   font: 'The CV font could not be read; no CV can print',
+  claude: 'Claude: the claude binary is not on the daemon\'s PATH; every CV generation fails',
 }
 
+/** Under `vault.root`: with the folder itself missing, one line says it all. */
+const IN_VAULT: ReadonlySet<PathKey> = new Set<PathKey>(['cvMaster', 'guide', 'seedCompanies', 'seedKit', 'seedCvs', 'seedPackages'])
+
 export const pathWarnings = (paths: Health['paths']): readonly string[] =>
-  (Object.keys(paths) as (keyof Health['paths'])[]).filter((key) => paths[key] === 'missing').map((key) => PATH_LINES[key])
+  (Object.keys(paths) as PathKey[])
+    .filter((key) => paths[key] === 'missing' && !(paths.vault === 'missing' && IN_VAULT.has(key)))
+    .map((key) => PATH_LINES[key])
+
+/** What every CV generation needs, as `pathWarnings` says it: the import adds these to its report. */
+export const generationWarnings = (paths: Health['paths']): readonly string[] =>
+  pathWarnings({ ...paths, seedCompanies: 'ok', seedKit: 'ok', seedCvs: 'ok', seedPackages: 'ok' })
 
 const realpathOf = (path: string): string | null => {
   try {
