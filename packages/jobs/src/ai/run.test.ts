@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { eventually, manualTimers, realTimers } from '../test-support.ts'
+import { capturedLog, eventually, manualTimers, realTimers } from '../test-support.ts'
 import { isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
@@ -85,6 +85,28 @@ test('an answer that fails the schema is a failure, and the reason quotes nothin
   const { input, cwd } = await rig()
   await writeFile(join(cwd, 'fake-claude.answer'), JSON.stringify({ title: 42, secret: 'the owner’s words' }))
   assert.deepEqual(await runClaude(input), { ok: false, kind: 'failed', reason: 'claude answered outside the schema' })
+})
+
+test('a schema failure is logged as a warning with the paths and codes of the issues, never a value', async () => {
+  const log = capturedLog()
+  const { input, cwd } = await rig(['ok'], { log: log.log, output: z.object({ title: z.string(), items: z.array(z.number()) }) })
+  await writeFile(join(cwd, 'fake-claude.answer'), JSON.stringify({ title: 42, items: [1, 'the owner’s words'], secret: 'the owner’s words' }))
+  assert.deepEqual(await runClaude({ ...input, prompt: 'PROMPT-DATA' }), { ok: false, kind: 'failed', reason: 'claude answered outside the schema' })
+  assert.deepEqual(log.lines, ['warn jobs claude: answered outside the schema at title (invalid_type), items.1 (invalid_type)'])
+})
+
+test('a non-zero exit logs a short tail of stderr, never in the reason', async () => {
+  const log = capturedLog()
+  const { input } = await rig(['refuse'], { log: log.log })
+  assert.deepEqual(await runClaude(input), { ok: false, kind: 'failed', reason: 'claude exited with code 1' })
+  assert.equal(log.lines.length, 1)
+  assert.match(log.lines[0]!, /^warn jobs claude: exited with code 1; stderr ends: .*no schema with key or ref second line$/)
+  assert.ok(log.lines[0]!.length < 300)
+})
+
+test('an answer past 1 MB says it was truncated, not that it is not JSON', async () => {
+  const { input } = await rig(['huge'])
+  assert.deepEqual(await runClaude(input), { ok: false, kind: 'failed', reason: 'claude answered more than 1 MB: truncated, not read' })
 })
 
 test('garbage: output that is not JSON is a failure', async () => {

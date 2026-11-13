@@ -16,11 +16,14 @@
  *
  * NOTHING THROWS OUT OF HERE: every path is `{ ok: false, kind, reason }`. NO REASON CARRIES A WORD
  * OF THE PROMPT, OF THE ANSWER, OF THE CLI'S `result` OR OF STDERR (criterion 41): of a limit's text
- * only the hour is taken, and never stored.
+ * only the hour is taken, and never stored. WHAT THE REASON CANNOT SAY GOES TO `input.log` (warn): the
+ * paths and zod codes of a schema failure (never a value, never zod's message), and the last 200
+ * characters of stderr on a non-zero exit — the CLI's own error line, which never echoes the prompt.
+ * An answer past 1 MB says it was truncated rather than «not JSON».
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { Timers } from '@factotum/core'
+import type { Logger, Timers } from '@factotum/core'
 import { CLAUDE_BIN, killGroup, killQuietly } from '@factotum/sessions'
 import type { z } from 'zod'
 import type { RunUsage } from '../types.ts'
@@ -68,11 +71,20 @@ export interface RunInput<T> {
   readonly timeoutMs: number
   /** The seam for `fake-claude`. Never from the configuration. */
   readonly bin?: string
+  /**
+   * Where a failed run says what the reason may not (warn): the paths and codes of a schema failure,
+   * a short stderr tail. Never a value of the prompt, of the answer or of the profile.
+   */
+  readonly log?: Logger | undefined
 }
 
 interface Outcome {
   readonly code: number | null
   readonly stdout: string
+  /** A chunk past `STDOUT_MAX` was dropped. */
+  readonly truncated: boolean
+  /** The last characters of stderr, for the log only. */
+  readonly stderr: string
   readonly spawnError: Error | undefined
   readonly stdinError: Error | undefined
   readonly timedOut: boolean
@@ -100,6 +112,8 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
 
   return new Promise<RunResult<T>>((resolve) => {
     let stdout = ''
+    let truncated = false
+    let stderr = ''
     let spawnError: Error | undefined
     let stdinError: Error | undefined
     let timedOut = false
@@ -142,16 +156,20 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
       grace?.[Symbol.dispose]()
       last?.[Symbol.dispose]()
       input.signal.removeEventListener('abort', onAbort)
-      resolve(conclude({ code, stdout, spawnError, stdinError, timedOut, aborted }, input))
+      resolve(conclude({ code, stdout, truncated, stderr, spawnError, stdinError, timedOut, aborted }, input))
     }
 
     // Decoded by the stream, not per chunk: a character split across two chunks would become U+FFFD.
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
       if (stdout.length < STDOUT_MAX) stdout += chunk
+      else truncated = true
     })
-    // Read always: a full stderr pipe would block the child.
-    child.stderr?.resume()
+    // Read always: a full stderr pipe would block the child. Only its tail is kept, for the log.
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = `${stderr}${chunk}`.slice(-STDERR_KEPT)
+    })
     child.on('error', (error: Error) => {
       spawnError = error
       if (child.pid === undefined) settle(null)
@@ -206,6 +224,7 @@ function conclude<T>(outcome: Outcome, input: RunInput<T>): RunResult<T> {
   if (outcome.timedOut) return failed(`claude gave no answer within ${Math.round(input.timeoutMs / 1000)} s`)
   if (outcome.spawnError !== undefined) return failed(`claude could not start: ${outcome.spawnError.message}`)
   if (outcome.stdinError !== undefined) return failed(`claude did not read the prompt (${codeOf(outcome.stdinError)})`)
+  if (outcome.truncated) return failed(`claude answered more than ${STDOUT_MAX / MB} MB: truncated, not read`)
 
   // BEFORE THE EXIT CODE (D10 change 1): the real CLI exits 1 with its JSON on stdout.
   const parsed = parse(outcome.stdout)
@@ -213,13 +232,42 @@ function conclude<T>(outcome: Outcome, input: RunInput<T>): RunResult<T> {
   if (parsed.kind === 'result' && parsed.value.is_error === true) {
     return failed(`claude failed: ${statusOf(parsed.value.api_error_status ?? parsed.value.terminal_reason)}`)
   }
-  if (outcome.code !== 0) return failed(`claude exited with code ${outcome.code}`)
+  if (outcome.code !== 0) {
+    input.log?.warn(`jobs claude: exited with code ${outcome.code}; stderr ends: ${tailOf(outcome.stderr)}`)
+    return failed(`claude exited with code ${outcome.code}`)
+  }
   if (parsed.kind === 'not-json') return failed('claude answered something that is not JSON')
   if (parsed.kind === 'not-result') return failed('claude answered something that is not a result')
 
   const checked = input.output.safeParse(parsed.value.structured_output)
-  if (!checked.success) return failed('claude answered outside the schema')
+  if (!checked.success) {
+    input.log?.warn(`jobs claude: answered outside the schema at ${issuesOf(checked.error.issues)}`)
+    return failed('claude answered outside the schema')
+  }
   return { ok: true, value: checked.data, usage: usageOf(parsed.value) }
+}
+
+const MB = 1024 * 1024
+/** How much of stderr the log gets: its end, where the CLI says what went wrong. */
+const STDERR_TAIL = 200
+const STDERR_KEPT = STDERR_TAIL * 4
+const MAX_ISSUES = 5
+/** A path segment the log may carry: a schema key or an index. Anything else could be the answer's data. */
+const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/
+
+/** stderr's last characters on one line, control characters gone. */
+function tailOf(stderr: string): string {
+  const line = stderr.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+  return line === '' ? '(empty)' : line.slice(-STDERR_TAIL)
+}
+
+/** `title (invalid_type), items.1 (invalid_type)`: where and what kind, never a value nor zod's message. */
+function issuesOf(issues: readonly z.core.$ZodIssue[]): string {
+  const said = issues.slice(0, MAX_ISSUES).map((issue) => {
+    const path = issue.path.map((key) => (typeof key === 'number' || (typeof key === 'string' && SAFE_KEY.test(key)) ? String(key) : '?')).join('.')
+    return `${path === '' ? '(root)' : path} (${issue.code})`
+  })
+  return issues.length > MAX_ISSUES ? `${said.join(', ')} and ${issues.length - MAX_ISSUES} more` : said.join(', ')
 }
 
 /** The texts the CLI uses for a limit (A3: «You've hit your session limit · resets 10am (…)»). */

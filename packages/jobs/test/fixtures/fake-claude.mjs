@@ -22,6 +22,7 @@
  *   api-error    an error that is not a limit, as the real CLI: 404, subtype "success", exit 1
  *   usage        a good answer with the three token counters apart (11 / 2222 / 35263, 777 out)
  *   garbage      a line that is not JSON
+ *   huge         a good result padded past 1 MB: the reader cuts it
  *   null         the JSON `null`: valid JSON, not a result
  *   odd-usage    a good answer whose usage fields are strings, not numbers
  *   hang         never answers (a minute), stdin unread
@@ -111,6 +112,7 @@ function answer() {
     modelUsage: { 'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 60, costUSD: 0.0021 } },
     ...(error === undefined ? { structured_output: output } : error.fields),
     ...(mode === 'odd-usage' ? { total_cost_usd: '0.01', duration_ms: 'soon', usage: 'many' } : {}),
+    ...(mode === 'huge' ? { padding: 'x'.repeat(1200 * 1024) } : {}),
   }
   process.stdout.write(`${JSON.stringify(result)}\n`)
   if (error !== undefined) process.exitCode = error.exit
