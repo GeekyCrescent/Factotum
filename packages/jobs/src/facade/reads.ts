@@ -10,7 +10,7 @@ import type { SeenBatch } from '../review/seen.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import type { Queries } from '../store/db.ts'
-import { APP_STATES, fail, ok, type Application, type Result } from '../types.ts'
+import { APP_STATES, fail, ok, type Application, type Profile, type Result } from '../types.ts'
 import { confinedArtifact, pathWarnings } from './sources.ts'
 import type { BatchAnswer, Health, Overview, SendNeed } from './types.ts'
 import { batchView, readyOutside } from './views.ts'
@@ -49,7 +49,11 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
   function answer(batch: SeenBatch | null): BatchAnswer {
     return db.read((q) => {
       const profile = repo.latestProfileVersion(q)?.profile
-      return { batch: batch === null || profile === undefined ? null : batchView(q, batch, profile), ready: readyOutside(q, batch?.items ?? []) }
+      return {
+        batch: batch === null || profile === undefined ? null : batchView(q, batch, profile),
+        ready: readyOutside(q, batch?.items ?? []),
+        missingPhone: isPhoneMissing(profile),
+      }
     })
   }
 
@@ -57,12 +61,11 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
     return db.read((q) => {
       const apps = repo.applicationsByState(q, [...APP_STATES]).filter((app) => !app.test)
       const open = repo.openBatch(q)
-      const phone = repo.latestProfileVersion(q)?.profile.identity?.phone ?? ''
       return {
         counts: countsOf(apps),
         reviewable: readyOutside(q, open?.items ?? []),
         batchOpen: open !== undefined,
-        missingPhone: phone.trim() === '',
+        missingPhone: isPhoneMissing(repo.latestProfileVersion(q)?.profile),
         notices: health().warnings,
         sends: sendsNeeding(q, apps),
         byState: byStateOf(apps),
@@ -80,6 +83,9 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
 
   return { health, overview, answer, file }
 }
+
+/** R9: no phone, nothing becomes ready. `identity` is read defensively: a stored profile is data. */
+const isPhoneMissing = (profile: Profile | undefined): boolean => (profile?.identity?.phone ?? '').trim() === ''
 
 const initialSent = (app: Application): boolean => app.sends.some((send) => send.kind === 'initial' && send.state === 'sent')
 

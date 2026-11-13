@@ -278,6 +278,8 @@ export interface BatchView {
 export interface BatchAnswer {
   readonly batch: BatchView | null
   readonly ready: number
+  /** R6 (crit. 15): the profile has no `identity.phone`; the review says so on top. */
+  readonly missingPhone: boolean
 }
 
 /** `GET /a/:id`: the card and its events, oldest first. */

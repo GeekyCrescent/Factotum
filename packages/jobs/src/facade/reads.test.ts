@@ -87,3 +87,19 @@ test('C1 overview: an open batch is continued, not counted again; a profile with
   assert.deepEqual(overview.notices, [])
   assert.deepEqual(overview.sends, [])
 })
+
+test('R6 batch answer: says the profile has no phone, so the review warns on top (crit. 15)', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, { ...PROFILE, identity: { ...PROFILE.identity, phone: '' } })
+
+  // Act
+  const without = readsOf(db).answer(null)
+  saveProfile(db, 3, PROFILE)
+  const withPhone = readsOf(db).answer(null)
+
+  // Assert
+  assert.equal(without.missingPhone, true)
+  assert.equal(withPhone.missingPhone, false)
+})
