@@ -967,3 +967,35 @@ export function heldDraftsDue(q: Queries, files: readonly string[], lastHoldDay:
       .map((row) => text(row, 'id')),
   )
 }
+
+// ── Sending (tasks E1–E3, design D9) ─────────────────────────────────────────────────────────────
+
+/** The `at` of every `smtp` row not `failed` changed since `since`, of any application and kind: the daily cap's raw count (E2). */
+export const smtpSendTimesSince = (q: Queries, since: string): readonly string[] =>
+  q
+    .all<Row>("SELECT at FROM sends WHERE channel = 'smtp' AND state <> 'failed' AND at >= ? ORDER BY at", since)
+    .map((row) => text(row, 'at'))
+
+/** One saved profile version (the one a send recorded at step 1, D9). */
+export function profileVersionOf(q: Queries, version: number): ProfileVersion | undefined {
+  const row = q.get<Row>('SELECT * FROM profile_versions WHERE version = ?', version)
+  if (row === undefined) return undefined
+  return deepFreeze({ version: Number(row.version), createdAt: text(row, 'created_at'), profile: json(row, 'data', {}) as ProfileVersion['profile'] })
+}
+
+const PENDING_DEFERRED = `e.kind = 'reply' AND json_extract(e.data, '$.deferred') = 1
+  AND NOT EXISTS (SELECT 1 FROM events a WHERE a.application_id = e.application_id AND a.kind = 'reply-applied'
+                  AND json_extract(a.data, '$.replyEventId') = e.id)`
+
+/**
+ * The `reply { deferred: true }` events of an application that no `reply-applied { replyEventId }`
+ * cites yet, in the order they were written (v6.1, design D3 «Respuesta mientras el `initial` está `sending`»).
+ */
+export const pendingDeferredReplies = (q: Queries, applicationId: string): readonly JobEvent[] =>
+  q.all<Row>(`SELECT * FROM events e WHERE e.application_id = ? AND ${PENDING_DEFERRED} ORDER BY e.rowid`, applicationId).map(toEvent)
+
+/** The applications with a deferred reply not applied yet (for the opening `tx`, after `recoverOnStart`). */
+export const applicationsWithDeferredReplies = (q: Queries): readonly string[] =>
+  q
+    .all<Row>(`SELECT DISTINCT e.application_id AS id FROM events e WHERE e.application_id IS NOT NULL AND ${PENDING_DEFERRED} ORDER BY e.application_id`)
+    .map((row) => text(row, 'id'))
