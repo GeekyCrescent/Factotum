@@ -92,7 +92,7 @@ function describe(error: unknown): string {
 // A DECLARED COPY of the idea in `packages/kernel/src/net/ranges.ts` (parsing to bytes, CIDR by
 // bytes): packages/jobs may not import the kernel. The ranges differ — the kernel decides where it
 // may LISTEN, this decides where the module may not CONNECT — and so does one rule: an address
-// embedding an IPv4 one (IPv4-mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`) is unwrapped FIRST and
+// embedding an IPv4 one (IPv4-mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`, 6to4 `2002:aabb:ccdd::`) is unwrapped FIRST and
 // the IPv4 is checked after. `::ffff:0.0.0.0` has two non-zero bytes (CLAUDE.md §2).
 
 type Bytes = readonly number[]
@@ -107,12 +107,24 @@ const DENIED_V4: readonly string[] = [
   '192.168.0.0/16',
   '224.0.0.0/4', // multicast
   '240.0.0.0/4', // reserved and broadcast
+  // Special-purpose (RFC 6890): never a company's web server.
+  '192.0.0.0/24', // IETF protocol assignments
+  '192.0.2.0/24', // TEST-NET-1
+  '192.88.99.0/24', // the deprecated 6to4 relay anycast
+  '198.18.0.0/15', // benchmarking
+  '198.51.100.0/24', // TEST-NET-2
+  '203.0.113.0/24', // TEST-NET-3
 ]
 
 const DENIED_V6: readonly string[] = [
   '::/96', // ::, ::1 and the deprecated IPv4-compatible ::a.b.c.d
+  '::ffff:0:0:0/96', // SIIT IPv4-translated (RFC 2765): a translator's, never a public server's
+  '64:ff9b:1::/48', // local-use NAT64 (RFC 8215): the network's own translator
+  '2001::/32', // Teredo: the IPv4 inside is obfuscated, so it cannot be judged
+  '2001:db8::/32', // documentation
   'fc00::/7', // unique local, Tailscale's fd7a:115c:a1e0::/48 included
   'fe80::/10', // link-local
+  'fec0::/10', // deprecated site-local, still routed inside some networks
   'ff00::/8', // multicast
 ]
 
@@ -121,6 +133,9 @@ const EMBEDS_V4: readonly Bytes[] = [
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff],
   [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0],
 ]
+
+/** 6to4 (`2002::/16`) carries its IPv4 address in bytes 2–5. */
+const SIX_TO_FOUR: Bytes = [0x20, 0x02]
 
 function parseIPv4(address: string): Bytes | undefined {
   const parts = address.split('.')
@@ -167,8 +182,9 @@ function canonicalBytes(address: string): Bytes | undefined {
   if (version !== 6) return undefined
   const bytes = parseIPv6(bare)
   if (bytes === undefined) return undefined
-  const embeds = EMBEDS_V4.some((prefix) => prefix.every((byte, i) => bytes[i] === byte))
-  return embeds ? bytes.slice(12) : bytes
+  const startsWith = (prefix: Bytes): boolean => prefix.every((byte, i) => bytes[i] === byte)
+  if (EMBEDS_V4.some(startsWith)) return bytes.slice(12)
+  return startsWith(SIX_TO_FOUR) ? bytes.slice(2, 6) : bytes
 }
 
 function inCidr(bytes: Bytes, cidr: string): boolean {

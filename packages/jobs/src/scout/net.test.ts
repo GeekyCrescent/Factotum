@@ -91,6 +91,25 @@ describe('isDeniedAddress', () => {
     '64:ff9b::a9fe:a9fe',
     'not-an-address',
     '',
+    // Special-purpose IPv4 (RFC 6890): IETF protocol, benchmarking, the three TEST-NETs, the old 6to4 relay.
+    '192.0.0.8',
+    '198.18.0.1',
+    '198.19.255.255',
+    '192.0.2.1',
+    '198.51.100.7',
+    '203.0.113.9',
+    '192.88.99.1',
+    // 6to4 embeds an IPv4 in bytes 2–5: unwrapped, then judged.
+    '2002:7f00:1::1',
+    '2002:a00:1::',
+    '2002:a9fe:a9fe::1',
+    '2001::1', // Teredo
+    '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+    '64:ff9b:1::a00:1', // local-use NAT64
+    '::ffff:0:7f00:1', // SIIT IPv4-translated
+    '::ffff:0:808:808',
+    'fec0::1', // deprecated site-local
+    '2001:db8::1', // documentation
   ]
   for (const address of denied) {
     test(`denies ${JSON.stringify(address)}`, () => {
@@ -98,7 +117,7 @@ describe('isDeniedAddress', () => {
     })
   }
 
-  const allowed = [PUBLIC_V4, '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700::6810:85e5', '::ffff:8.8.8.8', '64:ff9b::808:808']
+  const allowed = [PUBLIC_V4, '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700::6810:85e5', '::ffff:8.8.8.8', '64:ff9b::808:808', '2002:808:808::1', '192.0.1.1', '198.20.0.1', '2001:4860::8888']
   for (const address of allowed) {
     test(`allows ${address}`, () => {
       assert.equal(isDeniedAddress(address), false)
