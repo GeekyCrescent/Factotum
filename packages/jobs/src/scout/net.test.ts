@@ -181,6 +181,22 @@ describe('get', () => {
     })
   }
 
+  for (const url of ['https://example.com:8443/', 'https://example.com:80/', 'https://[::1]:8443/', 'https://example.com:22/']) {
+    test(`refuses a port other than https's default: ${url}`, async () => {
+      const h = harness({})
+      const result = await h.get(url)
+      assert.equal(result.ok ? null : result.error.kind, 'bad-url')
+      assert.equal(result.ok ? null : result.error.code, 'invalid')
+      assert.equal(h.calls.length + h.lookups.length, 0)
+    })
+  }
+
+  test('allows the default port written out', async () => {
+    const h = harness({ 'https://example.com/': new Response('hi') })
+    const result = await h.get('https://example.com:443/')
+    assert.equal(result.ok && result.value.body, 'hi')
+  })
+
   test('refuses credentials in the URL', async () => {
     const h = harness({})
     const result = await h.get('https://user:pass@example.com/')
@@ -197,7 +213,7 @@ describe('get', () => {
     })
   }
 
-  for (const url of ['https://127.0.0.1/', 'https://[::1]:8443/', 'https://[::ffff:0.0.0.0]/', 'https://2130706433/', 'https://0x7f.1/', 'https://100.100.100.100/']) {
+  for (const url of ['https://127.0.0.1/', 'https://[::1]/', 'https://[::ffff:0.0.0.0]/', 'https://2130706433/', 'https://0x7f.1/', 'https://100.100.100.100/']) {
     test(`refuses an address literal in a private range: ${url}`, async () => {
       const h = harness({})
       const result = await h.get(url)
@@ -283,6 +299,7 @@ describe('get', () => {
     ['https://www.linkedin.com/in/someone', 'linkedin', 'blocked'],
     ['https://169.254.169.254/latest/meta-data', 'private-address', 'blocked'],
     ['https://rebind.example/', 'private-address', 'blocked'],
+    ['https://example.org:8080/', 'bad-url', 'invalid'],
   ]
   for (const [to, kind, code] of badHops) {
     test(`re-checks every redirect: refuses one to ${to}`, async () => {

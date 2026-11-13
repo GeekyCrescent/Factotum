@@ -2,7 +2,7 @@
  * The module's only way out to the web (design D14 «La red»): the scout, the address check, the
  * live-ad check and «paste a link» all fetch through `createNet(...).get`.
  *
- * What it guarantees, each with a test: only `https:`; at most `MAX_REDIRECTS` redirects, each one
+ * What it guarantees, each with a test: only `https:` on its default port; at most `MAX_REDIRECTS` redirects, each one
  * re-checked exactly like the first URL; LinkedIn and its subdomains are never fetched (guardrail 5);
  * a name that resolves to loopback, a private, link-local, CGNAT (the tailnet) or otherwise
  * non-public address is refused, so pasting a link cannot become an SSRF against this daemon or the
@@ -265,6 +265,8 @@ function checkUrl(raw: string, base?: URL): NetResult<URL> {
   }
   if (url.protocol !== 'https:') return fail('not-https', `only https: links are fetched, not ${url.protocol}`)
   if (url.username !== '' || url.password !== '') return fail('bad-url', 'a URL with credentials is not fetched')
+  // `URL` drops the default `:443`, so any port left is another service: a web page never needs one.
+  if (url.port !== '') return fail('bad-url', `only the default https port is fetched, not ${url.port}`)
   if (isLinkedIn(url.hostname)) return fail('linkedin', 'LinkedIn pages are never fetched — paste the ad text instead')
   return ok(url)
 }
