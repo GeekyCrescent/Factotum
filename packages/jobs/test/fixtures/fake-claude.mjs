@@ -10,7 +10,8 @@
  * `fake-claude.calls` BEFORE reading stdin, so a test can find it and check it died, writes its argv
  * to `fake-claude.args.<N>` (JSON) and the prompt it read to `fake-claude.prompt.<N>`.
  *
- * THE ANSWER is the JSON in `fake-claude.answer` (the whole `structured_output`), or `{ title: 'parsed', … }`.
+ * THE ANSWER is the JSON in `fake-claude.answer.<N>` for call N when that file exists, else in
+ * `fake-claude.answer` (the whole `structured_output`), else `{ title: 'parsed', … }`.
  *
  *   ok           answers at once
  *   wait         reads stdin, then waits for the file `fake-claude.release` in its cwd, then answers
@@ -92,8 +93,9 @@ function answer() {
     return
   }
   const error = ERRORS[mode]
-  const output = existsSync('fake-claude.answer')
-    ? JSON.parse(readFileSync('fake-claude.answer', 'utf8'))
+  const answerFile = existsSync(`fake-claude.answer.${calls}`) ? `fake-claude.answer.${calls}` : 'fake-claude.answer'
+  const output = existsSync(answerFile)
+    ? JSON.parse(readFileSync(answerFile, 'utf8'))
     : { title: 'parsed', area: null, project: null, due: null, priority: 0 }
   const usage =
     mode === 'usage'
