@@ -43,7 +43,8 @@ export type { MailHealth, MailHealthState } from './mail-health.ts'
 
 export { createTestApplication, TEST_COMPANY, type TestApplicationContext } from './dev/test-application.ts'
 export { closeApplication, MAX_CLOSE_REASON_CHARS, type CloseContext, type CloseInput } from './owner/close.ts'
-export { DB_FILE, openDb, type Db, type OpenOptions } from './store/db.ts'
+export { DB_FILE, openDb, storeVersion, type Db, type OpenOptions } from './store/db.ts'
+export { SCHEMA_VERSION } from './store/schema.sql.ts'
 
 export type { DecisionKind, SkipReason } from './review/decide.ts'
 export type { ImportReport } from './seed/report.ts'

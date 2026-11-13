@@ -267,6 +267,29 @@ function dbOver(handle: Handle): Db {
   }
 }
 
+/**
+ * The schema version of `<dir>/jobs.db`, opened READ ONLY: null when there is no file. Creates,
+ * migrates and quarantines nothing — the CLI's check before `openDb`, so a CLI of another version
+ * never moves the daemon's store under it (review 1a).
+ */
+export async function storeVersion(dir: string, load: () => Promise<Sqlite> = () => import('node:sqlite')): Promise<Result<number | null>> {
+  const file = join(dir, DB_FILE)
+  if (!existsSync(file)) return ok(null)
+  const sqlite = await loadSqlite(load)
+  if (!sqlite.ok) return sqlite
+  try {
+    const handle = new sqlite.value.DatabaseSync(file, { readOnly: true })
+    try {
+      handle.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+      return ok(Number(handle.prepare('PRAGMA user_version').get()?.user_version ?? 0))
+    } finally {
+      handle.close()
+    }
+  } catch (error) {
+    return fail('module-error', `jobs.db does not open: ${messageOf(error)}`)
+  }
+}
+
 export async function openDb(options: OpenOptions): Promise<Result<Db>> {
   const migrations = options.migrations ?? MIGRATIONS
   const sqlite = await loadSqlite(options.load ?? (() => import('node:sqlite')))

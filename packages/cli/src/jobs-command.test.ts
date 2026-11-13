@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { moduleStateDir, statePaths } from '@factotum/kernel'
+import { openDb, SCHEMA_VERSION } from '@factotum/jobs'
 import { jobsCommand } from './jobs-command.ts'
 
 const NOW = new Date('2026-11-13T10:00:00.000Z')
@@ -15,12 +17,19 @@ function capture() {
   return { lines, out: (line: string) => void lines.push(line) }
 }
 
-async function freshHome(): Promise<string> {
-  return await mkdtemp(join(tmpdir(), 'factotum-jobs-cmd-'))
-}
+const storeDir = (home: string): string => moduleStateDir(statePaths('dev', home), 'jobs')
 
 function dbFile(home: string): string {
-  return join(moduleStateDir(statePaths('dev', home), 'jobs'), 'jobs.db')
+  return join(storeDir(home), 'jobs.db')
+}
+
+/** A home whose dev daemon has opened `jobs.db` (at this code's schema), as the CLI expects to find it. */
+async function freshHome(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), 'factotum-jobs-cmd-'))
+  const opened = await openDb({ dir: storeDir(home), now })
+  if (!opened.ok) assert.fail(opened.error.reason)
+  opened.value.close()
+  return home
 }
 
 /** Reads the base the command wrote, straight from SQLite: the test does not trust the engine to report on itself. */
@@ -156,4 +165,49 @@ test('bad arguments exit 2 with the usage: no subcommand, an unknown one, neithe
     assert.equal(code, 2, JSON.stringify(argv))
     assert.match(lines.join('\n'), /usage: factotum jobs test-application/)
   }
+})
+
+test('review 1a: it says which environment and which jobs.db (absolute) it opened', async () => {
+  // Arrange
+  const home = await freshHome()
+  const { lines, out } = capture()
+
+  // Act
+  const code = await createTest(home, out)
+
+  // Assert
+  assert.equal(code, 0)
+  assert.equal(lines[0], `jobs: dev store at ${dbFile(home)}`)
+})
+
+test('review 1a: a store at another schema version is refused with exit 2 — never migrated, never quarantined', async () => {
+  for (const version of [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1]) {
+    // Arrange
+    const home = await freshHome()
+    inspect(home, (db) => db.exec(`PRAGMA user_version = ${version}`))
+    const { lines, out } = capture()
+
+    // Act
+    const code = await createTest(home, out)
+
+    // Assert
+    assert.equal(code, 2, `version ${version}`)
+    assert.match(lines.join('\n'), new RegExp(`schema version ${version} and this CLI's is ${SCHEMA_VERSION}`))
+    assert.equal(inspect(home, (db) => Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)), version, 'left as it was')
+    assert.equal(inspect(home, (db) => (db.prepare(`SELECT count(*) AS n FROM sqlite_master WHERE name = 'applications'`).get() as { n: number }).n), 1, 'not quarantined')
+  }
+})
+
+test('review 1a: no jobs.db in that environment exits 2 and creates none (a wrong --env is not a new store)', async () => {
+  // Arrange
+  const home = await mkdtemp(join(tmpdir(), 'factotum-jobs-cmd-'))
+  const { lines, out } = capture()
+
+  // Act
+  const code = await createTest(home, out)
+
+  // Assert
+  assert.equal(code, 2)
+  assert.match(lines.join('\n'), /no jobs\.db/)
+  assert.equal(existsSync(dbFile(home)), false)
 })

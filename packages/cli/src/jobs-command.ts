@@ -9,11 +9,18 @@
  * daemon's send in flight as doubtful; `openDb` only opens, migrates and checks.
  *
  * The CV is only queued here: the daemon's pump picks it up on its next tick.
+ *
+ * IT SAYS WHICH STORE, AND NEVER MIGRATES ONE (review 1a): the first line names the environment and the
+ * absolute `jobs.db`; a missing store (a wrong `--env`) is not created, and a store at another schema
+ * version is refused before `openDb` — which would migrate an older one under the daemon, or quarantine
+ * a newer one from under it.
  */
+
+import { join, resolve } from 'node:path'
 
 import { moduleStateDir, statePaths } from '@factotum/kernel'
 import type { Environment } from '@factotum/core'
-import { closeApplication, createTestApplication, openDb, type Db } from '@factotum/jobs'
+import { closeApplication, createTestApplication, DB_FILE, openDb, SCHEMA_VERSION, storeVersion, type Db } from '@factotum/jobs'
 
 export interface JobsCommandDeps {
   readonly env: Environment
@@ -75,6 +82,17 @@ function run(db: Db, action: Action, now: () => Date, out: (line: string) => voi
   return 0
 }
 
+/** Why this store is not the CLI's to open, or null. */
+async function refusalOf(dir: string, env: Environment): Promise<string | null> {
+  const version = await storeVersion(dir)
+  if (!version.ok) return `cannot read the store: ${version.error.reason}`
+  if (version.value === null) return `no jobs.db in ${env}: start the ${env} daemon with jobs enabled first (or pass the right --env)`
+  if (version.value !== SCHEMA_VERSION) {
+    return `the store is at schema version ${version.value} and this CLI's is ${SCHEMA_VERSION}: use the CLI of the running daemon; it never migrates the store`
+  }
+  return null
+}
+
 export async function jobsCommand(deps: JobsCommandDeps): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line))
   const now = deps.now ?? (() => new Date())
@@ -84,7 +102,14 @@ export async function jobsCommand(deps: JobsCommandDeps): Promise<number> {
     return 2
   }
 
-  const dir = moduleStateDir(statePaths(deps.env, deps.home), 'jobs')
+  const dir = resolve(moduleStateDir(statePaths(deps.env, deps.home), 'jobs'))
+  const file = join(dir, DB_FILE)
+  out(`jobs: ${deps.env} store at ${file}`)
+  const refusal = await refusalOf(dir, deps.env)
+  if (refusal !== null) {
+    out(`jobs: ${refusal}`)
+    return 2
+  }
   const opened = await openDb({ dir, now })
   if (!opened.ok) {
     out(`jobs: cannot open the store: ${opened.error.reason}`)

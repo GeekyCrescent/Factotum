@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { openDb, type Db } from './db.ts'
+import { openDb, storeVersion, type Db } from './db.ts'
 import { MIGRATIONS, SCHEMA_VERSION } from './schema.sql.ts'
 import { manualClock, tempBase } from '../test-support.ts'
 import { fail, ok } from '../types.ts'
@@ -463,4 +463,20 @@ test('close is idempotent, and a transaction after close is a Result', async () 
   db.close()
   db.close()
   assert.equal(db.tx(() => ok(1)).ok, false)
+})
+
+test('review 1a: storeVersion reads the schema version read-only; null without a file, which it does not create; a failure is a result', async () => {
+  using base = tempBase()
+  assert.deepEqual(await storeVersion(base.dir), { ok: true, value: null })
+  assert.equal(existsSync(join(base.dir, 'jobs.db')), false)
+
+  const opened = await openDb({ dir: base.dir, now: manualClock(NOW).now })
+  assert.ok(opened.ok)
+  opened.value.close()
+  assert.deepEqual(await storeVersion(base.dir), { ok: true, value: SCHEMA_VERSION })
+
+  writeFileSync(join(base.dir, 'jobs.db'), 'not a database at all, long enough to be read as a header by sqlite')
+  assert.equal((await storeVersion(base.dir)).ok, false)
+  const noDriver = await storeVersion(base.dir, () => Promise.reject(new Error('no sqlite')))
+  assert.equal(noDriver.ok, false)
 })
