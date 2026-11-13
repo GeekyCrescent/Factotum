@@ -44,7 +44,7 @@ function otherSends(q: Queries, count: number, row: { channel: 'smtp' | 'manual'
 }
 
 const setAddress = (w: World, address: Address): void =>
-  write(w.db, (q) => q.run('UPDATE contacts SET address_status = ?, checked_at = ?, override_at = ?, verified_url = ? WHERE id = ?', address.status, address.checkedAt, address.override?.at ?? null, address.verifiedUrl, 'contact-1'))
+  void write(w.db, (q) => q.run('UPDATE contacts SET address_status = ?, checked_at = ?, override_at = ?, verified_url = ? WHERE id = ?', address.status, address.checkedAt, address.override?.at ?? null, address.verifiedUrl, 'contact-1'))
 
 const contactAddress = (w: World): Address | null | undefined => w.db.read((q) => repo.getContact(q, 'contact-1')?.address)
 
