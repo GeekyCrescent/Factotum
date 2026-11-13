@@ -18,7 +18,10 @@ import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
 import { confirmedLocal, createLock, decisionOn, localResultOf, viewOf, withLocal, type LocalResults } from './guard.ts'
-import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, sendKeyOf, type Notice } from './model.ts'
+import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice } from './model.ts'
+import { stillRewriting } from './rewrite-model.ts'
+import { isDialogOpen } from './sheet.tsx'
+import { SkipSheet } from './skip-sheet.tsx'
 import { sendIdOf, sendStateOf } from './sends-model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
@@ -65,6 +68,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const [busy, setBusy] = useState(false)
   const lock = useMemo(createLock, [])
   const box = useRef<HTMLTextAreaElement>(null)
+  /** The skip sheet is open on this card (`viewOf`): a card changed under it closes it. */
+  const [skipping, setSkipping] = useState<string | undefined>(undefined)
 
   // A batch seen for the first time opens on its first undecided item from the cursor.
   useEffect(() => {
@@ -89,7 +94,11 @@ export function Review({ props }: { readonly props: ViewProps }) {
   const item = batch === null || index < 0 ? undefined : batch.items[index]
   const result = item === undefined || batch === null ? undefined : batch.results[item.itemId]
   /** A card just shown takes no Approve and no Skip for a moment (D15 «Lo que se vio es lo que se aprueba»). */
-  const settle = useSettle(viewOf(item))
+  const view = viewOf(item)
+  const settle = useSettle(view)
+  useEffect(() => {
+    if (skipping !== undefined && skipping !== view) setSkipping(undefined)
+  }, [skipping, view])
 
   /** Posts one decision on the item on screen; `moveOn` advances when it went through. */
   const send = useCallback(
@@ -128,11 +137,11 @@ export function Review({ props }: { readonly props: ViewProps }) {
     void send({ kind: 'approve' }, true)
   }, [item, result, send, settle])
 
-  // Skip asks for a reason in `skip-sheet.tsx` (R5a); until then, «not now».
+  // Skip asks why (`skip-sheet.tsx`); the sheet opens only on a settled card, and its choice is a decision like any other.
   const skip = useCallback(() => {
-    if (item === undefined || result !== undefined || !settle.ready()) return
-    void send({ kind: 'skip', reason: 'not-now' }, true)
-  }, [item, result, send, settle])
+    if (item === undefined || result !== undefined || reviewableOf(item) === null || !settle.ready()) return
+    setSkipping(view)
+  }, [item, result, settle, view])
 
   const back = useCallback(() => {
     if (batch === null) return
@@ -147,7 +156,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const modified = event.ctrlKey || event.metaKey || event.altKey
-      const action = keyAction({ key: event.key, inField: isField(event.target), modified, repeat: event.repeat })
+      const action = keyAction({ key: event.key, inField: isField(event.target), modified, repeat: event.repeat, dialogOpen: isDialogOpen() })
       if (action === null) return
       event.preventDefault()
       if (action === 'approve') approve()
@@ -214,10 +223,18 @@ export function Review({ props }: { readonly props: ViewProps }) {
             onApprove={approve}
             onForward={forward}
           />
+          {skipping === view ? <SkipFor item={item} busy={busy} onChoose={(decision) => send(decision, true)} onClose={() => setSkipping(undefined)} /> : null}
         </>
       )}
     </Shell>
   )
+}
+
+function SkipFor({ item, busy, onChoose, onClose }: { readonly item: ReviewItem } & Omit<Parameters<typeof SkipSheet>[0], 'entity' | 'company'>) {
+  const subject = reviewableOf(item)
+  if (subject === null) return null
+  const company = companyOf(item) ?? ''
+  return <SkipSheet entity={subject.entity} company={company} busy={busy} onChoose={onChoose} onClose={onClose} />
 }
 
 interface ShellProps {
@@ -279,6 +296,11 @@ function Shell({ batch, index, notices, onDismiss, sends, children }: ShellProps
               <li key={at} class={`j-dot ${dot}`} />
             ))}
           </ol>
+        )}
+        {batch === undefined || stillRewriting(batch.rewriting) === null ? null : (
+          <p class="j-still" role="status">
+            {stillRewriting(batch.rewriting)}
+          </p>
         )}
         <SendLines sends={sends} />
       </header>

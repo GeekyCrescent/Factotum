@@ -26,6 +26,7 @@ import {
   statusOf,
   sendLine,
   shouldPollBatch,
+  companyOf,
   type Exit,
 } from './model.ts'
 
@@ -541,4 +542,17 @@ test('a held key (auto-repeat) never approves or skips', () => {
   assert.equal(keyAction({ key: 'a', inField: false, modified: false, repeat: true }), null)
   assert.equal(keyAction({ key: 's', inField: false, modified: false, repeat: true }), null)
   assert.equal(keyAction({ key: 'a', inField: false, modified: false, repeat: false }), 'approve')
+})
+
+test('with a sheet open (the skip sheet, the assist panel) no key of the review acts: the keys are the sheet’s', () => {
+  for (const key of ['a', 's', 'ArrowLeft', '/']) {
+    assert.equal(keyAction({ key, inField: false, modified: false, dialogOpen: true }), null)
+  }
+})
+
+test('the company of an item, whatever its kind; none for a proposal', () => {
+  assert.equal(companyOf(appItem()), 'Acme')
+  assert.equal(companyOf(followupItem()), 'Acme')
+  assert.equal(companyOf({ itemId: 'r', seen: 's', kind: 'reply', reply: { applicationId: 'a', eventId: 'e', company: { id: 'c', name: 'Beta' }, from: 'x', subject: 'y', summary: 'z', link: null } }), 'Beta')
+  assert.equal(companyOf({ itemId: 'p', seen: 's', kind: 'proposal', proposalId: 'p' }), null)
 })

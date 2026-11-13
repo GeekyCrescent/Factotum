@@ -153,6 +153,14 @@ export function reviewableOf(item: ReviewItem): Reviewable | null {
   return null
 }
 
+/** The company an item is about; null for a keeper proposal. */
+export function companyOf(item: ReviewItem): string | null {
+  if (item.kind === 'application' || (item.kind === 'rewritten' && item.target === 'application')) return item.application.company.name
+  if (item.kind === 'followup' || item.kind === 'rewritten') return item.followup.company.name
+  if (item.kind === 'reply') return item.reply.company.name
+  return null
+}
+
 export interface Gate {
   readonly enabled: boolean
   readonly why: string | null
@@ -413,6 +421,8 @@ export interface KeyPress {
   readonly modified: boolean
   /** The key is held and the system repeats it (`KeyboardEvent.repeat`). */
   readonly repeat?: boolean
+  /** A sheet or a dialog is open over the card: the keys are its own. */
+  readonly dialogOpen?: boolean
 }
 
 const KEYS: Readonly<Record<string, KeyAction>> = { a: 'approve', s: 'skip', arrowleft: 'back', '/': 'focus' }
@@ -421,7 +431,7 @@ const KEYS: Readonly<Record<string, KeyAction>> = { a: 'approve', s: 'skip', arr
 const DECIDING: ReadonlySet<KeyAction> = new Set<KeyAction>(['approve', 'skip'])
 
 export function keyAction(press: KeyPress): KeyAction | null {
-  if (press.inField || press.modified) return null
+  if (press.inField || press.modified || press.dialogOpen === true) return null
   const action = KEYS[press.key.toLowerCase()] ?? null
   if (action !== null && press.repeat === true && DECIDING.has(action)) return null
   return action

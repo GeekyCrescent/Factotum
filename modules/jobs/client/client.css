@@ -180,14 +180,45 @@
   gap: var(--space-3);
 }
 
-.j-rewrite {
-  margin: var(--space-1) 0 0;
-  color: var(--p2);
-  font-size: var(--text-small);
+.j-rewritten {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--p2-soft);
 }
 
-.j-rewrite.failed {
+.j-rewritten.failed {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+
+.j-rewrite-tag {
+  margin: 0;
+  color: var(--p2);
+  font-size: var(--text-small);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-rewritten.failed .j-rewrite-tag {
   color: var(--err);
+}
+
+.j-rewritten .btn {
+  justify-self: start;
+}
+
+.j-diff .add {
+  color: var(--ok);
+  text-decoration: none;
+  background: color-mix(in oklch, var(--ok) 14%, transparent);
+}
+
+.j-diff .del {
+  color: var(--err);
+  text-decoration: line-through;
 }
 
 .j-labels {
@@ -419,6 +450,95 @@
 
 .j-rule {
   margin: 0;
+}
+
+/* --- Sheets: the skip sheet, the assist panel ------------------------------ */
+
+.j-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.j-sheet-head h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-choices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-choice {
+  width: 100%;
+  min-height: var(--hit-decide);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding-block: var(--space-1h);
+  white-space: normal;
+  text-align: left;
+}
+
+.j-choice-note {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.j-choice.j-closes .j-choice-note {
+  color: var(--err);
+}
+
+.j-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.j-field {
+  flex: 1;
+  min-width: 12rem;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-input {
+  min-height: var(--hit);
+  padding: var(--space-1h) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-6);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+}
+
+textarea.j-input {
+  resize: vertical;
+  field-sizing: content;
+  min-height: calc(var(--hit) * 2);
+}
+
+.j-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.j-error {
+  margin: 0;
+  color: var(--err);
+  font-size: var(--text-small);
 }
 
 /* --- A finger, not a pointer ---------------------------------------------- */

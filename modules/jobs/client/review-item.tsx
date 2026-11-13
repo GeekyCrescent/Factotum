@@ -12,14 +12,15 @@
  *
  * THE BOX «Tell the AI what to change» sends with ⏎ (⇧⏎ for a new line) and the screen moves on
  * without waiting (crit. 31). An instruction that reads as a rule offers «Save as a rule for all?»,
- * one click (crit. 33). A rewritten item's diff and its «Try again» are `rewritten.tsx`'s (R5a).
+ * one click (crit. 33). A rewritten item's diff and its «Try again» are `rewritten.tsx`'s.
  */
 
 import type { JSX, RefObject } from 'preact'
 import { useState } from 'preact/hooks'
-import type { ApplicationCard, Decision, FollowupCard, ItemResult, ReplyCard, ReviewItem, RewriteInfo, ViewProps } from './contract.ts'
+import type { ApplicationCard, Decision, FollowupCard, ItemResult, ReplyCard, ReviewItem, ViewProps } from './contract.ts'
 import { Cv, FormAnswers, Gaps, Labels, Letter, Notes, ToLine } from './item-parts.tsx'
 import { blockersOf, exitsFor, gapsOf, labelsOf, refusalOf, reviewableOf, safeHref, type Exit, type Reviewable } from './model.ts'
+import { Rewritten } from './rewritten.tsx'
 import { isRuleHint } from './rule-hint.ts'
 
 /** What the card can ask of the screen. */
@@ -89,14 +90,20 @@ export function ReviewItemView({ props, item, result, actions, box, busy }: Revi
     />
   )
 
+  const tryAgain = (instruction: string): void => {
+    setText(instruction)
+    box.current?.focus()
+  }
+  const rewritten = item.kind === 'rewritten' ? <Rewritten item={item} rewrite={item.rewrite} decided={decided} onTryAgain={tryAgain} /> : null
+
   return (
     <article class="j-item">
-      {item.kind === 'application' ? <Application props={props} app={item.application} toLine={toLine} rewrite={undefined} /> : null}
-      {item.kind === 'rewritten' && item.target === 'application' ? (
-        <Application props={props} app={item.application} toLine={toLine} rewrite={item.rewrite} />
+      {item.kind === 'application' || (item.kind === 'rewritten' && item.target === 'application') ? (
+        <Application props={props} app={item.application} toLine={toLine} rewritten={rewritten} />
       ) : null}
-      {item.kind === 'followup' ? <Followup followup={item.followup} toLine={toLine} rewrite={undefined} /> : null}
-      {item.kind === 'rewritten' && item.target === 'followup' ? <Followup followup={item.followup} toLine={toLine} rewrite={item.rewrite} /> : null}
+      {item.kind === 'followup' || (item.kind === 'rewritten' && item.target === 'followup') ? (
+        <Followup followup={item.followup} toLine={toLine} rewritten={rewritten} />
+      ) : null}
       {item.kind === 'reply' ? <Reply reply={item.reply} /> : null}
       {item.kind === 'proposal' ? <p class="j-quiet">A CV keeper proposal: they arrive in phase 3.</p> : null}
       {subject === null || decided ? null : <Blocks subject={subject} onExit={onExit} busy={busy} />}
@@ -124,29 +131,26 @@ function applicationIdOf(item: ReviewItem): string | null {
 
 type ToLineFor = (entity: 'application' | 'followup', card: { readonly to: string | null; readonly contact: ApplicationCard['contact'] }, formUrl: string | null) => JSX.Element
 
-function Head({ company, role, rewrite }: { readonly company: string; readonly role: string; readonly rewrite: RewriteInfo | undefined }) {
+function Head({ company, role }: { readonly company: string; readonly role: string }) {
   return (
     <header class="j-item-head">
       <h2 class="j-company">{company}</h2>
       <p class="j-role">{role}</p>
-      {rewrite === undefined ? null : (
-        <p class={`j-rewrite${rewrite.failed ? ' failed' : ''}`}>
-          {rewrite.failed ? 'rewrite failed' : 'rewritten'}
-          {rewrite.instruction === null ? '' : ` · “${rewrite.instruction}”`}
-          {rewrite.failed && rewrite.reason !== null ? ` — ${rewrite.reason}` : ''}
-        </p>
-      )}
     </header>
   )
 }
 
-function Application({ props, app, toLine, rewrite }: { readonly props: ViewProps; readonly app: ApplicationCard; readonly toLine: ToLineFor; readonly rewrite: RewriteInfo | undefined }) {
+/** The rewrite's tag and diff (`rewritten.tsx`), under the head; null for an item that is not one. */
+type RewrittenSlot = JSX.Element | null
+
+function Application({ props, app, toLine, rewritten }: { readonly props: ViewProps; readonly app: ApplicationCard; readonly toLine: ToLineFor; readonly rewritten: RewrittenSlot }) {
   const ad = safeHref(app.adUrl)
   const letterTitle = app.channel === 'email' ? 'Email' : app.channel === 'linkedin' ? 'LinkedIn note' : 'Cover letter'
   const body = app.channel === 'linkedin' ? (app.linkedin ?? app.letter?.body ?? null) : (app.letter?.body ?? null)
   return (
     <>
-      <Head company={app.company.name} role={app.role} rewrite={rewrite} />
+      <Head company={app.company.name} role={app.role} />
+      {rewritten}
       <Labels labels={labelsOf(app)} />
       {ad === null ? null : (
         <a class="j-ad" href={ad} target="_blank" rel="noopener noreferrer">
@@ -169,10 +173,11 @@ function Application({ props, app, toLine, rewrite }: { readonly props: ViewProp
   )
 }
 
-function Followup({ followup, toLine, rewrite }: { readonly followup: FollowupCard; readonly toLine: ToLineFor; readonly rewrite: RewriteInfo | undefined }) {
+function Followup({ followup, toLine, rewritten }: { readonly followup: FollowupCard; readonly toLine: ToLineFor; readonly rewritten: RewrittenSlot }) {
   return (
     <>
-      <Head company={followup.company.name} role={`Follow-up ${followup.n} · ${followup.role}`} rewrite={rewrite} />
+      <Head company={followup.company.name} role={`Follow-up ${followup.n} · ${followup.role}`} />
+      {rewritten}
       <Labels labels={labelsOf({ hours: null, channel: followup.channel, score: null, warnings: followup.warnings })} />
       {followup.channel === 'email' ? toLine('followup', followup, null) : null}
       <Letter title={followup.channel === 'email' ? 'Email' : 'LinkedIn note'} subject={followup.subject} body={followup.body} />
@@ -184,7 +189,7 @@ function Reply({ reply }: { readonly reply: ReplyCard }) {
   const link = safeHref(reply.link, GMAIL)
   return (
     <>
-      <Head company={reply.company.name} role={reply.subject} rewrite={undefined} />
+      <Head company={reply.company.name} role={reply.subject} />
       <p class="j-quiet">From {reply.from}</p>
       <p class="j-text">{reply.summary}</p>
       {link === null ? null : (
