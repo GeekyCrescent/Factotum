@@ -64,7 +64,20 @@ describe('the message of step 2', () => {
     ['no letter', { letter: null }, undefined, 'missing-letter'],
     ['no subject', { letter: { subject: null, body: 'x' } }, undefined, 'missing-subject'],
     ['a stored to that is not the contact\'s email', {}, (q: Queries) => q.run("UPDATE applications SET target = json_set(target, '$.to', '') WHERE id = 'app-1'"), 'address-changed'],
-    ['a contact with no email', {}, (q: Queries) => q.run("UPDATE contacts SET email = NULL WHERE id = 'contact-1'"), 'no-address'],
+    ['a blank subject', { letter: { subject: ' \t ', body: 'x' } }, undefined, 'empty-subject'],
+    ['a blank body', { letter: { subject: 'Hello', body: ' \n\t ' } }, undefined, 'empty-body'],
+    ['a subject with CR/LF (header injection)', { letter: { subject: 'Hello\r\nBcc: someone@evil.example', body: 'x' } }, undefined, 'bad-subject'],
+    ['a subject with a bare LF', { letter: { subject: 'Hello\nthere', body: 'x' } }, undefined, 'bad-subject'],
+    [
+      'a contact email SMTP cannot take',
+      {},
+      (q: Queries) => {
+        q.run("UPDATE contacts SET email = 'ada at acme' WHERE id = 'contact-1'")
+        q.run("UPDATE applications SET target = json_set(target, '$.to', 'ada at acme') WHERE id = 'app-1'")
+      },
+      'bad-address',
+    ],
+    ['a contact with no email', {},(q: Queries) => q.run("UPDATE contacts SET email = NULL WHERE id = 'contact-1'"), 'no-address'],
     ['no PDF in the artifact', {}, (q: Queries) => q.run("UPDATE artifacts SET pdf = NULL WHERE application_id = 'app-1'"), 'missing-cv'],
   ] as const) {
     test(`the initial with ${name} → blocked ${reason}`, async (t) => {

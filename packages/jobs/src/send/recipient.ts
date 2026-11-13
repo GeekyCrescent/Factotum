@@ -19,7 +19,7 @@ export function recipientOf(q: Queries, contactId: string | null, storedTo: stri
   const email = contact?.email?.trim() ?? ''
   if (contact === undefined || email === '') return fail('blocked', 'no-address')
   if (storedTo === null || storedTo.trim() !== email) return fail('blocked', 'address-changed')
-  if (!isSendableAddress(email)) return fail('blocked', 'no-address')
+  if (!isSendableAddress(email)) return fail('blocked', 'bad-address')
   return ok({ contact, to: email })
 }
 

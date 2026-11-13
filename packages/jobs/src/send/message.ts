@@ -93,5 +93,15 @@ export function outgoingFor(q: Queries, id: string, kind: SendKind): Result<Outg
   const filledText = fillSlots(body, profile.profile)
   const missing = [...new Set([...filledSubject.missing, ...filledText.missing])]
   if (missing.length > 0) return fail('blocked', `unfilled-slot: ${missing.join(', ')}`)
+  const unfit = unfitText(filledSubject.text, filledText.text)
+  if (unfit !== null) return fail('blocked', unfit)
   return ok({ ...rest, to, subject: filledSubject.text, text: filledText.text, messageId: row.messageId })
+}
+
+/** D9 step 2 (revisión de E): a blank subject or body never goes out, nor a subject that would break its header line. */
+function unfitText(subject: string, text: string): string | null {
+  if (subject.trim() === '') return 'empty-subject'
+  if (/[\r\n]/.test(subject)) return 'bad-subject'
+  if (text.trim() === '') return 'empty-body'
+  return null
 }
