@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { AssistPanel } from './assist-panel.tsx'
 import { assistOf, closesOpenPanel, type AssistView } from './assist-model.ts'
 import type { BatchView, Decision, MarkAnswer, ReviewItem, ViewProps } from './contract.ts'
-import { confirmedLocal, createLock, decisionOn, LOCK_HELD, localResultOf, runOrSay, viewOf, withLocal, type LocalResults } from './guard.ts'
+import { confirmedLocal, createLock, decisionOn, localResultOf, refusalUnderLock, runOrSay, viewOf, withLocal, type LocalResults } from './guard.ts'
 import { approveGate, batchSummary, headerOf, keyAction, nextOpen, noticeOf, noticesOf, refusalOf, reviewableOf, companyOf, sendKeyOf, type Notice, type SendKey } from './model.ts'
 import { stillRewriting } from './rewrite-model.ts'
 import { isDialogOpen } from './sheet.tsx'
@@ -216,8 +216,8 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   /** «Mark as sent» through the same lock; the refusal's text, or null when it went through. */
-  const markSent = async (key: SendKey): Promise<string | null> => {
-    const running = lock.run(async (): Promise<string | null> => {
+  const markSent = (key: SendKey): Promise<string | null> =>
+    refusalUnderLock(lock, async (): Promise<string | null> => {
       setBusy(true)
       try {
         await api.post<MarkAnswer>(`a/${encodeURIComponent(key.applicationId)}/sends/${key.kind}/mark`)
@@ -229,8 +229,6 @@ export function Review({ props }: { readonly props: ViewProps }) {
         setBusy(false)
       }
     })
-    return (await running) ?? LOCK_HELD
-  }
   /** Closes `panel` once: a late second close (Later, then Mark's answer) moves the review on nothing. */
   const closeAssist = (panel: OpenPanel): void => {
     if (!closesOpenPanel(openPanel.current, panel)) return

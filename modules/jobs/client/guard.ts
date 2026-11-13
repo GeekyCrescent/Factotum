@@ -101,3 +101,13 @@ export function runOrSay<T>(lock: Lock, task: () => Promise<T>, say: (text: stri
   if (running === null) say(LOCK_HELD)
   return running
 }
+
+/**
+ * `lock.run` for a task that answers its refusal (`null` when it went through): `LOCK_HELD` only when
+ * the lock is held, so a task's `null` — success — is never read as «another action is still running».
+ */
+export async function refusalUnderLock(lock: Lock, task: () => Promise<string | null>): Promise<string | null> {
+  const running = lock.run(task)
+  if (running === null) return LOCK_HELD
+  return await running
+}

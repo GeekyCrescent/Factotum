@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { BatchView, ItemResult, ReviewItem } from './contract.ts'
-import { LOCK_HELD, SETTLE_MS, canDecide, confirmedLocal, createLock, decisionOn, localResultOf, runOrSay, settleLeft, viewOf, withLocal } from './guard.ts'
+import { LOCK_HELD, SETTLE_MS, canDecide, confirmedLocal, createLock, decisionOn, localResultOf, refusalUnderLock, runOrSay, settleLeft, viewOf, withLocal } from './guard.ts'
 
 // ── What was seen is what is approved (D15 «Lo que se vio es lo que se aprueba») ─────────────────
 
@@ -129,4 +129,19 @@ test('an action the lock refuses is never dropped in silence: it says another on
   assert.equal(await first, 'done')
   assert.equal(await runOrSay(lock, async () => 'again', (text) => said.push(text)), 'again')
   assert.deepEqual(said, [LOCK_HELD])
+})
+
+test('an action that answers its refusal: null when it went through, never mistaken for the lock held', async () => {
+  const lock = createLock()
+  assert.equal(await refusalUnderLock(lock, async () => null), null)
+  assert.equal(await refusalUnderLock(lock, async () => 'mark-sent is not a transition from sent'), 'mark-sent is not a transition from sent')
+})
+
+test('an action that answers its refusal, refused by the lock held, says another one is still running', async () => {
+  const lock = createLock()
+  let release = (): void => undefined
+  const first = refusalUnderLock(lock, () => new Promise<string | null>((resolve) => (release = () => resolve(null))))
+  assert.equal(await refusalUnderLock(lock, async () => null), LOCK_HELD)
+  release()
+  assert.equal(await first, null)
 })
