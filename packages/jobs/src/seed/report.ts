@@ -140,6 +140,7 @@ export function buildReport(
       p.entry.addresses.flatMap((a) => (a.status === 'verified' && a.evidence !== null ? [{ ...ref(p), email: a.email, evidence: a.evidence }] : [])),
     ),
     issues: [
+      ...seed.issues,
       ...invalidAddresses(seed, plan),
       ...entries.flatMap((p) => p.entry.issues.map((issue) => ({ kind: issue.kind, file: p.file, n: p.entry.n, detail: issue.detail }))),
     ],

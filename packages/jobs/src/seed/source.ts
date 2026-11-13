@@ -11,6 +11,7 @@ import { basename, join } from 'node:path'
 import { fail, ok, type Result } from '../types.ts'
 import { parseCompanies, parseHealthEmployers, type SeededCompany } from './companies.ts'
 import { parseCvs, parseKit, seedFollowupTemplates, type BaseCvs, type Kit } from './kit.ts'
+import type { SeedIssue } from './issues.ts'
 import type { UnparsedHeading } from './markdown.ts'
 import { parsePackage, type PackageFile } from './package.ts'
 
@@ -57,6 +58,8 @@ export interface Seed {
   readonly packages: readonly ReadPackage[]
   /** Every `## ` heading of the kit and the packages that is not `## N. Title`, with its file. */
   readonly unparsed: readonly (UnparsedHeading & { readonly file: string })[]
+  /** What the parsers of the kit and the companies file could not take, for the report. */
+  readonly issues: readonly SeedIssue[]
 }
 
 const HEALTH_FILE = new URL('../../assets/health-employers.json', import.meta.url)
@@ -137,5 +140,6 @@ export async function readSeed(source: SeedSource): Promise<Result<Seed>> {
     ...kit.unparsed.map((u) => ({ file: basename(seed.kit), ...u })),
     ...packages.value.flatMap(({ name, parsed }) => parsed.unparsed.map((u) => ({ file: name, ...u }))),
   ]
-  return ok({ companiesFile: basename(seed.companies), companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
+  const issues = kit.issues.map(({ kind, section, detail }) => ({ kind, file: basename(seed.kit), n: section, detail }))
+  return ok({ issues, companiesFile: basename(seed.companies), companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
 }

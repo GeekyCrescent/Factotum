@@ -211,3 +211,35 @@ test('the base CVs A and B run from their heading to "Para el owner"', async () 
   assert.ok(!cvs.B.includes('Checklist'))
   assert.throws(() => parseCvs('# CV A — only\n\ntext\n'), /CV B/)
 })
+
+test('a label with no blockquote answer and a section number used twice are kit issues, not silent', () => {
+  const parsed = parseKit(
+    [
+      '## 2. Work rights',
+      '',
+      '**Right to work?**',
+      '',
+      '> Yes.',
+      '',
+      '**Unanswered question?**',
+      '',
+      '> [!todo] fill this in',
+      '',
+      '**Also unanswered**',
+      '',
+      'Just advice, no quote.',
+      '',
+      '## 2. Work rights again',
+      '',
+      '**Visa?**',
+      '> Student visa.',
+    ].join('\n'),
+  )
+  assert.deepEqual(parsed.issues, [
+    { kind: 'kit-label-without-answer', section: 2, detail: 'Unanswered question?' },
+    { kind: 'kit-label-without-answer', section: 2, detail: 'Also unanswered' },
+    { kind: 'kit-duplicate-section', section: 2, detail: 'Work rights again' },
+  ])
+  assert.deepEqual(parsed.sections.get(2)?.map((q) => q.label), ['Right to work?'], 'the first section of a number wins')
+  assert.deepEqual(kit.issues, [])
+})

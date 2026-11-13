@@ -58,6 +58,12 @@ test('issues: an address the create transition refuses is invalid-address, in an
   )
 })
 
+test('issues: the kit\'s labels without an answer are in the report, with the kit file and the section', async () => {
+  const kit = (await fixture('kit.md')).replace('## 3. Salary / rate expectations', '## 3. Salary / rate expectations\n\n**Dangling label**\n')
+  const report = await dryRunWith({ 'kit.md': kit })
+  assert.deepEqual(report.issues, [{ kind: 'kit-label-without-answer', file: 'kit.md', n: 3, detail: 'Dangling label' }])
+})
+
 test('unparsed: a "## " heading that is not "## N. Title", in a package or in the kit, is in the report with its line count', async () => {
   const ads = `${await fixture(ADS)}\n\n## Appendix\n\nOne line.\nTwo lines.\n`
   const report = await dryRunWith({ [ADS]: ads })

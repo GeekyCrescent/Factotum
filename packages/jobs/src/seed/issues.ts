@@ -10,6 +10,10 @@ export type SeedIssueKind =
   | 'empty-answer'
   /** An address the `create` transition refuses: stored as text, without a state (approving it is `no-address`). */
   | 'invalid-address'
+  /** A bold label of the kit with no blockquote answer under it (`n` = its section). */
+  | 'kit-label-without-answer'
+  /** A kit section number used twice: the first wins (`n` = the number). */
+  | 'kit-duplicate-section'
 
 /** An issue of one package entry; the report adds its file and N. */
 export interface EntryIssue {
@@ -19,6 +23,6 @@ export interface EntryIssue {
 
 export interface SeedIssue extends EntryIssue {
   readonly file: string
-  /** The entry's N; null for an issue of a whole file (the kit, the companies file). */
+  /** The entry's N (the kit's section for a kit issue); null for an issue of a whole file. */
   readonly n: number | null
 }

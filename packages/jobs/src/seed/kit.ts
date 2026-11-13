@@ -24,6 +24,15 @@ export interface Kit {
   readonly leftovers: readonly KitLeftover[]
   /** `## ` headings that are not `## N. Title`: not read, reported. */
   readonly unparsed: readonly UnparsedHeading[]
+  readonly issues: readonly KitIssue[]
+}
+
+/** What the kit parser could not take: a label without an answer, a section number used twice. */
+export interface KitIssue {
+  readonly kind: 'kit-label-without-answer' | 'kit-duplicate-section'
+  readonly section: number
+  /** The label, or the title of the repeated section. */
+  readonly detail: string
 }
 
 /** `§N` plus the words of the «see …» phrase before the link (e.g. «the 100-word bio in»). */
@@ -86,27 +95,59 @@ const translateSlots = (text: string): string =>
 
 const cleanLabel = (raw: string): string => raw.trim().replace(/:$/, '').replace(/^["“”]+|["“”]+$/g, '').trim()
 
-function questionsOf(section: Section): readonly KitQuestion[] {
+interface SectionQuestions {
+  readonly questions: readonly KitQuestion[]
+  /** Bold labels with no blockquote under them (a blank line then a callout, advice, nothing). */
+  readonly unanswered: readonly string[]
+}
+
+function questionsOf(section: Section): SectionQuestions {
   const questions: KitQuestion[] = []
+  const unanswered: string[] = []
   for (let index = 0; index < section.lines.length; index += 1) {
     const label = LABEL_LINE.exec(section.lines[index] ?? '')
     if (!label) continue
     const quote = blockquoteAt(section.lines, index + 1)
-    if (quote === null) continue
+    if (quote === null) {
+      unanswered.push(cleanLabel(label[1] ?? ''))
+      continue
+    }
     questions.push({ label: cleanLabel(label[1] ?? ''), answer: translateSlots(quote.text) })
     index = quote.next - 1
   }
-  return questions
+  return { questions, unanswered }
 }
 
-/** `00-kit-base.md` → `§N → { label, answer }[]`, with the kit's TODOs translated into slots. */
+/** Sections whose number came before: the first of a number wins, the rest are issues. */
+function repeatedSections(sections: readonly Section[]): ReadonlySet<Section> {
+  const seen = new Set<number>()
+  return new Set(
+    sections.filter((section) => {
+      const repeated = seen.has(section.n)
+      seen.add(section.n)
+      return repeated
+    }),
+  )
+}
+
+/**
+ * `00-kit-base.md` → `§N → { label, answer }[]`, with the kit's TODOs translated into slots. A label
+ * with no answer and a section number used twice are `issues`, never dropped silently.
+ */
 export function parseKit(markdown: string): Kit {
   const { sections, unparsed } = splitSections(markdown)
-  const entries = sections.map((section) => [section.n, questionsOf(section)] as const)
+  const repeated = repeatedSections(sections)
+  const read = sections.map((section) => ({ section, ...questionsOf(section) }))
+  const kept = read.filter(({ section }) => !repeated.has(section))
+  const entries = kept.map(({ section, questions }) => [section.n, questions] as const)
   const leftovers = entries.flatMap(([section, questions]) =>
     questions.flatMap((question) => bracketTokens(question.answer).map((token) => ({ section, label: question.label, token }))),
   )
-  return { sections: new Map(entries), leftovers, unparsed }
+  const issues: KitIssue[] = [
+    ...read.flatMap(({ section, unanswered }) => unanswered.map((label) => ({ kind: 'kit-label-without-answer' as const, section: section.n, detail: label }))),
+    ...[...repeated].map((section) => ({ kind: 'kit-duplicate-section' as const, section: section.n, detail: section.title })),
+  ]
+  return { sections: new Map(entries), leftovers, unparsed, issues }
 }
 
 function wordsOf(text: string): ReadonlySet<string> {
