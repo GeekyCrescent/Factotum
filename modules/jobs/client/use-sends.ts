@@ -18,10 +18,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
-import type { Api, SendState, SendView, UnknownRequest } from './contract.ts'
+import type { Api, SendNeed, SendState, SendView, UnknownRequest } from './contract.ts'
 import type { Lock } from './guard.ts'
 import { refusalOf, type SendKey } from './model.ts'
-import { answerRefused, dismissed, isPolling, pollFailed, polled, repolled, retryRefused, sendIdOf, tracked, type SendAction, type TrackedSend } from './sends-model.ts'
+import { answerRefused, dismissed, isPolling, pollFailed, polled, repolled, retryRefused, seeded, sendIdOf, tracked, type SendAction, type TrackedSend } from './sends-model.ts'
 
 export const SEND_POLL_MS = 1_000
 
@@ -35,6 +35,8 @@ export interface SendsState {
   readonly track: (key: SendKey, state?: SendState | null) => void
   /** «Retry» (`POST …/retry`, then followed again) or an answer to «did it go?» (`POST …/unknown`). */
   readonly act: (key: SendKey, action: SendAction) => Promise<void>
+  /** The sends that need the owner, as the tracker read them (`GET /overview`). */
+  readonly seed: (needs: readonly SendNeed[]) => void
   /** «Retry polling» of a line that gave up reading. */
   readonly repoll: (key: SendKey) => void
   /** «Dismiss» a failed or unknown line. */
@@ -97,8 +99,9 @@ export function useSends(api: Api, lock: Lock): SendsState {
     [api, lock, track],
   )
 
+  const seed = useCallback((needs: readonly SendNeed[]): void => setSends((now) => seeded(now, needs)), [])
   const repoll = useCallback((key: SendKey): void => setSends((now) => repolled(now, key)), [])
   const dismiss = useCallback((key: SendKey): void => setSends((now) => dismissed(now, key)), [])
 
-  return { sends, track, act, repoll, dismiss }
+  return { sends, track, act, seed, repoll, dismiss }
 }

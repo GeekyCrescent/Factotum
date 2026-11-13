@@ -12,6 +12,7 @@ import type { ViewProps } from './contract.ts'
 import { Review } from './review.tsx'
 import { routeOf } from './settings-route.ts'
 import { Settings } from './settings.tsx'
+import { Tracker } from './tracker.tsx'
 
 const REVIEW = 'review'
 
@@ -19,6 +20,7 @@ function JobsView(props: ViewProps) {
   const route = routeOf(props.rest)
   if (route.screen === 'review') return <Review props={props} />
   if (route.screen === 'settings') return <Settings props={props} anchor={route.anchor} />
+  if (route.screen === 'tracker') return <Tracker props={props} />
   return <NotYet props={props} />
 }
 

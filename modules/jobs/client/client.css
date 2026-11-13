@@ -740,6 +740,51 @@ textarea.j-input {
   overflow-wrap: anywhere;
 }
 
+/* --- The tracker, minimal (R7) --------------------------------------------- */
+
+.j-tracker {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.j-counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-counter {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-counter-value {
+  font-size: var(--text-page);
+  font-weight: 600;
+}
+
+.j-counter-label {
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-tracker-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* --- A finger, not a pointer ---------------------------------------------- */
 
 /* The shell's small button is 36 px; on a touch screen every button of the review takes 44 px

@@ -14,6 +14,7 @@ import {
   polled,
   repolled,
   retryRefused,
+  seeded,
   sendStateOf,
   tracked,
   type TrackedSend,
@@ -146,6 +147,25 @@ test('a refused answer says why and keeps the same choices', () => {
   assert.equal(sends[0]?.line.text, 'Acme: conflict')
   assert.equal(sends[0]?.line.tone, 'err')
   assert.deepEqual(actions(sends[0]), actions(unknown[0]))
+})
+
+test('the sends the tracker brings (overview) become cards with their reason; one already followed is left as it is', () => {
+  const needs = [
+    { applicationId: 'a', company: 'Acme', kind: 'initial' as const, state: 'failed' as const, at: '', reason: '535 auth' },
+    { applicationId: 'b', company: 'Beta', kind: 'followup-1' as const, state: 'send-unknown' as const, at: '', reason: null },
+  ]
+  const sends = seeded([], needs)
+  assert.deepEqual(
+    sends.map((s) => [s.key.applicationId, s.line.text]),
+    [
+      ['a', 'Acme: 535 auth'],
+      ['b', 'Beta: did it go?'],
+    ],
+  )
+  assert.deepEqual(actions(sends[0]), ['retry:Retry'])
+  const followed = tracked([], { applicationId: 'a', kind: 'initial', company: 'Acme' })
+  assert.equal(seeded(followed, needs)[0]?.line.text, 'Sending to Acme…')
+  assert.equal(seeded(sends, needs), sends, 'nothing new: the same list')
 })
 
 test('each send is named by its kind: «Initial email», «Follow-up 1»', () => {

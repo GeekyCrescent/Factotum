@@ -319,6 +319,41 @@ export interface UnknownRequest {
  */
 export type MarkAnswer = SendView
 
+// ── The tracker, minimal (R7; design D15 «Tracker», D13 `GET /overview`; crit. 63) ────────────────
+
+/** A send that needs the owner: «did it go?» or failed. The tracker shows one card per send. */
+export interface SendNeed {
+  readonly applicationId: string
+  readonly company: string
+  readonly kind: SendKind
+  readonly state: 'send-unknown' | 'failed'
+  readonly at: string
+  /** Of `failed`, masked. */
+  readonly reason: string | null
+}
+
+/** `GET /overview`. */
+export interface Overview {
+  /** crit. 63: to review (`in-review` + `ready`), approved not sent, sent, awaiting reply (sent, no human reply), interviews, offers. */
+  readonly counts: {
+    readonly toReview: number
+    readonly approvedNotSent: number
+    readonly sent: number
+    readonly awaitingReply: number
+    readonly interviews: number
+    readonly offers: number
+  }
+  /** What «Start review» would put in a new batch, before `batchSize` (the N of «Start review (N)»). */
+  readonly reviewable: number
+  /** A batch is open: the tracker continues it (`GET /batch`) instead of arming another over it. */
+  readonly batchOpen: boolean
+  readonly missingPhone: boolean
+  /** `health()`'s warnings, as sentences (password file, IMAP, paused queue, vault, chromium…). */
+  readonly notices: readonly string[]
+  /** Every `send-unknown` and `failed` row of `sends` whose application is still waiting on it. */
+  readonly sends: readonly SendNeed[]
+}
+
 // ── Settings: the profile, the rules, the import (R6; design D7, D8, D13) ─────────────────────────
 
 /** design D7 `Profile`, as `packages/jobs/src/types.ts` has it; `POST /profile` takes it WHOLE (strict). */

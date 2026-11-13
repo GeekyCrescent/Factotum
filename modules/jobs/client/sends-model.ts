@@ -11,7 +11,7 @@
  * went is exactly what is unknown.
  */
 
-import type { SendKind, SendState, SendView, UnknownAnswer } from './contract.ts'
+import type { SendKind, SendNeed, SendState, SendView, UnknownAnswer } from './contract.ts'
 import { sendLine, type SendKey, type SendLine } from './model.ts'
 
 /** The bar shows this many lines when it can drop ok ones. */
@@ -77,6 +77,21 @@ const sameLine = (a: SendLine, b: SendLine): boolean => a.text === b.text && a.t
  */
 export function tracked(sends: readonly TrackedSend[], key: SendKey, state: SendState | null = null): readonly TrackedSend[] {
   return trimmed([...sends.filter((send) => !same(send.key, key)), sending(key, state ?? 'sending')])
+}
+
+/**
+ * The sends the tracker brings (`GET /overview` `sends`) as cards, after those already followed; a send
+ * already followed is left as it is. The same list back when there is nothing new.
+ */
+export function seeded(sends: readonly TrackedSend[], needs: readonly SendNeed[]): readonly TrackedSend[] {
+  const known = new Set(sends.map((send) => sendIdOf(send.key)))
+  const fresh = needs
+    .map((need): TrackedSend => {
+      const key: SendKey = { applicationId: need.applicationId, kind: need.kind, company: need.company }
+      return { key, line: sendLine({ kind: need.kind, state: need.state, at: need.at, reason: need.reason }, need.company), failures: 0, lost: false, state: need.state }
+    })
+    .filter((send) => !known.has(sendIdOf(send.key)))
+  return fresh.length === 0 ? sends : [...sends, ...fresh]
 }
 
 /** What a read of `GET /a/:id/sends/:kind` does; the same list back when nothing changed. */
