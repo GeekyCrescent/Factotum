@@ -18,9 +18,6 @@
  * NEVER IN AN EVENT, A REASON OR THE LOG: the password, the body, the subject, the address.
  */
 
-import { existsSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
-
 import type { Logger, Timers } from '@factotum/core'
 import type { PasswordResult, SendInput, SendResult } from '@factotum/mail'
 import { uuidv7 } from '@factotum/sessions'
@@ -29,6 +26,7 @@ import { addressTransition, appTransition, approvalGate, followupTransition, sen
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { fail, ok, type Address, type Application, type Followup, type Result, type Send, type SendKind } from '../types.ts'
+import { confinedPdf } from './attachment.ts'
 import { applyDeferredReplies, hasHumanReply } from './deferred.ts'
 import { outgoingFor, type Outgoing } from './message.ts'
 import { recipientOf } from './recipient.ts'
@@ -65,8 +63,8 @@ export interface SenderDeps {
   readonly sendMail: (input: SendInput) => Promise<SendResult>
   readonly enqueueCheck: Enqueue
   readonly log: Logger
-  /** Where a relative artifact path is resolved (`<stateDir>`); absolute paths are taken as they are. */
-  readonly stateDir?: string
+  /** `<stateDir>`: a relative artifact path is resolved here, and every CV must be under its `artifacts/`. */
+  readonly stateDir: string
   /** Applying the initial's deferred replies after step 3 (v6.1); `applyDeferredReplies` unless a test replaces it. */
   readonly applyDeferred?: typeof applyDeferredReplies
 }
@@ -152,15 +150,13 @@ export function createSender(deps: SenderDeps): Sender {
   let stopped = false
 
   const capOf = (q: Queries, at: Date): DailyCap => dailyCap(q, at, deps.timeZone, deps.mail.maxSendsPerDay)
-  const resolvePath = (path: string): string => (isAbsolute(path) || deps.stateDir === undefined ? path : join(deps.stateDir, path))
-
-  /** `stat` BEFORE the `tx` (D9 step 1): the current version's PDF is on the disk. */
+  /** `stat` BEFORE the `tx` (D9 step 1): the current version's PDF is on the disk, a regular `.pdf` under `<stateDir>/artifacts/`. */
   function pdfExists(id: string): boolean {
     const pdf = db.read((q) => {
       const app = repo.getApplication(q, id)
       return app === undefined ? null : (repo.getArtifacts(q, id, app.version)?.pdf ?? null)
     })
-    return pdf !== null && existsSync(resolvePath(pdf))
+    return pdf !== null && confinedPdf(deps.stateDir, pdf) !== null
   }
 
   function beginInitial(id: string, sendAnyway: boolean, at: Date): Result<Approved['state']> {
@@ -217,12 +213,20 @@ export function createSender(deps: SenderDeps): Sender {
 
   /** Everything step 2 does before SMTP: the message from the store, the password, the input. */
   async function prepare(id: string, kind: SendKind, signal: AbortSignal): Promise<Result<SendInput>> {
-    const message = db.read((q) => outgoingFor(q, id, kind))
+    const read = db.read((q) => outgoingFor(q, id, kind))
+    const message = read.ok ? confined(read.value) : read
     if (!message.ok) return message
     const password = await deps.readPassword(deps.mail.passwordFile)
     if (!password.ok) return fail('blocked', password.reason)
     if (signal.aborted) return fail('conflict', STOPPING)
     return ok(inputFor(message.value, password.password, signal))
+  }
+
+  /** The attachment by its confined real path, or `missing-cv`: never another path the store names. */
+  function confined(message: Outgoing): Result<Outgoing> {
+    if (message.attachment === undefined) return ok(message)
+    const path = confinedPdf(deps.stateDir, message.attachment.path)
+    return path === null ? fail('blocked', 'missing-cv') : ok({ ...message, attachment: { ...message.attachment, path } })
   }
 
   function inputFor(message: Outgoing, password: string, signal: AbortSignal): SendInput {
@@ -238,7 +242,7 @@ export function createSender(deps: SenderDeps): Sender {
       messageId: message.messageId,
       ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
       ...(message.references === undefined ? {} : { references: message.references }),
-      ...(message.attachment === undefined ? {} : { attachment: { ...message.attachment, path: resolvePath(message.attachment.path) } }),
+      ...(message.attachment === undefined ? {} : { attachment: message.attachment }),
       timers: deps.timers,
       signal,
     }

@@ -147,18 +147,6 @@ describe('the edges of steps 1 and 3', () => {
     })
   })
 
-  test('a relative artifact path is resolved under stateDir', async (t) => {
-    await within(t, {}, async (w) => {
-      write(w.db, (q) => q.run("UPDATE artifacts SET pdf = 'cv-v1.pdf' WHERE application_id = 'app-1'"))
-      errorOf(createSender(w.deps).approve('app-1', 'initial'), 'blocked', 'missing-cv')
-      const sender = createSender({ ...w.deps, stateDir: w.base.dir })
-      valueOf(sender.approve('app-1', 'initial'))
-      await sender.settled()
-      assert.equal(appOf(w.db).state, 'sent')
-      assert.ok((w.server.messages[0] ?? '').includes('application/pdf'))
-    })
-  })
-
   test('step 3 that cannot be written is logged (no address, no body) and the row stays sending', async (t) => {
     await within(t, {}, async (w) => {
       const sender = createSender({

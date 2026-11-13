@@ -6,9 +6,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { connectNodemailer, readPassword, sendMail, type ConnectSmtp, type SendInput, type SendResult } from '@factotum/mail'
 import { startFakeSmtp, type FakeSmtpServer, type SmtpCut } from '@factotum/mail/testing'
@@ -123,11 +123,14 @@ export async function world(options: WorldOptions = {}): Promise<World | null> {
   const clock = manualClock(NOW_ISO)
   const timers = manualTimers()
   const { log, lines } = capturedLog()
-  const pdf = join(base.dir, 'cv-v1.pdf')
+  // By its real path (macOS's tmpdir is a symlink): the sender attaches the realpath it confined.
+  const stateDir = join(realpathSync(base.dir), 'state')
+  const pdf = join(stateDir, 'artifacts', 'app-1', 'v1', 'cv.pdf')
+  mkdirSync(dirname(pdf), { recursive: true, mode: 0o700 })
   if (options.noPdf !== true) writeFileSync(pdf, '%PDF-1.7\nnot really a CV\n')
   const passwordFile = join(base.dir, 'gmail-jobs')
   writeFileSync(passwordFile, `${PASSWORD}\n`, { mode: 0o600 })
-  const db = valueOf(await openDb({ dir: join(base.dir, 'state'), now: clock.now }))
+  const db = valueOf(await openDb({ dir: stateDir, now: clock.now }))
   seedStore(db, options, pdf)
 
   const connect: ConnectSmtp = (given) =>
@@ -150,6 +153,7 @@ export async function world(options: WorldOptions = {}): Promise<World | null> {
     },
     enqueueCheck,
     log,
+    stateDir,
   }
   return {
     base,
