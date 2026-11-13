@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 
-import { contactHashOf, cvContactOf, renderCvHtml } from './render.ts'
+import { contactHashOf, CSP, cvContactOf, renderCvHtml } from './render.ts'
 import { DOC, PROFILE } from './test-cv.ts'
 import type { Profile } from '../types.ts'
 
@@ -39,12 +39,24 @@ test('without a phone nothing like [phone] is painted, and no separator dangles'
 })
 
 test('the HTML stands alone: no file://, no http, no script; the font is a data: URI of the given bytes', () => {
-  const { html } = renderCvHtml(DOC, withIdentity({ linkedin: 'https://www.linkedin.com/in/alex-example' }), FONT)
+  const rendered = renderCvHtml(DOC, withIdentity({ linkedin: 'https://www.linkedin.com/in/alex-example' }), FONT)
+  // The CSP's `http-equiv` is the one `http` allowed: its own test pins it.
+  const html = rendered.html.replace(CSP, '')
   assert.equal(html.includes('file://'), false)
   assert.equal(html.includes('http'), false)
   assert.equal(html.includes('<script'), false)
   assert.ok(html.includes(`url(data:font/woff2;base64,${Buffer.from(FONT).toString('base64')}) format('woff2')`))
   assert.ok(html.includes('linkedin.com/in/alex-example'))
+})
+
+test('a CSP denies everything but inline style and data: fonts, before any style; no http, file: or @import', () => {
+  const { html } = renderCvHtml(DOC, PROFILE, FONT)
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">`
+  assert.equal(CSP, csp)
+  assert.ok(html.includes(csp))
+  assert.ok(html.indexOf(csp) < html.indexOf('<style>'), 'in force before the first style')
+  const rest = html.replace(csp, '')
+  for (const banned of ['http', 'file:', '@import']) assert.equal(rest.includes(banned), false, banned)
 })
 
 test('A4 with a 12 mm margin', () => {

@@ -7,7 +7,9 @@
  * does not: the headless one prints by itself, without touching the owner's processes or profile).
  * No `--no-sandbox` (≈ 50 runs, exit 0), no `--headless=new` (in 152 `--headless` is already the new
  * mode), no profile per run. The binary is the config's `chromium`, `/usr/lib/chromium/chromium` by
- * default — not the launcher that adds the owner's `chromium-flags.conf`.
+ * default — not the launcher that adds the owner's `chromium-flags.conf`. Three flags on top of D5's,
+ * hardening only: `--disable-extensions`, `--no-first-run`, `--disable-background-networking` (no
+ * extension, no first-run work, no component updates or other background requests from the profile).
  *
  * THE HTML GOES TO `<stateDir>/render/<id>/cv.html` and the PDF next to it. A PDF left there by an
  * earlier print is removed first, so an exit 0 that wrote nothing is never taken for a print.
@@ -43,6 +45,10 @@ export function chromiumArgs(stateDir: string, html: string, pdf: string): reado
     '--headless',
     '--disable-gpu',
     '--no-pdf-header-footer',
+    // Nothing on the side: none of these touches layout or print, so A2's measurements still hold.
+    '--disable-extensions',
+    '--no-first-run',
+    '--disable-background-networking',
     `--user-data-dir=${join(stateDir, 'chromium')}`,
     `--print-to-pdf=${pdf}`,
     pathToFileURL(html).href,

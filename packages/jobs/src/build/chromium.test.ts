@@ -37,11 +37,14 @@ function modes(stateDir: string, ...lines: string[]): void {
   writeFileSync(join(stateDir, 'chromium', 'fake-chromium.modes'), `${lines.join('\n')}\n`)
 }
 
-test('the command is D5’s, exactly: headless, no GPU, no header or footer, its own profile, no --no-sandbox', () => {
+test('the command is D5’s, exactly: headless, no GPU, no header or footer, its own profile, no --no-sandbox — and nothing on the side', () => {
   assert.deepEqual(chromiumArgs('/state', '/state/render/a1/cv.html', '/state/render/a1/cv.pdf'), [
     '--headless',
     '--disable-gpu',
     '--no-pdf-header-footer',
+    '--disable-extensions',
+    '--no-first-run',
+    '--disable-background-networking',
     '--user-data-dir=/state/chromium',
     '--print-to-pdf=/state/render/a1/cv.pdf',
     'file:///state/render/a1/cv.html',

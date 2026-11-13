@@ -10,7 +10,7 @@
  *
  * SELF-CONTAINED: every text escaped; fixed A4 CSS; Geist inlined as a `data:` URI; no script, no
  * `file://`, no `http` — Chromium needs no permission to read anything else, and the PDF it prints is
- * the same on every machine. The same doc and the same contact give the same bytes (a reprint, D5).
+ * the same on every machine. A CSP (`CSP`) refuses anything else the page might try to load. The same doc and the same contact give the same bytes (a reprint, D5).
  */
 
 import { createHash } from 'node:crypto'
@@ -32,6 +32,13 @@ export interface RenderedCv {
 }
 
 const SEPARATOR = ' · '
+
+/**
+ * Defence in depth for what the escaping already prevents: the page may load nothing — no script, no
+ * image, no request — but its own inline style and the inlined `data:` font. Its one `http` is the
+ * attribute's name.
+ */
+export const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">`
 
 /** What the template reads of the profile, in a fixed key order: that order IS the canonical JSON. */
 export function cvContactOf(profile: Profile): CvContact {
@@ -140,6 +147,7 @@ export function renderCvHtml(doc: CvDoc, profile: Profile, font: Uint8Array): Re
 <html lang="en">
 <head>
 <meta charset="utf-8">
+${CSP}
 <title>${escapeHtml(contact.name)}</title>
 <style>
 ${fontFace(font)}
