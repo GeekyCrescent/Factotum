@@ -81,6 +81,8 @@ test('the real dry run: 100 / 18 / 25 / 37 and the channels per file', { skip },
   show(t, 'kitRefs', report.kitRefs.map((r) => `${r.file}#${r.n} §${r.section} ${r.question} → ${r.matched}${r.ambiguous ? ' (ambiguous)' : ''}`))
   show(t, 'verified', report.verified.map((v) => `${v.file}#${v.n} ${v.email}`))
   show(t, 'kit', report.kit)
+  show(t, 'unparsed', report.unparsed)
+  show(t, 'issues', report.issues)
   show(t, 'suggestedHealth', report.companies.suggestedHealth)
   show(t, 'queued', report.queued)
   db.close()
