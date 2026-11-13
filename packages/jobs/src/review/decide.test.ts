@@ -6,7 +6,7 @@ import type { Approved } from '../send/send.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
-import { eventually, tempBase } from '../test-support.ts'
+import { capturedLog, eventually, tempBase } from '../test-support.ts'
 import { fail, ok, type Profile, type Result, type SendKind, type Warning } from '../types.ts'
 import type { Batch, ReviewItemRef } from './batch.ts'
 import { decide, NOT_A_FIT, type DecideDeps, type Decision } from './decide.ts'
@@ -50,6 +50,7 @@ async function world(approveResult: Result<Approved> = ok({ state: 'sending', ki
     },
     queue,
     pdfExists: () => true,
+    log: capturedLog().log,
     relintOne: (_q, entity) => {
       relinted.push(entity.id)
       return ok(undefined)
@@ -119,6 +120,37 @@ describe('decide approve (T-A11, T-A12 through the sender)', () => {
     assert.equal(batch?.results[item.itemId], 'approved')
     assert.equal(batch?.cursor, 1)
     errorOf(decide(w.deps, decision(item, 'approve')), 'conflict', 'already-decided')
+  })
+
+  test('a batch note that cannot be written after the send moved: logged, and the answer says it was not recorded', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    const log = capturedLog()
+    const db: Db = { ...w.db, tx: () => fail('module-error', 'disk I/O error') }
+    const decided = valueOf(decide({ ...w.deps, db, log: log.log }, decision(item, 'approve')))
+    assert.deepEqual(decided, { itemId: item.itemId, result: null, send: { state: 'sending', kind: 'initial' }, unrecorded: 'disk I/O error' })
+    assert.equal(w.approvals.length, 1, 'the send is not undone')
+    assert.ok(log.lines.some((line) => line.startsWith('error') && line.includes('disk I/O error') && line.includes(item.itemId)))
+    assert.equal(w.batch()?.results[item.itemId], undefined)
+  })
+
+  test('a batch closed while the sender ran: the send stands, the answer says it was not recorded', async () => {
+    const w = await world()
+    insertApp(w.db, { id: 'a1', state: 'ready' })
+    const item = itemOf(w.start(), 'a1')
+    const log = capturedLog()
+    const approve: DecideDeps['approve'] = (...args) => {
+      w.db.tx((q) => {
+        repo.closeBatches(q, NOW)
+        return ok(undefined)
+      })
+      return w.deps.approve(...args)
+    }
+    const decided = valueOf(decide({ ...w.deps, approve, log: log.log }, decision(item, 'approve')))
+    assert.equal(decided.result, null)
+    assert.equal(decided.unrecorded, 'no such item in the open batch')
+    assert.equal(log.lines.length, 1)
   })
 
   test('a refusal of the sender (check-pending) passes through and decides nothing', async () => {

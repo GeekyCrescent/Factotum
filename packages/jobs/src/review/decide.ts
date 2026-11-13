@@ -21,6 +21,8 @@
  */
 
 import { instructionEvent } from '../ai/returns.ts'
+import type { Logger } from '@factotum/core'
+
 import type { Queue, RelintFn } from '../ai/queue.ts'
 import type { Approved, Sender } from '../send/send.ts'
 import { checkIt } from '../build/verify.ts'
@@ -62,6 +64,8 @@ export interface DecideDeps {
   readonly pdfExists: (path: string) => boolean
   /** L4's re-lint of one entity, for T-A10 (injected, as the queue's). */
   readonly relintOne: RelintFn
+  /** Where a batch note that could not be written after a send goes. */
+  readonly log: Logger
 }
 
 export interface Decided {
@@ -70,6 +74,11 @@ export interface Decided {
   readonly result: ItemResult | null
   /** The sender's answer to an `approve`. */
   readonly send?: Approved
+  /**
+   * An `approve` whose send moved but whose batch note could not be written: why (`result` is then
+   * null). The send stands — the item leaves the batch on the next read, as anything sent does.
+   */
+  readonly unrecorded?: string
 }
 
 interface Target {
@@ -189,12 +198,16 @@ function approve(deps: DecideDeps, decision: Decision): Result<Decided> {
   const sent = deps.approve(target.value.applicationId, 'initial', { addressOverride: decision.addressOverride === true })
   if (!sent.ok) return sent
   // The send is written; the batch's note of it is its own `tx`, re-read so a decision meanwhile is kept.
-  deps.db.tx((q) => {
+  const noted = deps.db.tx((q) => {
     const fresh = targetOf(q, decision.itemId)
-    if (fresh.ok) record(q, fresh.value, 'approved')
+    if (!fresh.ok) return fresh
+    record(q, fresh.value, 'approved')
     return ok(undefined)
   })
-  return ok({ itemId: decision.itemId, result: 'approved', send: sent.value })
+  if (noted.ok) return ok({ itemId: decision.itemId, result: 'approved', send: sent.value })
+  const what = `application ${target.value.applicationId} was approved (${sent.value.state}) but item ${decision.itemId} could not be recorded in the batch`
+  deps.log.error(`jobs review: ${what}: ${noted.error.reason}`)
+  return ok({ itemId: decision.itemId, result: null, send: sent.value, unrecorded: noted.error.reason })
 }
 
 export function decide(deps: DecideDeps, decision: Decision): Result<Decided> {
