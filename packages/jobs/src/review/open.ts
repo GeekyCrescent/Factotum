@@ -70,8 +70,11 @@ export function newBatchCount(q: Queries, at: Date, timeZone: string): number {
   return buildBatch(poolOf(q), { today: todayIn(at, timeZone), timeZone, batchSize: Number.POSITIVE_INFINITY, newId }).length
 }
 
-/** Whether the entity of an item is still in a batch state. A reply stays until it is marked done (`pendingAsks`). */
-function isLive(q: Queries, item: ReviewItemRef, asks: ReadonlySet<string>): boolean {
+/**
+ * Whether the entity of an item is still in a batch state. A reply stays until it is marked done
+ * (`pendingAsks`: `asks` holds their event ids). The tracker counts the open batch with it (review 1a).
+ */
+export function isLive(q: Queries, item: ReviewItemRef, asks: ReadonlySet<string>): boolean {
   const appLive = (id: string): boolean => APP_IN_BATCH.includes(repo.getApplication(q, id)?.state ?? 'closed')
   const followupLive = (id: string): boolean => FOLLOWUP_IN_BATCH.includes(repo.getFollowup(q, id)?.state ?? 'cancelled')
   switch (item.kind) {

@@ -6,7 +6,8 @@
 import type { Queue } from '../ai/queue.ts'
 import { BACKUP_FAILING, WAVE2_FAILING } from '../clock.ts'
 import type { MailHealth } from '../mail-health.ts'
-import { newBatchCount } from '../review/open.ts'
+import type { ReviewItemRef } from '../review/batch.ts'
+import { isLive, newBatchCount } from '../review/open.ts'
 import type { SeenBatch } from '../review/seen.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -88,7 +89,7 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
         counts: countsOf(apps),
         reviewable: newBatchCount(q, now(), timeZone),
         batchOpen: open !== undefined,
-        batchUndecided: open === undefined ? 0 : undecidedIn(open),
+        batchUndecided: open === undefined ? 0 : undecidedIn(q, open),
         missingPhone: isPhoneMissing(repo.latestProfileVersion(q)?.profile),
         notices: health().warnings,
         sends: sendsNeeding(q, apps, staleBefore()),
@@ -108,8 +109,15 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
   return { health, overview, answer, file }
 }
 
-/** The items of the open batch with no result yet: while there is one, the tracker continues it (R8). */
-const undecidedIn = (batch: repo.StoredBatch): number => batch.items.filter((item) => typeof item.itemId !== 'string' || batch.results[item.itemId] === undefined).length
+/**
+ * The items of the open batch with no result yet whose entity is still in a batch state — the ones the
+ * review would show (its read prunes the rest): while there is one, the tracker continues it (R8).
+ */
+function undecidedIn(q: Queries, batch: repo.StoredBatch): number {
+  const asks = new Set(repo.pendingAsks(q).map((reply) => reply.eventId))
+  const undecided = (item: Readonly<Record<string, unknown>>): boolean => typeof item.itemId !== 'string' || batch.results[item.itemId] === undefined
+  return batch.items.filter((item) => undecided(item) && isLive(q, item as unknown as ReviewItemRef, asks)).length
+}
 
 /**
  * A reply deferred while its initial was `sending` that is still not applied once the send ended: the

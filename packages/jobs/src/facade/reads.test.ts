@@ -192,6 +192,29 @@ test('R8 overview: an open batch with an undecided item counts it; a skipped-tod
   assert.equal(overview.reviewable, 1, 'the ready one; the one skipped today waits for tomorrow')
 })
 
+test('review 1a: an undecided item whose application left its batch state is not counted — «Start review», not «Continue review»', async () => {
+  // Arrange: the batch holds the test application, closed before it was decided.
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  insertApp(db, { id: 'a-test', state: 'closed', test: true }, ARTIFACTS)
+  insertApp(db, { id: 'a-ready', state: 'ready' }, ARTIFACTS)
+  valueOf(
+    db.tx((q) => {
+      repo.insertBatch(q, { id: 'b-1', items: [{ itemId: 'i-1', kind: 'application', applicationId: 'a-test' }], cursor: 0, results: {} }, NOW)
+      return ok(undefined)
+    }),
+  )
+
+  // Act
+  const overview = readsOf(db).overview()
+
+  // Assert
+  assert.equal(overview.batchOpen, true)
+  assert.equal(overview.batchUndecided, 0)
+  assert.equal(overview.reviewable, 1)
+})
+
 test('R6 batch answer: says the profile has no phone, so the review warns on top (crit. 15)', async () => {
   // Arrange
   using base = tempBase()
