@@ -3,6 +3,7 @@
  * anything is written, and what the real import answers. Pure: built from the seed and the plan.
  */
 
+import { isSendableAddress } from '../shape.ts'
 import type { Channel } from '../types.ts'
 import type { ByHandResult } from './by-hand.ts'
 import type { SeedIssue } from './issues.ts'
@@ -98,6 +99,22 @@ function fileReports(seed: Seed, plan: Plan): readonly FileReport[] {
   })
 }
 
+/**
+ * The addresses the `create` transition (T-D1) refuses: they are stored as text without a state, so
+ * approving that application is `no-address` (write.ts `withAddress`). The companies file's first.
+ */
+function invalidAddresses(seed: Seed, plan: Plan): readonly SeedIssue[] {
+  const ofCompanies = seed.companies.flatMap(({ company }) =>
+    company.contacts.flatMap((c) =>
+      c.email === null || isSendableAddress(c.email) ? [] : [{ kind: 'invalid-address' as const, file: seed.companiesFile, n: null, detail: `${company.name}: ${c.email}` }],
+    ),
+  )
+  const ofEntries = plan.entries.flatMap((p) =>
+    p.entry.addresses.flatMap((a) => (isSendableAddress(a.email) ? [] : [{ kind: 'invalid-address' as const, file: p.file, n: p.entry.n, detail: a.email }])),
+  )
+  return [...ofCompanies, ...ofEntries]
+}
+
 export function buildReport(
   seed: Seed,
   plan: Plan,
@@ -122,7 +139,10 @@ export function buildReport(
     verified: entries.flatMap((p) =>
       p.entry.addresses.flatMap((a) => (a.status === 'verified' && a.evidence !== null ? [{ ...ref(p), email: a.email, evidence: a.evidence }] : [])),
     ),
-    issues: entries.flatMap((p) => p.entry.issues.map((issue) => ({ kind: issue.kind, file: p.file, n: p.entry.n, detail: issue.detail }))),
+    issues: [
+      ...invalidAddresses(seed, plan),
+      ...entries.flatMap((p) => p.entry.issues.map((issue) => ({ kind: issue.kind, file: p.file, n: p.entry.n, detail: issue.detail }))),
+    ],
     unparsed: seed.unparsed,
     kit: { leftovers: seed.kit.leftovers, templateWarnings: seed.templateWarnings },
     byHand: entries.flatMap((p) => (p.byHand === null ? [] : [{ ...ref(p), at: p.byHand.at, result: p.byHand.result }])),

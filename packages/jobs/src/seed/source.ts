@@ -48,6 +48,8 @@ export interface ReadPackage {
 }
 
 export interface Seed {
+  /** The companies file's base name, for the report. */
+  readonly companiesFile: string
   readonly companies: readonly SeededCompany[]
   readonly kit: Kit
   readonly cvs: BaseCvs
@@ -135,5 +137,5 @@ export async function readSeed(source: SeedSource): Promise<Result<Seed>> {
     ...kit.unparsed.map((u) => ({ file: basename(seed.kit), ...u })),
     ...packages.value.flatMap(({ name, parsed }) => parsed.unparsed.map((u) => ({ file: name, ...u }))),
   ]
-  return ok({ companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
+  return ok({ companiesFile: basename(seed.companies), companies: companies.value, kit, cvs: cvs.value, templateWarnings: warnings, packages: packages.value, unparsed })
 }

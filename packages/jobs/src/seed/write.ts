@@ -112,6 +112,7 @@ const blankContact = (companyId: string, from: Partial<Contact> = {}): Contact =
 function withAddress(contact: Contact, email: string, seenAt: string | null, now: Date): Contact {
   const created = addressTransition(contact, { type: 'create', email, seen: seenAt === null ? null : { url: seenAt } }, now)
   // An address the rule of `to` refuses keeps its text, without a state: approving it is `no-address`.
+  // The report lists it as `invalid-address` (report.ts `invalidAddresses`, the same rule).
   return created.ok ? created.value : { ...contact, email }
 }
 

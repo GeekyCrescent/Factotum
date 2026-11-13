@@ -43,6 +43,21 @@ test('issues: a form line that does not parse and an empty answer are reported; 
   db.close()
 })
 
+test('issues: an address the create transition refuses is invalid-address, in an entry or in the companies file', async () => {
+  const replace = {
+    [ADS]: (await fixture(ADS)).replace('email hr@petrel.example', 'email {hr}@petrel.example'),
+    'companies.json': (await fixture('companies.json')).replace('"hello@wattle-robotics.example"', '"[hello]@wattle-robotics.example"'),
+  }
+  const report = await dryRunWith(replace)
+  assert.deepEqual(
+    report.issues.filter((i) => i.kind === 'invalid-address'),
+    [
+      { kind: 'invalid-address', file: 'companies.json', n: null, detail: 'Wattle Robotics: [hello]@wattle-robotics.example' },
+      { kind: 'invalid-address', file: ADS, n: 5, detail: '{hr}@petrel.example' },
+    ],
+  )
+})
+
 test('unparsed: a "## " heading that is not "## N. Title", in a package or in the kit, is in the report with its line count', async () => {
   const ads = `${await fixture(ADS)}\n\n## Appendix\n\nOne line.\nTwo lines.\n`
   const report = await dryRunWith({ [ADS]: ads })
