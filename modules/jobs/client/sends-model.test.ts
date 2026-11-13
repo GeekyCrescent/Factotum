@@ -1,0 +1,97 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import type { SendView } from './contract.ts'
+import type { SendKey } from './model.ts'
+import {
+  MAX_LINES,
+  MAX_POLL_FAILURES,
+  dismissed,
+  isPolling,
+  pollFailed,
+  polled,
+  repolled,
+  retryRefused,
+  tracked,
+  type TrackedSend,
+} from './sends-model.ts'
+
+const key = (applicationId: string, company = applicationId): SendKey => ({ applicationId, kind: 'initial', company })
+const view = (state: SendView['state'], reason: string | null = null): SendView => ({ kind: 'initial', state, at: '', reason })
+const ids = (sends: readonly TrackedSend[]): readonly string[] => sends.map((send) => send.key.applicationId)
+
+test('a tracked send starts «Sending…» and is polled', () => {
+  const sends = tracked([], key('a', 'Acme'))
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0]?.line.text, 'Sending to Acme…')
+  assert.equal(isPolling(sends[0] as TrackedSend), true)
+})
+
+test('tracking the same send again replaces its line, it does not add one', () => {
+  const once = tracked([], key('a'))
+  const twice = tracked(once, key('a'))
+  assert.deepEqual(ids(twice), ['a'])
+})
+
+test('an answer that changes nothing returns the same list, so nothing is drawn again', () => {
+  const sends = tracked([], key('a'))
+  assert.equal(polled(sends, key('a'), view('sending')), sends)
+})
+
+test('an answer moves the line on and stops its poll when final', () => {
+  const sends = polled(tracked([], key('a', 'Acme')), key('a'), view('sent'))
+  assert.equal(sends[0]?.line.text, 'Sent to Acme ✓')
+  assert.equal(isPolling(sends[0] as TrackedSend), false)
+})
+
+test('an answer for a send no longer tracked changes nothing', () => {
+  const sends = tracked([], key('a'))
+  assert.equal(polled(sends, key('zz'), view('sent')), sends)
+  assert.equal(pollFailed(sends, key('zz')), sends)
+})
+
+test('only final ok lines are evicted; a failed or unknown line stays until dismissed', () => {
+  let sends: readonly TrackedSend[] = []
+  sends = polled(tracked(sends, key('f')), key('f'), view('failed', '535 auth'))
+  sends = polled(tracked(sends, key('u')), key('u'), view('send-unknown'))
+  sends = tracked(sends, key('p'))
+  sends = polled(tracked(sends, key('ok1')), key('ok1'), view('sent'))
+  sends = tracked(sends, key('p2'))
+  // Five lines: the ok one is the only one that may go.
+  assert.deepEqual(ids(sends), ['f', 'u', 'p', 'p2'])
+  assert.equal(sends.length > MAX_LINES, true)
+  sends = dismissed(sends, key('f'))
+  assert.deepEqual(ids(sends), ['u', 'p', 'p2'])
+})
+
+test('the oldest ok lines go first once the bar is full', () => {
+  let sends: readonly TrackedSend[] = []
+  for (const id of ['a', 'b', 'c']) sends = polled(tracked(sends, key(id)), key(id), view('sent'))
+  sends = tracked(sends, key('d'))
+  assert.deepEqual(ids(sends), ['b', 'c', 'd'])
+})
+
+test(`after ${MAX_POLL_FAILURES} failed reads in a row the line says «status unknown» and stops polling`, () => {
+  let sends = tracked([], key('a', 'Acme'))
+  for (let n = 1; n < MAX_POLL_FAILURES; n += 1) sends = pollFailed(sends, key('a'))
+  assert.equal(isPolling(sends[0] as TrackedSend), true)
+  assert.equal(sends[0]?.line.text, 'Sending to Acme…')
+  sends = pollFailed(sends, key('a'))
+  assert.equal(sends[0]?.line.text, 'Acme: status unknown — check the tracker')
+  assert.equal(sends[0]?.lost, true)
+  assert.equal(sends[0]?.line.retry, false, 'a lost read never offers to SEND again')
+  assert.equal(isPolling(sends[0] as TrackedSend), false)
+  const back = repolled(sends, key('a'))
+  assert.equal(isPolling(back[0] as TrackedSend), true)
+  assert.equal(back[0]?.failures, 0)
+  assert.equal(back[0]?.lost, false)
+})
+
+test('a good read resets the failure count', () => {
+  const sends = polled(pollFailed(tracked([], key('a')), key('a')), key('a'), view('sending'))
+  assert.equal(sends[0]?.failures, 0)
+})
+
+test('a refused retry shows why and offers Retry again', () => {
+  const sends = retryRefused(polled(tracked([], key('a', 'Acme')), key('a'), view('failed')), key('a'), 'smtp down')
+  assert.deepEqual(sends[0]?.line, { text: 'Acme: smtp down', tone: 'err', final: true, retry: true })
+})

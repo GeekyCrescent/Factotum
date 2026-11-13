@@ -18,10 +18,11 @@ import type { ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { BatchView, Decision, ReviewItem, ViewProps } from './contract.ts'
 import { createLock, decisionOn, viewOf } from './guard.ts'
-import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf, type SendKey } from './model.ts'
+import { approveGate, batchSummary, headerOf, keyAction, nextOpen, sendKeyOf } from './model.ts'
+import { sendIdOf } from './sends-model.ts'
 import { ReviewItemView, type ItemActions } from './review-item.tsx'
 import { isRefusal, useBatch } from './use-batch.ts'
-import { useSends, type TrackedSend } from './use-sends.ts'
+import { useSends, type SendsState } from './use-sends.ts'
 import { useSettle } from './use-settle.ts'
 
 /** The focus is somewhere typing goes: the keys are the text's, not the screen's. */
@@ -148,10 +149,10 @@ export function Review({ props }: { readonly props: ViewProps }) {
     skip,
   }
 
-  if (answer === undefined) return <Shell error={error} onDismiss={clearError} sends={sends.sends} onRetry={sends.retry} />
+  if (answer === undefined) return <Shell error={error} onDismiss={clearError} sends={sends} />
   if (batch === null) {
     return (
-      <Shell error={error} onDismiss={clearError} sends={sends.sends} onRetry={sends.retry}>
+      <Shell error={error} onDismiss={clearError} sends={sends}>
         <div class="j-empty">
           <p>No batch open.</p>
           <button type="button" class="btn primary" disabled={answer.ready === 0} onClick={() => void start()}>
@@ -163,7 +164,7 @@ export function Review({ props }: { readonly props: ViewProps }) {
   }
 
   return (
-    <Shell batch={batch} index={index} error={error ?? notice} onDismiss={() => (clearError(), setNotice(undefined))} sends={sends.sends} onRetry={sends.retry}>
+    <Shell batch={batch} index={index} error={error ?? notice} onDismiss={() => (clearError(), setNotice(undefined))} sends={sends}>
       {item === undefined ? (
         <End batch={batch} ready={answer.ready} onStart={() => void start()} />
       ) : (
@@ -190,12 +191,40 @@ interface ShellProps {
   readonly index?: number
   readonly error: string | undefined
   readonly onDismiss: () => void
-  readonly sends: readonly TrackedSend[]
-  readonly onRetry: (key: SendKey) => Promise<void>
+  readonly sends: SendsState
   readonly children?: ComponentChildren
 }
 
-function Shell({ batch, index, error, onDismiss, sends, onRetry, children }: ShellProps) {
+/** The send lines: «Retry» resends a failed one; «Retry polling» reads a lost one again; the rest of what needs the owner stays until «Dismiss». */
+function SendLines({ sends }: { readonly sends: SendsState }) {
+  if (sends.sends.length === 0) return null
+  return (
+    <ul class="j-sends" role="status">
+      {sends.sends.map((send) => (
+        <li key={sendIdOf(send.key)} class={`j-send ${send.line.tone}`}>
+          {send.line.text}
+          {send.line.retry ? (
+            <button type="button" class="btn sm quiet" onClick={() => void sends.retry(send.key)}>
+              Retry
+            </button>
+          ) : null}
+          {send.lost ? (
+            <button type="button" class="btn sm quiet" onClick={() => sends.repoll(send.key)}>
+              Retry polling
+            </button>
+          ) : null}
+          {send.line.final && send.line.tone !== 'ok' ? (
+            <button type="button" class="btn sm quiet" onClick={() => sends.dismiss(send.key)}>
+              Dismiss
+            </button>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Shell({ batch, index, error, onDismiss, sends, children }: ShellProps) {
   const header = batch === undefined || index === undefined ? undefined : headerOf(batch, index < 0 ? batch.items.length : index)
   return (
     <div class="j-screen">
@@ -217,20 +246,7 @@ function Shell({ batch, index, error, onDismiss, sends, onRetry, children }: She
             ))}
           </ol>
         )}
-        {sends.length === 0 ? null : (
-          <ul class="j-sends" role="status">
-            {sends.map((send) => (
-              <li key={`${send.key.applicationId}/${send.key.kind}`} class={`j-send ${send.line.tone}`}>
-                {send.line.text}
-                {send.line.retry ? (
-                  <button type="button" class="btn sm quiet" onClick={() => void onRetry(send.key)}>
-                    Retry
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
+        <SendLines sends={sends} />
       </header>
       {error === undefined ? null : (
         <div class="notice err j-notice" role="alert">
