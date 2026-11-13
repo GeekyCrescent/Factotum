@@ -23,6 +23,7 @@ import type { FetchLike, Lookup } from '../scout/net.ts'
 import type {
   Address,
   AppState,
+  Artifacts,
   Application,
   Channel,
   FollowupState,
@@ -207,6 +208,12 @@ export interface ApplicationCard {
   readonly warnings: readonly Warning[]
   readonly jobs: { readonly cv: JobStatus; readonly letter: JobStatus; readonly reprint: JobStatus }
   readonly sends: readonly SendView[]
+  /** Where a `form` or `platform` application is submitted (`target.url`); the assist panel's «Open form». */
+  readonly targetUrl: string | null
+  /** `target.instruction`: the package's «Send via», like «LinkedIn message to Tom Crawford (first)». */
+  readonly instruction: string | null
+  /** The package's «Skills to tick / Do not tick» (D8 step 4); null when the entry has none. */
+  readonly skills: Artifacts['skills']
 }
 
 export interface FollowupCard {

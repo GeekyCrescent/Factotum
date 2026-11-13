@@ -83,6 +83,9 @@ export function applicationCard(q: Queries, app: Application, profile: Profile):
     warnings: app.warnings,
     jobs: jobsOf(q, app.id),
     sends: app.sends.map(sendView),
+    targetUrl: app.target.url,
+    instruction: app.target.instruction,
+    skills: artifacts?.skills ?? null,
   }
 }
 

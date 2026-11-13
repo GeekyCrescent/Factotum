@@ -116,3 +116,23 @@ test('C1 views: ready outside the batch as the store keeps it — its items read
   // The stored items, no cast: `readyOutside` reads what the store answers.
   assert.equal(db.read((q) => readyOutside(q, repo.openBatch(q)?.items ?? [])), 1)
 })
+
+test('C1 views: a form card carries what the assist panel opens and ticks — target URL, instruction, skills (R5b)', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  const skills = { tick: ['TypeScript', 'AWS'], doNotTick: ['Go'] }
+  const app = insertApp(
+    db,
+    { channel: 'form', target: { contactId: null, to: null, url: 'https://acme.example/apply', contactName: null, instruction: 'the form on acme.example/apply' } },
+    { ...ARTIFACTS, skills },
+  )
+
+  // Act
+  const card = db.read((q) => applicationCard(q, app, PROFILE))
+
+  // Assert
+  assert.equal(card.targetUrl, 'https://acme.example/apply')
+  assert.equal(card.instruction, 'the form on acme.example/apply')
+  assert.deepEqual(card.skills, skills)
+})
