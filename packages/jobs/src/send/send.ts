@@ -14,7 +14,8 @@
  * `approve` DOES STEP 1 AND RETURNS: steps 2–3 run in a registered promise that never rejects, which
  * `stop()` aborts and waits for — and then step 3 is NOT written (D9 step 5): the row stays `sending`
  * and the next start makes it `send-unknown`; what the aborted attempt did (an SMTP `250` with its
- * messageId included) goes to the log only. Nothing here retries by itself.
+ * messageId included) goes to the log only. Nothing here retries a SEND by itself; a step 3 whose
+ * `tx` fails is written once more after `STEP3_RETRY_MS`, then given up with `send-unrecorded`.
  *
  * NEVER IN AN EVENT, A REASON OR THE LOG: the password, the body, the subject, the address.
  */
@@ -37,6 +38,8 @@ export const MESSAGE_ID_HOST = 'jobs.factotum.local'
 export const STOPPING = 'stopping'
 /** The reason of a step 2 that threw (D9, revisión de E). */
 export const INTERNAL_ERROR = 'internal-error'
+/** A step 3 whose `tx` failed is tried once more after this (D9, revisión del corte 1a). */
+export const STEP3_RETRY_MS = 2_000
 const DAY_MS = 86_400_000
 /** Every zone is within ±14 h of UTC, so today's rows changed in the last two days. */
 const CAP_WINDOW_MS = 2 * DAY_MS
@@ -293,12 +296,56 @@ export function createSender(deps: SenderDeps): Sender {
     if (!recorded.ok) report(`send ${id}/initial: the deferred-replies-failed event was not written (${recorded.error.code})`)
   }
 
-  /** Step 3 in its own `tx`; for the initial, then the deferred replies in another. */
-  function record(id: string, kind: SendKind, result: SendResult): void {
+  /** Step 3 in its own `tx`: the instant it was written at. */
+  function writeStep3(id: string, kind: SendKind, result: SendResult): Result<Date> {
     const at = deps.now()
     const written = db.tx((q) => finish(q, id, kind, result, at))
-    if (!written.ok) return report(`send ${id}/${kind}: step 3 was not written (${written.error.code} ${written.error.reason}); the row stays sending until the restart`)
-    if (kind === 'initial') applyDeferredAfter(id, at)
+    return written.ok ? ok(at) : written
+  }
+
+  /** `ms` on the injected timers, cut short by `stop()`'s abort; the timer never outlives it. */
+  function pause(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) return resolve()
+      const done = (): void => {
+        timer[Symbol.dispose]()
+        signal.removeEventListener('abort', done)
+        resolve()
+      }
+      const timer = deps.timers.setTimeout(done, ms)
+      signal.addEventListener('abort', done, { once: true })
+    })
+  }
+
+  /**
+   * Step 3 given up (D9, revisión del corte 1a): the row stays `sending` until the restart makes it
+   * `send-unknown`. What SMTP said is appended as `send-unrecorded` — in a `tx` of its own, which may
+   * work where step 3 did not (step 3 is refused, for one, when the row moved under it) — and logged.
+   */
+  function unrecorded(id: string, kind: SendKind, result: SendResult, error: { readonly code: string; readonly reason: string }): void {
+    report(`send ${id}/${kind}: step 3 was not written (${error.code} ${error.reason}), twice; the row stays sending until the restart (${outcomeWord(result)})`)
+    const appended = db.tx((q) => {
+      const companyId = repo.getApplication(q, id)?.companyId ?? null
+      return ok(repo.appendEvent(q, { kind: 'send-unrecorded', data: unrecordedData(kind, result), applicationId: id, companyId }, deps.now()))
+    })
+    if (!appended.ok) report(`send ${id}/${kind}: the send-unrecorded event was not written either (${appended.error.code})`)
+  }
+
+  /**
+   * Step 3, and ONCE MORE after `STEP3_RETRY_MS` when its `tx` fails (a lock that lifts); then given up
+   * (`unrecorded`). `stop()` during the wait: nothing written, as any stop (`stoppedWith`). For the
+   * initial, then the deferred replies in another `tx`.
+   */
+  async function record(id: string, kind: SendKind, result: SendResult, signal: AbortSignal): Promise<void> {
+    let written = writeStep3(id, kind, result)
+    if (!written.ok) {
+      report(`send ${id}/${kind}: step 3 failed (${written.error.code}); trying it once more in ${STEP3_RETRY_MS} ms`, 'warn')
+      await pause(STEP3_RETRY_MS, signal)
+      if (signal.aborted) return stoppedWith(id, kind, result)
+      written = writeStep3(id, kind, result)
+    }
+    if (!written.ok) return unrecorded(id, kind, result, written.error)
+    if (kind === 'initial') applyDeferredAfter(id, written.value)
   }
 
   /**
@@ -316,7 +363,7 @@ export function createSender(deps: SenderDeps): Sender {
   async function deliver(id: string, kind: SendKind, signal: AbortSignal): Promise<void> {
     const result = await transmit(id, kind, signal)
     if (signal.aborted) return stoppedWith(id, kind, result)
-    record(id, kind, result)
+    await record(id, kind, result, signal)
   }
 
   function launch(id: string, kind: SendKind): boolean {
@@ -369,6 +416,14 @@ export function createSender(deps: SenderDeps): Sender {
 const faultOf = (error: unknown): string => (error instanceof Error ? error.name : typeof error)
 
 const refused = (reason: string): SendResult => ({ ok: false, phase: 'before-data', reason })
+
+const outcomeWord = (result: SendResult): 'sent' | 'failed' | 'unknown' => (result.ok ? 'sent' : result.phase === 'before-data' ? 'failed' : 'unknown')
+
+/** What SMTP said of a send whose step 3 was given up: the code and our id, never the body nor the address. */
+function unrecordedData(kind: SendKind, result: SendResult): Readonly<Record<string, unknown>> {
+  if (result.ok) return { kind, outcome: 'sent', messageId: result.messageId, response: result.response }
+  return result.phase === 'before-data' ? { kind, outcome: 'failed', reason: result.reason } : { kind, outcome: 'unknown' }
+}
 
 type SmtpOutcome = { readonly type: 'smtp-accepted'; readonly response: string } | { readonly type: 'smtp-failed'; readonly reason: string } | { readonly type: 'smtp-unknown' }
 

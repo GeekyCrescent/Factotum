@@ -5,14 +5,15 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import type { Queries } from '../store/db.ts'
+import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { errorOf, followup, followupVersion, valueOf } from '../test-state.ts'
+import { eventually } from '../test-support.ts'
 import { fail } from '../types.ts'
 import { appOf, artifacts, eventsOf, PHONE, sentWithFollowup, testProfile, world, write, type World, type WorldOptions } from '../test-send.ts'
 import { applyDeferredRepliesOnStart } from './deferred.ts'
 import { cvFileName, outgoingFor } from './message.ts'
-import { createSender } from './send.ts'
+import { createSender, STEP3_RETRY_MS } from './send.ts'
 
 async function within(t: { skip: (m: string) => void }, options: WorldOptions, body: (w: World) => Promise<void>): Promise<void> {
   const w = await world(options)
@@ -173,7 +174,7 @@ describe('the edges of steps 1 and 3', () => {
     })
   })
 
-  test('step 3 that cannot be written is logged (no address, no body) and the row stays sending', async (t) => {
+  test('step 3 that cannot be written is retried once after STEP3_RETRY_MS; then logged (no address, no body), an event, and the row stays sending', async (t) => {
     await within(t, {}, async (w) => {
       const sender = createSender({
         ...w.deps,
@@ -183,10 +184,45 @@ describe('the edges of steps 1 and 3', () => {
         },
       })
       valueOf(sender.approve('app-1', 'initial'))
+      const messageId = appOf(w.db).sends[0]?.messageId
+      await eventually(() => w.timers.pending().includes(STEP3_RETRY_MS), 'the retry of step 3 armed')
+      assert.equal(w.timers.fire(STEP3_RETRY_MS), 1)
       await sender.settled()
       assert.equal(appOf(w.db).sends[0]?.state, 'sending')
       assert.match(w.lines.join('\n'), /step 3 was not written/)
       assert.ok(!w.lines.join('\n').includes('ada@acme.example'))
+      const unrecorded = eventsOf(w.db).filter((e) => e.kind === 'send-unrecorded')
+      assert.deepEqual(unrecorded.map((e) => e.data), [{ kind: 'initial', outcome: 'sent', messageId, response: '250 2.0.0 OK' }])
+    })
+  })
+
+  test('step 3 that fails once and writes on its retry: the row ends sent, nothing else said', async (t) => {
+    await within(t, {}, async (w) => {
+      let txs = 0
+      const flaky: Db = { ...w.db, tx: (fn) => ((txs += 1) === 2 ? fail('module-error', 'database is locked') : w.db.tx(fn)) }
+      const sender = createSender({ ...w.deps, db: flaky })
+      valueOf(sender.approve('app-1', 'initial'))
+      await eventually(() => w.timers.pending().includes(STEP3_RETRY_MS), 'the retry of step 3 armed')
+      assert.equal(appOf(w.db).sends[0]?.state, 'sending')
+      w.timers.fire(STEP3_RETRY_MS)
+      await sender.settled()
+      assert.equal(appOf(w.db).sends[0]?.state, 'sent')
+      assert.equal(appOf(w.db).state, 'sent')
+      assert.ok(!eventsOf(w.db).some((e) => e.kind === 'send-unrecorded'))
+    })
+  })
+
+  test('stop() while step 3 waits for its retry: it does not wait for the timer, writes nothing, and logs what SMTP said', async (t) => {
+    await within(t, {}, async (w) => {
+      let txs = 0
+      const flaky: Db = { ...w.db, tx: (fn) => ((txs += 1) === 2 ? fail('module-error', 'database is locked') : w.db.tx(fn)) }
+      const sender = createSender({ ...w.deps, db: flaky })
+      valueOf(sender.approve('app-1', 'initial'))
+      await eventually(() => w.timers.pending().includes(STEP3_RETRY_MS), 'the retry of step 3 armed')
+      await sender.stop()
+      assert.equal(appOf(w.db).sends[0]?.state, 'sending')
+      assert.deepEqual(w.timers.pending(), [], 'the retry timer is disposed')
+      assert.match(w.lines.join('\n'), /accepted by SMTP after stop/)
     })
   })
 
