@@ -12,7 +12,9 @@
  *   fail       what the real one does with a file it cannot open: one line on stderr, exit 1
  *   hang       never answers, and starts a grandchild that hangs too (the group must die whole)
  *   stubborn   never answers and ignores SIGTERM (writes `fake-poppler.ready` once it does): only SIGKILL ends it
- * Every call appends its pid to `fake-poppler.calls` in that folder; `hang` appends the grandchild's.
+ *   escape     never answers, and starts a grandchild IN ANOTHER GROUP that holds its stdout open: killing
+ *              the group never brings `close` (the test kills the grandchild itself)
+ * Every call appends its pid to `fake-poppler.calls` in that folder; `hang` and `escape` append the grandchild's.
  */
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -27,6 +29,11 @@ const mode = existsSync(modeFile) ? readFileSync(modeFile, 'utf8').trim() : 'ok'
 if (mode === 'stubborn') {
   process.on('SIGTERM', () => undefined)
   writeFileSync(join(dir, 'fake-poppler.ready'), '')
+  setTimeout(() => process.exit(0), 60_000)
+} else if (mode === 'escape') {
+  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true })
+  grandchild.unref()
+  appendFileSync(join(dir, 'fake-poppler.calls'), `${grandchild.pid}\n`)
   setTimeout(() => process.exit(0), 60_000)
 } else if (mode === 'hang') {
   const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore' })

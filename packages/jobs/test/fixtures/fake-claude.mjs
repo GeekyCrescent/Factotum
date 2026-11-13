@@ -28,7 +28,10 @@
  *   no-stdin     exits 0 at once WITHOUT reading stdin — the EPIPE case
  *   stubborn     like "hang", but ignores SIGTERM: only SIGKILL ends it
  *   refuse       what the real CLI does with a schema it refuses: one line on stderr, exit 1
+ *   escape       like "hang", and starts a grandchild IN ANOTHER GROUP that holds stdout open: killing
+ *                the group never brings `close`. Its pid goes to `fake-claude.calls` too; the test kills it
  */
+import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 appendFileSync('fake-claude.calls', `${process.pid}\n`)
@@ -54,7 +57,12 @@ if (mode === 'refuse') {
   process.exit(1)
 }
 if (mode === 'stubborn') process.on('SIGTERM', () => undefined)
-if (mode === 'hang' || mode === 'stubborn') {
+if (mode === 'escape') {
+  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true })
+  grandchild.unref()
+  appendFileSync('fake-claude.calls', `${grandchild.pid}\n`)
+}
+if (mode === 'hang' || mode === 'stubborn' || mode === 'escape') {
   setTimeout(() => process.exit(0), 60_000)
 } else {
   let prompt = ''

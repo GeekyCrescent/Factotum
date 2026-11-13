@@ -5,7 +5,8 @@
  * COPIED FROM packages/tasks/src/ai/run.ts (the spawning half of `runClaude`, S11), without the
  * prompt and the JSON: `detached: true` so the child leads its own group; the timeout and the signal
  * kill THE GROUP (`killQuietly`), then SIGKILL after a grace; ONE decision per process, on `close` —
- * a binary that is not there emits `error` and may emit `close` too.
+ * a binary that is not there emits `error` and may emit `close` too — or, when a descendant outside
+ * the group keeps stdout open and `close` never comes, `SETTLE_GRACE_MS` after the SIGKILL.
  *
  * NOTHING THROWS OUT OF HERE: every path is a `Result`. A REASON NEVER CARRIES STDERR: Poppler's
  * names the path, Chromium's is noise we cannot vouch for; stderr is drained and dropped.
@@ -20,6 +21,11 @@ import { fail, ok, type Result } from '../types.ts'
 
 /** After SIGTERM, how long the group gets before SIGKILL (the value of `tasks`). */
 export const KILL_GRACE_MS = 5_000
+/**
+ * After SIGKILL, how long `close` gets before the run settles without it: a descendant that left the
+ * group (`setsid`) can hold stdout open forever, and the slot would be lost with it.
+ */
+export const SETTLE_GRACE_MS = 2_000
 /** `pdfinfo` prints < 1 KB; past this it is not an answer. */
 const STDOUT_MAX = 64 * 1024
 
@@ -68,6 +74,7 @@ function settleOn(child: ChildProcess, input: ProcessInput, resolve: (result: Re
   let aborted = false
   let settled = false
   let grace: Disposable | undefined
+  let last: Disposable | undefined
 
   const kill = (): void => {
     killQuietly(child.pid)
@@ -75,8 +82,14 @@ function settleOn(child: ChildProcess, input: ProcessInput, resolve: (result: Re
       try {
         if (child.pid !== undefined) killGroup(child.pid, 'SIGKILL')
       } catch {
-        // Already gone: what was wanted.
+        // Already gone (ESRCH): what was wanted.
       }
+      // `close` waits for every holder of stdout; one outside the group may never let go.
+      last = input.timers.setTimeout(() => {
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        settle(null)
+      }, SETTLE_GRACE_MS)
     }, KILL_GRACE_MS)
   }
   const timer = input.timers.setTimeout(() => {
@@ -94,6 +107,7 @@ function settleOn(child: ChildProcess, input: ProcessInput, resolve: (result: Re
     settled = true
     timer[Symbol.dispose]()
     grace?.[Symbol.dispose]()
+    last?.[Symbol.dispose]()
     input.signal?.removeEventListener('abort', onAbort)
     resolve(conclude({ code, stdout, spawnError, timedOut, aborted }, input))
   }

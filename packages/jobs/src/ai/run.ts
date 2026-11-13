@@ -28,8 +28,13 @@ import { buildClaudeArgs } from './args.ts'
 
 export type { RunUsage } from '../types.ts'
 
-/** After SIGTERM, how long the group gets before SIGKILL: a run settles only on `close`. */
+/** After SIGTERM, how long the group gets before SIGKILL: a run settles on `close`, or `SETTLE_GRACE_MS` after. */
 export const KILL_GRACE_MS = 5_000
+/**
+ * After SIGKILL, how long `close` gets before the run settles without it: a descendant that left the
+ * group (`setsid`) can hold stdout open forever, and the queue's slot would be lost with it.
+ */
+export const SETTLE_GRACE_MS = 2_000
 /** A CV is tens of KB; past this it is not an answer. */
 const STDOUT_MAX = 1024 * 1024
 /** The reason of a limit: ours, never the CLI's text. */
@@ -102,14 +107,21 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
     let settled = false
 
     let grace: Disposable | undefined
+    let last: Disposable | undefined
     const kill = (): void => {
       killQuietly(child.pid)
       grace ??= input.timers.setTimeout(() => {
         try {
           if (child.pid !== undefined) killGroup(child.pid, 'SIGKILL')
         } catch {
-          // Already gone: what was wanted.
+          // Already gone (ESRCH): what was wanted.
         }
+        // `close` waits for every holder of stdout; one outside the group may never let go.
+        last = input.timers.setTimeout(() => {
+          child.stdout?.destroy()
+          child.stderr?.destroy()
+          settle(null)
+        }, SETTLE_GRACE_MS)
       }, KILL_GRACE_MS)
     }
     const timer = input.timers.setTimeout(() => {
@@ -128,6 +140,7 @@ export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
       settled = true
       timer[Symbol.dispose]()
       grace?.[Symbol.dispose]()
+      last?.[Symbol.dispose]()
       input.signal.removeEventListener('abort', onAbort)
       resolve(conclude({ code, stdout, spawnError, stdinError, timedOut, aborted }, input))
     }

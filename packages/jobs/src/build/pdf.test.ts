@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { eventually, manualTimers, realTimers, tempBase } from '../test-support.ts'
 import { countPages, pagesOf, POPPLER_TIMEOUT_MS, renderPreview, type PopplerRun } from './pdf.ts'
-import { KILL_GRACE_MS } from './process.ts'
+import { KILL_GRACE_MS, SETTLE_GRACE_MS } from './process.ts'
 
 const FIXTURES = new URL('../../test/fixtures/', import.meta.url)
 const FAKE_PDFINFO = fileURLToPath(new URL('fake-pdfinfo.mjs', FIXTURES))
@@ -135,6 +135,27 @@ test('a group that ignores SIGTERM gets SIGKILL after the grace, and the run sti
   manual.fire(KILL_GRACE_MS)
   assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'pdfinfo gave no answer within 15 s' } })
   await eventually(() => !alive(pid!), 'the stubborn pdfinfo is gone')
+})
+
+test('a descendant in another group holding stdout: close never comes, and a last timer settles the run as timed out', async () => {
+  using base = tempBase()
+  const pdf = join(base.dir, 'cv.pdf')
+  writeFileSync(pdf, '%PDF-fake\n')
+  writeFileSync(join(base.dir, 'fake-poppler.mode'), 'escape')
+  const manual = manualTimers()
+  const pending = countPages(run({ timers: manual.timers }), pdf)
+  await eventually(() => callsIn(base.dir).length === 2, 'pdfinfo and its escaped grandchild started')
+  const [pid, grandchild] = callsIn(base.dir)
+  try {
+    manual.fire(POPPLER_TIMEOUT_MS)
+    await eventually(() => !alive(pid!), 'pdfinfo gone')
+    manual.fire(KILL_GRACE_MS)
+    assert.deepEqual(manual.pending(), [SETTLE_GRACE_MS], 'a last timer, since close may never come')
+    manual.fire(SETTLE_GRACE_MS)
+    assert.deepEqual(await pending, { ok: false, error: { code: 'module-error', reason: 'pdfinfo gave no answer within 15 s' } })
+  } finally {
+    process.kill(grandchild!, 'SIGKILL')
+  }
 })
 
 test('the signal aborted mid-run kills the group and answers stopped; already aborted never spawns', async () => {

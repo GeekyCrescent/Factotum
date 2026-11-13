@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { eventually, manualTimers, realTimers } from '../test-support.ts'
-import { isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, type RunInput } from './run.ts'
+import { isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
 const OUTPUT = z.object({ title: z.string() })
@@ -202,6 +202,24 @@ test('a claude that ignores SIGTERM gets SIGKILL after the grace, and the run st
   manual.fire(KILL_GRACE_MS)
   assert.deepEqual(await pending, { ok: false, kind: 'failed', reason: 'claude gave no answer within 30 s' })
   await eventually(() => !alive(pid!), 'the stubborn claude is gone')
+})
+
+test('a descendant in another group holding stdout: close never comes, and a last timer settles the run as timed out', async () => {
+  const manual = manualTimers()
+  const { input, pids } = await rig(['escape'], { timers: manual.timers })
+  const pending = runClaude(input)
+  await eventually(async () => (await pids()).length === 2, 'claude and its escaped grandchild started')
+  const [pid, grandchild] = await pids()
+  try {
+    manual.fire(TIMEOUT_MS)
+    await eventually(() => !alive(pid!), 'the claude process gone')
+    manual.fire(KILL_GRACE_MS)
+    assert.deepEqual(manual.pending(), [SETTLE_GRACE_MS], 'a last timer, since close may never come')
+    manual.fire(SETTLE_GRACE_MS)
+    assert.deepEqual(await pending, { ok: false, kind: 'failed', reason: 'claude gave no answer within 30 s' })
+  } finally {
+    process.kill(grandchild!, 'SIGKILL')
+  }
 })
 
 // ── The pure pieces ──────────────────────────────────────────────────────────────────────────────
