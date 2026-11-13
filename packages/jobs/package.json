@@ -12,13 +12,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     }
   },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-exclude=\"src/test-*.ts\" --test-coverage-exclude=\"test/**\" --test-coverage-lines=80 --test-coverage-branches=80 'src/**/*.test.ts'"
+    "test": "node --test --experimental-test-coverage --test-coverage-exclude=\"**/dist/**\" --test-coverage-exclude=\"**/*.test.ts\" --test-coverage-exclude=\"src/test-*.ts\" --test-coverage-exclude=\"src/testing.ts\" --test-coverage-exclude=\"test/**\" --test-coverage-lines=80 --test-coverage-branches=80 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@factotum/core": "workspace:*",
