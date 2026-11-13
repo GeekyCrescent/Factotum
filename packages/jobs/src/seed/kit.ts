@@ -75,8 +75,17 @@ export interface BaseCvs {
   readonly B: string
 }
 
-/** The kit's TODOs that become slots (design D6 «Huecos»). */
+/**
+ * The kit's TODOs that become slots (design D6 «Huecos»).
+ *
+ * `{suburb}` ABSORBS THE PLACE WORD RIGHT BEFORE IT (R8): the kit writes «I live in Sydney [suburb —
+ * TODO]», and the suburb slot is the whole place — «Sydney» or «Eastwood» — so keeping «Sydney» gave «I
+ * live in Sydney Sydney». Narrow: one capitalised word of two letters or more, then spaces, then the
+ * token; «in [suburb — TODO]», «I [suburb — TODO]» and a lower-case word are left as they are.
+ */
 const KIT_SLOTS: readonly (readonly [RegExp, string])[] = [
+  // No `i` flag on the first: it would make `\p{Lu}` match «in» too.
+  [/(?<![\p{L}\p{N}])\p{Lu}\p{L}+[ \t]+\[suburb\b[^\]\n]*\bTODO\b[^\]\n]*\]/gu, '{suburb}'],
   [/\[suburb\b[^\]\n]*\bTODO\b[^\]\n]*\]/gi, '{suburb}'],
   [/\[timezone\b[^\]\n]*\bTODO\b[^\]\n]*\]/gi, '{timezone}'],
   [/\[your hourly rate\b[^\]\n]*\bTODO\b[^\]\n]*\]/gi, '{rate}'],

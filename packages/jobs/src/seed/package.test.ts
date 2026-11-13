@@ -93,7 +93,7 @@ test('ads: likely form questions become form[], with kit cites resolved and thei
   assert.equal(second[1]?.answer, 'Yes, from 12 January 2027 (or by video before then).')
   assert.equal(second[1]?.hint, 'see [[00-kit-base]] §6 for December travel')
   assert.equal(second[2]?.answer, "about 1. Don't round up.")
-  assert.equal(second[3]?.answer, 'I live in Sydney {suburb} and can commute to the office or work hybrid.')
+  assert.equal(second[3]?.answer, 'I live in {suburb} and can commute to the office or work hybrid.')
   assert.equal(second[4]?.answer, '{rate}')
   assert.ok(second[5]?.answer.includes('{timezone}'))
 })

@@ -72,9 +72,24 @@ test('a single-question section is its answer, not ambiguous; an unknown section
 
 test('the kit TODOs become slots: suburb, timezone and rate', () => {
   const six = kit.sections.get(6) ?? []
-  assert.equal(six.find((q) => q.label === 'Location / commute')?.answer, 'I live in Sydney {suburb} and can commute to the office or work hybrid.')
+  assert.equal(six.find((q) => q.label === 'Location / commute')?.answer, 'I live in {suburb} and can commute to the office or work hybrid.')
   assert.ok(six.find((q) => q.label.startsWith('Availability for interviews'))?.answer.includes('be in {timezone}, so'))
   assert.equal(kit.sections.get(3)?.find((q) => q.label === 'If the form forces a number')?.answer, '{rate}')
+})
+
+test('«Sydney [suburb — TODO]»: the place word before the suburb is absorbed, so it is never doubled (R8)', () => {
+  const answer = kit.sections.get(6)?.find((q) => q.label === 'Location / commute')?.answer ?? ''
+  const live = (suburb: string): string => fillSlots(answer, { ...PROFILE, identity: { ...PROFILE.identity, suburb } }).text
+  assert.equal(live('Sydney'), 'I live in Sydney and can commute to the office or work hybrid.')
+  assert.equal(live('Eastwood'), 'I live in Eastwood and can commute to the office or work hybrid.')
+})
+
+test('only one capitalised word directly before [suburb — TODO] is absorbed: «in [suburb — TODO]», «I [suburb — TODO]» and a lower-case word stay', () => {
+  const answerOf = (line: string): string | undefined => parseKit(`## 6. Q\n\n**Where**\n> ${line}\n`).sections.get(6)?.[0]?.answer
+  assert.equal(answerOf('I live in [suburb — TODO].'), 'I live in {suburb}.')
+  assert.equal(answerOf('Close to the [suburb — TODO] station.'), 'Close to the {suburb} station.')
+  assert.equal(answerOf('I [suburb — TODO] daily.'), 'I {suburb} daily.')
+  assert.equal(answerOf('Based near [suburb — TODO], Sydney.'), 'Based near {suburb}, Sydney.')
 })
 
 test('a form answer that is only the cite becomes the kit answer, and the parenthesis behind goes to hint', () => {
