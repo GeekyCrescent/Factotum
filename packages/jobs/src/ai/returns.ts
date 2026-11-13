@@ -4,11 +4,13 @@
  * BACK (a linter that throws, a refused transition) the run is a failed one (`returnNotWritten`): an
  * attempt, the retries, an event — in a second `tx`, never a work left `running`.
  *
- * A GENERATION THAT COMES BACK (cv, letter, rewrite, reprint) is saved as a NEW VERSION ALWAYS, the
- * fields it did not produce taken from the current version, whatever state the entity is in now. The
- * transition is applied only from `generating` (T-A2, and only once NO request of its own is still
- * queued or running) or `rewriting` (T-A8, T-F4); anywhere else (`closed`, `sent`…) the version is kept
- * and the state is not touched.
+ * A GENERATION THAT COMES BACK (cv, letter, rewrite, reprint) is saved as a NEW VERSION, the fields it
+ * did not produce taken from the current version. The transition is applied only from `generating`
+ * (T-A2, and only once NO request of its own is still queued or running) or `rewriting` (T-A8, T-F4);
+ * anywhere else (`closed`…) the version is kept and the state is not touched — EXCEPT once the entity
+ * is approved for sending (D9, revisión del corte 1a): an application `approved`, `sending`,
+ * `send-unknown` or `sent`, or a follow-up `sending`, `send-unknown` or `sent`, DISCARDS what came
+ * back (`prepared { discarded: true }`), so the version its send pinned stays the current one.
  *
  * A GENERATION THAT FAILS FOR THE THIRD TIME: a `cv`/`letter` takes the application out of
  * `generating` to `in-review` with the warning OF THE CLASS THAT FAILED (T-A3, v5 X8) — again only
@@ -123,6 +125,9 @@ function discard(q: Queries, work: Work, now: Date): Result<void> {
 
 const REVIEWED: ReadonlySet<string> = new Set(['in-review', 'ready'])
 const FOLLOWUP_REVIEWED: ReadonlySet<string> = new Set(['draft', 'ready'])
+/** Approved for sending: a return never makes a new version here (D9, revisión del corte 1a). */
+const APP_PINNED: ReadonlySet<string> = new Set(['approved', 'sending', 'send-unknown', 'sent'])
+const FOLLOWUP_PINNED: ReadonlySet<string> = new Set(['sending', 'send-unknown', 'sent'])
 
 /** Another request of this entity is still queued or running (T-A2, T-A3). */
 function pendingBesides(q: Queries, entityId: string, workId: string): boolean {
@@ -205,6 +210,7 @@ function saveVersion(q: Queries, app: Application, patch: ArtifactsPatch, now: D
 export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatch, deps: ReturnDeps, now: Date, found?: readonly Warning[]): Result<void> {
   const before = getApplication(q, work.ref)
   if (before === undefined) return fail('not-found', 'no such application')
+  if (APP_PINNED.has(before.state)) return discard(q, work, now)
   const app = withFound(saveVersion(q, before, patch, now), patch, found)
   const event: EventSpec = { kind: 'prepared', data: { kind: work.kind, version: app.version, workId: work.id } }
   if (app.state === 'generating' && !pendingBesides(q, app.id, work.id)) return settleGeneration(q, app, event, deps, now)
@@ -223,6 +229,7 @@ export function applicationReturned(q: Queries, work: Work, patch: ArtifactsPatc
 export function followupReturned(q: Queries, work: Work, produced: Omit<Followup['versions'][number], 'version' | 'origin' | 'instruction'>, deps: ReturnDeps, now: Date): Result<void> {
   const row = getFollowup(q, work.ref)
   if (row === undefined) return fail('not-found', 'no such follow-up')
+  if (FOLLOWUP_PINNED.has(row.state)) return discard(q, work, now)
   const version = { ...produced, version: row.version + 1, origin: 'rewritten' as const, instruction: instructionOf(q, row.applicationId, row.id) }
   if (row.state === 'rewriting') {
     const warnings = deps.lint(q, { kind: 'followup', followup: row, version }, now)

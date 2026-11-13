@@ -122,6 +122,7 @@ CREATE TABLE sends (
   reason           TEXT,
   address_override INTEGER NOT NULL DEFAULT 0,
   profile_version  INTEGER,
+  artifacts_version INTEGER,
   attempts         TEXT NOT NULL DEFAULT '[]',
   PRIMARY KEY (application_id, kind)
 ) STRICT;

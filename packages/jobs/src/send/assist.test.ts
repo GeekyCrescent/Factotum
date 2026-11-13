@@ -9,8 +9,9 @@ import { describe, test } from 'node:test'
 
 import type { Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { ADDRESSES, errorOf, followup, valueOf } from '../test-state.ts'
-import { appOf, eventsOf, sentWithFollowup, world, write, type World, type WorldOptions } from '../test-send.ts'
+import { applicationReturned } from '../ai/returns.ts'
+import { ADDRESSES, errorOf, followup, followupVersion, valueOf } from '../test-state.ts'
+import { appOf, artifacts, decoded, eventsOf, sentWithFollowup, world, write, type World, type WorldOptions } from '../test-send.ts'
 import { ok, type AppState, type Followup, type SendState } from '../types.ts'
 import { createAssist, type AssistDeps } from './assist.ts'
 import { createSender, type Sender } from './send.ts'
@@ -34,7 +35,7 @@ async function within(t: { skip: (m: string) => void }, options: WorldOptions, b
 function initialIn(q: Queries, appState: AppState, state: SendState, reason: string | null = null): void {
   q.run('UPDATE applications SET state = ? WHERE id = ?', appState, 'app-1')
   q.run(
-    "INSERT INTO sends (application_id, kind, channel, message_id, state, at, reason, profile_version) VALUES ('app-1', 'initial', 'smtp', ?, ?, '2026-11-13T22:00:00.000Z', ?, 1)",
+    "INSERT INTO sends (application_id, kind, channel, message_id, state, at, reason, profile_version, artifacts_version) VALUES ('app-1', 'initial', 'smtp', ?, ?, '2026-11-13T22:00:00.000Z', ?, 1, 1)",
     M1,
     state,
     reason,
@@ -179,7 +180,7 @@ describe('the follow-up row moves through the injected step (F2b connects it)', 
     await within(t, {}, async (w, sender, deps) => {
       write(w.db, (q) => {
         sentWithFollowup(q, followup({ state: 'send-unknown' }))
-        q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', 'send-unknown', '2026-11-13T22:00:00.000Z', 1)")
+        q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', 'send-unknown', '2026-11-13T22:00:00.000Z', 1, 1)")
       })
       const assist = createAssist(deps)
       assert.equal(valueOf(assist.resolveUnknown('app-1', 'followup-1', 'again')).messageId, '<f1@jobs.factotum.local>')
@@ -193,7 +194,7 @@ describe('the follow-up row moves through the injected step (F2b connects it)', 
     await within(t, {}, async (w, sender, deps) => {
       write(w.db, (q) => {
         sentWithFollowup(q, followup({ state: 'send-unknown' }))
-        q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', 'send-unknown', '2026-11-13T22:00:00.000Z', 1)")
+        q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', 'send-unknown', '2026-11-13T22:00:00.000Z', 1, 1)")
       })
       const assist = createAssist(deps)
       errorOf(assist.resolveUnknown('app-1', 'followup-1', 'not-went'), 'conflict')
@@ -227,7 +228,7 @@ describe('the follow-up row moves through the injected step (F2b connects it)', 
 /** A follow-up of app-1 whose row is in `state`, id F1. */
 function followupRowIn(q: Queries, state: 'send-unknown' | 'failed'): void {
   sentWithFollowup(q, followup({ state }))
-  q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', ?, '2026-11-13T22:00:00.000Z', 1)", state)
+  q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', ?, '2026-11-13T22:00:00.000Z', 1, 1)", state)
 }
 
 const followupRow = (w: World) => appOf(w.db).sends.find((s) => s.kind === 'followup-1')
@@ -352,5 +353,96 @@ describe('an answer carries the state the screen saw: another device moved the r
       assert.equal(valueOf(assist.retrySend('app-1', 'followup-1', { expect: { state: 'failed', at: AT } })).state, 'sending')
       await sender.settled()
     })
+  })
+})
+
+describe('what goes out is the version approved at step 1 (D9, revisión del corte 1a)', () => {
+  const NEW_SUBJECT = 'A later letter nobody approved'
+  const returnsDeps = { lint: () => [], relintOne: () => ok(undefined), pdfExists: () => true }
+  const AT = '2026-11-13T22:00:00.000Z'
+  const work: repo.Work = { id: 'w-letter', kind: 'letter', ref: 'app-1', lane: 'bulk', state: 'done', attempts: 0, notBefore: null, reason: null, createdAt: AT, updatedAt: AT }
+  const laterLetter = { letter: { subject: NEW_SUBJECT, body: 'Unapproved {signature}' }, profileVersion: 1, rules: [], usage: null, origin: 'generated' as const }
+  /** A version 2 the owner never approved, written straight into the store. */
+  const laterVersion = (q: Queries): void => {
+    repo.insertArtifacts(q, 'app-1', { ...artifacts(2, null), letter: laterLetter.letter }, new Date(AT))
+    q.run("UPDATE applications SET version = 2 WHERE id = 'app-1'")
+  }
+
+  test('step 1 pins the approved version on the row (artifacts_version)', async (t) => {
+    await within(t, {}, async (w, sender) => {
+      valueOf(sender.approve('app-1', 'initial'))
+      assert.equal(appOf(w.db).sends[0]?.artifactsVersion, 1)
+      await sender.settled()
+    })
+  })
+
+  test('a letter that comes back while the initial is sending is discarded: no version 2, and the mail carries version 1', async (t) => {
+    await within(t, {}, async (w, sender) => {
+      valueOf(sender.approve('app-1', 'initial'))
+      write(w.db, (q) => valueOf(applicationReturned(q, work, laterLetter, returnsDeps, w.clock.now())))
+      await sender.settled()
+      assert.equal(appOf(w.db).version, 1)
+      assert.equal(eventsOf(w.db).find((e) => e.kind === 'prepared')?.data.discarded, true)
+      assert.equal(w.server.messages.length, 1)
+      assert.ok(!decoded(w.server.messages[0] ?? '').includes(NEW_SUBJECT))
+    })
+  })
+
+  test('a letter that comes back while the initial is send-unknown is discarded; «Send again» mails version 1', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => initialIn(q, 'send-unknown', 'send-unknown'))
+      write(w.db, (q) => valueOf(applicationReturned(q, work, laterLetter, returnsDeps, w.clock.now())))
+      assert.equal(appOf(w.db).version, 1)
+      valueOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again'))
+      await sender.settled()
+      assert.equal(appOf(w.db).state, 'sent')
+      const mail = decoded(w.server.messages[0] ?? '')
+      assert.ok(mail.includes('I would like to apply'), 'the approved letter went')
+      assert.ok(!mail.includes('Unapproved') && !mail.includes(NEW_SUBJECT))
+    })
+  })
+
+  test('«Send again» after a later version → blocked stale-version: nothing moves, nothing sent', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => {
+        initialIn(q, 'send-unknown', 'send-unknown')
+        laterVersion(q)
+      })
+      errorOf(createAssist(deps).resolveUnknown('app-1', 'initial', 'again'), 'blocked', 'stale-version')
+      assert.equal(appOf(w.db).sends[0]?.state, 'send-unknown')
+      await sender.settled()
+      assert.equal(w.server.messages.length, 0)
+    })
+  })
+
+  test('«Retry» of a failed initial after a later version → blocked stale-version (only «Approve» of what was seen sends it)', async (t) => {
+    await within(t, {}, async (w, sender, deps) => {
+      write(w.db, (q) => {
+        initialIn(q, 'ready', 'failed')
+        laterVersion(q)
+      })
+      errorOf(createAssist(deps).retrySend('app-1', 'initial'), 'blocked', 'stale-version')
+      assert.equal(appOf(w.db).sends[0]?.state, 'failed')
+      await sender.settled()
+      assert.equal(w.server.messages.length, 0)
+    })
+  })
+
+  test('a follow-up «Send again» and «Retry» after a later version of its text → blocked stale-version', async (t) => {
+    for (const [state, act] of [
+      ['send-unknown', (a: ReturnType<typeof createAssist>) => a.resolveUnknown('app-1', 'followup-1', 'again')],
+      ['failed', (a: ReturnType<typeof createAssist>) => a.retrySend('app-1', 'followup-1')],
+    ] as const) {
+      await within(t, {}, async (w, sender, deps) => {
+        write(w.db, (q) => {
+          sentWithFollowup(q, followup({ state, version: 2, versions: [followupVersion(1), followupVersion(2)] }))
+          q.run("INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'followup-1', 'fu-1', 'smtp', '<f1@jobs.factotum.local>', ?, ?, 1, 1)", state, AT)
+        })
+        errorOf(act(createAssist(deps)), 'blocked', 'stale-version')
+        assert.equal(followupRow(w)?.state, state)
+        await sender.settled()
+        assert.equal(w.server.messages.length, 0)
+      })
+    }
   })
 })

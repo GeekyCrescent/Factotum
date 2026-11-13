@@ -5,8 +5,12 @@
  * stored texts keep `{signature}`. A slot left unfilled is refused (`unfilled-slot: <slot>`), never
  * sent half-filled.
  *
- * THE INITIAL carries the current version's PDF; A FOLLOW-UP NEVER DOES (v4, A3). In the thread
- * (D12 rule 1) a follow-up's subject is `Re: <the initial's subject>`, `inReplyTo` the last `smtp`
+ * THE VERSION IS THE ONE STEP 1 PINNED on the row (`artifactsVersion`, D9 revisión del corte 1a):
+ * the initial's letter and PDF, a follow-up's text. When the entity has another version now (or the
+ * row pins none) nothing goes: `stale-version`.
+ *
+ * THE INITIAL carries its version's PDF; A FOLLOW-UP NEVER DOES (v4, A3). In the thread (D12 rule 1)
+ * a follow-up's subject is `Re: <the subject of the initial that went>`, `inReplyTo` the last `smtp`
  * row `sent`, `references` all of them in order; without a thread (rule 2) it is its own version's
  * subject, and no threading headers.
  */
@@ -50,8 +54,15 @@ export function cvFileName(profile: Profile): string {
 
 const reSubject = (subject: string): string => (/^re:/i.test(subject) ? subject : `Re: ${subject}`)
 
-function initialDraft(q: Queries, app: Application, profile: Profile): Result<Draft> {
-  const artifacts = repo.getArtifacts(q, app.id, app.version)
+/** `stale-version` unless the row pins exactly the version the entity has now. */
+export function pinnedVersion(row: Send, current: number): Result<number> {
+  return row.artifactsVersion === current ? ok(current) : fail('blocked', 'stale-version')
+}
+
+function initialDraft(q: Queries, app: Application, row: Send, profile: Profile): Result<Draft> {
+  const pinned = pinnedVersion(row, app.version)
+  if (!pinned.ok) return pinned
+  const artifacts = repo.getArtifacts(q, app.id, pinned.value)
   if (artifacts?.letter == null) return fail('blocked', 'missing-letter')
   if (artifacts.pdf === null) return fail('blocked', 'missing-cv')
   const { subject, body } = artifacts.letter
@@ -60,11 +71,16 @@ function initialDraft(q: Queries, app: Application, profile: Profile): Result<Dr
 
 function followupDraft(q: Queries, app: Application, row: Send): Result<Draft> {
   const f = row.followupId === null ? undefined : repo.getFollowup(q, row.followupId)
-  const version = f?.versions.find((v) => v.version === f.version)
-  if (f === undefined || version === undefined) return fail('conflict', 'the follow-up has no current version')
+  if (f === undefined) return fail('conflict', 'the follow-up has no current version')
+  const pinned = pinnedVersion(row, f.version)
+  if (!pinned.ok) return pinned
+  const version = f.versions.find((v) => v.version === pinned.value)
+  if (version === undefined) return fail('conflict', 'the follow-up has no current version')
   const thread = app.sends.filter((s) => s.kind !== row.kind && s.channel === 'smtp' && s.state === 'sent' && s.messageId !== null).map((s) => s.messageId as string)
   if (thread.length === 0) return ok({ contactId: f.contactId, to: f.to, subject: version.subject, body: version.body }) // D12 rule 2
-  const initialSubject = repo.getArtifacts(q, app.id, app.version)?.letter?.subject ?? null
+  // The subject of the initial that went: the version its row pinned (a manual one pins none: the current).
+  const initial = app.sends.find((s) => s.kind === 'initial')
+  const initialSubject = repo.getArtifacts(q, app.id, initial?.artifactsVersion ?? app.version)?.letter?.subject ?? null
   return ok({
     contactId: f.contactId,
     to: f.to,
@@ -82,7 +98,7 @@ export function outgoingFor(q: Queries, id: string, kind: SendKind): Result<Outg
   if (app === undefined || row === undefined || row.state !== 'sending' || row.messageId === null) return fail('conflict', 'the send is not in flight')
   const profile = row.profileVersion === null ? undefined : repo.profileVersionOf(q, row.profileVersion)
   if (profile === undefined) return fail('blocked', 'missing-profile')
-  const draft = kind === 'initial' ? initialDraft(q, app, profile.profile) : followupDraft(q, app, row)
+  const draft = kind === 'initial' ? initialDraft(q, app, row, profile.profile) : followupDraft(q, app, row)
   if (!draft.ok) return draft
   const { contactId, to: storedTo, subject, body, ...rest } = draft.value
   const recipient = recipientOf(q, contactId, storedTo)

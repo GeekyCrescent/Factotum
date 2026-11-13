@@ -15,6 +15,7 @@ export const toSend = (row: Row): Send => ({
   reason: textOrNull(row, 'reason'),
   addressOverride: row.address_override === 1,
   profileVersion: numberOrNull(row, 'profile_version'),
+  artifactsVersion: numberOrNull(row, 'artifacts_version'),
   attempts: json(row, 'attempts', []),
 })
 
@@ -29,12 +30,12 @@ export const sendsOf = (q: Queries, applicationId: string): readonly Send[] =>
 /** One row per `(application_id, kind)` (v5, X6): «Retry» UPDATEs it, never a second INSERT. */
 export function upsertSend(q: Queries, applicationId: string, send: Send): void {
   q.run(
-    `INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, response, reason, address_override, profile_version, attempts)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, response, reason, address_override, profile_version, artifacts_version, attempts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (application_id, kind) DO UPDATE SET
        followup_id = excluded.followup_id, channel = excluded.channel, message_id = excluded.message_id, state = excluded.state,
        at = excluded.at, response = excluded.response, reason = excluded.reason, address_override = excluded.address_override,
-       profile_version = excluded.profile_version, attempts = excluded.attempts`,
+       profile_version = excluded.profile_version, artifacts_version = excluded.artifacts_version, attempts = excluded.attempts`,
     applicationId,
     send.kind,
     send.followupId,
@@ -46,6 +47,7 @@ export function upsertSend(q: Queries, applicationId: string, send: Send): void 
     send.reason,
     flag(send.addressOverride),
     send.profileVersion,
+    send.artifactsVersion,
     JSON.stringify(send.attempts),
   )
 }

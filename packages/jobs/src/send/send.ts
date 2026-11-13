@@ -5,7 +5,8 @@
  * 1. `tx`: the guards (state, PDF on disk for the initial, address, daily cap) and the row `sending`
  *    with its `Message-ID` — all decided by `state.ts`, written here with `approved { kind }`.
  * 2. Outside any `tx`: `readPassword`, the slots filled with the profile version the row recorded,
- *    and `sendMail` (the CV attached ONLY to the initial).
+ *    the texts and CV of the version it pinned (`artifactsVersion`, refused `stale-version` when the
+ *    entity moved on), and `sendMail` (the CV attached ONLY to the initial).
  * 3. `tx`: `sent` | `failed` | `send-unknown` with its event; for the initial, the deferred replies
  *    (v6.1) are applied in a SECOND `tx` that cannot undo the first (revisión de E): a mail SMTP took
  *    is never written back to `sending`.
@@ -195,7 +196,7 @@ export function createSender(deps: SenderDeps): Sender {
       const gate = approvalGate(address, at, sendAnyway)
       const addressOverride = gate.ok && gate.value.override !== 'none'
       const profileVersion = repo.latestProfileVersion(q)?.version ?? null
-      const row = sendTransition(null, { type: 'approve', kind, followupId: f.id, messageId: newMessageId(at), addressOverride, profileVersion }, at) // T-S1
+      const row = sendTransition(null, { type: 'approve', kind, followupId: f.id, messageId: newMessageId(at), addressOverride, profileVersion, artifactsVersion: f.version }, at) // T-S1
       if (!row.ok) return row
       const override = writeOverride(q, f.contactId, address, sendAnyway, at)
       if (!override.ok) return override

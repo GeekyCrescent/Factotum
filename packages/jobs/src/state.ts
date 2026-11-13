@@ -109,6 +109,8 @@ export type SendEvent =
       readonly messageId: string
       readonly addressOverride: boolean
       readonly profileVersion: number | null
+      /** The version approved (`Send.artifactsVersion`). */
+      readonly artifactsVersion: number
     }
   | { readonly type: 'mark-sent'; readonly kind: SendKind; readonly followupId: string | null }
   | { readonly type: 'smtp-accepted'; readonly response: string }
@@ -123,6 +125,7 @@ export type SendEvent =
       readonly cap: DailyCap
       readonly addressOverride: boolean
       readonly profileVersion: number | null
+      readonly artifactsVersion: number
     }
   | { readonly type: 'it-didnt-go'; readonly appState: AppState }
 
@@ -238,6 +241,7 @@ const newSend = (kind: SendKind, followupId: string | null, at: string): Send =>
   reason: null,
   addressOverride: false,
   profileVersion: null,
+  artifactsVersion: null,
   attempts: [],
 })
 
@@ -251,6 +255,7 @@ function createSend(event: SendEvent, at: string): Result<Send> {
       messageId: event.messageId,
       addressOverride: event.addressOverride,
       profileVersion: event.profileVersion,
+      artifactsVersion: event.artifactsVersion,
     })
   }
   if (event.type === 'mark-sent') return ok({ ...newSend(event.kind, event.followupId, at), channel: 'manual', state: 'sent' })
@@ -309,6 +314,7 @@ function retrySend(send: Send, event: Extract<SendEvent, { type: 'retry' }>, at:
     reason: null,
     addressOverride: event.addressOverride,
     profileVersion: event.profileVersion,
+    artifactsVersion: event.artifactsVersion,
     attempts: [...send.attempts, ...previous],
   })
 }
@@ -413,11 +419,13 @@ function approve(app: Application, event: Extract<AppEvent, { type: 'approve' }>
   if (overCap(event.cap)) return capReached()
   const addressOverride = gate.value.override !== 'none'
   const initial = initialOf(app)
+  // D9 (revisión del corte 1a): the row pins the version approved, the application's current one.
+  const pinned = { addressOverride, profileVersion: event.profileVersion, artifactsVersion: app.version }
   // v6 (M1): the EXISTENCE of the row decides — T-S1 without one, T-S8 on a failed one, whatever the button.
   const moved =
     initial === undefined
-      ? sendTransition(null, { type: 'approve', kind: 'initial', followupId: null, messageId: event.messageId, addressOverride, profileVersion: event.profileVersion }, now)
-      : sendTransition(initial, { type: 'retry', messageId: event.messageId, cap: event.cap, addressOverride, profileVersion: event.profileVersion }, now)
+      ? sendTransition(null, { type: 'approve', kind: 'initial', followupId: null, messageId: event.messageId, ...pinned }, now)
+      : sendTransition(initial, { type: 'retry', messageId: event.messageId, cap: event.cap, ...pinned }, now)
   if (!moved.ok) return initial !== undefined && initial.state !== 'failed' ? fail('conflict', 'the initial was already sent') : moved
   return ok({ ...withSend(app, moved.value), state: 'sending' }) // T-A11
 }

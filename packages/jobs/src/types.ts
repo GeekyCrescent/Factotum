@@ -178,6 +178,12 @@ export interface Send {
   readonly addressOverride: boolean
   /** The profile version that filled the slots when sending (D6). */
   readonly profileVersion: number | null
+  /**
+   * The version approved at step 1 (D9, revisión del corte 1a): of the application's artifacts for the
+   * initial, of the follow-up's text for a follow-up. Step 2, «Send again» and «Retry» send THAT one, and
+   * refuse `stale-version` when the entity has moved on. Null on a manual row.
+   */
+  readonly artifactsVersion: number | null
   /** Earlier `failed` attempts of THIS row, so a late reply still matches (D12 rule 1). */
   readonly attempts: readonly SendAttempt[]
 }

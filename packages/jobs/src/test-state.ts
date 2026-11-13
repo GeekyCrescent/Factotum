@@ -56,6 +56,7 @@ export function send(overrides: Partial<Send> = {}): Send {
     reason: null,
     addressOverride: false,
     profileVersion: 1,
+    artifactsVersion: 1,
     attempts: [],
     ...overrides,
   }

@@ -18,7 +18,7 @@ const d = (row: Contact, event: AddressEvent): Contact => valueOf(addressTransit
 // ── Send ─────────────────────────────────────────────────────────────────────────────────────────
 
 test('T-S1: approving writes a new row in sending, with its messageId, before SMTP opens', () => {
-  const row = s(null, { type: 'approve', kind: 'followup-1', followupId: 'fu-1', messageId: '<a@jobs.factotum.local>', addressOverride: true, profileVersion: 4 })
+  const row = s(null, { type: 'approve', kind: 'followup-1', followupId: 'fu-1', messageId: '<a@jobs.factotum.local>', addressOverride: true, profileVersion: 4, artifactsVersion: 1 })
   assert.deepEqual(row, {
     kind: 'followup-1',
     followupId: 'fu-1',
@@ -30,6 +30,7 @@ test('T-S1: approving writes a new row in sending, with its messageId, before SM
     reason: null,
     addressOverride: true,
     profileVersion: 4,
+    artifactsVersion: 1,
     attempts: [],
   })
 })
@@ -68,10 +69,10 @@ test('T-S7: a reply proves a send-unknown: by its messageId, one of its attempts
 })
 
 test('T-S8: «Retry»: failed → sending on the same row, a new messageId, the old one in attempts', () => {
-  const row = s(send({ state: 'failed', reason: 'boom' }), { type: 'retry', messageId: '<m2@x>', cap: CAP, addressOverride: true, profileVersion: 2 })
+  const row = s(send({ state: 'failed', reason: 'boom' }), { type: 'retry', messageId: '<m2@x>', cap: CAP, addressOverride: true, profileVersion: 2, artifactsVersion: 1 })
   assert.deepEqual([row.state, row.messageId, row.reason, row.addressOverride, row.profileVersion], ['sending', '<m2@x>', null, true, 2])
   assert.deepEqual(row.attempts, [{ messageId: '<m1@jobs.factotum.local>', at: '2026-11-10T00:00:00.000Z', reason: 'boom' }])
-  errorOf(sendTransition(send({ state: 'failed' }), { type: 'retry', messageId: '<m2@x>', cap: { sentToday: 1, maxPerDay: 1 }, addressOverride: false, profileVersion: 1 }, NOW), 'limit')
+  errorOf(sendTransition(send({ state: 'failed' }), { type: 'retry', messageId: '<m2@x>', cap: { sentToday: 1, maxPerDay: 1 }, addressOverride: false, profileVersion: 1, artifactsVersion: 1 }, NOW), 'limit')
 })
 
 test('T-S9: «Mark as sent» or imported by hand: a manual row, sent, without a messageId', () => {
@@ -93,8 +94,8 @@ test('T-S11: a reply proves a failed row, only by rule 1 (its messageId or an at
 
 const invalidSends: readonly { readonly from: Send['state']; readonly name: string; readonly event: SendEvent }[] = [
   { from: 'sending', name: '«It went»', event: { type: 'it-went' } },
-  { from: 'send-unknown', name: '«Retry» (T-S8 is only failed)', event: { type: 'retry', messageId: '<n@x>', cap: CAP, addressOverride: false, profileVersion: 1 } },
-  { from: 'sent', name: '«Retry»', event: { type: 'retry', messageId: '<n@x>', cap: CAP, addressOverride: false, profileVersion: 1 } },
+  { from: 'send-unknown', name: '«Retry» (T-S8 is only failed)', event: { type: 'retry', messageId: '<n@x>', cap: CAP, addressOverride: false, profileVersion: 1, artifactsVersion: 1 } },
+  { from: 'sent', name: '«Retry»', event: { type: 'retry', messageId: '<n@x>', cap: CAP, addressOverride: false, profileVersion: 1, artifactsVersion: 1 } },
   { from: 'failed', name: '«It went»', event: { type: 'it-went' } },
 ]
 for (const { from, name, event } of invalidSends) {
@@ -102,7 +103,7 @@ for (const { from, name, event } of invalidSends) {
 }
 
 test('a send row is never created twice, and nothing but approve or mark-sent creates one', () => {
-  errorOf(sendTransition(send(), { type: 'approve', kind: 'initial', followupId: null, messageId: '<x@x>', addressOverride: false, profileVersion: 1 }, NOW), 'conflict')
+  errorOf(sendTransition(send(), { type: 'approve', kind: 'initial', followupId: null, messageId: '<x@x>', addressOverride: false, profileVersion: 1, artifactsVersion: 1 }, NOW), 'conflict')
   errorOf(sendTransition(null, { type: 'it-went' }, NOW), 'conflict')
 })
 

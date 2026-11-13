@@ -188,7 +188,7 @@ test('follow-ups: create, read by application and by contact, apply a transition
   assert.deepEqual(db.read((q) => repo.followupsOfContact(q, 'contact-1')), [followup()])
   assert.ok(fu)
   const moved = valueOf(followupTransition(fu, { type: 'approve', app: { state: 'sent', hasHumanReply: false }, address: ADDRESSES.verifiedToday, sendAnyway: false, cap: CAP }, NOW))
-  const row = valueOf(sendTransition(null, { type: 'approve', kind: 'followup-1', followupId: 'fu-1', messageId: '<f@x>', addressOverride: false, profileVersion: 1 }, NOW))
+  const row = valueOf(sendTransition(null, { type: 'approve', kind: 'followup-1', followupId: 'fu-1', messageId: '<f@x>', addressOverride: false, profileVersion: 1, artifactsVersion: 1 }, NOW))
   write(db, (q) => repo.saveFollowup(q, moved, { kind: 'approved', data: { kind: 'followup-1' } }, NOW, row))
   const app = db.read((q) => repo.getApplication(q, 'app-1'))
   assert.equal(app?.state, 'sent', 'a follow-up never changes the application state')

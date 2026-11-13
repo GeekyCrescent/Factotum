@@ -25,9 +25,9 @@ async function within(t: { skip: (m: string) => void }, options: WorldOptions, b
 }
 
 /** The initial of app-1 in flight, as step 1 leaves it. */
-function inFlight(q: Queries, profileVersion = 1): void {
+function inFlight(q: Queries, profileVersion = 1, artifactsVersion: number | null = 1): void {
   q.run("UPDATE applications SET state = 'sending' WHERE id = 'app-1'")
-  q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', ?)", profileVersion)
+  q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', ?, ?)", profileVersion, artifactsVersion)
 }
 
 /** A follow-up `n` of app-1 in flight. */
@@ -35,7 +35,7 @@ function followupInFlight(q: Queries, n: 1 | 2, subject: string | null): void {
   const id = `fu-${n}`
   repo.insertFollowup(q, followup({ id, n, state: 'sending', versions: [followupVersion(1, { subject, body: 'Following up.\n\n{signature}' })] }), { kind: 'followup-proposed' }, new Date())
   q.run(
-    "INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version) VALUES ('app-1', ?, ?, 'smtp', ?, 'sending', '2026-11-13T22:00:00.000Z', 1)",
+    "INSERT INTO sends (application_id, kind, followup_id, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', ?, ?, 'smtp', ?, 'sending', '2026-11-13T22:00:00.000Z', 1, 1)",
     `followup-${n}`,
     id,
     `<f${n}@jobs.factotum.local>`,
@@ -127,7 +127,33 @@ describe('the message of step 2', () => {
       write(w.db, (q) => q.run(`UPDATE followups SET data = json_set(data, '$.versions[0].subject', NULL) WHERE id = 'fu-1'`))
       errorOf(w.db.read((q) => outgoingFor(q, 'app-1', 'followup-1')), 'blocked', 'missing-subject')
       write(w.db, (q) => q.run("UPDATE followups SET version = 7 WHERE id = 'fu-1'"))
-      errorOf(w.db.read((q) => outgoingFor(q, 'app-1', 'followup-1')), 'conflict')
+      errorOf(w.db.read((q) => outgoingFor(q, 'app-1', 'followup-1')), 'blocked', 'stale-version')
+    })
+  })
+
+  test('the initial pinned at version 1 while the application is at 2 → blocked stale-version; a row pinned to nothing too', async (t) => {
+    await within(t, {}, async (w) => {
+      write(w.db, (q) => {
+        inFlight(q)
+        repo.insertArtifacts(q, 'app-1', artifacts(2, w.pdf), w.clock.now())
+        q.run("UPDATE applications SET version = 2 WHERE id = 'app-1'")
+      })
+      errorOf(w.db.read((q) => outgoingFor(q, 'app-1', 'initial')), 'blocked', 'stale-version')
+      write(w.db, (q) => q.run("UPDATE sends SET artifacts_version = NULL WHERE kind = 'initial'"))
+      errorOf(w.db.read((q) => outgoingFor(q, 'app-1', 'initial')), 'blocked', 'stale-version')
+    })
+  })
+
+  test('a follow-up in the thread takes its Re: from the version of the initial that WENT, not a later one', async (t) => {
+    await within(t, { letter: { subject: 'The approved one', body: 'x {signature}' } }, async (w) => {
+      write(w.db, (q) => {
+        sentWithFollowup(q, followup({ state: 'sent' }))
+        q.run("UPDATE sends SET artifacts_version = 1 WHERE kind = 'initial'")
+        repo.insertArtifacts(q, 'app-1', { ...artifacts(2, null), letter: { subject: 'A later one', body: 'y' } }, w.clock.now())
+        q.run("UPDATE applications SET version = 2 WHERE id = 'app-1'")
+        followupInFlight(q, 2, null)
+      })
+      assert.equal(valueOf(w.db.read((q) => outgoingFor(q, 'app-1', 'followup-2'))).subject, 'Re: The approved one')
     })
   })
 })

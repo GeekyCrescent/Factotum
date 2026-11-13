@@ -239,7 +239,7 @@ describe('the address guard: «Qué responde el motor» (E2, v5 X4)', () => {
     await within(t, {}, async (w) => {
       write(w.db, (q) => {
         q.run("UPDATE applications SET state = 'sending' WHERE id = 'app-1'")
-        q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', 1)")
+        q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', 1, 1)")
         q.run("UPDATE contacts SET email = 'other@acme.example' WHERE id = 'contact-1'")
       })
       const sender = createSender(w.deps)

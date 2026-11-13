@@ -203,6 +203,7 @@ test('T-A11: approving an email goes ready → sending with no approved in betwe
     reason: null,
     addressOverride: false,
     profileVersion: 3,
+    artifactsVersion: 1,
     attempts: [],
   })
 })

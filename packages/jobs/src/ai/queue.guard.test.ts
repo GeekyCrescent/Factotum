@@ -106,6 +106,43 @@ test('G4: what comes back late to a closed application is kept as a version, and
   assert.deepEqual(eventsOf(db, 'app-1').at(-1)?.data, { kind: 'cv', version: 2, workId: id })
 })
 
+for (const state of ['approved', 'sending', 'send-unknown', 'sent'] as const) {
+  test(`D9 (revisión 1a): a CV that comes back to an application ${state} is DISCARDED — no new version, prepared { discarded: true }`, async () => {
+    using base = tempBase()
+    const db = await queueStore(base)
+    const run = controlled()
+    const { queue } = rig(db, { handlers: { cv: run.handler } })
+    insertApp(db, { state: 'generating' })
+    const id = enqueue(db, queue, 'cv')
+    queue.pump()
+    valueOf(db.tx((q) => repo.saveApplication(q, { ...appOf(db, 'app-1'), state }, { kind: 'approved', data: { kind: 'initial' } }, NOW)))
+    run.finish(id, cvBack('late'))
+    await queue.settled()
+    const app = appOf(db, 'app-1')
+    assert.deepEqual([app.state, app.version], [state, 1])
+    assert.equal(db.read((q) => repo.getArtifacts(q, 'app-1', 2)), undefined, 'no version 2')
+    const last = eventsOf(db, 'app-1').at(-1)
+    assert.deepEqual([last?.kind, last?.data], ['prepared', { discarded: true, kind: 'cv', workId: id }])
+  })
+}
+
+for (const state of ['sending', 'send-unknown', 'sent'] as const) {
+  test(`D9 (revisión 1a): a follow-up rewrite that comes back to a follow-up ${state} is DISCARDED — no new version`, async () => {
+    using base = tempBase()
+    const db = await queueStore(base)
+    const back: JobResult = { ok: true, output: { type: 'followup', version: { subject: null, body: 'Late {signature}', profileVersion: 1, rules: [], usage: null } } }
+    const { queue } = rig(db, { handlers: { rewrite: async () => back } })
+    insertApp(db, { state: 'sent' })
+    insertFollowup(db, { state })
+    queue.add({ kind: 'rewrite', ref: 'fu-1' })
+    await queue.settled()
+    const row = db.read((q) => repo.getFollowup(q, 'fu-1'))
+    assert.deepEqual([row?.state, row?.version, row?.versions.length], [state, 1, 1])
+    const last = eventsOf(db, 'app-1').at(-1)
+    assert.deepEqual([last?.kind, last?.data.discarded, last?.data.followupId], ['prepared', true, 'fu-1'])
+  })
+}
+
 test('G4: back to generating, the injected lint decides: a block → in-review with it', async () => {
   using base = tempBase()
   const db = await queueStore(base)

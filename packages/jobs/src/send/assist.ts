@@ -7,6 +7,10 @@
  * UPDATEs the same row with a new one, the old to `attempts` (T-S8). For the initial, «Retry» IS the
  * approval (T-A11 + T-S8, with every check of step 1: v6 M1).
  *
+ * Both send THE VERSION THE ROW PINNED at its approval (D9, revisión del corte 1a): when the
+ * application (or the follow-up) has another one now, they answer `blocked stale-version` and move
+ * nothing — what was approved is not what would go; only «Approve» of what the screen shows sends it.
+ *
  * A FOLLOW-UP ROW moves through `moveFollowup` (T-F7, T-F9, T-F10, T-F13), the step F2b connects like
  * B6's `afterSave`; by default it is the bare `followupTransition`.
  */
@@ -16,6 +20,7 @@ import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { fail, ok, type Application, type Followup, type Result, type Send, type SendKind, type SendState } from '../types.ts'
 import { hasHumanReply } from './deferred.ts'
+import { pinnedVersion } from './message.ts'
 import { addressGuard } from './recipient.ts'
 import { dailyCap, enqueueIfPending, followupOf, newMessageId, writeOverride, type ApproveOptions, type Enqueue, type Sender } from './send.ts'
 
@@ -59,6 +64,18 @@ export interface Assist {
 const rowOf = (app: Application, kind: SendKind): Result<Send> => {
   const row = app.sends.find((s) => s.kind === kind)
   return row === undefined ? fail('conflict', `there is no ${kind} send`) : ok(row)
+}
+
+/** `stale-version` when `kind`'s row pins another version than `current` (D9, revisión del corte 1a); ok without a row (its conflict comes later). */
+function sameVersion(app: Application, kind: SendKind, current: number): Result<unknown> {
+  const row = app.sends.find((s) => s.kind === kind)
+  return row === undefined ? ok(undefined) : pinnedVersion(row, current)
+}
+
+/** The same for a follow-up, read inside the caller's `tx`. */
+function sameFollowupVersion(q: Queries, f: Followup, kind: SendKind): Result<unknown> {
+  const app = repo.getApplication(q, f.applicationId)
+  return app === undefined ? fail('not-found', 'no such application') : sameVersion(app, kind, f.version)
 }
 
 /** `conflict 'stale'` when the screen saw `kind`'s row in another state or at another moment; ok without `expect`. */
@@ -149,7 +166,10 @@ export function createAssist(deps: AssistDeps): Assist {
     const step = (q: Queries, at: Date, app: Application): Result<InitialStep> => {
       if (answer === 'went') return ok({ event: { type: 'it-went' }, log: (row) => ({ kind: 'sent', data: { kind, messageId: row.messageId, answer } }) }) // T-A17 + T-S5
       if (answer === 'not-went') return ok({ event: { type: 'it-didnt-go' }, log: () => ({ kind: 'send-failed', data: { kind, reason: 'owner-not-sent' } }) }) // T-A31 + T-S10
-      const guard = guarded(q, at, app.state === 'send-unknown', app.target, sendAnyway)
+      const again = app.state === 'send-unknown'
+      const version = again ? sameVersion(app, kind, app.version) : ok(undefined)
+      if (!version.ok) return version
+      const guard = guarded(q, at, again, app.target, sendAnyway)
       if (!guard.ok) return guard
       return ok({ event: { type: 'send-again', cap: capOf(q, at) }, log: () => ({ kind: 'approved', data: { kind, again: true } }) }) // T-A18 + T-S6
     }
@@ -166,7 +186,10 @@ export function createAssist(deps: AssistDeps): Assist {
           log: () => ({ kind: 'followup-cancelled', data: { kind, why: 'not-sent' } }),
         }) // T-F13 + T-S10
       }
-      const guard = guarded(q, at, f.state === 'send-unknown', f, sendAnyway)
+      const again = f.state === 'send-unknown'
+      const version = again ? sameFollowupVersion(q, f, kind) : ok(undefined)
+      if (!version.ok) return version
+      const guard = guarded(q, at, again, f, sendAnyway)
       if (!guard.ok) return guard
       const cap = capOf(q, at)
       return ok({ followup: (app) => ({ type: 'send-again', app: context(q, app), cap }), send: () => ({ type: 'send-again', cap }), log: () => ({ kind: 'approved', data: { kind, again: true } }) }) // T-F9 + T-S6
@@ -175,13 +198,16 @@ export function createAssist(deps: AssistDeps): Assist {
 
   function retryFollowup(id: string, kind: SendKind, sendAnyway: boolean, expect: SendExpect | undefined): Result<Send> {
     return onFollowup(id, kind, (q, at, f) => {
-      const guard = guarded(q, at, f.state === 'failed', f, sendAnyway)
+      const retry = f.state === 'failed'
+      const version = retry ? sameFollowupVersion(q, f, kind) : ok(undefined)
+      if (!version.ok) return version
+      const guard = guarded(q, at, retry, f, sendAnyway)
       if (!guard.ok) return guard
       const cap = capOf(q, at)
       const profileVersion = repo.latestProfileVersion(q)?.version ?? null
       return ok({
         followup: () => ({ type: 'retry', cap }),
-        send: () => ({ type: 'retry', messageId: newMessageId(at), cap, addressOverride: guard.value, profileVersion }),
+        send: () => ({ type: 'retry', messageId: newMessageId(at), cap, addressOverride: guard.value, profileVersion, artifactsVersion: f.version }),
         log: () => ({ kind: 'approved', data: { kind, retry: true } }),
       }) // T-F10 + T-S8
     }, expect)
@@ -209,6 +235,8 @@ export function createAssist(deps: AssistDeps): Assist {
       if (!seen.ok) return seen
       const failed = rowOf(app, 'initial')
       if (!failed.ok || failed.value.state !== 'failed') return fail('conflict', 'only a failed send is retried')
+      const version = pinnedVersion(failed.value, app.version)
+      if (!version.ok) return version
       const approved = deps.sender.approve(id, 'initial', options) // T-A11 + T-S8, every check of step 1; it launches 2–3
       if (!approved.ok) return approved
       const after = db.read((q) => repo.getApplication(q, id))

@@ -231,7 +231,7 @@ test('deferred, then a cut after DATA or a restart (T-S4): T-S7 + T-A17, no «di
 
 test('«Retry» updates the same row: a new messageId, the old one in attempts, reason cleared (T-S8)', () => {
   const failed = send({ state: 'failed', messageId: FIRST, reason: 'timeout', at: '2026-11-12T00:00:00.000Z' })
-  const next = valueOf(sendTransition(failed, { type: 'retry', messageId: SECOND, cap: CAP, addressOverride: false, profileVersion: 2 }, NOW))
+  const next = valueOf(sendTransition(failed, { type: 'retry', messageId: SECOND, cap: CAP, addressOverride: false, profileVersion: 2, artifactsVersion: 1 }, NOW))
   assert.deepEqual([next.kind, next.state, next.messageId, next.reason], ['initial', 'sending', SECOND, null])
   assert.deepEqual(next.attempts, [{ messageId: FIRST, at: '2026-11-12T00:00:00.000Z', reason: 'timeout' }])
 })

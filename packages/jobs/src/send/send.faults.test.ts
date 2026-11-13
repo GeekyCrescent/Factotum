@@ -25,7 +25,7 @@ async function within(t: { skip: (m: string) => void }, options: WorldOptions, b
 const inFlight = (w: World): void =>
   write(w.db, (q) => {
     q.run("UPDATE applications SET state = 'sending' WHERE id = 'app-1'")
-    q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', 1)")
+    q.run("INSERT INTO sends (application_id, kind, channel, message_id, state, at, profile_version, artifacts_version) VALUES ('app-1', 'initial', 'smtp', '<m@jobs.factotum.local>', 'sending', '2026-11-13T22:00:00.000Z', 1, 1)")
   })
 
 const failedWith = (w: World): { state: string | undefined; reason: string | null | undefined; events: readonly unknown[] } => ({
