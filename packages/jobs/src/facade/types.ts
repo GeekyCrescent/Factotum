@@ -101,13 +101,43 @@ export interface Health {
   readonly warnings: readonly string[]
 }
 
+/** A send that needs the owner: «did it go?» or failed. The tracker shows one card per send. */
+export interface SendNeed {
+  readonly applicationId: string
+  readonly company: string
+  readonly kind: SendKind
+  readonly state: 'send-unknown' | 'failed'
+  readonly at: string
+  /** Of `failed`, masked. */
+  readonly reason: string | null
+}
+
+/**
+ * `GET /overview`, AS THE SCREEN READS IT (`modules/jobs/client/contract.ts` `Overview`). The test
+ * application is never counted (crit. 63).
+ */
 export interface Overview {
-  /** Applications by state; the test application is not counted (crit. 63). */
-  readonly counts: Readonly<Partial<Record<AppState, number>>>
+  /** crit. 63: to review (`in-review` + `ready`), approved not sent, sent, awaiting reply (sent, no human reply), interviews, offers. */
+  readonly counts: {
+    readonly toReview: number
+    readonly approvedNotSent: number
+    readonly sent: number
+    readonly awaitingReply: number
+    readonly interviews: number
+    readonly offers: number
+  }
   /** `ready` applications outside the open batch: «Start review (N)». */
-  readonly ready: number
+  readonly reviewable: number
+  /** A batch is open: the tracker continues it instead of arming another over it. */
+  readonly batchOpen: boolean
+  /** The current profile has no phone (R9): nothing becomes ready. */
+  readonly missingPhone: boolean
   /** `health().warnings`. */
-  readonly warnings: readonly string[]
+  readonly notices: readonly string[]
+  /** Every `send-unknown` and `failed` row of an application that is not closed. */
+  readonly sends: readonly SendNeed[]
+  /** Applications by state, for the engine's own tests and the T2a list; the screen does not read it. */
+  readonly byState: Readonly<Partial<Record<AppState, number>>>
 }
 
 // ── The cards (the screen's views) ───────────────────────────────────────────────────────────────

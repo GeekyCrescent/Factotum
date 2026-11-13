@@ -9,9 +9,10 @@ import type { MailHealth } from '../mail-health.ts'
 import type { SeenBatch } from '../review/seen.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { APP_STATES, fail, ok, type Result } from '../types.ts'
+import type { Queries } from '../store/db.ts'
+import { APP_STATES, fail, ok, type Application, type Result } from '../types.ts'
 import { confinedArtifact, pathWarnings } from './sources.ts'
-import type { BatchAnswer, Health, Overview } from './types.ts'
+import type { BatchAnswer, Health, Overview, SendNeed } from './types.ts'
 import { batchView, readyOutside } from './views.ts'
 
 export interface ReadsDeps {
@@ -55,10 +56,17 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
   function overview(): Overview {
     return db.read((q) => {
       const apps = repo.applicationsByState(q, [...APP_STATES]).filter((app) => !app.test)
-      const counts: Partial<Record<(typeof APP_STATES)[number], number>> = {}
-      for (const app of apps) counts[app.state] = (counts[app.state] ?? 0) + 1
-      const open = repo.openBatch(q)?.items ?? []
-      return { counts, ready: readyOutside(q, open), warnings: health().warnings }
+      const open = repo.openBatch(q)
+      const phone = repo.latestProfileVersion(q)?.profile.identity?.phone ?? ''
+      return {
+        counts: countsOf(apps),
+        reviewable: readyOutside(q, open?.items ?? []),
+        batchOpen: open !== undefined,
+        missingPhone: phone.trim() === '',
+        notices: health().warnings,
+        sends: sendsNeeding(q, apps),
+        byState: byStateOf(apps),
+      }
     })
   }
 
@@ -71,4 +79,37 @@ export function views({ db, queue, mail: mailNow, paths, stateDir }: ReadsDeps):
   }
 
   return { health, overview, answer, file }
+}
+
+const initialSent = (app: Application): boolean => app.sends.some((send) => send.kind === 'initial' && send.state === 'sent')
+
+/** crit. 63, the screen's six counters. */
+function countsOf(apps: readonly Application[]): Overview['counts'] {
+  const count = (keep: (app: Application) => boolean): number => apps.filter(keep).length
+  return {
+    toReview: count((app) => app.state === 'in-review' || app.state === 'ready'),
+    approvedNotSent: count((app) => app.state === 'approved'),
+    sent: count(initialSent),
+    awaitingReply: count((app) => app.state === 'sent'),
+    interviews: count((app) => app.outcome === 'interview'),
+    offers: count((app) => app.outcome === 'offer'),
+  }
+}
+
+function byStateOf(apps: readonly Application[]): Overview['byState'] {
+  return apps.reduce<Partial<Record<Application['state'], number>>>((counts, app) => ({ ...counts, [app.state]: (counts[app.state] ?? 0) + 1 }), {})
+}
+
+/** The sends the owner has to answer: `send-unknown` or `failed`, of an application not closed. */
+function sendsNeeding(q: Queries, apps: readonly Application[]): readonly SendNeed[] {
+  return apps
+    .filter((app) => app.state !== 'closed')
+    .flatMap((app) =>
+      app.sends.flatMap((send): SendNeed[] =>
+        send.state === 'send-unknown' || send.state === 'failed'
+          ? [{ applicationId: app.id, company: repo.getCompany(q, app.companyId)?.name ?? '', kind: send.kind, state: send.state, at: send.at, reason: send.reason }]
+          : [],
+      ),
+    )
+    .toSorted((a, b) => a.at.localeCompare(b.at) || a.applicationId.localeCompare(b.applicationId))
 }

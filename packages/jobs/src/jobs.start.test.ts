@@ -107,7 +107,7 @@ test('C1 health: a 0644 password file reads «readable by others» once the lsta
     assert.match(health.mail.reason ?? '', /^Mail: password file is readable by others/)
     assert.ok(!(health.mail.reason ?? '').includes(rig.passwordFile))
     assert.ok(health.warnings.some((w) => w.startsWith('Mail: password file is readable by others')))
-    assert.ok(jobs.overview().warnings.length > 0, 'the overview carries it')
+    assert.ok(jobs.overview().notices.length > 0, 'the overview carries it')
     assert.equal(jobs.where().mode, 'host')
   } finally {
     await jobs.stop()
@@ -177,7 +177,7 @@ test('C1 start: fits in 10 s with a store of 100 companies and 80 applications',
   const took = performance.now() - began
   try {
     assert.ok(took < 10_000, `start took ${Math.round(took)} ms`)
-    assert.equal(jobs.overview().counts.draft, 80)
+    assert.equal(jobs.overview().byState.draft, 80)
   } finally {
     await jobs.stop()
   }

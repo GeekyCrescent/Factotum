@@ -20,7 +20,7 @@ async function imported(base: { readonly dir: string }): Promise<{ readonly jobs
   const jobs = await started(depsOf(rig))
   const report = valueOf(await jobs.importSeed({ dryRun: false }))
   assert.ok(report.queued.cv > 0, 'CVs queued')
-  await eventually(() => (jobs.overview().counts.generating ?? 0) === 0, 'every CV came back', 30_000)
+  await eventually(() => (jobs.overview().byState.generating ?? 0) === 0, 'every CV came back', 30_000)
   return { jobs, rig }
 }
 
@@ -84,13 +84,13 @@ test('C1 flow: saveProfile re-lints in its tx; saveRule too; a bad profile is in
   using base = tempBase()
   const { jobs } = await imported(base)
   try {
-    const before = jobs.overview().counts.ready ?? 0
+    const before = jobs.overview().byState.ready ?? 0
     assert.ok(before > 0)
     const profile = jobs.profile().profile
     const saved = valueOf(jobs.saveProfile({ ...profile, identity: { ...profile.identity, phone: '' } }))
     assert.equal(saved.version, 2)
     assert.ok(saved.relinted >= before, 'the ready ones went back for the phone')
-    assert.equal(jobs.overview().counts.ready ?? 0, 0)
+    assert.equal(jobs.overview().byState.ready ?? 0, 0)
     errorOf(jobs.saveProfile({ nope: true }), 'invalid')
 
     const rule = valueOf(jobs.saveRule({ text: 'Always be brief.', scope: 'all' }))
@@ -106,12 +106,12 @@ test('C1 flow: the test application is not in the overview; retry and the send p
   using base = tempBase()
   const { jobs, rig } = await imported(base)
   try {
-    const counts = jobs.overview().counts
+    const counts = jobs.overview().byState
     // The CLI's way: a second handle on the same jobs.db, beside the running facade.
     const db = valueOf(await openDb({ dir: rig.stateDir, now: () => NOW }))
     const test = valueOf(createTestApplication(db, { now: () => NOW }, { to: 'owner@example.test' }))
     db.close()
-    assert.deepEqual(jobs.overview().counts, counts, 'not counted')
+    assert.deepEqual(jobs.overview().byState, counts, 'not counted')
     assert.equal(valueOf(jobs.application(test.id)).application.test, true)
 
     errorOf(jobs.retry(test.id, 'reprint'), 'conflict', 'reprint arrives with H5c')
