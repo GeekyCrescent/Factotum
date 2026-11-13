@@ -84,15 +84,41 @@ describe('approve does not wait for SMTP (E1b)', () => {
     }
   })
 
-  test('after stop(), approve is refused and nothing launches', async (t) => {
+  test('after stop(), approve is refused and nothing launches; launch says so', async (t) => {
     await within(t, {}, async (w) => {
       const sender = createSender(w.deps)
       await sender.stop()
       errorOf(sender.approve('app-1', 'initial'), 'conflict')
-      sender.launch('app-1', 'initial')
+      assert.equal(sender.launch('app-1', 'initial'), false)
       await sender.settled()
       assert.equal(appOf(w.db).state, 'ready')
       assert.equal(w.server.commands.length, 0)
+      assert.match(w.lines.join('\n'), /warn send app-1\/initial: not launched, the sender is stopping/)
+    })
+  })
+
+  test('SMTP accepts while stop() aborts: step 3 is still not written (D9 step 5), but the log keeps the messageId and the response', async (t) => {
+    await within(t, {}, async (w) => {
+      let called = false
+      const sender = createSender({
+        ...w.deps,
+        // The 250 arrives as the abort does: the server already has the mail.
+        sendMail: (input) => {
+          called = true
+          return new Promise((resolve) => input.signal.addEventListener('abort', () => resolve({ ok: true, messageId: input.messageId, response: '250 2.0.0 OK q1 - gsmtp' })))
+        },
+      })
+      valueOf(sender.approve('app-1', 'initial'))
+      const messageId = appOf(w.db).sends[0]?.messageId ?? ''
+      await eventually(() => called, 'sendMail is called')
+      await sender.stop()
+      assert.equal(appOf(w.db).sends[0]?.state, 'sending')
+      assert.ok(!kindsOf(w).includes('sent'))
+      const logged = w.lines.join('\n')
+      assert.ok(logged.includes(messageId), logged)
+      assert.match(logged, /accepted by SMTP after stop/)
+      assert.match(logged, /250 2\.0\.0 OK q1/)
+      for (const secret of ['ada@acme.example', 'Dear Ada', 'abcdefghijklmnop']) assert.ok(!logged.includes(secret), `no ${secret} in the log`)
     })
   })
 })

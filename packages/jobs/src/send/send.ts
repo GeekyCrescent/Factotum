@@ -12,7 +12,8 @@
  *
  * `approve` DOES STEP 1 AND RETURNS: steps 2–3 run in a registered promise that never rejects, which
  * `stop()` aborts and waits for — and then step 3 is NOT written (D9 step 5): the row stays `sending`
- * and the next start makes it `send-unknown`. Nothing here retries by itself.
+ * and the next start makes it `send-unknown`; what the aborted attempt did (an SMTP `250` with its
+ * messageId included) goes to the log only. Nothing here retries by itself.
  *
  * NEVER IN AN EVENT, A REASON OR THE LOG: the password, the body, the subject, the address.
  */
@@ -83,8 +84,8 @@ export interface Approved {
 export interface Sender {
   /** Step 1 in its `tx`; launches 2–3 and returns at once (D9 step 4). What `decide({ kind: 'approve' })` calls. */
   readonly approve: (id: string, kind: SendKind, options?: ApproveOptions) => Result<Approved>
-  /** Steps 2–3 for a row ALREADY `sending` («Send again», «Retry»: assist.ts writes their step 1). */
-  readonly launch: (id: string, kind: SendKind) => void
+  /** Steps 2–3 for a row ALREADY `sending` («Send again», «Retry»: assist.ts writes their step 1). Whether it launched (not after `stop`). */
+  readonly launch: (id: string, kind: SendKind) => boolean
   /** The client's poll (`GET /a/:id/sends/:kind`). */
   readonly send: (id: string, kind: SendKind) => Result<Send>
   /** Resolves when every send in flight has finished (tests, and `stop`). */
@@ -206,9 +207,9 @@ export function createSender(deps: SenderDeps): Sender {
   }
 
   /** Logs and never throws: a broken logger must not turn a send into an unobserved rejection. */
-  function report(message: string): void {
+  function report(message: string, level: 'error' | 'warn' = 'error'): void {
     try {
-      log.error(message)
+      log[level](message)
     } catch {
       // The logger itself failed: there is nowhere left to say it, and the send's state is already decided.
     }
@@ -290,14 +291,29 @@ export function createSender(deps: SenderDeps): Sender {
     if (kind === 'initial') applyDeferredAfter(id, at)
   }
 
+  /**
+   * stop() (D9 step 5): step 3 is NOT written — the store is closing, and the next start makes the row
+   * `send-unknown`, which asks the owner. What is known is logged instead: a mail SMTP accepted as the
+   * abort landed carries its messageId and the server's response (our id and a queue id, no address), so
+   * the owner's «It went» can be checked against the log.
+   */
+  function stoppedWith(id: string, kind: SendKind, result: SendResult): void {
+    const tail = 'step 3 not written (stopping); the restart makes it send-unknown'
+    if (result.ok) report(`send ${id}/${kind}: accepted by SMTP after stop, ${result.messageId} ${result.response}; ${tail}`, 'warn')
+    else report(`send ${id}/${kind}: stopped mid-send (${result.phase}); ${tail}`, 'warn')
+  }
+
   async function deliver(id: string, kind: SendKind, signal: AbortSignal): Promise<void> {
     const result = await transmit(id, kind, signal)
-    if (signal.aborted) return // stop(): no step 3, the row stays `sending` (D9 step 5)
+    if (signal.aborted) return stoppedWith(id, kind, result)
     record(id, kind, result)
   }
 
-  function launch(id: string, kind: SendKind): void {
-    if (stopped) return
+  function launch(id: string, kind: SendKind): boolean {
+    if (stopped) {
+      report(`send ${id}/${kind}: not launched, the sender is stopping; a row left sending becomes send-unknown at the restart`, 'warn')
+      return false
+    }
     const controller = new AbortController()
     const entry = {
       controller,
@@ -306,6 +322,7 @@ export function createSender(deps: SenderDeps): Sender {
         .finally(() => inFlight.delete(entry)),
     }
     inFlight.add(entry)
+    return true
   }
 
   async function settled(): Promise<void> {
