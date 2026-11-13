@@ -277,11 +277,14 @@ export interface Jobs {
   readonly application: (id: string) => Result<ApplicationDetail>
   readonly importSeed: (input: { readonly dryRun: boolean }) => Promise<Result<ImportReport>>
   readonly profile: () => ProfileVersion
-  /** D6 «Re-lint» in the same `tx`; `relinted`: how many changed. */
-  readonly saveProfile: (input: unknown) => Result<ProfileVersion & { readonly relinted: number }>
+  /**
+   * D6 «Re-lint» in the same `tx`; `relinted`: how many changed; `skipped`: how many could not be
+   * linted (the master CV unreadable, the vault offline) and kept their warnings — never a failed save.
+   */
+  readonly saveProfile: (input: unknown) => Result<ProfileVersion & { readonly relinted: number; readonly skipped: number }>
   readonly rules: () => readonly Rule[]
   /** A new rule, or an edit of `id`; re-lints as `saveProfile`. */
-  readonly saveRule: (input: unknown, id?: string) => Result<Rule & { readonly relinted: number }>
+  readonly saveRule: (input: unknown, id?: string) => Result<Rule & { readonly relinted: number; readonly skipped: number }>
   /** Synchronous, no network: it does not wait for address checks (D9). */
   readonly startBatch: () => Result<BatchAnswer>
   readonly batch: () => Result<BatchAnswer>

@@ -144,17 +144,45 @@ test('L4: an unsent follow-up is re-linted with the follow-up profile (T-F2), bo
   assert.equal(report.relinted, 2)
 })
 
-test('L4: a master CV that cannot be read refuses the re-lint and rolls the profile save back', async () => {
+test('L4: a master CV that cannot be read (the vault offline) skips each application, logged and reported; the profile and a rule still save', async () => {
   using base = tempBase()
   const db = await store(base)
-  insertApp(db, { state: 'in-review', warnings: [BLOCKER] }, CLEAN)
+  insertApp(db, { id: 'a', state: 'in-review', warnings: [BLOCKER] }, CLEAN)
+  insertApp(db, { id: 'b', state: 'ready' }, CLEAN)
+  insertFollowup(db, { id: 'fu-draft', applicationId: 'a', state: 'draft', warnings: [BLOCKER], versions: [followupVersion(1, { body: 'Hi Ada,\n\nFollowing up.\n\n{signature}' })] })
   const broken = linter({ master: () => fail('module-error', 'cv master: cannot read (ENOENT)') })
+  const log = capturedLog()
+  const deps = { now: () => NOW, linter: broken, log: log.log, newId: () => 'rule-1', enqueueReprint: () => assert.fail('no reprint') }
 
-  const saved = saveProfileRelinting(db, PROFILE, { now: () => NOW, linter: broken, enqueueReprint: () => assert.fail('no reprint') })
+  const saved = valueOf(saveProfileRelinting(db, { ...PROFILE, identity: { ...PROFILE.identity, phone: '+61 499 999 999' } }, deps))
 
-  errorOf(saved, 'module-error', 'cv master: cannot read (ENOENT)')
-  assert.equal(db.read((q) => repo.latestProfileVersion(q))?.version, 2, 'the version was rolled back')
-  assert.equal(appOf(db, 'app-1').state, 'in-review')
+  assert.equal(saved.version, 3, 'the profile saved')
+  assert.deepEqual([saved.relinted, saved.skipped], [1, 2], 'the follow-up re-linted; both applications skipped')
+  assert.deepEqual(appOf(db, 'a').warnings, [BLOCKER], 'a skipped row keeps its warnings')
+  assert.equal(appOf(db, 'b').state, 'ready')
+  assert.deepEqual(relinted(db, 'b'), [])
+  assert.deepEqual(log.lines.filter((line) => line.startsWith('warn')).length, 2)
+  assert.ok(log.lines.every((line) => !line.startsWith('warn') || line.includes('cv master: cannot read (ENOENT)')))
+
+  const rule = valueOf(saveRuleRelinting(db, { text: 'Always be brief.', scope: 'all' }, deps))
+  assert.deepEqual([rule.id, rule.skipped], ['rule-1', 2])
+})
+
+test('L4: an application whose company is gone is skipped by the re-lint; the others still re-lint', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  // A damaged store: the foreign keys are off only to write the orphan.
+  db.read((q) => q.run('PRAGMA foreign_keys = OFF'))
+  insertApp(db, { id: 'orphan', state: 'in-review', warnings: [BLOCKER], opportunityId: 'nope' }, CLEAN)
+  db.read((q) => q.run('PRAGMA foreign_keys = ON'))
+  insertApp(db, { id: 'fine', state: 'in-review', warnings: [BLOCKER] }, CLEAN)
+
+  const report = valueOf(db.tx((q) => linter().relintUnsent(q, NOW)))
+
+  assert.equal(report.relinted, 1)
+  assert.deepEqual(report.skipped, [{ kind: 'application', id: 'orphan', reason: 'application orphan has no opportunity or company' }])
+  assert.equal(appOf(db, 'fine').state, 'ready')
+  assert.deepEqual(appOf(db, 'orphan').warnings, [BLOCKER])
 })
 
 test('L4: saving the profile re-lints in its tx; the reprint hook runs after it, once per application', async () => {

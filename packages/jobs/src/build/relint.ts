@@ -14,6 +14,10 @@
  * application that GAINED `cv-stale`; it is named in the report and the caller enqueues it AFTER the
  * `tx` (`saveProfileRelinting`, the hook `enqueueReprint` — a no-op until H5c connects it).
  *
+ * A ROW IT CANNOT LINT IS SKIPPED, NEVER FATAL (`relintUnsent`): with the vault offline the master CV
+ * cannot be read, and the owner must still be able to edit the profile. The row keeps its warnings,
+ * the save logs it and answers how many were `skipped`. `relintOne` (one row, a caller about it) fails.
+ *
  * THE SAME LINTER IS THE QUEUE'S GUARD (G4, `QueueDeps.lint`/`relintOne`): what comes back late is
  * linted, or re-linted, by this file too.
  */
@@ -49,11 +53,23 @@ export interface LinterDeps {
   readonly pdfExists: (path: string) => boolean
 }
 
+/** An entity the re-lint could not lint (its context is missing): left as it was. */
+export interface SkippedRelint {
+  readonly kind: 'application' | 'followup'
+  readonly id: string
+  readonly reason: string
+}
+
 export interface RelintReport {
   /** Entities whose state or warnings changed (one `relinted` event each). */
   readonly relinted: number
   /** Applications that GAINED `cv-stale`: one reprint each, after the `tx`. */
   readonly reprint: readonly string[]
+  /**
+   * Entities whose lint context could not be read — the master CV with the vault offline, an
+   * opportunity or company gone. Their warnings stay as they were; the save never fails for them.
+   */
+  readonly skipped: readonly SkippedRelint[]
 }
 
 export interface Linter {
@@ -61,7 +77,7 @@ export interface Linter {
   readonly lint: LintFn
   /** One entity, in the caller's `tx` (the queue's guard, `decide`). */
   readonly relintOne: RelintFn
-  /** Everything unsent, in the caller's `tx` (`saveProfile`, `saveRule`). */
+  /** Everything unsent, in the caller's `tx` (`saveProfile`, `saveRule`); a row it cannot lint is skipped. */
   readonly relintUnsent: (q: Queries, now: Date) => Result<RelintReport>
 }
 
@@ -84,13 +100,16 @@ const EMPTY: Omit<Artifacts, 'version' | 'profileVersion'> = {
   origin: 'generated',
 }
 
-/** One entity's re-lint: whether it changed, and whether it gained `cv-stale`. */
+/** One entity's re-lint: whether it changed, whether it gained `cv-stale`, or why it was not linted. */
 interface Outcome {
   readonly changed: boolean
   readonly staleGained: boolean
+  /** Why its lint context could not be read; null when it was linted. */
+  readonly skipped: string | null
 }
 
-const UNCHANGED: Outcome = { changed: false, staleGained: false }
+const UNCHANGED: Outcome = { changed: false, staleGained: false, skipped: null }
+const skippedFor = (reason: string): Outcome => ({ ...UNCHANGED, skipped: reason })
 
 const codesOf = (warnings: readonly Warning[]): readonly string[] => [...new Set(warnings.filter((w) => w.blocks && w.overridden === null).map((w) => w.code))]
 const hasStale = (warnings: readonly Warning[]): boolean => warnings.some((w) => w.code === 'cv-stale')
@@ -146,48 +165,55 @@ export function createLinter(deps: LinterDeps): Linter {
     if (!APP_STATES.includes(app.state)) return ok(UNCHANGED)
     const artifacts = getArtifacts(q, app.id, app.version) ?? { ...EMPTY, version: app.version, profileVersion: 0 }
     const linted = lintApplication(q, app, artifacts)
-    if (!linted.ok) return linted
+    if (!linted.ok) return ok(skippedFor(linted.error.reason))
     const moved = appTransition(app, { type: 'relint', pdfExists: pdfOn(artifacts), warnings: linted.value }, now) // T-A5, T-A6
     if (!moved.ok) return moved
     if (moved.value.state === app.state && same(moved.value.warnings, app.warnings)) return ok(UNCHANGED)
     const data = { from: app.state, to: moved.value.state, codes: codesOf(moved.value.warnings) }
     const saved = saveApplication(q, moved.value, { kind: 'relinted', data }, now)
     if (!saved.ok) return saved
-    return ok({ changed: true, staleGained: hasStale(moved.value.warnings) && !hasStale(app.warnings) })
+    return ok({ changed: true, staleGained: hasStale(moved.value.warnings) && !hasStale(app.warnings), skipped: null })
   }
 
   function relintFollowup(q: Queries, row: Followup, now: Date): Result<Outcome> {
     if (!FOLLOWUP_STATES.includes(row.state)) return ok(UNCHANGED)
     const version = row.versions.find((v) => v.version === row.version)
-    if (version === undefined) return fail('module-error', `follow-up ${row.id} has no version ${row.version}`)
+    if (version === undefined) return ok(skippedFor(`follow-up ${row.id} has no version ${row.version}`))
     const linted = lintRow(q, row, version)
-    if (!linted.ok) return linted
+    if (!linted.ok) return ok(skippedFor(linted.error.reason))
     const moved = followupTransition(row, { type: 'relint', warnings: linted.value }, now) // T-F2
     if (!moved.ok) return moved
     if (moved.value.state === row.state && same(moved.value.warnings, row.warnings)) return ok(UNCHANGED)
     const saved = saveFollowup(q, moved.value, { kind: 'relinted', data: { from: row.state, to: moved.value.state, codes: codesOf(moved.value.warnings) } }, now)
-    return saved.ok ? ok({ changed: true, staleGained: false }) : saved
+    return saved.ok ? ok({ changed: true, staleGained: false, skipped: null }) : saved
+  }
+
+  /** One entity: its caller (the queue's guard, `decide`) is about that row, so a skip is its failure. */
+  const settledOne = (done: Result<Outcome>): Result<void> => {
+    if (!done.ok) return done
+    return done.value.skipped === null ? ok(undefined) : fail('module-error', done.value.skipped)
   }
 
   const relintOne: RelintFn = (q, entity, now) => {
     if (entity.kind === 'application') {
       const app = getApplication(q, entity.id)
       if (app === undefined) return fail('not-found', 'no such application')
-      const done = relintApplication(q, app, now)
-      return done.ok ? ok(undefined) : done
+      return settledOne(relintApplication(q, app, now))
     }
     const row = getFollowup(q, entity.id)
     if (row === undefined) return fail('not-found', 'no such follow-up')
-    const done = relintFollowup(q, row, now)
-    return done.ok ? ok(undefined) : done
+    return settledOne(relintFollowup(q, row, now))
   }
 
+  /** A row whose context cannot be read is skipped, never fatal: the save it rides on stands. */
   function relintUnsent(q: Queries, now: Date): Result<RelintReport> {
     let relinted = 0
     const reprint: string[] = []
+    const skipped: SkippedRelint[] = []
     for (const app of applicationsByState(q, APP_STATES)) {
       const done = relintApplication(q, app, now)
       if (!done.ok) return done
+      if (done.value.skipped !== null) skipped.push({ kind: 'application', id: app.id, reason: done.value.skipped })
       if (done.value.changed) relinted += 1
       if (done.value.staleGained) reprint.push(app.id)
     }
@@ -195,9 +221,10 @@ export function createLinter(deps: LinterDeps): Linter {
       const row = getFollowup(q, id)
       const done = row === undefined ? ok(UNCHANGED) : relintFollowup(q, row, now)
       if (!done.ok) return done
+      if (done.value.skipped !== null) skipped.push({ kind: 'followup', id, reason: done.value.skipped })
       if (done.value.changed) relinted += 1
     }
-    return ok({ relinted, reprint })
+    return ok({ relinted, reprint, skipped })
   }
 
   return { lint: lintTarget, relintOne, relintUnsent }
@@ -216,8 +243,18 @@ export interface RelintSaveDeps {
   readonly log?: Logger | undefined
 }
 
-/** Calls the reprint hook for each application, after the `tx`; a hook that throws is logged, never fatal. */
-function reprintAfter(report: RelintReport, deps: RelintSaveDeps): void {
+/** What a save answers of its re-lint: how many changed, and how many could not be linted. */
+export interface RelintCounts {
+  readonly relinted: number
+  readonly skipped: number
+}
+
+/**
+ * After the `tx`: logs each skipped row, then calls the reprint hook for each application; a hook
+ * that throws is logged, never fatal.
+ */
+function afterRelint(report: RelintReport, deps: RelintSaveDeps): RelintCounts {
+  for (const skip of report.skipped) deps.log?.warn(`jobs: the re-lint skipped ${skip.kind} ${skip.id} (${skip.reason}); its warnings stay as they were`)
   for (const id of report.reprint) {
     try {
       deps.enqueueReprint(id)
@@ -225,14 +262,14 @@ function reprintAfter(report: RelintReport, deps: RelintSaveDeps): void {
       deps.log?.error(`jobs: the reprint of application ${id} was not queued (${error instanceof Error ? error.message : String(error)})`)
     }
   }
+  return { relinted: report.relinted, skipped: report.skipped.length }
 }
 
 /** `saveProfile` with `relintUnsent` as its `afterSave`: the facade's `saveProfile` (D3, D6). */
-export function saveProfileRelinting(db: Db, input: unknown, deps: RelintSaveDeps): Result<ProfileVersion & { readonly relinted: number }> {
+export function saveProfileRelinting(db: Db, input: unknown, deps: RelintSaveDeps): Result<ProfileVersion & RelintCounts> {
   const saved = saveProfile(db, input, { now: deps.now, afterSave: (q) => deps.linter.relintUnsent(q, deps.now()) })
   if (!saved.ok) return saved
-  reprintAfter(saved.value.hook, deps)
-  return ok({ ...saved.value.saved, relinted: saved.value.hook.relinted })
+  return ok({ ...saved.value.saved, ...afterRelint(saved.value.hook, deps) })
 }
 
 /** `saveRule` (new, or an edit of `id`) with `relintUnsent` as its `afterSave`. */
@@ -241,7 +278,7 @@ export function saveRuleRelinting(
   input: unknown,
   deps: RelintSaveDeps & { readonly newId?: () => string },
   id?: string,
-): Result<Rule & { readonly relinted: number }> {
+): Result<Rule & RelintCounts> {
   const ctx = {
     now: deps.now,
     afterSave: (q: Queries) => deps.linter.relintUnsent(q, deps.now()),
@@ -249,6 +286,5 @@ export function saveRuleRelinting(
   }
   const saved = saveRule(db, input, ctx, id)
   if (!saved.ok) return saved
-  reprintAfter(saved.value.hook, deps)
-  return ok({ ...saved.value.saved, relinted: saved.value.hook.relinted })
+  return ok({ ...saved.value.saved, ...afterRelint(saved.value.hook, deps) })
 }
