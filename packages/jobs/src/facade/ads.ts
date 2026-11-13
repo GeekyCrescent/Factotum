@@ -14,6 +14,10 @@ import { AD_STALE_MS, revalidateAd } from '../build/revalidate.ts'
 import type { Net } from '../scout/net.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
+import { ok } from '../types.ts'
+
+/** `meta` key: since when the last walk failed (ISO); the next walk that goes through clears it (review 1a). */
+export const ADS_FAILING = 'adsFailing'
 
 export interface AdRevalidatorDeps {
   readonly db: Db
@@ -51,19 +55,37 @@ export function createAdRevalidator(deps: AdRevalidatorDeps): AdRevalidator {
   let controller = new AbortController()
   let stopped = false
 
-  async function walk(): Promise<void> {
+  /** The `meta` flag `health()` reads: set on a failed walk (kept since its first), cleared by a good one. */
+  function flag(failed: boolean): void {
+    const since = deps.db.read((q) => repo.getMeta(q, ADS_FAILING))
+    if (failed === (since !== undefined)) return
+    const written = deps.db.tx((q) => ok(failed ? repo.setMeta(q, ADS_FAILING, deps.now().toISOString()) : repo.deleteMeta(q, ADS_FAILING)))
+    if (!written.ok) deps.log.error(`jobs: ${ADS_FAILING} was not written (${written.error.reason})`)
+  }
+
+  /** True when every due ad was revalidated. */
+  async function walk(): Promise<boolean> {
+    let allChecked = true
     for (const id of dueApplications(deps.db, deps.now())) {
-      if (stopped) return
+      if (stopped) return allChecked
       const outcome = await revalidateAd({ db: deps.db, net: deps.net, now: deps.now }, id, controller.signal)
-      if (!outcome.ok) deps.log.warn(`jobs: the ad of application ${id} was not revalidated (${outcome.error.reason})`)
+      if (outcome.ok) continue
+      allChecked = false
+      deps.log.warn(`jobs: the ad of application ${id} was not revalidated (${outcome.error.reason})`)
     }
+    return allChecked
   }
 
   return {
     kick: () => {
       if (stopped || walking !== null) return
       walking = walk()
-        .catch((error: unknown) => deps.log.error(`jobs: the ad revalidation failed (${messageOf(error)})`))
+        .catch((error: unknown) => {
+          deps.log.error(`jobs: the ad revalidation failed (${messageOf(error)})`)
+          return false
+        })
+        // A walk cut short by `stop` says nothing either way.
+        .then((allChecked) => (stopped ? undefined : flag(!allChecked)))
         .finally(() => {
           walking = null
         })

@@ -7,7 +7,7 @@ import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
 import { capturedLog, tempBase } from '../test-support.ts'
 import { ok, type Opportunity } from '../types.ts'
-import { createAdRevalidator } from './ads.ts'
+import { ADS_FAILING, createAdRevalidator } from './ads.ts'
 
 const page = (status: number, url: string): NetResult<Page> => ({ ok: true, value: { status, url, redirects: [], contentType: 'text/html', body: '' } })
 
@@ -87,5 +87,33 @@ test('C1 ads: a walk that throws is logged, and the next kick walks again', asyn
   ads.kick()
   await ads.idle()
   assert.equal(calls, 2)
+  await ads.stop()
+})
+
+test('review 1a: a walk that fails is flagged in meta (for health); the next walk that goes through clears it', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await storeWithAd(base)
+  insertApp(db, { state: 'ready' })
+  let calls = 0
+  const net: Net = {
+    get: async (url) => {
+      calls += 1
+      if (calls === 1) throw new Error('boom')
+      return page(200, url)
+    },
+  }
+  const ads = createAdRevalidator({ db, net, now: () => NOW, log: capturedLog().log })
+
+  // Act
+  ads.kick()
+  await ads.idle()
+  const flagged = db.read((q) => repo.getMeta(q, ADS_FAILING))
+  ads.kick()
+  await ads.idle()
+
+  // Assert
+  assert.equal(flagged, NOW.toISOString())
+  assert.equal(db.read((q) => repo.getMeta(q, ADS_FAILING)), undefined)
   await ads.stop()
 })

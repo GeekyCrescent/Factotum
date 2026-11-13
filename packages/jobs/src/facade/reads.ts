@@ -4,7 +4,7 @@
  */
 
 import type { Queue } from '../ai/queue.ts'
-import { BACKUP_FAILING } from '../clock.ts'
+import { BACKUP_FAILING, WAVE2_FAILING } from '../clock.ts'
 import type { MailHealth } from '../mail-health.ts'
 import { newBatchCount } from '../review/open.ts'
 import type { SeenBatch } from '../review/seen.ts'
@@ -12,6 +12,7 @@ import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import type { Queries } from '../store/db.ts'
 import { APP_STATES, fail, ok, type Application, type Profile, type Result, type Send } from '../types.ts'
+import { ADS_FAILING } from './ads.ts'
 import { confinedArtifact, pathWarnings } from './sources.ts'
 import type { BatchAnswer, Health, Overview, SendNeed } from './types.ts'
 import { batchView, readyOutside } from './views.ts'
@@ -49,13 +50,21 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
     const mail = mailNow()
     const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
     const pausedUntil = queue.pausedUntil()
-    const stuck = db.read((q) => repo.sendingBefore(q, staleBefore()))
+    const { stuck, wave2Failing, adsFailing, deferredStuck } = db.read((q) => ({
+      stuck: repo.sendingBefore(q, staleBefore()),
+      wave2Failing: repo.getMeta(q, WAVE2_FAILING) !== undefined,
+      adsFailing: repo.getMeta(q, ADS_FAILING) !== undefined,
+      deferredStuck: hasDeferredStuck(q),
+    }))
     const warnings = [
       ...(mail.state === 'bad' && mail.reason !== null ? [mail.reason] : []),
       ...pathWarnings(paths),
       ...(pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
       ...(backupFailing === null ? [] : ['The daily copy of jobs.db keeps failing']),
       ...(stuck === 0 ? [] : [SENDING_STALE_LINE]),
+      ...(wave2Failing ? ['Wave 2: some CVs could not be queued; the clock keeps trying'] : []),
+      ...(adsFailing ? ['Live ads: the last check of the ads in review failed'] : []),
+      ...(deferredStuck ? ['Replies that came in while an email was sending were not applied; they will be at the next restart'] : []),
     ]
     return { mail, queue: { pausedUntil, running: queue.running().length }, paths, backupFailing, warnings }
   }
@@ -101,6 +110,13 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
 
 /** The items of the open batch with no result yet: while there is one, the tracker continues it (R8). */
 const undecidedIn = (batch: repo.StoredBatch): number => batch.items.filter((item) => typeof item.itemId !== 'string' || batch.results[item.itemId] === undefined).length
+
+/**
+ * A reply deferred while its initial was `sending` that is still not applied once the send ended: the
+ * second `tx` after step 3 failed (`deferred-replies-failed`), or the opening one did. Read, not
+ * flagged: it clears itself when the next start applies them (review 1a).
+ */
+const hasDeferredStuck = (q: Queries): boolean => repo.applicationsWithDeferredReplies(q).some((id) => repo.getApplication(q, id)?.state !== 'sending')
 
 /** R9: no phone, nothing becomes ready. `identity` is read defensively: a stored profile is data. */
 const isPhoneMissing = (profile: Profile | undefined): boolean => (profile?.identity?.phone ?? '').trim() === ''

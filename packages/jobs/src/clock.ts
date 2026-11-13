@@ -17,7 +17,8 @@
  * in `meta` and are written AFTER the effect, and only when it WHOLLY succeeded (both can be repeated
  * without harm), so a task missed while the daemon was down — or that failed, even for one CV of the
  * wave — runs in the next round:
- * - wave 2 remembers `lastWave2At` only if every `enqueueCv` went through;
+ * - wave 2 remembers `lastWave2At` only if every `enqueueCv` went through; until then
+ *   `meta.wave2Failing` holds since when (for `health()`);
  * - the copy remembers its day right after `VACUUM INTO` succeeded, before pruning (a prune that fails
  *   is logged, the day stays taken). Today's file found WITHOUT today's mark is removed and taken
  *   again: it is a copy nobody vouched for (a crash before the mark, a VACUUM INTO that died half-way),
@@ -44,6 +45,8 @@ export const BACKUP_KEEP = 7
 export const BACKUP_FAILURES_FLAG = 3
 /** `meta` key: when the daily copy started failing for good (ISO); absent while copies work. */
 export const BACKUP_FAILING = 'backupFailing'
+/** `meta` key: since when a wave-2 round left a CV unqueued (ISO); the round that queues them all clears it (review 1a). */
+export const WAVE2_FAILING = 'wave2Failing'
 /** The CV of a held file is queued this many days before its `holdUntil` (D8 step 7, as the import). */
 const HOLD_LEAD_DAYS = 7
 const DAY_MS = 86_400_000
@@ -128,8 +131,13 @@ export function createClock(deps: ClockDeps): Clock {
       allQueued = false
       log.error(`jobs clock: the wave-2 CV of ${id} was not queued (${queued.error.code}: ${queued.error.reason})`)
     }
-    // A refused CV is tried again next round, not an hour later.
-    if (allQueued) remember(LAST_WAVE2_AT, at.toISOString())
+    // A refused CV is tried again next round, not an hour later; `health()` says so meanwhile.
+    if (!allQueued) {
+      if (meta(WAVE2_FAILING) === undefined) remember(WAVE2_FAILING, at.toISOString())
+      return
+    }
+    remember(LAST_WAVE2_AT, at.toISOString())
+    if (meta(WAVE2_FAILING) !== undefined) forget(WAVE2_FAILING)
   }
 
   /** Keeps the newest `BACKUP_KEEP` copies (their names sort by day) and makes each one 0600. */

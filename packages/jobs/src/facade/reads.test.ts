@@ -8,6 +8,8 @@ import * as repo from '../store/repo.ts'
 import { NOW, send, valueOf } from '../test-state.ts'
 import { tempBase } from '../test-support.ts'
 import { ok, type Profile } from '../types.ts'
+import { WAVE2_FAILING } from '../clock.ts'
+import { ADS_FAILING } from './ads.ts'
 import { views } from './reads.ts'
 
 const PATHS = { vault: 'ok', cvMaster: 'ok', guide: 'ok', seedCompanies: 'ok', seedKit: 'ok', seedCvs: 'ok', seedPackages: 'ok', chromium: 'ok', pdfinfo: 'ok', pdftoppm: 'ok', font: 'ok', claude: 'ok' } as const
@@ -89,6 +91,34 @@ test('review 1a: a sending row whose step 3 never got written is listed after 2 
   const line = 'A send was not confirmed after 2 minutes — check Gmail\'s Sent before sending it again'
   assert.ok(reads.health().warnings.includes(line))
   assert.ok(overview.notices.includes(line))
+})
+
+test('review 1a: a failing wave 2, a failing ad walk and deferred replies left unapplied are health warnings', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  insertApp(db, { id: 'a-sent', state: 'sent', sends: [send({ messageId: '<a-sent@jobs.factotum.local>', state: 'sent' })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-sending', state: 'sending', sends: [send({ messageId: '<a-sending@jobs.factotum.local>', state: 'sending', at: NOW.toISOString() })] }, ARTIFACTS)
+  const reads = readsOf(db)
+  const deferred = (id: string, app: string): void =>
+    valueOf(db.tx((q) => ok(void q.run(`INSERT INTO events (id, at, recorded_at, application_id, kind, data) VALUES (?, ?, ?, ?, 'reply', '{"deferred":true,"class":"interview"}')`, id, NOW.toISOString(), NOW.toISOString(), app))))
+  const lines = {
+    wave2: 'Wave 2: some CVs could not be queued; the clock keeps trying',
+    ads: 'Live ads: the last check of the ads in review failed',
+    deferred: 'Replies that came in while an email was sending were not applied; they will be at the next restart',
+  }
+
+  // Act: a deferred reply on an application still sending is waiting, not stuck.
+  deferred('r-wait', 'a-sending')
+  const waiting = reads.health().warnings
+  valueOf(db.tx((q) => (repo.setMeta(q, WAVE2_FAILING, NOW.toISOString()), repo.setMeta(q, ADS_FAILING, NOW.toISOString()), ok(undefined))))
+  deferred('r-stuck', 'a-sent')
+  const failing = reads.health().warnings
+
+  // Assert
+  assert.deepEqual(waiting, [])
+  assert.deepEqual(failing, [lines.wave2, lines.ads, lines.deferred])
 })
 
 test('C1 overview: an open batch with an undecided item is continued; a profile without a phone says so', async () => {

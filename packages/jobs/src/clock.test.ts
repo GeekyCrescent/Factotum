@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } f
 import { join } from 'node:path'
 import { createQueue } from './ai/queue.ts'
 import { queueStore } from './ai/test-queue.ts'
-import { BACKUP_FAILING, BACKUP_FAILURES_FLAG, BACKUP_KEEP, CLOCK_MS, createClock, TASK_TIMEOUT_MS, type ClockDeps } from './clock.ts'
+import { BACKUP_FAILING, BACKUP_FAILURES_FLAG, BACKUP_KEEP, CLOCK_MS, createClock, TASK_TIMEOUT_MS, WAVE2_FAILING, type ClockDeps } from './clock.ts'
 import type { Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
 import { application, NOW, valueOf } from './test-state.ts'
@@ -240,6 +240,34 @@ test('wave 2 is remembered only when every CV was queued: a refused one is tried
   timers.tick(CLOCK_MS)
   await clock.idle()
   assert.equal(stateOf(db, 'a'), 'generating', 'not an hour later: the next round')
+  await clock.stop()
+})
+
+test('review 1a: a wave-2 CV the queue refuses is flagged in meta (for health), and the round that queues them all clears it', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await queueStore(base)
+  heldDraft(db, 'a', '2026-11-15')
+  let refuse = true
+  const { clock, timers } = clockRig(db, base.dir, {
+    enqueueCv: (q, id) => {
+      if (refuse) return { ok: false, error: { code: 'module-error', reason: 'refused' } }
+      const app = repo.getApplication(q, id)!
+      return repo.saveApplication(q, { ...app, state: 'generating' }, { kind: 'prepared' }, NOW)
+    },
+  })
+
+  // Act
+  clock.start()
+  await clock.idle()
+  const flagged = db.read((q) => repo.getMeta(q, WAVE2_FAILING))
+  refuse = false
+  timers.tick(CLOCK_MS)
+  await clock.idle()
+
+  // Assert
+  assert.equal(flagged, NOW.toISOString())
+  assert.equal(db.read((q) => repo.getMeta(q, WAVE2_FAILING)), undefined)
   await clock.stop()
 })
 
