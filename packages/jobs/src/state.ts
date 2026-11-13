@@ -58,6 +58,8 @@ export type AppEvent =
       readonly pending: boolean
       /** The classes whose generation failed for the third time (T-A3). */
       readonly failed: readonly GeneratedKind[]
+      /** The last reason of each failed class, when known: `NO_LETTER_YET` is said on its warning. */
+      readonly reasons?: Readonly<Partial<Record<GeneratedKind, string>>>
       readonly pdfExists: boolean
       readonly warnings: readonly Warning[]
       readonly version: number
@@ -361,8 +363,13 @@ export function relintedWarnings(previous: readonly Warning[], linted: readonly 
 /** Ready needs the CV printed and no block left; anything else reviewed is in-review. */
 const reviewedState = (pdfExists: boolean, warnings: readonly Warning[]): AppState => (pdfExists && !hasBlock(warnings) ? 'ready' : 'in-review')
 
-function missingWarning(kind: GeneratedKind): Warning {
-  return { code: kind === 'cv' ? 'missing-cv' : 'missing-letter', where: kind, detail: `the ${kind} generation failed`, blocks: true, overridden: null }
+/** Until T1 writes `draftOutreach`, nothing generates a letter: a `letter` work fails with this (§M). */
+export const NO_LETTER_YET = 'letter generation arrives with T1'
+
+/** The class's warning; a letter that failed because nothing generates letters yet says so, so the card explains itself. */
+function missingWarning(kind: GeneratedKind, reason: string | undefined): Warning {
+  const detail = kind === 'letter' && reason === NO_LETTER_YET ? NO_LETTER_YET : `the ${kind} generation failed`
+  return { code: kind === 'cv' ? 'missing-cv' : 'missing-letter', where: kind, detail, blocks: true, overridden: null }
 }
 
 const MISSING_CODE: Readonly<Record<GeneratedKind, Warning['code']>> = { cv: 'missing-cv', letter: 'missing-letter' }
@@ -384,7 +391,7 @@ function generationReturned(app: Application, event: Extract<AppEvent, { type: '
     // T-A3: in-review with the warning of the class that failed (v5, X8); what came back is kept.
     const codes = new Set(event.failed.map((kind) => MISSING_CODE[kind]))
     const kept = event.warnings.filter((w) => !codes.has(w.code))
-    return ok({ ...app, state: 'in-review', version: event.version, warnings: [...kept, ...event.failed.map(missingWarning)] })
+    return ok({ ...app, state: 'in-review', version: event.version, warnings: [...kept, ...event.failed.map((kind) => missingWarning(kind, event.reasons?.[kind]))] })
   }
   return ok({ ...app, state: reviewedState(event.pdfExists, event.warnings), version: event.version, warnings: event.warnings }) // T-A2
 }

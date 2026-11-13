@@ -130,10 +130,19 @@ function pendingBesides(q: Queries, entityId: string, workId: string): boolean {
 }
 
 /** The classes of this application whose latest request failed for good (T-A3). */
+const failedRequests = (q: Queries, applicationId: string) => genRequestsOf(q, applicationId).filter((r) => r.state === 'failed' && GENERATED.has(r.kind))
+
 function failedClasses(q: Queries, applicationId: string): readonly GeneratedKind[] {
-  return genRequestsOf(q, applicationId)
-    .filter((r) => r.state === 'failed' && GENERATED.has(r.kind))
-    .map((r) => r.kind as GeneratedKind)
+  return failedRequests(q, applicationId).map((r) => r.kind as GeneratedKind)
+}
+
+/** The last reason of each failed class, read from its work row (`missingWarning` says `NO_LETTER_YET`). */
+function failedReasons(q: Queries, applicationId: string): Partial<Record<GeneratedKind, string>> {
+  const pairs = failedRequests(q, applicationId).flatMap((r) => {
+    const reason = getWork(q, r.workId)?.reason
+    return reason === null || reason === undefined ? [] : [[r.kind, reason] as const]
+  })
+  return Object.fromEntries(pairs)
 }
 
 const currentArtifacts = (q: Queries, app: Application): Artifacts | undefined => getArtifacts(q, app.id, app.version)
@@ -176,7 +185,8 @@ function settleGeneration(q: Queries, app: Application, event: EventSpec, deps: 
   const artifacts = currentArtifacts(q, app)
   const failed = failedClasses(q, app.id)
   const warnings = lintCurrent(q, app, artifacts, deps, now)
-  const moved = appTransition(app, { type: 'generation-returned', pending: false, failed, pdfExists: pdfOn(artifacts, deps), warnings, version: app.version }, now)
+  const reasons = failedReasons(q, app.id)
+  const moved = appTransition(app, { type: 'generation-returned', pending: false, failed, reasons, pdfExists: pdfOn(artifacts, deps), warnings, version: app.version }, now)
   if (!moved.ok) return moved
   const data = failed.length === 0 ? { ...event.data } : { ...event.data, failed: true, kinds: failed }
   return saveApplication(q, moved.value, { ...event, data }, now)

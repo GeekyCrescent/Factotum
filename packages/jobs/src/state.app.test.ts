@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appTransition, newApplication, type AppEvent } from './state.ts'
+import { appTransition, NO_LETTER_YET, newApplication, type AppEvent } from './state.ts'
 import { ADDRESSES, ADVISORY, application, BLOCKER, CAP, errorOf, NOW, send, valueOf } from './test-state.ts'
 import type { AppState, Application, Warning } from './types.ts'
 
@@ -85,6 +85,18 @@ test('T-A3: the third failure of the CV puts missing-cv, of the letter missing-l
     version: 1,
   })
   assert.deepEqual(both.warnings.map((w) => w.code), ['missing-cv', 'missing-letter'])
+})
+
+test('T-A3: a letter that failed because nothing generates letters yet says so on its missing-letter; any other reason stays generic', () => {
+  const returned = (reasons: Partial<Record<'cv' | 'letter', string>>) =>
+    move(application({ state: 'generating' }), { type: 'generation-returned', pending: false, failed: ['cv', 'letter'], reasons, pdfExists: false, warnings: [], version: 1 })
+
+  const notYet = returned({ letter: NO_LETTER_YET, cv: 'claude answered outside the schema' })
+  assert.deepEqual(notYet.warnings.map((w) => [w.code, w.detail]), [
+    ['missing-cv', 'the cv generation failed'],
+    ['missing-letter', 'letter generation arrives with T1'],
+  ])
+  assert.equal(returned({ letter: 'claude timed out' }).warnings.find((w) => w.code === 'missing-letter')?.detail, 'the letter generation failed')
 })
 
 test('T-A4: «Retry» of missing-cv in-review → generating, and asks only for that class', () => {

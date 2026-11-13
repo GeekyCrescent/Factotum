@@ -46,6 +46,7 @@ import { openReview } from './review/open.ts'
 import { createRewriteHandler } from './review/rewrite.ts'
 import type { SeenBatch } from './review/seen.ts'
 import { createNet, systemLookup } from './scout/net.ts'
+import { NO_LETTER_YET } from './state.ts'
 import { importSeed } from './seed/import.ts'
 import type { ImportReport } from './seed/report.ts'
 import { createAssist } from './send/assist.ts'
@@ -55,8 +56,8 @@ import { openDb, type Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
 import { APP_STATES, fail, ok, type Profile, type Result, type Send, type SendKind } from './types.ts'
 
-/** Until T1 writes `draftOutreach`, nothing generates a letter: a `letter` work fails with this (§M). */
-export const NO_LETTER_YET = 'letter generation arrives with T1'
+/** The `letter` handler's reason until T1 (§M); its `missing-letter` says it (`state.ts`). */
+export { NO_LETTER_YET }
 /** Until H5c, nothing reprints a CV: «Retry print» says so. */
 export const NO_REPRINT_YET = 'reprint arrives with H5c'
 

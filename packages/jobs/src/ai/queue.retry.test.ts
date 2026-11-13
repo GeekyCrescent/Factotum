@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { appTransition, followupTransition } from '../state.ts'
+import { appTransition, followupTransition, NO_LETTER_YET } from '../state.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
@@ -120,6 +120,21 @@ test('X8: a «Draft outreach» letter that fails three times with the CV back �
   const requests = db.read((q) => repo.genRequestsOf(q, 'app-1'))
   assert.deepEqual(requests.map((r) => [r.kind, r.state]), [['cv', 'done'], ['letter', 'queued']])
   assert.equal(requests.find((r) => r.kind === 'cv')?.workId, cvWork, 'no new cv')
+})
+
+test('X8: a letter handler that fails with NO_LETTER_YET → its missing-letter explains itself', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const notYet: JobHandler = async () => ({ ok: false, kind: 'failed', reason: NO_LETTER_YET })
+  const { queue, clock } = rig(db, { handlers: { cv: async () => CV_BACK, letter: notYet } })
+  insertApp(db, { state: 'generating' }, null)
+  valueOf(db.tx((q) => queue.enqueue(q, { kind: 'cv', ref: 'app-1' })))
+  valueOf(db.tx((q) => queue.enqueue(q, { kind: 'letter', ref: 'app-1' })))
+  queue.pump()
+  await runOut(queue, clock.advance)
+
+  const app = appOf(db, 'app-1')
+  assert.deepEqual(app.warnings.map((w) => [w.code, w.detail]), [['missing-letter', 'letter generation arrives with T1']])
 })
 
 test('X8: both fail → both codes, and «Retry» queues both', async () => {
