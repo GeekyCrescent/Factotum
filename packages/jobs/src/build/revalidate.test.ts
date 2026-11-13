@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { createNet, type FetchLike, type Net } from '../scout/net.ts'
+import { BODY_CAP_BYTES, createNet, type FetchLike, type Net } from '../scout/net.ts'
 import { openDb, type Db, type Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { application, errorOf, NOW, valueOf } from '../test-state.ts'
@@ -59,6 +59,25 @@ describe('classifyAd (N3, design D9 «El anuncio vivo», markers of A6)', () => 
     assert.deepEqual(await verdictOf(SEEK, { [SEEK]: '<h2>This job is no longer advertised</h2>' }), { kind: 'closed', reason: 'seek-no-longer-advertised' })
     assert.deepEqual(await verdictOf(SEEK, { [SEEK]: redux({ id: '1' }).replace('"job"', '"other"') }), { kind: 'open' })
     assert.deepEqual(await verdictOf(SEEK, { [SEEK]: '<h1>Graduate developer</h1>' }), { kind: 'open' })
+  })
+
+  test('a hostile 1 MiB SEEK page is read in linear time (the regexes run synchronously)', async () => {
+    const size = BODY_CAP_BYTES - 64
+    const fill = (unit: string, tail = ''): string => unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
+    const bodies = [
+      `SEEK_REDUX_DATA${fill(' ')}`,
+      fill('SEEK_REDUX_DATA = {'),
+      `SEEK_REDUX_DATA = ${fill('{"a":"\\"')}`,
+      fill('data-automation = '),
+      `data-automation${fill(' ', '=')}`,
+      fill('this job is no longer '),
+    ]
+    for (const body of bodies) {
+      const started = performance.now()
+      await verdictOf(SEEK, { [SEEK]: body })
+      const elapsed = performance.now() - started
+      assert.ok(elapsed < 500, `${body.slice(0, 20)}…: ${Math.round(elapsed)} ms`)
+    }
   })
 
   test('the SEEK markers are SEEK\'s: the same text elsewhere is an open page', async () => {

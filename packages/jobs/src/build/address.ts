@@ -62,14 +62,84 @@ function safeDecode(text: string): string {
   }
 }
 
-const stripTags = (html: string): string => html.replace(/<[^>]*>/g, ' ')
+// LINEAR TIME ONLY. A page is up to 1 MiB of a stranger's HTML and a regex runs synchronously: the
+// check's 60 s deadline cannot interrupt it, so a backtracking pattern (`<[^>]*>` on `<<<<…`,
+// `\s*…` on a long run of spaces, `([\s\S]*?)<\/a>` on anchors that never close) would freeze the
+// daemon for minutes. Tags are walked with `indexOf`, and the regexes left run on bounded text.
+
+/** A `<` further than this from its `>` is text, not a tag. */
+export const MAX_TAG_LENGTH = 500
+
+type Token = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'tag'; readonly tag: string }
+
+/** The page as text and tags, in order, in one pass: the next `>` is looked up again only once passed. */
+function tokenize(html: string): readonly Token[] {
+  const tokens: Token[] = []
+  let textFrom = 0
+  let gt = -1
+  for (let lt = html.indexOf('<'); lt !== -1; lt = html.indexOf('<', lt + 1)) {
+    if (gt < lt) gt = html.indexOf('>', lt)
+    if (gt === -1) break // no `>` left: the rest is text
+    if (gt - lt > MAX_TAG_LENGTH) continue
+    if (lt > textFrom) tokens.push({ kind: 'text', text: html.slice(textFrom, lt) })
+    tokens.push({ kind: 'tag', tag: html.slice(lt, gt + 1) })
+    textFrom = gt + 1
+    lt = gt
+  }
+  if (textFrom < html.length) tokens.push({ kind: 'text', text: html.slice(textFrom) })
+  return tokens
+}
+
+/** Every tag becomes a space, as a browser would separate the words. */
+const textOf = (tokens: readonly Token[]): string => tokens.map((token) => (token.kind === 'text' ? token.text : ' ')).join('')
+
+/** `ada [at] acme`, `ada(at)acme`, `ada at acme` → `ada@acme`, on whitespace already collapsed to one space. */
+const deobfuscate = (text: string): string => text.replace(/\s+/g, ' ').replace(/ ?[[(] ?at ?[\])] ?| at /gi, '@')
 
 /** Every place the address may be written: the page, its text de-obfuscated, its `mailto:` links. */
 function haystacks(body: string): readonly string[] {
   const decoded = decodeEntities(body)
   const mailtos = [...decoded.matchAll(/mailto:([^"'?\s>]+)/gi)].map((match) => safeDecode(match[1] ?? ''))
-  const text = stripTags(decoded).replace(/\s*[[(]\s*at\s*[\])]\s*|\s+at\s+/gi, '@')
-  return [decoded, text, ...mailtos]
+  return [decoded, deobfuscate(textOf(tokenize(decoded))), ...mailtos]
+}
+
+/** The quoted `href` of an opening `<a …>` tag (at most `MAX_TAG_LENGTH` long), or null. */
+function hrefOf(tag: string): string | null {
+  if (!/^<a[\s>]/i.test(tag)) return null
+  const at = /\shref\s*=\s*/i.exec(tag)
+  if (at === null) return null
+  const start = at.index + at[0].length
+  const quote = tag[start]
+  if (quote !== '"' && quote !== "'") return null
+  const end = tag.indexOf(quote, start + 1)
+  return end === -1 ? null : tag.slice(start + 1, end)
+}
+
+const isAnchorEnd = (tag: string): boolean => /^<\/a[\s>]/i.test(tag)
+
+interface Anchor {
+  readonly href: string
+  readonly text: string
+}
+
+/** Each `<a href>` with its text, which ends at its `</a>` or at the next anchor (they do not nest). */
+function anchorsOf(body: string): readonly Anchor[] {
+  const anchors: Anchor[] = []
+  let href: string | null = null
+  let parts: string[] = []
+  for (const token of [...tokenize(body), { kind: 'tag', tag: '</a>' } as const]) {
+    if (token.kind === 'text') {
+      if (href !== null) parts.push(token.text)
+      continue
+    }
+    const opened = hrefOf(token.tag)
+    if (href !== null && (opened !== null || isAnchorEnd(token.tag))) anchors.push({ href, text: parts.join(' ') })
+    if (opened !== null || isAnchorEnd(token.tag)) {
+      href = opened
+      parts = []
+    }
+  }
+  return anchors
 }
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -82,24 +152,37 @@ function mentions(body: string, email: string): boolean {
 
 const onDomain = (host: string, domain: string): boolean => host === domain || host.endsWith(`.${domain}`)
 
+/** An `href` resolved against the page, without its fragment; null when it is not a URL. */
+function absoluteUrl(href: string, base: string): URL | null {
+  try {
+    const url = new URL(decodeEntities(href), base)
+    url.hash = ''
+    return url
+  } catch {
+    return null
+  }
+}
+
 /** The links worth a visit, in document order, deduplicated, on the domain, `https:` only. */
 function candidatePages(page: Page, domain: string): readonly string[] {
   const seen = new Set<string>([page.url])
   const found: string[] = []
-  for (const match of page.body.matchAll(/<a\b[^>]*?\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
-    let url: URL
-    try {
-      url = new URL(decodeEntities(match[2] ?? ''), page.url)
-    } catch {
-      continue
-    }
-    url.hash = ''
-    const wanted = PAGE_WORDS.test(url.pathname) || PAGE_WORDS.test(stripTags(match[3] ?? ''))
+  // Parsing a URL is the costly step: a page repeating one href is parsed once.
+  const resolved = new Map<string, URL | null>()
+  const resolve = (href: string): URL | null => {
+    if (!resolved.has(href)) resolved.set(href, absoluteUrl(href, page.url))
+    return resolved.get(href) ?? null
+  }
+  for (const anchor of anchorsOf(page.body)) {
+    const url = resolve(anchor.href)
+    if (url === null) continue
+    const wanted = PAGE_WORDS.test(url.pathname) || PAGE_WORDS.test(anchor.text)
     if (!wanted || url.protocol !== 'https:' || !onDomain(url.hostname, domain) || seen.has(url.href)) continue
     seen.add(url.href)
     found.push(url.href)
+    if (found.length === MAX_EXTRA_PAGES) break
   }
-  return found.slice(0, MAX_EXTRA_PAGES)
+  return found
 }
 
 function homeOf(website: string | null): URL | null {

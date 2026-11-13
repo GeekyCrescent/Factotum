@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { createNet, type FetchLike, type Net } from '../scout/net.ts'
+import { BODY_CAP_BYTES, createNet, type FetchLike, type Net } from '../scout/net.ts'
 import { openDb, type Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { ADDRESSES, application, contact, NOW, valueOf, errorOf } from '../test-state.ts'
@@ -10,6 +10,8 @@ import { ok, type Address, type Opportunity } from '../types.ts'
 import { addressSearch, applyAddressOutcome, checkAddress, MAX_EXTRA_PAGES, searchAddress, type AddressOutcome } from './address.ts'
 
 const EMAIL = 'ada@acme.example'
+/** Generous for linear work on 1 MiB, even under coverage; the quadratic regexes took seconds. */
+const LINEAR_BOUND_MS = 500
 const HOME = 'https://acme.example/'
 
 type Route = string | { readonly status: number; readonly body?: string } | Error
@@ -150,6 +152,38 @@ describe('searchAddress (N2, design D9 «La re-búsqueda»)', () => {
     const net = createNet({ fetch: aborting, lookup: async () => ['93.184.216.34'], timers: manualTimers().timers, now: manualClock().now, politeMs: 0 })
     assert.deepEqual(await searchAddress(net, { email: EMAIL, website: HOME }, controller.signal), { kind: 'unreachable', reason: 'aborted' })
     assert.deepEqual(asked, [HOME])
+  })
+
+  describe('reads a hostile 1 MiB page in linear time (the 60 s deadline cannot interrupt a regex)', () => {
+    const size = BODY_CAP_BYTES - 64
+    const fill = (unit: string, tail = ''): string => unit.repeat(Math.floor((size - tail.length) / unit.length)) + tail
+    const bodies: Readonly<Record<string, string>> = {
+      'unclosed tags': fill('<'),
+      'anchors that never close': fill('<a href="x">'),
+      'anchors sharing one far </a>': fill('<a href="/contact">', '</a>'),
+      'a whitespace run': `ada${fill(' ', 'acme.example')}`,
+      'a whitespace run before a bracket': fill(' ', '['),
+      'an unclosed href': fill('<a href="', '>'),
+      'nested-looking entities': fill('&#1'),
+    }
+    for (const [name, body] of Object.entries(bodies)) {
+      test(name, async () => {
+        const started = performance.now()
+        const outcome = await search({ [HOME]: body })
+        const elapsed = performance.now() - started
+        assert.ok(elapsed < LINEAR_BOUND_MS, `${name}: ${Math.round(elapsed)} ms`)
+        assert.notEqual(outcome.kind, 'found')
+      })
+    }
+  })
+
+  test('an anchor whose link text is cut by the next anchor still counts by its own text', async () => {
+    const { net, asked } = netOf({
+      [HOME]: '<a href="/p/1">Contact<a href="/p/2">nothing here</a><A HREF=\'/p/3\' class="x">Our <b>team</b></A>',
+      'https://acme.example/p/3': page(EMAIL),
+    })
+    assert.deepEqual(await searchAddress(net, { email: EMAIL, website: HOME }), { kind: 'found', url: 'https://acme.example/p/3' })
+    assert.deepEqual(asked, [HOME, 'https://acme.example/p/1', 'https://acme.example/p/3'])
   })
 
   test('addressSearch binds a Net', async () => {
