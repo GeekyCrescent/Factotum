@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fillSlots, isSlotName, RATE_NEUTRAL, signatureOf, SLOT_NAMES, SLOT_WARNING } from './slots.ts'
+import { fillSlots, isSlotName, RATE_NEUTRAL, signatureOf, SLOT_NAMES, SLOT_WARNING, slotsPreserved } from './slots.ts'
 import type { Profile } from '../types.ts'
 
 const seed = (): Profile => JSON.parse(readFileSync(new URL('../../assets/profile-seed.json', import.meta.url), 'utf8')) as Profile
@@ -91,4 +91,48 @@ test('a value with a $ pattern is copied literally', () => {
   const set = seed()
   const profile: Profile = { ...set, preferences: { ...set.preferences, rateExpectation: "A$45 $& $' an hour" } }
   assert.equal(fillSlots('{rate}', profile).text, "A$45 $& $' an hour")
+})
+
+// ── slotsPreserved (design D10 «Los huecos sobreviven a la reescritura», v4 B2) ───────────────────
+
+const LETTER = { subject: 'Application', body: 'Dear Ada,\n\nSee {portfolio}.\n\n{signature}', 'form.0': 'From {suburb}, {timezone}.' }
+
+test('the same slots in every field, moved around or with other words: preserved', () => {
+  const after = { subject: 'Application — shorter', body: 'Hi Ada. {portfolio}\n{signature}', 'form.0': '{timezone}; I live in {suburb}.' }
+  assert.equal(slotsPreserved(LETTER, after), true)
+})
+
+test('a {signature} lost: not preserved', () => {
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, body: 'Dear Ada,\n\nSee {portfolio}.\n\nJuan' }), false)
+})
+
+test('a {portfolio} filled with a URL: not preserved', () => {
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, body: 'Dear Ada,\n\nSee https://github.com/x.\n\n{signature}' }), false)
+})
+
+test('a slot added, even one known elsewhere in the text: not preserved', () => {
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, subject: 'Application {rate}' }), false)
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, body: `${LETTER.body}\n{signature}` }), false)
+})
+
+test('by field: a slot moved from one field to another is not preserved', () => {
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, body: 'Dear Ada,\n\nSee {portfolio}. {suburb}\n\n{signature}', 'form.0': 'From here, {timezone}.' }), false)
+})
+
+test('a field gone counts as empty: its slots are lost', () => {
+  const { 'form.0': _, ...without } = LETTER
+  assert.equal(slotsPreserved(LETTER, without), false)
+  assert.equal(slotsPreserved({ subject: null, body: '{signature}' }, { subject: null, body: '{signature}' }), true)
+})
+
+test('allowDrop portfolio may remove {portfolio}, never add one, and nothing else', () => {
+  const dropped = { ...LETTER, body: 'Dear Ada,\n\n{signature}' }
+  assert.equal(slotsPreserved(LETTER, dropped, { allowDrop: ['portfolio'] }), true)
+  assert.equal(slotsPreserved(LETTER, LETTER, { allowDrop: ['portfolio'] }), true)
+  assert.equal(slotsPreserved(LETTER, { ...LETTER, subject: 'See {portfolio}' }, { allowDrop: ['portfolio'] }), false)
+  assert.equal(slotsPreserved(LETTER, { ...dropped, body: 'Dear Ada' }, { allowDrop: ['portfolio'] }), false)
+})
+
+test('an unknown {field} is not a slot: the linter judges it, not this', () => {
+  assert.equal(slotsPreserved({ body: 'Hi {name}' }, { body: 'Hi Ada' }), true)
 })

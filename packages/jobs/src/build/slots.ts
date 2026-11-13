@@ -108,6 +108,40 @@ export interface Filled {
   readonly blocks: readonly SlotBlock[]
 }
 
+/** The texts of one version that carry slots, by field (subject, body, each answer, the LinkedIn note). */
+export type SlotFields = Readonly<Record<string, string | null>>
+
+export interface PreserveOptions {
+  /** Slots the output may REMOVE (never add): «Remove the portfolio line» carries `['portfolio']` (D10). */
+  readonly allowDrop?: readonly SlotName[]
+}
+
+/** How many times each known slot appears in `text`. */
+function slotCounts(text: string | null): ReadonlyMap<SlotName, number> {
+  const counts = new Map<SlotName, number>()
+  for (const [, name] of (text ?? '').matchAll(SLOT)) counts.set(name as SlotName, (counts.get(name as SlotName) ?? 0) + 1)
+  return counts
+}
+
+/**
+ * design D10, v4 B2: a rewrite keeps, FIELD BY FIELD, exactly the multiset of known slots of the
+ * version it rewrote — none lost (`{signature}` dropped), none filled (`{portfolio}` → a URL), none
+ * added. A field missing on either side is empty. `allowDrop` lets a slot only go down. Pure.
+ */
+export function slotsPreserved(before: SlotFields, after: SlotFields, options: PreserveOptions = {}): boolean {
+  const droppable = new Set(options.allowDrop ?? [])
+  const fields = new Set([...Object.keys(before), ...Object.keys(after)])
+  return [...fields].every((field) => {
+    const was = slotCounts(before[field] ?? null)
+    const now = slotCounts(after[field] ?? null)
+    return SLOT_NAMES.every((slot) => {
+      const from = was.get(slot) ?? 0
+      const to = now.get(slot) ?? 0
+      return droppable.has(slot) ? to <= from : to === from
+    })
+  })
+}
+
 export function fillSlots(text: string, profile: Profile): Filled {
   const missing: SlotName[] = []
   const filled = text.replace(SLOT, (token, name: SlotName) => {
