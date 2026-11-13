@@ -9,9 +9,12 @@
  *   means `pages=1`;
  * - `fake-chromium.calls`: every call appends its pid (`hang` appends its grandchild's too);
  * - `fake-chromium.args.<N>` and `fake-chromium.html.<N>`: the arguments (NUL-separated) and the HTML
- *   it was given.
+ *   it was given;
+ * - `fake-chromium.timeline`: `start <pid>` when it begins and `end <pid>` when it writes its PDF, so a
+ *   test can see whether two prints overlapped on the same profile.
  *
  *   pages=N    writes a "PDF" `%PDF-fake pages=N` that fake-pdfinfo counts
+ *   slow       like pages=1, after 300 ms
  *   no-pdf     exits 0 without writing the PDF
  *   fail       one line on stderr, exit 1
  *   hang       never answers, and starts a grandchild that hangs too (the group must die whole)
@@ -28,6 +31,7 @@ const pdf = flag('print-to-pdf')
 const url = args[args.length - 1]
 mkdirSync(dataDir, { recursive: true })
 
+appendFileSync(join(dataDir, 'fake-chromium.timeline'), `start ${process.pid}\n`)
 appendFileSync(join(dataDir, 'fake-chromium.calls'), `${process.pid}\n`)
 const calls = readFileSync(join(dataDir, 'fake-chromium.calls'), 'utf8').trim().split('\n').length
 const modesFile = join(dataDir, 'fake-chromium.modes')
@@ -44,7 +48,13 @@ if (mode === 'hang') {
 } else if (mode === 'fail') {
   process.stderr.write('[0101/000000.000000:ERROR:headless_shell.cc] Abnormal renderer termination.\n')
   process.exit(1)
+} else if (mode === 'slow') {
+  setTimeout(() => print('1'), 300)
 } else if (mode !== 'no-pdf') {
-  const pages = /^pages=(\d+)$/.exec(mode)?.[1] ?? '1'
+  print(/^pages=(\d+)$/.exec(mode)?.[1] ?? '1')
+}
+
+function print(pages) {
   writeFileSync(pdf, `%PDF-fake pages=${pages}\n`)
+  appendFileSync(join(dataDir, 'fake-chromium.timeline'), `end ${process.pid}\n`)
 }

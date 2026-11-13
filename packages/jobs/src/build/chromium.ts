@@ -14,7 +14,7 @@
  */
 
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { Timers } from '@factotum/core'
@@ -76,9 +76,36 @@ function printed(pdf: string): boolean {
   }
 }
 
-/** Prints `html` as `<stateDir>/render/<renderId>/cv.pdf`; the PDF's path. */
+/**
+ * The tail of the prints queued on each `--user-data-dir`: two Chromiums on one profile fight over its
+ * lock (the second may hand its order to the first and exit 0 with no PDF), so prints on the same
+ * state folder run one after the other. The queue runs one `reprint` at a time, but a CV run prints
+ * too (H5a), and nothing else serialised the two.
+ */
+const printing = new Map<string, Promise<unknown>>()
+
+function oneAtATime<T>(key: string, job: () => Promise<T>): Promise<T> {
+  const before = printing.get(key) ?? Promise.resolve()
+  const mine = before.then(job, job)
+  const tail = mine.then(
+    () => undefined,
+    () => undefined,
+  )
+  printing.set(key, tail)
+  // The last one out removes its key, so the map does not grow with every state folder ever seen.
+  void tail.then(() => {
+    if (printing.get(key) === tail) printing.delete(key)
+  })
+  return mine
+}
+
+/** Prints `html` as `<stateDir>/render/<renderId>/cv.pdf`; the PDF's path. One print per profile at a time. */
 export async function printPdf(run: ChromiumRun, renderId: string, html: string): Promise<Result<string>> {
   if (!RENDER_ID.test(renderId)) return fail('invalid', 'a render id is letters, digits, dashes and underscores')
+  return oneAtATime(resolve(run.stateDir, 'chromium'), () => printNow(run, renderId, html))
+}
+
+async function printNow(run: ChromiumRun, renderId: string, html: string): Promise<Result<string>> {
   if (run.signal?.aborted === true) return fail('module-error', 'stopped')
   const paths = prepare(run.stateDir, renderId, html)
   if (!paths.ok) return paths

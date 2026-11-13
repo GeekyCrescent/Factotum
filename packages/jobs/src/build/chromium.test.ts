@@ -83,6 +83,30 @@ test('a stale PDF of an earlier print never passes for this one', async () => {
   assert.deepEqual(await printPdf(run(base.dir), 'a1', HTML), { ok: false, error: { code: 'module-error', reason: 'chromium wrote no PDF' } })
 })
 
+const timelineOf = (stateDir: string): string[] => readFileSync(join(stateDir, 'chromium', 'fake-chromium.timeline'), 'utf8').trim().split('\n').map((line) => line.split(' ')[0]!)
+
+test('two prints on the same profile run one after the other, never at once; a failed one does not block the next', async () => {
+  using base = tempBase()
+  modes(base.dir, 'slow', 'fail', 'slow')
+  const [first, second, third] = await Promise.all([printPdf(run(base.dir), 'a1', HTML), printPdf(run(base.dir), 'a2', HTML), printPdf(run(base.dir), 'a3', HTML)])
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, false)
+  assert.equal(third.ok, true)
+  assert.deepEqual(timelineOf(base.dir), ['start', 'end', 'start', 'start', 'end'])
+})
+
+test('prints on two different state folders do not wait for each other', async () => {
+  using one = tempBase()
+  using two = tempBase()
+  modes(one.dir, 'hang')
+  const manual = manualTimers()
+  const hung = printPdf(run(one.dir, { timers: manual.timers }), 'a1', HTML)
+  assert.equal((await printPdf(run(two.dir), 'a1', HTML)).ok, true)
+  await eventually(() => callsIn(one.dir).length === 2, 'the hung chromium started')
+  manual.fire(CHROMIUM_TIMEOUT_MS)
+  assert.equal((await hung).ok, false)
+})
+
 test('a binary that is not there is a Result with its reason, never a throw', async () => {
   using base = tempBase()
   const result = await printPdf(run(base.dir, { bin: join(base.dir, 'no-chromium') }), 'a1', HTML)
