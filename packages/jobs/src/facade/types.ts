@@ -111,14 +111,17 @@ export interface Health {
   readonly warnings: readonly string[]
 }
 
-/** A send that needs the owner: «did it go?» or failed. The tracker shows one card per send. */
+/**
+ * A send that needs the owner: «did it go?», failed, or `sending` for more than 2 minutes (its step 3
+ * never written: «not confirmed — check Sent before sending again», review 1a). One card per send.
+ */
 export interface SendNeed {
   readonly applicationId: string
   readonly company: string
   readonly kind: SendKind
-  readonly state: 'send-unknown' | 'failed'
+  readonly state: 'send-unknown' | 'failed' | 'sending'
   readonly at: string
-  /** Of `failed`, masked. */
+  /** Of `failed`, masked; of a stale `sending`, what to do. */
   readonly reason: string | null
 }
 
@@ -146,7 +149,7 @@ export interface Overview {
   readonly missingPhone: boolean
   /** `health().warnings`. */
   readonly notices: readonly string[]
-  /** Every `send-unknown` and `failed` row of an application that is not closed. */
+  /** Every `send-unknown` and `failed` row — and `sending` one older than 2 minutes — of an application that is not closed. */
   readonly sends: readonly SendNeed[]
   /** Applications by state, for the engine's own tests and the T2a list; the screen does not read it. */
   readonly byState: Readonly<Partial<Record<AppState, number>>>

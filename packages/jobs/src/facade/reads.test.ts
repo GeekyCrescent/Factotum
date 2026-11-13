@@ -67,6 +67,30 @@ test('C1 overview: the tracker shape of the screen — counters of crit. 63, rev
   )
 })
 
+test('review 1a: a sending row whose step 3 never got written is listed after 2 minutes, and health warns', async () => {
+  // Arrange: one in flight for 3 minutes (step 3 lost), one that started 30 s ago, a closed one.
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  const ago = (ms: number): string => new Date(NOW.getTime() - ms).toISOString()
+  insertApp(db, { id: 'a-stuck', state: 'sending', sends: [send({ messageId: '<a-stuck@jobs.factotum.local>', state: 'sending', at: ago(3 * 60_000) })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-moving', state: 'sending', sends: [send({ messageId: '<a-moving@jobs.factotum.local>', state: 'sending', at: ago(30_000) })] }, ARTIFACTS)
+  insertApp(db, { id: 'a-test', state: 'sending', test: true, sends: [send({ messageId: '<a-test@jobs.factotum.local>', state: 'sending', at: ago(3 * 60_000) })] }, ARTIFACTS)
+
+  // Act
+  const reads = readsOf(db)
+  const overview = reads.overview()
+
+  // Assert
+  assert.deepEqual(
+    overview.sends.map((s) => [s.applicationId, s.kind, s.state, s.reason]),
+    [['a-stuck', 'initial', 'sending', 'not confirmed — check Sent before sending again']],
+  )
+  const line = 'A send was not confirmed after 2 minutes — check Gmail\'s Sent before sending it again'
+  assert.ok(reads.health().warnings.includes(line))
+  assert.ok(overview.notices.includes(line))
+})
+
 test('C1 overview: an open batch with an undecided item is continued; a profile without a phone says so', async () => {
   // Arrange
   using base = tempBase()

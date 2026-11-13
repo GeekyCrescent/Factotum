@@ -57,3 +57,11 @@ export const smtpSendTimesSince = (q: Queries, since: string): readonly string[]
   q
     .all<Row>("SELECT at FROM sends WHERE channel = 'smtp' AND state <> 'failed' AND at >= ? ORDER BY at", since)
     .map((row) => text(row, 'at'))
+
+/**
+ * How many `sending` rows started before `before`, of an application that is not the test one: sends
+ * whose step 3 never got written (review 1a). The next start makes them `send-unknown`; until then the
+ * owner is told.
+ */
+export const sendingBefore = (q: Queries, before: string): number =>
+  Number(q.get<Row>("SELECT count(*) AS n FROM sends s JOIN applications a ON a.id = s.application_id WHERE s.state = 'sending' AND s.at < ? AND a.test = 0", before)?.n ?? 0)

@@ -176,6 +176,27 @@ test('the sends the tracker brings (overview) become cards with their reason; on
   assert.equal(seeded(sends, needs), sends, 'nothing new: the same list')
 })
 
+test('review 1a: a send «sending» for minutes (its step 3 lost) is a card saying to check Sent; a read still «sending» keeps it', () => {
+  // Arrange
+  const reason = 'not confirmed — check Sent before sending again'
+  const need = { applicationId: 'a', company: 'Acme', kind: 'initial', state: 'sending', at: '2026-11-14T00:00:00.000Z', reason } as const
+
+  // Act
+  const sends = seeded([], [need])
+  const card = sends[0] as TrackedSend
+  const reread = polled(sends, key('a', 'Acme'), { kind: 'initial', state: 'sending', at: need.at, reason: null })
+  const moved = polled(sends, key('a', 'Acme'), { kind: 'initial', state: 'send-unknown', at: '2026-11-14T01:00:00.000Z', reason: null })
+
+  // Assert
+  assert.equal(card.line.text, `Acme: ${reason}`)
+  assert.equal(card.line.tone, 'ask')
+  assert.equal(isPolling(card), false, 'nothing to poll for: the row moves only at the next start')
+  assert.deepEqual(actionsOf(card), [], 'no «Send again» while it may have gone')
+  assert.deepEqual(toRefresh(sends), sends, 'read again on coming back')
+  assert.equal(reread, sends, 'still sending: the card stays as it is')
+  assert.equal(moved[0]?.line.text, 'Acme: did it go?', 'once the restart made it send-unknown, the card says so')
+})
+
 test('each send is named by its kind: «Initial email», «Follow-up 1»', () => {
   assert.equal(kindLabel('initial'), 'Initial email')
   assert.equal(kindLabel('followup-1'), 'Follow-up 1')

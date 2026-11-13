@@ -104,6 +104,8 @@ export function seeded(sends: readonly TrackedSend[], needs: readonly SendNeed[]
 /** What a read of `GET /a/:id/sends/:kind` does; the same list back when nothing changed. */
 export function polled(sends: readonly TrackedSend[], key: SendKey, view: SendView): readonly TrackedSend[] {
   return replaced(sends, key, (send) => {
+    // A «not confirmed» card read still `sending`: its row moves only at the next start; it stays as it says.
+    if (send.state === 'sending' && send.line.final && view.state === 'sending') return send
     const line = sendLine(view, send.key.company)
     if (sameLine(line, send.line) && send.failures === 0 && !send.lost && send.state === view.state && send.at === view.at) return send
     return { key: send.key, line, failures: 0, lost: false, state: view.state, at: view.at }

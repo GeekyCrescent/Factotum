@@ -332,7 +332,8 @@ export interface SendLine {
 export function sendLine(send: SendView, company: string): SendLine {
   switch (send.state) {
     case 'sending':
-      return { text: `Sending to ${company}…`, tone: 'pending', final: false, retry: false }
+      // With a reason, the overview's «not confirmed» (step 3 lost): nothing to poll for until the next start.
+      return send.reason === null ? { text: `Sending to ${company}…`, tone: 'pending', final: false, retry: false } : { text: `${company}: ${send.reason}`, tone: 'ask', final: true, retry: false }
     case 'sent':
       return { text: `Sent to ${company} ✓`, tone: 'ok', final: true, retry: false }
     case 'failed':

@@ -11,10 +11,16 @@ import type { SeenBatch } from '../review/seen.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import type { Queries } from '../store/db.ts'
-import { APP_STATES, fail, ok, type Application, type Profile, type Result } from '../types.ts'
+import { APP_STATES, fail, ok, type Application, type Profile, type Result, type Send } from '../types.ts'
 import { confinedArtifact, pathWarnings } from './sources.ts'
 import type { BatchAnswer, Health, Overview, SendNeed } from './types.ts'
 import { batchView, readyOutside } from './views.ts'
+
+/** A `sending` row older than this has lost its step 3 (an SMTP exchange takes seconds): the owner checks Sent. */
+export const SENDING_STALE_MS = 120_000
+/** Of a `sending` row listed in `sends` (review 1a). */
+export const SENDING_STALE_REASON = 'not confirmed — check Sent before sending again'
+const SENDING_STALE_LINE = "A send was not confirmed after 2 minutes — check Gmail's Sent before sending it again"
 
 export interface ReadsDeps {
   readonly db: Db
@@ -37,15 +43,19 @@ export interface Reads {
 }
 
 export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone }: ReadsDeps): Reads {
+  const staleBefore = (): string => new Date(now().getTime() - SENDING_STALE_MS).toISOString()
+
   function health(): Health {
     const mail = mailNow()
     const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
     const pausedUntil = queue.pausedUntil()
+    const stuck = db.read((q) => repo.sendingBefore(q, staleBefore()))
     const warnings = [
       ...(mail.state === 'bad' && mail.reason !== null ? [mail.reason] : []),
       ...pathWarnings(paths),
       ...(pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
       ...(backupFailing === null ? [] : ['The daily copy of jobs.db keeps failing']),
+      ...(stuck === 0 ? [] : [SENDING_STALE_LINE]),
     ]
     return { mail, queue: { pausedUntil, running: queue.running().length }, paths, backupFailing, warnings }
   }
@@ -72,7 +82,7 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
         batchUndecided: open === undefined ? 0 : undecidedIn(open),
         missingPhone: isPhoneMissing(repo.latestProfileVersion(q)?.profile),
         notices: health().warnings,
-        sends: sendsNeeding(q, apps),
+        sends: sendsNeeding(q, apps, staleBefore()),
         byState: byStateOf(apps),
       }
     })
@@ -114,16 +124,22 @@ function byStateOf(apps: readonly Application[]): Overview['byState'] {
   return apps.reduce<Partial<Record<Application['state'], number>>>((counts, app) => ({ ...counts, [app.state]: (counts[app.state] ?? 0) + 1 }), {})
 }
 
-/** The sends the owner has to answer: `send-unknown` or `failed`, of an application not closed. */
-function sendsNeeding(q: Queries, apps: readonly Application[]): readonly SendNeed[] {
+/** What a send asks of the owner: `send-unknown`, `failed`, or a `sending` that started before `staleBefore`. */
+function needOf(send: Send, staleBefore: string): Pick<SendNeed, 'state' | 'reason'> | null {
+  if (send.state === 'send-unknown' || send.state === 'failed') return { state: send.state, reason: send.reason }
+  if (send.state === 'sending' && send.at < staleBefore) return { state: 'sending', reason: SENDING_STALE_REASON }
+  return null
+}
+
+/** The sends the owner has to answer (`needOf`), of an application not closed. */
+function sendsNeeding(q: Queries, apps: readonly Application[], staleBefore: string): readonly SendNeed[] {
   return apps
     .filter((app) => app.state !== 'closed')
     .flatMap((app) =>
-      app.sends.flatMap((send): SendNeed[] =>
-        send.state === 'send-unknown' || send.state === 'failed'
-          ? [{ applicationId: app.id, company: repo.getCompany(q, app.companyId)?.name ?? '', kind: send.kind, state: send.state, at: send.at, reason: send.reason }]
-          : [],
-      ),
+      app.sends.flatMap((send): SendNeed[] => {
+        const need = needOf(send, staleBefore)
+        return need === null ? [] : [{ applicationId: app.id, company: repo.getCompany(q, app.companyId)?.name ?? '', kind: send.kind, at: send.at, ...need }]
+      }),
     )
     .toSorted((a, b) => a.at.localeCompare(b.at) || a.applicationId.localeCompare(b.applicationId))
 }

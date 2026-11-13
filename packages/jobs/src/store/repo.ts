@@ -39,7 +39,7 @@ export { getRule, insertProfileVersion, insertRule, latestProfileVersion, listRu
 export { recoverOnStart, type Recovered, type Skipped } from './repo/recover.ts'
 export * from './repo/review.ts'
 export { heldDraftsDue, seedDraftsWithoutCv } from './repo/seed.ts'
-export { smtpSendTimesSince } from './repo/sends.ts'
+export { sendingBefore, smtpSendTimesSince } from './repo/sends.ts'
 export {
   dueWork,
   genRequestsOf,
