@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks'
-import { ARM_EXPIRY_MS, pressArmed } from './arm.ts'
+import { ARM_EXPIRY_MS, armOn, pressArmed, type Arm } from './arm.ts'
 import type { Api, ApplicationCard, ContactView, FormAnswer } from './contract.ts'
 import { addressControls, formMark, safeModulePath, type Label } from './model.ts'
 
@@ -30,6 +30,8 @@ export interface ToLineProps {
   /** Read-only: an item already decided shows the line, not the buttons. */
   readonly decided: boolean
   readonly busy: boolean
+  /** The card as seen (`guard.ts` `viewOf`): an arm set on another `seen` is not a confirmation. */
+  readonly seen: string
   readonly onSendAnyway: () => void
   readonly onSwitch: () => void
 }
@@ -38,20 +40,22 @@ export interface ToLineProps {
  * «To: … · verified / checking… / unverified / sent anyway» and, by the D3 table, «Send anyway»
  * (a second click confirms, T-D5) and «Switch to form» / «Switch to LinkedIn note».
  */
-export function ToLine({ entity, to, contact, formUrl, decided, busy, onSendAnyway, onSwitch }: ToLineProps) {
-  const [armedAt, setArmedAt] = useState<number | null>(null)
+export function ToLine({ entity, to, contact, formUrl, decided, busy, seen, onSendAnyway, onSwitch }: ToLineProps) {
+  const [arm, setArm] = useState<Arm | null>(null)
+  // A repaint with a new `seen` (the address or a warning moved) disarms it: confirm what is shown now.
+  const armedAt = armOn(arm, seen)
   const armed = armedAt !== null
   const controls = addressControls(contact?.address ?? null, { now: new Date(), entity, formUrl })
   const switchLabel = entity === 'followup' ? 'Switch to LinkedIn note' : 'Switch to form'
   // The arm goes by itself after ARM_EXPIRY_MS (`arm.ts`).
   useEffect(() => {
     if (armedAt === null) return
-    const timer = setTimeout(() => setArmedAt(null), Math.max(0, armedAt + ARM_EXPIRY_MS - Date.now()))
+    const timer = setTimeout(() => setArm(null), Math.max(0, armedAt + ARM_EXPIRY_MS - Date.now()))
     return () => clearTimeout(timer)
   }, [armedAt])
   const anyway = () => {
     const press = pressArmed(armedAt, Date.now())
-    setArmedAt(press.armedAt)
+    setArm(press.armedAt === null ? null : { at: press.armedAt, on: seen })
     if (press.fire) onSendAnyway()
   }
   return (
@@ -62,7 +66,7 @@ export function ToLine({ entity, to, contact, formUrl, decided, busy, onSendAnyw
       {decided ? null : (
         <div class="j-to-acts">
           {controls.sendAnyway === 'hidden' ? null : (
-            <button type="button" class={`btn sm${armed ? ' primary' : ''}`} disabled={busy || controls.sendAnyway === 'off'} onClick={anyway} onBlur={() => setArmedAt(null)}>
+            <button type="button" class={`btn sm${armed ? ' primary' : ''}`} disabled={busy || controls.sendAnyway === 'off'} onClick={anyway} onBlur={() => setArm(null)}>
               {armed ? 'Click again to send anyway' : 'Send anyway'}
             </button>
           )}

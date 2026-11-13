@@ -18,6 +18,7 @@
 import type { JSX, RefObject } from 'preact'
 import { useState } from 'preact/hooks'
 import type { ApplicationCard, Decision, FollowupCard, ItemResult, ReplyCard, ReviewItem, ViewProps } from './contract.ts'
+import { viewOf } from './guard.ts'
 import { Cv, FormAnswers, Gaps, Labels, Letter, Notes, ToLine } from './item-parts.tsx'
 import { blockersOf, exitsFor, gapsOf, labelsOf, refusalOf, reviewableOf, safeHref, type Exit, type Reviewable } from './model.ts'
 import { Rewritten } from './rewritten.tsx'
@@ -85,6 +86,7 @@ export function ReviewItemView({ props, item, result, actions, box, busy }: Revi
       formUrl={formUrl}
       decided={decided}
       busy={busy}
+      seen={viewOf(item)}
       onSendAnyway={actions.sendAnyway}
       onSwitch={() => void actions.decide({ kind: entity === 'followup' ? 'switch-channel' : 'switch-to-form' })}
     />
