@@ -221,6 +221,12 @@ test('T-A12: a manual approve still needs the PDF and no blocks', () => {
   errorOf(appTransition(application({ channel: 'form', warnings: [BLOCKER] }), approve(), NOW), 'blocked', 'lint-blocks')
 })
 
+test('approving an in-review application is blocked by what blocks it, never a conflict (H5c: cv-stale)', () => {
+  const stale = { code: 'cv-stale', where: 'cv', detail: 'printed with another contact', blocks: true, overridden: null } as const
+  errorOf(appTransition(application({ state: 'in-review', warnings: [stale] }), approve(), NOW), 'blocked', 'lint-blocks')
+  errorOf(appTransition(application({ state: 'in-review', warnings: [stale] }), approve({ pdfExists: false }), NOW), 'blocked', 'missing-cv')
+})
+
 test('T-A13: «Mark as sent» approved → sent with a manual initial row (T-S9)', () => {
   const next = move(application({ state: 'approved', channel: 'form' }), { type: 'mark-sent' })
   assert.equal(next.state, 'sent')
