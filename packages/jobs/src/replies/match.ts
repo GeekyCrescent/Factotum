@@ -84,8 +84,8 @@ export interface MatchWorld {
 }
 
 export type ReplyMatch =
-  /** Rule 1: the thread names this send (by its current `messageId`, or one of its `attempts`). */
-  | { readonly kind: 'thread'; readonly rule: 1; readonly applicationId: string; readonly sendKind: SendKind; readonly viaAttempt: boolean }
+  /** Rule 1: the thread names this send (by its current `messageId`, or one of its `attempts`): `messageId` is the one named. */
+  | { readonly kind: 'thread'; readonly rule: 1; readonly applicationId: string; readonly sendKind: SendKind; readonly viaAttempt: boolean; readonly messageId: string }
   /** Rules 2–3: one or more candidates, in the store's order; Claude classifies (and picks, if several). */
   | { readonly kind: 'candidates'; readonly rule: 2 | 3; readonly applicationIds: readonly string[] }
   /** Rule 4, a job's subject: shown as «Unmatched reply», sender and subject only. */
@@ -151,10 +151,11 @@ function byThread(mail: MatchMail, apps: readonly MatchApp[]): ReplyMatch | unde
   for (const { application } of apps) {
     for (const row of application.sends) {
       if (row.messageId !== null && named.has(row.messageId)) {
-        return { kind: 'thread', rule: 1, applicationId: application.id, sendKind: row.kind, viaAttempt: false }
+        return { kind: 'thread', rule: 1, applicationId: application.id, sendKind: row.kind, viaAttempt: false, messageId: row.messageId }
       }
-      if (row.attempts.some((attempt) => named.has(attempt.messageId))) {
-        return { kind: 'thread', rule: 1, applicationId: application.id, sendKind: row.kind, viaAttempt: true }
+      const attempt = row.attempts.find((a) => named.has(a.messageId))
+      if (attempt !== undefined) {
+        return { kind: 'thread', rule: 1, applicationId: application.id, sendKind: row.kind, viaAttempt: true, messageId: attempt.messageId }
       }
     }
   }

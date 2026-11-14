@@ -41,27 +41,27 @@ const world = (apps: readonly MatchApp[]) => ({ apps, now: NOW })
 
 test('rule 1: In-Reply-To carrying the messageId of a sent initial → that application and send', () => {
   const match = matchReply(mail({ inReplyTo: ['<a1@jobs.factotum.local>'] }), world([app('a1'), app('a2')]))
-  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: false })
+  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: false, messageId: '<a1@jobs.factotum.local>' })
 })
 
 test('rule 1: References carrying the messageId of a follow-up → that follow-up send', () => {
   const followup = sent({ kind: 'followup-1', followupId: 'f1', messageId: '<f1@jobs.factotum.local>' })
   const a1 = app('a1', { sends: [sent({ messageId: '<a1@jobs.factotum.local>' }), followup] })
   const match = matchReply(mail({ references: ['<other@x.example>', '<f1@jobs.factotum.local>'] }), world([a1]))
-  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'followup-1', viaAttempt: false })
+  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'followup-1', viaAttempt: false, messageId: '<f1@jobs.factotum.local>' })
 })
 
 test('rule 1 has no 60-day cap and ignores the state: an application `ready` whose initial `failed` matches by its current messageId (v6, M3)', () => {
   const failed = sent({ state: 'failed', at: daysAgo(400), messageId: '<old@jobs.factotum.local>' })
   const ready = app('a1', { state: 'ready', sends: [failed] })
   const match = matchReply(mail({ inReplyTo: ['<old@jobs.factotum.local>'] }), world([ready]))
-  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: false })
+  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: false, messageId: '<old@jobs.factotum.local>' })
 })
 
 test('rule 1 also matches an earlier messageId of the row’s `attempts` history (v5, X6), and says so', () => {
   const retried = sent({ state: 'send-unknown', messageId: '<new@jobs.factotum.local>', attempts: [{ messageId: '<first@jobs.factotum.local>', at: daysAgo(3), reason: 'timeout' }] })
   const match = matchReply(mail({ references: ['<first@jobs.factotum.local>'] }), world([app('a1', { state: 'send-unknown', sends: [retried] })]))
-  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: true })
+  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: 'a1', sendKind: 'initial', viaAttempt: true, messageId: '<first@jobs.factotum.local>' })
 })
 
 test('rule 1 matches a row still `sending` (Q4 writes a deferred reply for it)', () => {
@@ -82,7 +82,7 @@ test('rule 1: the test application (C1) is matched by its thread', async () => {
   const created = valueOf(createTestApplication(db, { now: () => NOW }, { to: 'owner@example.test' }))
   const testApp = { ...appOf(db, created.id), state: 'sent' as const, sends: [sent({ messageId: '<test@jobs.factotum.local>' })] }
   const match = matchReply(mail({ inReplyTo: ['<test@jobs.factotum.local>'] }), world([{ application: testApp, domain: null, lastHumanReplyAt: null }]))
-  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: created.id, sendKind: 'initial', viaAttempt: false })
+  assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: created.id, sendKind: 'initial', viaAttempt: false, messageId: '<test@jobs.factotum.local>' })
 })
 
 // ── Rule 2: the domain ───────────────────────────────────────────────────────────────────────────

@@ -105,10 +105,11 @@ test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the five he
     ],
   )
   const [reply] = read.replies
-  assert.deepEqual(reply?.match, { kind: 'thread', rule: 1, applicationId: 'app-1', sendKind: 'initial', viaAttempt: false })
+  assert.deepEqual(reply?.match, { kind: 'thread', rule: 1, applicationId: 'app-1', sendKind: 'initial', viaAttempt: false, messageId: '<m1@jobs.factotum.local>' })
   assert.equal(reply?.from, 'Ada Lovelace <ada@acme.example>')
   assert.equal(reply?.fromAddress, 'ada@acme.example')
   assert.equal(reply?.date, '2026-11-13T05:00:00.000Z')
+  assert.equal(reply?.receivedAt, '2026-11-13T05:00:00.000Z')
   assert.equal(reply?.messageId, '<r1@acme.example>')
   assert.equal(reply?.gmailLink, `https://mail.google.com/mail/u/${encodeURIComponent(USER)}/#all/1999999999999999`)
   assert.equal(reply?.list, false)

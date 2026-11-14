@@ -11,7 +11,7 @@ import type { Application } from '../../types.ts'
 import type { Queries } from '../db.ts'
 import { getApplication } from './applications.ts'
 import { deleteMeta, getMeta, setMeta } from './meta.ts'
-import { text, textOrNull, type Row } from './rows.ts'
+import { json, text, textOrNull, type Row } from './rows.ts'
 
 /** `meta` keys (D12): the instant of the last read, and the backfill an import of by-hand sends leaves (S6b). */
 export const LAST_REPLY_POLL = 'lastReplyPoll'
@@ -73,6 +73,52 @@ export function markMailSeen(q: Queries, seen: SeenMail, now: Date): void {
 export function pendingClassifyRefs(q: Queries): ReadonlySet<string> {
   const rows = q.all<Row>("SELECT ref FROM work WHERE kind = 'classify' AND state IN ('queued', 'running')")
   return new Set(rows.map((row) => text(row, 'ref')))
+}
+
+/**
+ * An «Unmatched reply» (design D12 rule 4, requirements crit. 56): a `reply` event with no application
+ * and `data.unmatched`, that no `reply-applied { replyEventId }` has assigned or ignored yet.
+ */
+export interface UnmatchedReply {
+  /** `<UIDVALIDITY>:<UID>`: what `POST /replies/:key/assign` names. */
+  readonly key: string
+  readonly eventId: string
+  /** ISO: the date of the mail. */
+  readonly at: string
+  readonly from: string
+  readonly subject: string
+  readonly link: string | null
+  /** Claude's class when it classified it but could not name the application; null for rule 4. */
+  readonly class: string | null
+  readonly summary: string | null
+}
+
+const PENDING_UNMATCHED = `e.kind = 'reply' AND e.application_id IS NULL AND json_extract(e.data, '$.unmatched') = 1
+  AND NOT EXISTS (SELECT 1 FROM events a WHERE a.kind = 'reply-applied' AND json_extract(a.data, '$.replyEventId') = e.id)`
+
+const toUnmatched = (row: Row): UnmatchedReply => {
+  const data = json<Readonly<Record<string, unknown>>>(row, 'data', {})
+  const str = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+  return Object.freeze({
+    key: str(data.key) ?? '',
+    eventId: text(row, 'id'),
+    at: text(row, 'at'),
+    from: str(data.from) ?? '',
+    subject: str(data.subject) ?? '',
+    link: str(data.link),
+    class: str(data.class),
+    summary: str(data.summary),
+  })
+}
+
+/** The «Unmatched replies» still waiting for the owner, newest first. */
+export const unmatchedReplies = (q: Queries): readonly UnmatchedReply[] =>
+  q.all<Row>(`SELECT e.id, e.at, e.data FROM events e WHERE ${PENDING_UNMATCHED} ORDER BY e.at DESC, e.rowid DESC`).map(toUnmatched)
+
+/** One of them, by the mail's key; undefined when there is none waiting. */
+export const unmatchedReply = (q: Queries, key: string): UnmatchedReply | undefined => {
+  const row = q.get<Row>(`SELECT e.id, e.at, e.data FROM events e WHERE ${PENDING_UNMATCHED} AND json_extract(e.data, '$.key') = ?`, key)
+  return row === undefined ? undefined : toUnmatched(row)
 }
 
 /** An application as the matcher reads it (`replies/match.ts`, `MatchApp`). */

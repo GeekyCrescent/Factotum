@@ -88,6 +88,8 @@ export interface ReadReply {
   readonly subject: string
   /** ISO: the date OF THE MAIL (its `Date`, else when the server got it). */
   readonly date: string
+  /** ISO: when the server got it (`INTERNALDATE`, what `SEARCH SINCE` reads). */
+  readonly receivedAt: string
   /** `https://mail.google.com/mail/u/<user>/#all/<X-GM-MSGID in hex>`, when the server gave the id. */
   readonly gmailLink: string | null
   /** It carries a `List-Id`: a mailing list wrote it. */
@@ -216,6 +218,7 @@ interface Described {
   readonly mail: MatchMail
   readonly fromDisplay: string
   readonly date: string
+  readonly receivedAt: string
   readonly gmailLink: string | null
   readonly list: boolean
   readonly message: FetchMessageObject
@@ -243,6 +246,7 @@ function describe(message: FetchMessageObject, uidValidity: number, user: string
       },
       fromDisplay: cut(sender?.name ? `${sender.name} <${address}>` : address, FROM_MAX),
       date: (toDate(envelope?.date) ?? received).toISOString(),
+      receivedAt: received.toISOString(),
       gmailLink: gmailLinkOf(message.emailId, user),
       list: headers.has('list-id'),
       message,
@@ -260,6 +264,7 @@ function toReply(d: Described, match: ReadReply['match'], body: string): ReadRep
     fromAddress: d.mail.from,
     subject: d.mail.subject,
     date: d.date,
+    receivedAt: d.receivedAt,
     gmailLink: d.gmailLink,
     list: d.list,
     match,

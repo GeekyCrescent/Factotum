@@ -47,9 +47,10 @@ function reply(over: Partial<ReadReply> = {}): ReadReply {
     fromAddress: 'ada@acme.example',
     subject: 'Re: Application',
     date: '2026-11-13T05:00:00.000Z',
+    receivedAt: '2026-11-13T05:00:00.000Z',
     gmailLink: null,
     list: false,
-    match: { kind: 'thread', rule: 1, applicationId: 'app-1', sendKind: 'initial', viaAttempt: false },
+    match: { kind: 'thread', rule: 1, applicationId: 'app-1', sendKind: 'initial', viaAttempt: false, messageId: '<m1@jobs.factotum.local>' },
     body: 'Can we talk on Monday?',
     ...over,
   }
