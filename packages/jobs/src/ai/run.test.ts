@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { capturedLog, eventually, manualTimers, PROCESS_GONE_MS, realTimers } from '../test-support.ts'
-import { isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
+import { AUTH_REASON, isAuth, isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
 const OUTPUT = z.object({ title: z.string() })
@@ -161,6 +161,12 @@ test('A3: an API error that is not a limit, exit 1 with its JSON, is failed WITH
   assert.deepEqual(await runClaude(input), { ok: false, kind: 'failed', reason: 'claude failed: 404' })
 })
 
+test('a logged-out CLI (measured: exit 1, subtype "success", no status, «Failed to authenticate: OAuth…») is AUTH, and its reason quotes nothing of the CLI', async () => {
+  const { input } = await rig(['auth'])
+  assert.deepEqual(await runClaude(input), { ok: false, kind: 'auth', reason: AUTH_REASON })
+  assert.doesNotMatch(AUTH_REASON, /OAuth|expired|refreshed|authenticate/i)
+})
+
 test('a non-zero exit with nothing to read (a refused argument) is a failure with its code and nothing of stderr', async () => {
   const { input } = await rig(['refuse'])
   assert.deepEqual(await runClaude(input), { ok: false, kind: 'failed', reason: 'claude exited with code 1' })
@@ -256,6 +262,18 @@ test('isLimit: status 429, or is_error with a limit text; never subtype; a plain
   assert.equal(isLimit({ is_error: false, result: 'You’ve hit your session limit', subtype: 'success' }), false)
   assert.equal(isLimit({ is_error: true, api_error_status: 404, result: 'model not found', subtype: 'success' }), false)
   assert.equal(isLimit({ is_error: true, result: 42 }), false)
+})
+
+test('isAuth: is_error with one of the login texts, any case; never subtype; a limit or another error is not', () => {
+  assert.equal(isAuth({ is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed' }), true)
+  assert.equal(isAuth({ is_error: true, result: 'OAuth token has expired' }), true)
+  assert.equal(isAuth({ is_error: true, result: 'Not logged in · Please run /login' }), true)
+  assert.equal(isAuth({ is_error: true, result: 'please run /LOGIN' }), true)
+  assert.equal(isAuth({ is_error: true, result: 'Invalid API key · Fix external API key' }), true)
+  assert.equal(isAuth({ is_error: false, result: 'Failed to authenticate', subtype: 'error' }), false)
+  assert.equal(isAuth({ is_error: true, api_error_status: 404, result: 'model not found' }), false)
+  assert.equal(isAuth({ is_error: true, result: "You've hit your session limit" }), false)
+  assert.equal(isAuth({ is_error: true, result: 42 }), false)
 })
 
 test('resetsAtOf: the next occurrence of that wall-clock hour in that zone, plus one minute', () => {

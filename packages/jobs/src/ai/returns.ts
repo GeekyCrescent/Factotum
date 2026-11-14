@@ -326,6 +326,13 @@ export const LIMIT_PAUSE_MS = 30 * 60_000
 export const LIMIT_STREAK_MAX = 6
 /** `meta` key: `{ workId, count }` of the limits hit in a row by one work. */
 const LIMIT_STREAK = 'limitStreak'
+/**
+ * A logged-out CLI pauses this long, then ONE probe runs (D10, as after a limit). There is no reset
+ * time to read — only the owner logging in ends it — so this is the interval between probes.
+ */
+export const AUTH_PAUSE_MS = 15 * 60_000
+/** `meta` key: the ISO instant the CLI was first found logged out; cleared by the first good run. */
+export const AUTH_FAILING = 'authFailing'
 /** `meta` key: while it is in the future, no Claude work leaves the queue. */
 export const PAUSED_UNTIL = 'pausedUntil'
 
@@ -364,6 +371,21 @@ function limited(q: Queries, work: Work, result: Extract<RunFailure, { kind: 'li
     return ok({ ...counted.value, warning: `${work.kind} ${work.id} hit the usage limit ${streak} times in a row: counted as a failed attempt` })
   }
   setMeta(q, LIMIT_STREAK, JSON.stringify({ workId: work.id, count: streak }))
+  const saved = saveWork(q, { ...work, state: 'queued', notBefore: null, reason: result.reason, updatedAt: now.toISOString() })
+  return saved.ok ? ok(NOTHING) : saved
+}
+
+/**
+ * A logged-out CLI adds no attempt either (D10): nothing can succeed until the owner logs in, so the
+ * work goes back to the queue and the WHOLE queue pauses `AUTH_PAUSE_MS` (never shortening a longer
+ * pause already set); then one probe, as after a limit. No streak counts it: a work never reaches its
+ * third attempt because of a login. `meta.authFailing` is what `health()` says, until a good run.
+ */
+function loggedOut(q: Queries, work: Work, result: Extract<RunFailure, { kind: 'auth' }>, now: Date): Result<Aftermath> {
+  const until = new Date(now.getTime() + AUTH_PAUSE_MS).toISOString()
+  const already = getMeta(q, PAUSED_UNTIL)
+  setMeta(q, PAUSED_UNTIL, already !== undefined && already > until ? already : until)
+  if (getMeta(q, AUTH_FAILING) === undefined) setMeta(q, AUTH_FAILING, now.toISOString())
   const saved = saveWork(q, { ...work, state: 'queued', notBefore: null, reason: result.reason, updatedAt: now.toISOString() })
   return saved.ok ? ok(NOTHING) : saved
 }
@@ -412,6 +434,8 @@ export function markNotWritten(q: Queries, work: Work, now: Date): Result<void> 
 
 function succeeded(q: Queries, work: Work, output: JobOutput, deps: ReturnDeps, now: Date): Result<Aftermath> {
   liftPause(q, work, now)
+  // A good run of Claude: it is logged in again (a reprint runs no Claude and proves nothing).
+  if (work.kind !== 'reprint') deleteMeta(q, AUTH_FAILING)
   const saved = saveWork(q, { ...work, state: 'done', notBefore: null, reason: null, updatedAt: now.toISOString() })
   if (!saved.ok) return saved
   if (output.type !== 'apply' && superseded(q, work)) {
@@ -432,5 +456,6 @@ export function writeReturn(q: Queries, work: Work, result: JobResult, deps: Ret
   const current = getWork(q, work.id) ?? work
   if (result.ok) return succeeded(q, current, result.output, deps, now)
   if (result.kind === 'limit') return limited(q, current, result, deps, now)
+  if (result.kind === 'auth') return loggedOut(q, current, result, now)
   return failedRun(q, current, result.reason, deps, now)
 }

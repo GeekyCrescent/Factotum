@@ -5,7 +5,9 @@ import { join } from 'node:path'
 
 import { appOf, eventsOf } from '../ai/test-queue.ts'
 import { getArtifacts } from '../store/repo.ts'
-import { tempBase } from '../test-support.ts'
+import { AUTH_PAUSE_MS } from '../ai/queue.ts'
+import { NOW } from '../test-state.ts'
+import { manualClock, tempBase } from '../test-support.ts'
 import { fail, type Warning } from '../types.ts'
 import { DOC } from './test-cv.ts'
 import { APP_ID, builderDeps, builderRig, builderStore, GUIDE, onlyWork, RULE_TEXT, runDir, runQueue, scriptClaude } from './test-builder.ts'
@@ -93,6 +95,31 @@ test('a usage limit comes back as a limit: no attempt counted, the queue pauses'
   const work = onlyWork(db)
   assert.deepEqual([work.state, work.attempts], ['queued', 0])
   assert.notEqual(queue.pausedUntil(), null)
+})
+
+test('a CV that meets a logged-out CLI twice and then answers goes to review, never missing-cv', async () => {
+  // Arrange
+  using base = tempBase()
+  const db = await builderStore(base)
+  scriptClaude(base.dir, ['auth', 'auth', 'ok'], [DOC, DOC, DOC])
+  const clock = manualClock(NOW)
+  const { queue } = builderRig(db, builderDeps(db, base.dir), { now: clock.now })
+
+  // Act
+  await runQueue(queue)
+  const paused = onlyWork(db)
+  for (let probe = 0; probe < 2; probe += 1) {
+    clock.advance(AUTH_PAUSE_MS)
+    await runQueue(queue)
+  }
+
+  // Assert
+  assert.deepEqual([paused.state, paused.attempts], ['queued', 0])
+  const app = appOf(db, APP_ID)
+  assert.ok(app.state === 'in-review' || app.state === 'ready', `went to review, not ${app.state}`)
+  assert.equal(app.warnings.some((w) => w.code === 'missing-cv'), false)
+  assert.deepEqual([onlyWork(db).state, onlyWork(db).attempts], ['done', 0])
+  assert.equal(queue.pausedUntil(), null)
 })
 
 test('what the run needs and cannot read is a failed attempt with its reason, and Claude is never called', async () => {

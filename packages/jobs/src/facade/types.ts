@@ -85,7 +85,7 @@ export type PathState = 'ok' | 'missing'
 export interface Health {
   /** The app password's file (D13 step 5): `unknown` until its `lstat` is back. */
   readonly mail: MailHealth
-  /** The generation queue: paused by a usage limit until then (D10); null when it runs. */
+  /** The generation queue: paused by a usage limit, or by a logged-out CLI until its next probe, until then (D10); null when it runs. */
   readonly queue: { readonly pausedUntil: string | null; readonly running: number }
   /** What `start` found on disk (step 3): a missing one warns, never switches the module off. */
   readonly paths: {

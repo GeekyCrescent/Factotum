@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { insertApp, queueStore } from '../ai/test-queue.ts'
+import { AUTH_PAUSE_MS, type JobResult } from '../ai/queue.ts'
+import { AUTH_REASON } from '../ai/run.ts'
+import { DONE, insertApp, queueStore, rig } from '../ai/test-queue.ts'
 import { contactHashOf } from '../build/render.ts'
 import { ARTIFACTS, PROFILE } from '../build/test-cv.ts'
 import type { Db } from '../store/db.ts'
@@ -11,20 +13,23 @@ import { tempBase } from '../test-support.ts'
 import { ok, type Profile } from '../types.ts'
 import { WAVE2_FAILING } from '../clock.ts'
 import { ADS_FAILING } from './ads.ts'
-import { views } from './reads.ts'
+import { AUTH_WARNING, views } from './reads.ts'
 
 const PATHS = { vault: 'ok', cvMaster: 'ok', guide: 'ok', seedCompanies: 'ok', seedKit: 'ok', seedCvs: 'ok', seedPackages: 'ok', chromium: 'ok', pdfinfo: 'ok', pdftoppm: 'ok', font: 'ok', claude: 'ok' } as const
 
-function readsOf(db: Db, mailReason: string | null = null) {
-  return views({
-    db,
+function readsDeps(mailReason: string | null = null) {
+  return {
     queue: { pausedUntil: () => null, running: () => [] },
-    mail: () => (mailReason === null ? { state: 'ok', reason: null, at: NOW.toISOString() } : { state: 'bad', reason: mailReason, at: NOW.toISOString() }),
+    mail: () => (mailReason === null ? ({ state: 'ok', reason: null, at: NOW.toISOString() } as const) : ({ state: 'bad', reason: mailReason, at: NOW.toISOString() } as const)),
     paths: PATHS,
     stateDir: '/nowhere',
     now: () => NOW,
     timeZone: 'Australia/Sydney',
-  })
+  }
+}
+
+function readsOf(db: Db, mailReason: string | null = null) {
+  return views({ ...readsDeps(mailReason), db })
 }
 
 function saveProfile(db: Db, version: number, profile: Profile): void {
@@ -120,6 +125,40 @@ test('review 1a: a failing wave 2, a failing ad walk and deferred replies left u
   // Assert
   assert.deepEqual(waiting, [])
   assert.deepEqual(failing, [lines.wave2, lines.ads, lines.deferred])
+})
+
+test('a logged-out CLI is a health warning and an overview notice while it holds, and the first good run clears it', async () => {
+  // Arrange: a real queue whose first run meets the expired login
+  using base = tempBase()
+  const db = await queueStore(base)
+  let results: JobResult[] = [{ ok: false, kind: 'auth', reason: AUTH_REASON }]
+  const { queue, clock } = rig(db, {
+    handlers: {
+      cv: async () => {
+        const [first = DONE, ...rest] = results
+        results = rest
+        return first
+      },
+    },
+  })
+  const reads = views({ ...readsDeps(), db, queue, now: clock.now })
+
+  // Act
+  valueOf(queue.add({ kind: 'cv', ref: 'a1' }))
+  await queue.settled()
+  const loggedOut = reads.health()
+  const notices = reads.overview().notices
+  clock.advance(AUTH_PAUSE_MS)
+  queue.pump()
+  await queue.settled()
+  const back = reads.health()
+
+  // Assert
+  assert.deepEqual(loggedOut.warnings, [AUTH_WARNING], 'said as a login, never as a usage limit')
+  assert.ok(notices.includes(AUTH_WARNING))
+  assert.equal(AUTH_WARNING, 'Claude is logged out on this machine — run `claude` and /login there; generation is paused')
+  assert.deepEqual(back.warnings, [])
+  assert.equal(back.queue.pausedUntil, null)
 })
 
 test('C1 overview: an open batch with an undecided item is continued; a profile without a phone says so', async () => {

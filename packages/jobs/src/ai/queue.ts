@@ -40,6 +40,8 @@ import type { RunFailure } from './run.ts'
 
 export type { Lane, Work, WorkKind } from '../store/repo.ts'
 export {
+  AUTH_FAILING,
+  AUTH_PAUSE_MS,
   classesOf,
   instructionEvent,
   LIMIT_PAUSE_MS,
@@ -138,7 +140,7 @@ export interface Queue {
   readonly retry: (q: Queries, applicationId: string) => Result<readonly GeneratedKind[]>
   /** `enqueue` in a `tx` of its own, then the pump. */
   readonly add: (spec: EnqueueSpec) => Result<Work>
-  /** `meta.pausedUntil` while a usage limit holds the queue (for `health()`); null when it runs. */
+  /** `meta.pausedUntil` while a usage limit or a logged-out CLI holds the queue (for `health()`); null when it runs. */
   readonly pausedUntil: () => string | null
   /** Starts what can start. Never inside a `tx`; never throws. */
   readonly pump: () => void

@@ -31,7 +31,7 @@ import type { z } from 'zod'
 import { buildCvPrompt, type CvPromptInput } from '../ai/prompts/cv.ts'
 import { writeSystemFile } from '../ai/prompts/fixed.ts'
 import type { ArtifactsPatch, JobContext, JobHandler, JobResult } from '../ai/queue.ts'
-import { runClaude, type RunFailure, type RunResult } from '../ai/run.ts'
+import { isPause, runClaude, type RunFailure, type RunResult } from '../ai/run.ts'
 import { CV_DOC_OUTPUT, CV_DOC_JSON_SCHEMA } from '../ai/schemas.ts'
 import { enabledRules } from '../rules.ts'
 import type { Db } from '../store/db.ts'
@@ -209,7 +209,7 @@ const blocking = (code: Warning['code'], detail: string): Warning => ({ code, wh
 export const UNCHECKED_PREFIX = 'the check did not run: '
 
 /**
- * Step 8's check. A verifier that does not run FAILS THE ATTEMPT (a limit stays a limit, with no
+ * Step 8's check. A verifier that does not run FAILS THE ATTEMPT (a limit or a logged-out CLI stays a pause, with no
  * attempt counted): the queue's retries at 2 and 10 min, and the third failure is T-A3's `missing-cv`
  * with «Retry». Never an `unsupported-claim` «I checked it» could clear on a CV nobody checked.
  */
@@ -217,7 +217,7 @@ async function verifyCv(deps: CvBuilderDeps, doc: CvDoc, ctx: JobContext): Promi
   const checked = await deps.verify({ cv: doc, letter: null, origin: 'generated' }, ctx)
   if (checked.ok) return { ok: true, value: checked }
   deps.log.warn(`jobs cv: the verifier did not run (${checked.reason})`)
-  return checked.kind === 'limit' ? checked : failed(`${UNCHECKED_PREFIX}${checked.reason}`)
+  return isPause(checked) ? checked : failed(`${UNCHECKED_PREFIX}${checked.reason}`)
 }
 
 /** Steps 8 then 7b: verified first (nothing unchecked is kept), the print in its version folder; what goes back to the queue. */

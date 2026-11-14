@@ -27,7 +27,7 @@ import type { Logger, Timers } from '@factotum/core'
 import type { ArtifactsPatch, JobContext, JobHandler, JobResult } from '../ai/queue.ts'
 import { writeSystemFile } from '../ai/prompts/fixed.ts'
 import { buildRewritePrompt, REMOVE_PORTFOLIO_INSTRUCTION, REWRITE_JSON_SCHEMA, REWRITE_OUTPUT, type RewriteOutput, type RewritePromptInput } from '../ai/prompts/rewrite.ts'
-import { runClaude, type RunFailure, type RunResult } from '../ai/run.ts'
+import { isPause, runClaude, type RunFailure, type RunResult } from '../ai/run.ts'
 import { addUsage, UNCHECKED_PREFIX, type VerifyFn } from '../build/cv.ts'
 import { slotsPreserved, type SlotFields, type SlotName } from '../build/slots.ts'
 import type { Db, Queries } from '../store/db.ts'
@@ -198,7 +198,7 @@ const letterText = (letter: Letter): string => (letter.subject === null ? letter
 /** The changed texts through the verifier (D6: every rewrite); one that does not run fails the attempt. */
 async function verifyChanged(deps: RewriteDeps, changed: Changed, ctx: JobContext): Promise<RunFailure | { readonly ok: true; readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }> {
   const checked = await deps.verify({ cv: changed.cv, letter: changed.letter === null ? null : letterText(changed.letter), origin: 'rewritten' }, ctx)
-  if (checked.ok || checked.kind === 'limit') return checked
+  if (checked.ok || isPause(checked)) return checked
   return failed(`${UNCHECKED_PREFIX}${checked.reason}`)
 }
 
