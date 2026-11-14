@@ -228,10 +228,11 @@ export function createQueue(deps: QueueDeps): Queue {
    * D3 «`cv-stale`»: an application this return leaves `in-review`/`ready` with `cv-stale` and nothing
    * of class `cv` pending gets its reprint, in the return's `tx` — a CV or a rewrite that came back
    * printed with a contact changed meanwhile (T-A2, T-A8), or a reprint that printed one saved during it.
-   * A reprint that FAILED does not queue itself again: «Retry print» is the owner's.
+   * A reprint that FAILED does not queue itself again: «Retry print» is the owner's. Nor does one that
+   * printed NOTHING (its output is not a new version): another would find the same and loop.
    */
   function reprintIfStale(q: Queries, work: Work, result: JobResult): Result<void> {
-    if (work.kind === 'reprint' && !result.ok) return ok(undefined)
+    if (work.kind === 'reprint' && (!result.ok || result.output.type !== 'application')) return ok(undefined)
     // Only a generation's return (cv, letter, rewrite, reprint) speaks for the application's texts.
     const classes = classesOf(q, work.kind, work.ref)
     if (classes.length === 0) return ok(undefined)

@@ -9,14 +9,18 @@
  * writes it (the guard of G4: a newer request of class `cv` discards it) and re-lints it (T-A5). More
  * than one page is `cv-overflow`, with no «shorter»: that one is Claude, and the owner's to ask for.
  *
- * NOTHING TO DO is a run that writes nothing: an application no longer `in-review`/`ready` (D5: only
- * the unsent are reprinted), or whose printed contact is today's again (the owner changed it back).
+ * NOTHING TO DO is a run that prints nothing: an application no longer `in-review`/`ready` (D5: only
+ * the unsent are reprinted) writes nothing. One whose printed contact is today's again (the owner changed
+ * it back while the re-lint skipped it, the vault offline) is RE-LINTED instead (`relintOne`), so its
+ * `cv-stale` clears; with the vault still offline that re-lint fails, and the run is a failed attempt
+ * (the queue's retries, then `reprint-failed`). The queue never queues a reprint after one that printed
+ * nothing (`reprintIfStale`): that is what kept a stale-but-current CV reprinting forever.
  *
  * A REPRINT THAT FAILS (Chromium, Poppler) is a failed attempt; the third leaves `cv-stale` with
  * `reprint-failed { reason }` (`returns.ts`), and «Retry print» (`retryPrint`) queues another.
  */
 
-import type { EnqueueSpec, JobHandler, JobResult } from '../ai/queue.ts'
+import type { EnqueueSpec, JobHandler, JobResult, RelintFn } from '../ai/queue.ts'
 import type { PrintFn } from '../review/rewrite.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
@@ -28,6 +32,8 @@ export interface ReprintDeps {
   readonly db: Db
   /** D5 steps 5–7 with today's profile (`printer` of `facade/sources.ts`). */
   readonly print: PrintFn
+  /** L4's one-row re-lint: a CV whose printed contact is today's again only needs its warnings redone. */
+  readonly relintOne: RelintFn
 }
 
 /** The states a reprint is for (D3 «`cv-stale`»): unsent and unapproved. */
@@ -72,6 +78,12 @@ export function retryPrint(q: Queries, enqueue: (q: Queries, spec: EnqueueSpec) 
 const overflowOf = (pages: number): readonly Warning[] =>
   pages > 1 ? [{ code: 'cv-overflow', where: 'cv', detail: `the CV prints on ${pages} pages`, blocks: true, overridden: null }] : []
 
+/** Nothing to print: the re-lint of the row, in the return's `tx` (its failure is the run's). */
+const relinted = (deps: ReprintDeps, applicationId: string): JobResult => ({
+  ok: true,
+  output: { type: 'apply', apply: (q, now) => deps.relintOne(q, { kind: 'application', id: applicationId }, now) },
+})
+
 export function createReprintHandler(deps: ReprintDeps): JobHandler {
   return async (work, ctx) => {
     const read = deps.db.read((q) => {
@@ -82,7 +94,8 @@ export function createReprintHandler(deps: ReprintDeps): JobHandler {
     const { app, artifacts, profile } = read
     if (app === undefined) return failed('no such application')
     if (profile === undefined) return failed('there is no profile to print with')
-    if (!REPRINTABLE.has(app.state) || artifacts?.contactHash === contactHashOf(profile.profile)) return NOTHING
+    if (!REPRINTABLE.has(app.state)) return NOTHING
+    if (artifacts?.contactHash === contactHashOf(profile.profile)) return relinted(deps, app.id)
     if (artifacts?.cv === null || artifacts?.cv === undefined) return failed('there is no CV to reprint')
     const printed = await deps.print({ applicationId: app.id, version: app.version + 1, cv: artifacts.cv, signal: ctx.signal })
     if (!printed.ok) return failed(`the print failed: ${printed.error.reason}`)

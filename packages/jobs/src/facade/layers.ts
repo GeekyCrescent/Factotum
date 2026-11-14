@@ -138,7 +138,7 @@ export function buildGeneration(base: Base, { font, vault, linter }: OnDisk) {
     log,
   })
   // D5 «Reimpresión»: no Claude, so it needs only the printer — and works without the font only as the CV does.
-  const reprint = font === null ? failing('the CV font could not be read') : createReprintHandler({ db, print })
+  const reprint = font === null ? failing('the CV font could not be read') : createReprintHandler({ db, print, relintOne: linter.relintOne })
   // D12 «Clasificar» on `models.classify`; Q4 applies the verdict in the queue's `tx`.
   const push = pushAfterCommit(base)
   const classifier = createClassifier({

@@ -47,8 +47,8 @@ async function world(base: TempBase, app: Parameters<typeof insertApp>[1] = {}, 
   const clock = manualClock(NOW)
   const log = capturedLog().log
   const print = printer(db, { stateDir: base.dir, timers: realTimers, log, font: FONT, chromium: FAKE_CHROMIUM, poppler: { pdfinfo: FAKE_PDFINFO, pdftoppm: FAKE_PDFTOPPM } })
-  const handler = createReprintHandler({ db, print })
   const linter = createLinter({ master: () => ok(MASTER), pdfExists: () => true })
+  const handler = createReprintHandler({ db, print, relintOne: linter.relintOne })
   const queue = createQueue({ db, now: clock.now, concurrency: 2, handlers: { reprint: wrap === undefined ? handler : wrap(handler) }, log, lint: linter.lint, relintOne: linter.relintOne, pdfExists: () => true })
   return { db, queue, clock }
 }
@@ -211,4 +211,25 @@ test('H5c: a contact saved again while the reprint printed queues another reprin
   const app = appOf(w.db, 'app-1')
   assert.deepEqual([app.state, app.version], ['ready', 3])
   assert.equal(current(w.db).contactHash, contactHashOf(NEWEST))
+})
+
+test('H5c: a reprint whose contact is current again re-lints instead — cv-stale clears, and no other reprint is queued', async () => {
+  using base = tempBase()
+  // The owner changed the contact back while the re-lint was skipped (vault offline): `cv-stale` stayed
+  // on a CV printed with today's contact.
+  let runs = 0
+  const w = await world(base, {}, { ...PRINTED, contactHash: contactHashOf(TODAY) }, (handler) => async (work, ctx) => {
+    runs += 1
+    // A loop guard for the red run: past a few, a failure (which never queues another) ends it.
+    return runs > 3 ? { ok: false, kind: 'failed', reason: 'looping' } : handler(work, ctx)
+  })
+
+  await reprint(w)
+  await w.queue.settled()
+
+  assert.equal(runs, 1, 'one run, no reprint queued after a no-op')
+  assert.equal(reprintWorks(w.db).length, 1)
+  assert.equal(prints(base.dir), 0, 'nothing printed')
+  const app = appOf(w.db, 'app-1')
+  assert.deepEqual([app.state, app.version, app.warnings], ['ready', 1, []], 'the re-lint took cv-stale away')
 })

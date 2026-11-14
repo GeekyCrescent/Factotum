@@ -42,7 +42,7 @@ function queueOf(db: Db, base: TempBase, handlers: QueueDeps['handlers'] = {}): 
     db,
     now: () => NOW,
     concurrency: 2,
-    handlers: { cv: createCvHandler(builderDeps(db, base.dir)), reprint: createReprintHandler({ db, print }), ...handlers },
+    handlers: { cv: createCvHandler(builderDeps(db, base.dir)), reprint: createReprintHandler({ db, print, relintOne: linter.relintOne }), ...handlers },
     log,
     lint: linter.lint,
     relintOne: linter.relintOne,
