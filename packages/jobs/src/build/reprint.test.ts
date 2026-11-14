@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import { createQueue, type JobHandler, type Queue } from '../ai/queue.ts'
 import { appOf, eventsOf, insertApp, queueStore, workOf } from '../ai/test-queue.ts'
 import { printer } from '../facade/sources.ts'
+import type { PrintFn } from '../review/rewrite.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, valueOf } from '../test-state.ts'
@@ -40,7 +41,13 @@ interface World {
 }
 
 /** Profile version 2 is `TODAY` (the new phone); `app-1` is `in-review` with `cv-stale` over `PRINTED`. */
-async function world(base: TempBase, app: Parameters<typeof insertApp>[1] = {}, artifacts: Artifacts = PRINTED, wrap?: (handler: JobHandler) => JobHandler): Promise<World> {
+async function world(
+  base: TempBase,
+  app: Parameters<typeof insertApp>[1] = {},
+  artifacts: Artifacts = PRINTED,
+  wrap?: (handler: JobHandler) => JobHandler,
+  wrapPrint: (print: PrintFn) => PrintFn = (print) => print,
+): Promise<World> {
   const db = await queueStore(base)
   valueOf(db.tx((q) => ok(repo.insertProfileVersion(q, { version: 2, createdAt: NOW.toISOString(), profile: TODAY }, { kind: 'profile-saved' }, NOW))))
   insertApp(db, { state: 'in-review', warnings: [STALE], ...app }, artifacts)
@@ -48,7 +55,7 @@ async function world(base: TempBase, app: Parameters<typeof insertApp>[1] = {}, 
   const log = capturedLog().log
   const print = printer(db, { stateDir: base.dir, timers: realTimers, log, font: FONT, chromium: FAKE_CHROMIUM, poppler: { pdfinfo: FAKE_PDFINFO, pdftoppm: FAKE_PDFTOPPM } })
   const linter = createLinter({ master: () => ok(MASTER), pdfExists: () => true })
-  const handler = createReprintHandler({ db, print, relintOne: linter.relintOne })
+  const handler = createReprintHandler({ db, print: wrapPrint(print), relintOne: linter.relintOne })
   const queue = createQueue({ db, now: clock.now, concurrency: 2, handlers: { reprint: wrap === undefined ? handler : wrap(handler) }, log, lint: linter.lint, relintOne: linter.relintOne, pdfExists: () => true })
   return { db, queue, clock }
 }
@@ -232,4 +239,26 @@ test('H5c: a reprint whose contact is current again re-lints instead — cv-stal
   assert.equal(prints(base.dir), 0, 'nothing printed')
   const app = appOf(w.db, 'app-1')
   assert.deepEqual([app.state, app.version, app.warnings], ['ready', 1, []], 'the re-lint took cv-stale away')
+})
+
+test('H5c: the version a reprint writes names the profile its PDF was printed with, even when one is saved as it starts printing', async () => {
+  using base = tempBase()
+  const NEWEST: Profile = { ...PROFILE, identity: { ...PROFILE.identity, phone: '+61 411 111 111' } }
+  let saved = false
+  const w = await world(base, {}, PRINTED, undefined, (print) => async (input) => {
+    if (!saved) {
+      saved = true // after the handler read the profile, before the printer reads anything
+      valueOf(w.db.tx((q) => ok(repo.insertProfileVersion(q, { version: 3, createdAt: NOW.toISOString(), profile: NEWEST }, { kind: 'profile-saved' }, NOW))))
+    }
+    return print(input)
+  })
+
+  await reprint(w)
+  await w.queue.settled()
+
+  const first = w.db.read((q) => repo.getArtifacts(q, 'app-1', 2))
+  assert.deepEqual([first?.profileVersion, first?.contactHash], [2, contactHashOf(TODAY)], 'printed with version 2, and says so')
+  const app = appOf(w.db, 'app-1')
+  assert.deepEqual([app.state, app.version], ['ready', 3], 'version 3 is out of date at once: another reprint')
+  assert.deepEqual([current(w.db).profileVersion, current(w.db).contactHash], [3, contactHashOf(NEWEST)])
 })

@@ -32,7 +32,7 @@ import { addUsage, UNCHECKED_PREFIX, type VerifyFn } from '../build/cv.ts'
 import { slotsPreserved, type SlotFields, type SlotName } from '../build/slots.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { fail, ok, type Application, type Artifacts, type CvDoc, type Result, type RunUsage, type Warning } from '../types.ts'
+import { fail, ok, type Application, type Artifacts, type CvDoc, type ProfileVersion, type Result, type RunUsage, type Warning } from '../types.ts'
 
 type Letter = NonNullable<Artifacts['letter']>
 
@@ -50,6 +50,8 @@ export type PrintFn = (input: {
   readonly version: number
   readonly cv: CvDoc
   readonly signal: AbortSignal
+  /** The profile to print with, when the caller already read it (and names its version); else today's. */
+  readonly profile?: ProfileVersion
 }) => Promise<Result<Pick<Artifacts, 'pdf' | 'png' | 'contactHash'> & { readonly pages: number }>>
 
 export interface RewriteDeps {

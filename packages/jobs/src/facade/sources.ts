@@ -185,8 +185,8 @@ export function confinedArtifact(stateDir: string, path: string, extension: '.pd
 
 /** The rewrite's printer (`RewriteDeps.print`): H5b's steps 5–7 with today's profile, its render folder cleared. */
 export function printer(db: Db, deps: PrintDeps): PrintFn {
-  return async ({ applicationId, version, cv, signal }) => {
-    const profile = db.read((q) => latestProfileVersion(q))
+  return async ({ applicationId, version, cv, signal, profile: given }) => {
+    const profile = given ?? db.read((q) => latestProfileVersion(q))
     if (profile === undefined) return fail('module-error', 'there is no profile to print with')
     const renderId = uuidv7()
     try {

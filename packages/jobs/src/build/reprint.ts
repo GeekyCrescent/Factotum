@@ -97,7 +97,8 @@ export function createReprintHandler(deps: ReprintDeps): JobHandler {
     if (!REPRINTABLE.has(app.state)) return NOTHING
     if (artifacts?.contactHash === contactHashOf(profile.profile)) return relinted(deps, app.id)
     if (artifacts?.cv === null || artifacts?.cv === undefined) return failed('there is no CV to reprint')
-    const printed = await deps.print({ applicationId: app.id, version: app.version + 1, cv: artifacts.cv, signal: ctx.signal })
+    // The profile read once, here: the PDF is printed with it and the version names it.
+    const printed = await deps.print({ applicationId: app.id, version: app.version + 1, cv: artifacts.cv, signal: ctx.signal, profile })
     if (!printed.ok) return failed(`the print failed: ${printed.error.reason}`)
     const { pages, ...files } = printed.value
     return {
