@@ -121,3 +121,17 @@ test('H5c: rewriting when the contact changes, and the CV did not change — bac
   const artifacts = db.read((q) => repo.getArtifacts(q, 'rw', app.version))
   assert.deepEqual([artifacts?.origin, artifacts?.contactHash, artifacts?.letter?.body], ['reprinted', contactHashOf(NEW), 'Shorter.\n\n{signature}'])
 })
+
+test('H5c: a work that writes no CV nor letter (a verify, a classify) never queues a reprint — a failed one waits for «Retry print»', async () => {
+  using base = tempBase()
+  const db = await builderStore(base)
+  const stale = { code: 'cv-stale', where: 'cv', detail: 'printed with another contact', blocks: true, overridden: null } as const
+  insertApp(db, { id: 'st', state: 'in-review', warnings: [stale] }, { ...ARTIFACTS, contactHash: contactHashOf(PROFILE) })
+  saveContact(db, 3, NEW)
+  const queue = queueOf(db, base, { verify: async () => ({ ok: true, output: { type: 'apply', apply: () => ok(undefined) } }) })
+
+  valueOf(queue.add({ kind: 'verify', ref: 'st' }))
+  await queue.settled()
+
+  assert.deepEqual(kinds(db, 'st'), ['verify'])
+})

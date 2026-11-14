@@ -230,8 +230,11 @@ export function createQueue(deps: QueueDeps): Queue {
    */
   function reprintIfStale(q: Queries, work: Work, result: JobResult): Result<void> {
     if (work.kind === 'reprint' && !result.ok) return ok(undefined)
+    // Only a generation's return (cv, letter, rewrite, reprint) speaks for the application's texts.
+    const classes = classesOf(q, work.kind, work.ref)
+    if (classes.length === 0) return ok(undefined)
     const app = getApplication(q, work.ref)
-    if (app === undefined || !awaitsReprint(q, app, { workId: work.id, writesCv: classesOf(q, work.kind, work.ref).includes('cv') })) return ok(undefined)
+    if (app === undefined || !awaitsReprint(q, app, { workId: work.id, writesCv: classes.includes('cv') })) return ok(undefined)
     const queued = enqueue(q, { kind: 'reprint', ref: app.id })
     return queued.ok ? ok(undefined) : queued
   }
