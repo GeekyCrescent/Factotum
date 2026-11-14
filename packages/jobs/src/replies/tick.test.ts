@@ -8,8 +8,8 @@ import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, send } from '../test-state.ts'
 import { capturedLog, manualClock, realTimers, tempBase } from '../test-support.ts'
-import type { Result } from '../types.ts'
-import type { ReplyJob } from './classify.ts'
+import { ok, type Result } from '../types.ts'
+import { createClassifier, type ReplyJob } from './classify.ts'
 import { createReplyTask, READ_FAILURES_FLAG, REPLY_READ_FAILING, type ReplyTaskDeps } from './tick.ts'
 
 const PASSWORD = 'abcdefghijklmnop'
@@ -78,6 +78,7 @@ function harness(db: Db, connect: ConnectImap, over: Partial<ReplyTaskDeps> = {}
     },
     connect: withUidValidity(connect),
     classifier: {
+      holds: () => false,
       submit: (q: Queries, enqueue, job): Result<repo.Work> => {
         submitted.push(job)
         return enqueue(q, { kind: 'classify', ref: job.reply.key, lane: 'interactive' })
@@ -186,6 +187,26 @@ test('Q5: a read that left a mail to its classify work keeps the hold, even when
   db.read((q) => q.run('UPDATE meta SET value = ? WHERE key = ?', new Date(h.clock.now().getTime() - 10 * MINUTE).toISOString(), 'lastReplyPoll'))
   await createReplyTask({ ...h.deps, connect: withUidValidity(imapDouble([thread]).connect) }).run()
   assert.deepEqual(h.submitted.map((j) => j.reply.key), ['7:11', '7:13', '7:11'], 'submitted anew')
+})
+
+test('Q5: a new UIDVALIDITY does not hand a mail over twice while its classification waits — found by its Message-ID', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const { queue } = rig(db)
+  const classifier = createClassifier({ stateDir: base.dir, now: () => NOW, timers: realTimers, log: capturedLog().log, claude: { model: 'haiku', effort: undefined }, apply: () => ok(undefined) })
+  const h = harness(db, imapDouble([thread]).connect, { classifier, enqueue: queue.enqueue })
+  await createReplyTask(h.deps).run()
+
+  // The mailbox was rebuilt: the same mail under UIDVALIDITY 8, while its work (key 7:11) still waits.
+  h.clock.advance(10 * MINUTE)
+  const rebuilt: ConnectImap = (options) => {
+    const client = imapDouble([thread]).connect(options)
+    return { ...client, mailboxOpen: async (path, o) => ({ ...((await client.mailboxOpen(path, o)) as object), uidValidity: 8n }) }
+  }
+  await createReplyTask({ ...h.deps, connect: rebuilt }).run()
+
+  assert.deepEqual(db.read((q) => [...repo.pendingClassifyRefs(q)]), ['7:11'], 'one classification, not two')
+  assert.equal(meta(db, repo.REPLY_HOLD_FROM), '2026-11-13T05:00:00.000Z')
 })
 
 test('Q5: three failed reads in a row → `meta.replyReadFailing` = when the first failed; the next good read clears it; no secret in the log', async () => {

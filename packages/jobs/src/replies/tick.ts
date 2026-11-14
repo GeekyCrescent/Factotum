@@ -17,8 +17,9 @@
  * waits any more — so a classification that outlives its body (a restart after a long pause) is found
  * again by the next read (the pending item of Q1). The hold is released only by a read that left NO
  * mail to a pending work and finds none pending in its `tx`: a work that ended between the two (a
- * restart, nothing applied) keeps it for one more read, which finds the mail again. The queue is
- * pumped after the `tx`.
+ * restart, nothing applied) keeps it for one more read, which finds the mail again. A mail whose
+ * `Message-ID` the classifier already holds under another key (a new UIDVALIDITY) is left to that
+ * work, and keeps the hold too. The queue is pumped after the `tx`.
  *
  * NOTHING HERE LOGS a body, a subject or an address: only counts and the masked reason.
  */
@@ -55,7 +56,7 @@ export interface ReplyTaskDeps {
   /** The password health's `readPassword` (it refreshes the cache). */
   readonly readPassword: (file: string) => Promise<PasswordResult>
   readonly connect: ConnectImap
-  readonly classifier: Pick<Classifier, 'submit'>
+  readonly classifier: Pick<Classifier, 'submit' | 'holds'>
   readonly enqueue: Queue['enqueue']
   readonly pump: () => void
   /** A test cannot wait the reader's ninety seconds. */
@@ -82,8 +83,11 @@ export function createReplyTask(deps: ReplyTaskDeps): ReplyTask {
 
   /** In the read's `tx`: the unmatched recorded, the matched submitted and held. */
   const handle = (q: Queries, replies: readonly ReadReply[], pollAt: Date, waiting: number): Result<void> => {
-    if (waiting === 0 && repo.pendingClassifyRefs(q).size === 0) repo.releaseHold(q)
+    // Under another key (a new UIDVALIDITY) a mail whose classification waits is still that mail.
+    const held = replies.filter((reply) => deps.classifier.holds(reply.messageId))
+    if (waiting === 0 && held.length === 0 && repo.pendingClassifyRefs(q).size === 0) repo.releaseHold(q)
     for (const reply of replies) {
+      if (held.includes(reply)) continue
       const input = reply.match.kind === 'unmatched' ? undefined : classifyInputOf(q, reply)
       if (input === undefined || input.candidates.length === 0) {
         const recorded = recordUnmatched(q, reply, pollAt)

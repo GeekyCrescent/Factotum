@@ -144,6 +144,11 @@ export interface Classifier {
    * nothing: the mail is unseen, and the next read submits it anew.
    */
   readonly failed: (q: Queries, work: Work, now: Date) => Result<void>
+  /**
+   * Whether a reply with this `Message-ID` already waits for its classification, under whatever key:
+   * a mailbox rebuilt with a new UIDVALIDITY gives the same mail another key while its work waits.
+   */
+  readonly holds: (messageId: string | null) => boolean
   /** Keeps `job` in memory and enqueues its `classify` work (ref = the mail's key), in the caller's `tx`; pump after. */
   readonly submit: (q: Queries, enqueue: Queue['enqueue'], job: ReplyJob) => Result<Work>
 }
@@ -185,5 +190,7 @@ export function createClassifier(deps: ClassifierDeps): Classifier {
     return job === undefined ? ok(undefined) : recordUnmatched(q, job.reply, now)
   }
 
-  return { handler, submit, failed }
+  const holds = (messageId: string | null): boolean => messageId !== null && [...waiting.values()].some((job) => job.reply.messageId === messageId)
+
+  return { handler, submit, failed, holds }
 }
