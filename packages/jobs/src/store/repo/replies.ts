@@ -17,16 +17,42 @@ import { json, text, textOrNull, type Row } from './rows.ts'
 export const LAST_REPLY_POLL = 'lastReplyPoll'
 export const REPLY_BACKFILL_FROM = 'replyBackfillFrom'
 
+/**
+ * `meta` key (tasks Q5, the pending item of Q1): the earliest INTERNALDATE of a mail handed to
+ * classification and not applied yet. The window never closes past it, so a mail whose classification
+ * waits longer than a day (a usage limit, a logged-out CLI during an absence) and then loses its body
+ * with a restart is still found by the next read.
+ */
+export const REPLY_HOLD_FROM = 'replyHoldFrom'
+
 export interface ReplyClocks {
   readonly lastPoll: string | undefined
   readonly backfill: string | undefined
   /** The oldest `at` of any `sends` row: the first read starts there (D12). */
   readonly oldestSend: string | undefined
+  /** `REPLY_HOLD_FROM`. */
+  readonly hold?: string | undefined
 }
 
 export function replyClocks(q: Queries): ReplyClocks {
   const oldest = q.get<Row>('SELECT min(at) AS at FROM sends')
-  return { lastPoll: getMeta(q, LAST_REPLY_POLL), backfill: getMeta(q, REPLY_BACKFILL_FROM), oldestSend: textOrNull(oldest ?? {}, 'at') ?? undefined }
+  return {
+    lastPoll: getMeta(q, LAST_REPLY_POLL),
+    backfill: getMeta(q, REPLY_BACKFILL_FROM),
+    oldestSend: textOrNull(oldest ?? {}, 'at') ?? undefined,
+    hold: getMeta(q, REPLY_HOLD_FROM),
+  }
+}
+
+/** A mail received at `receivedAt` went to classification: the hold is the earliest such. */
+export function holdReplies(q: Queries, receivedAt: string): void {
+  const current = getMeta(q, REPLY_HOLD_FROM)
+  if (current === undefined || receivedAt < current) setMeta(q, REPLY_HOLD_FROM, receivedAt)
+}
+
+/** No classification is waiting any more: the window may close again. */
+export function releaseHold(q: Queries): void {
+  deleteMeta(q, REPLY_HOLD_FROM)
 }
 
 /** The read is saved: its instant, and the backfill is spent (v4 C1: in the same `tx`). */
@@ -91,6 +117,8 @@ export interface UnmatchedReply {
   /** Claude's class when it classified it but could not name the application; null for rule 4. */
   readonly class: string | null
   readonly summary: string | null
+  /** The applications the reader matched it to (rules 1–3) when Claude could not settle it; [] for rule 4. */
+  readonly candidates: readonly string[]
 }
 
 const PENDING_UNMATCHED = `e.kind = 'reply' AND e.application_id IS NULL AND json_extract(e.data, '$.unmatched') = 1
@@ -108,6 +136,7 @@ const toUnmatched = (row: Row): UnmatchedReply => {
     link: str(data.link),
     class: str(data.class),
     summary: str(data.summary),
+    candidates: Array.isArray(data.candidates) ? data.candidates.filter((id): id is string => typeof id === 'string') : [],
   })
 }
 

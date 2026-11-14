@@ -53,6 +53,8 @@ export interface ReturnDeps {
   readonly lint: LintFn
   readonly relintOne: RelintFn
   readonly pdfExists: (path: string) => boolean
+  /** A `classify` failed for the third time (Q5): the classifier keeps its reply from being lost. */
+  readonly classifyFailed?: ((q: Queries, work: Work, now: Date) => Result<void>) | undefined
 }
 
 /** An entity whose rewrite failed for good, for the batch (D15: «rewrite failed» at its end). */
@@ -311,6 +313,10 @@ function workFailed(q: Queries, work: Work, deps: ReturnDeps, now: Date): Result
   if (work.kind === 'cv' || work.kind === 'letter') return generationFailed(q, work, deps, now)
   if (work.kind === 'rewrite') return rewriteFailed(q, work, now)
   if (work.kind === 'reprint') return reprintFailed(q, work, now)
+  if (work.kind === 'classify' && deps.classifyFailed !== undefined) {
+    const kept = deps.classifyFailed(q, work, now)
+    return kept.ok ? ok(NOTHING) : kept
+  }
   return ok(NOTHING)
 }
 

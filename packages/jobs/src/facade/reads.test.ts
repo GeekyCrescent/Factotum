@@ -12,6 +12,7 @@ import { NOW, send, valueOf } from '../test-state.ts'
 import { tempBase } from '../test-support.ts'
 import { ok, type Profile } from '../types.ts'
 import { WAVE2_FAILING } from '../clock.ts'
+import { REPLY_READ_FAILING } from '../replies/tick.ts'
 import { ADS_FAILING } from './ads.ts'
 import { AUTH_WARNING, views } from './reads.ts'
 
@@ -125,6 +126,22 @@ test('review 1a: a failing wave 2, a failing ad walk and deferred replies left u
   // Assert
   assert.deepEqual(waiting, [])
   assert.deepEqual(failing, [lines.wave2, lines.ads, lines.deferred])
+})
+
+test('Q5: three failed reads of the mailbox → «Mail reading failing since <hora>», in the module’s zone (with the day when not today)', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  saveProfile(db, 2, PROFILE)
+  const reads = readsOf(db)
+  assert.deepEqual(reads.health().warnings, [])
+
+  // NOW is 11:00 on 14-nov in Sydney.
+  valueOf(db.tx((q) => ok(repo.setMeta(q, REPLY_READ_FAILING, '2026-11-13T22:05:00.000Z'))))
+  assert.deepEqual(reads.health().warnings, ['Mail reading failing since 09:05'])
+  assert.deepEqual(readsOf(db).overview().notices, ['Mail reading failing since 09:05'])
+
+  valueOf(db.tx((q) => ok(repo.setMeta(q, REPLY_READ_FAILING, '2026-11-12T22:05:00.000Z'))))
+  assert.deepEqual(reads.health().warnings, ['Mail reading failing since 13 Nov 09:05'])
 })
 
 test('a logged-out CLI is a health warning and an overview notice while it holds, and the first good run clears it', async () => {

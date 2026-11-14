@@ -17,8 +17,11 @@
  * whose `classify` work is still queued, is skipped: nothing is processed twice.
  *
  * WHAT IS WRITTEN, in ONE `tx` after a read that worked: `lastReplyPoll` = the read's instant,
- * `replyBackfillFrom` deleted (v4 C1), and the IGNORED mails (rule 4, not a job's subject) marked
- * seen. Everything else comes back to the caller (Q4/Q5), which marks it seen when it applies it.
+ * `replyBackfillFrom` deleted (v4 C1), the IGNORED mails (rule 4, not a job's subject) marked seen,
+ * and whatever the caller's `handle` writes (Q5: the unmatched recorded, the matched submitted to
+ * classification and held). Everything else comes back to the caller too; it is marked seen when
+ * applied. The window also stays open behind `replyHoldFrom` (Q5): the earliest mail still waiting
+ * for its classification.
  *
  * NOTHING THROWS OUT OF HERE, and NOTHING IS LOGGED: a reply's body, subject or address never reaches
  * a log line. A failure is `{ ok: false, reason }`, and the reason never carries the password nor the
@@ -41,8 +44,8 @@ import {
   type MetaQuery,
   type PickedPart,
 } from '@factotum/mail'
-import type { Db } from '../store/db.ts'
-import { ok } from '../types.ts'
+import type { Db, Queries } from '../store/db.ts'
+import { ok, type Result } from '../types.ts'
 import { markMailSeen, mailSeen, pendingClassifyRefs, replyClocks, replyWorld, saveReplyPoll, type ReplyClocks } from '../store/repo.ts'
 import { HUMAN_REPLY_CLASSES, matchReply, messageIdsIn, type MatchMail, type MatchWorld, type ReplyMatch } from './match.ts'
 
@@ -72,6 +75,11 @@ export interface ReadInput {
   readonly now: () => Date
   /** A test cannot wait ninety seconds. */
   readonly timeoutMs?: number
+  /**
+   * What the caller does with the replies (Q5: record the unmatched, submit the matched to
+   * classification), INSIDE the read's own `tx`: the poll is saved with them, or neither is.
+   */
+  readonly handle?: (q: Queries, replies: readonly ReadReply[], pollAt: Date) => Result<void>
 }
 
 /** One mail that needs the caller: matched (rules 1–3, with its body) or unmatched (rule 4, without). */
@@ -106,7 +114,7 @@ export type ReadResult =
 /** The start of the window, or null when nothing was ever sent nor read (D12; v4 C1). Pure. */
 export function sinceOf(clocks: ReplyClocks): string | null {
   const from = clocks.lastPoll === undefined ? clocks.oldestSend : clocks.lastPoll
-  const starts = [from, clocks.backfill].filter((at): at is string => at !== undefined)
+  const starts = [from, clocks.backfill, clocks.hold].filter((at): at is string => at !== undefined)
   if (starts.length === 0) return null
   const earliest = starts.reduce((a, b) => (a < b ? a : b))
   return new Date(new Date(earliest).getTime() - DAY_MS).toISOString()
@@ -130,7 +138,7 @@ export async function readReplies(input: ReadInput): Promise<ReadResult> {
     client = input.connect(imapOptions(input.server, input.password))
     const read = await session(client, input, new Date(since), pollAt, signal)
     if (!read.ok) return read
-    return save(input.db, read.value, pollAt, since)
+    return save(input, read.value, pollAt, since)
   } catch (error) {
     if (signal.aborted) return { ok: false, reason: own.signal.aborted ? `no answer within ${Math.round(timeoutMs / 1000)} s` : 'stopped' }
     return { ok: false, reason: reasonOf(error, { user: input.server.user, password: input.password }) }
@@ -178,12 +186,12 @@ async function session(client: ImapClient, input: ReadInput, since: Date, now: D
   return { ok: true, value: { replies, ignored: matched.filter((d) => d.match.kind === 'ignored') } }
 }
 
-/** The read's `tx`: the poll, the backfill spent, the ignored ones seen. */
-function save(db: Db, read: Session, pollAt: Date, since: string): ReadResult {
-  const saved = db.tx((q) => {
+/** The read's `tx`: the poll, the backfill spent, the ignored ones seen, and the caller's `handle`. */
+function save(input: ReadInput, read: Session, pollAt: Date, since: string): ReadResult {
+  const saved = input.db.tx((q) => {
     saveReplyPoll(q, pollAt.toISOString())
     for (const d of read.ignored) markMailSeen(q, { key: d.key, uidValidity: d.uidValidity, uid: d.uid, messageId: d.mail.messageId, applicationId: null, class: 'ignored' }, pollAt)
-    return ok(undefined)
+    return input.handle === undefined ? ok(undefined) : input.handle(q, read.replies, pollAt)
   })
   if (!saved.ok) return { ok: false, reason: `the read could not be saved (${saved.error.reason})` }
   return { ok: true, replies: read.replies, since, pollAt: pollAt.toISOString() }

@@ -32,8 +32,9 @@ import type { NotificationMessage } from '@factotum/core'
 import { appTransition, followupTransition, isHumanClass } from '../state.ts'
 import type { Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { ok, type Application, type Result, type Send } from '../types.ts'
+import { fail, ok, type Application, type Result, type Send } from '../types.ts'
 import type { ClassifyVerdict, ReplyJob } from './classify.ts'
+import { REPLY_CLASSES, type ReplyClass } from './match.ts'
 import type { ReadReply } from './read.ts'
 
 /** design D16: the company in a push title is cut to this. */
@@ -76,14 +77,26 @@ export function replyPush(applicationId: string, company: string, replyClass: 'i
   return { title: `${label}: ${cut(company, PUSH_COMPANY_MAX)}`, body: PUSH_BODY, path: `/m/jobs/a/${applicationId}`, tag: `jobs-reply-${applicationId}` }
 }
 
+/** What an event says of a mail (D12): never its body. */
+interface MailFacts {
+  readonly key: string
+  /** ISO: the date of the mail. */
+  readonly date: string
+  readonly from: string
+  readonly subject: string
+  readonly link: string | null
+}
+
+const factsOf = (reply: ReadReply): MailFacts => ({ key: reply.key, date: reply.date, from: reply.from, subject: reply.subject, link: reply.gmailLink })
+
 /** What every `reply` event carries (D12): never the body. */
-function replyData(reply: ReadReply, verdict: ClassifyVerdict | null): Readonly<Record<string, unknown>> {
+function replyData(mail: MailFacts, verdict: ClassifyVerdict | null): Readonly<Record<string, unknown>> {
   return {
-    key: reply.key,
+    key: mail.key,
     ...(verdict === null ? {} : { class: verdict.class }),
-    from: reply.from,
-    subject: reply.subject,
-    link: reply.gmailLink,
+    from: mail.from,
+    subject: mail.subject,
+    link: mail.link,
     ...(verdict === null ? {} : { summary: verdict.summary }),
   }
 }
@@ -98,9 +111,16 @@ function seen(q: Queries, reply: ReadReply, applicationId: string | null, cls: s
  */
 export function recordUnmatched(q: Queries, reply: ReadReply, now: Date, verdict: ClassifyVerdict | null = null): Result<void> {
   if (repo.mailSeen(q, reply.key, reply.messageId)) return ok(undefined)
-  repo.appendEvent(q, { kind: 'reply', at: reply.date, data: { ...replyData(reply, verdict), unmatched: true }, applicationId: null, companyId: null }, now)
+  const data = { ...replyData(factsOf(reply), verdict), unmatched: true, candidates: candidatesOf(reply) }
+  repo.appendEvent(q, { kind: 'reply', at: reply.date, data, applicationId: null, companyId: null }, now)
   seen(q, reply, null, 'unmatched', now)
   return ok(undefined)
+}
+
+/** The applications the reader matched a mail to, for «Assign to…». */
+function candidatesOf(reply: ReadReply): readonly string[] {
+  if (reply.match.kind === 'thread') return [reply.match.applicationId]
+  return reply.match.kind === 'candidates' ? reply.match.applicationIds : []
 }
 
 /** The sends the reply moved to `sent` (T-S7, T-S11): `resolved-by-reply` for each, the follow-up's row with its send. */
@@ -138,32 +158,23 @@ function cancelFollowups(q: Queries, applicationId: string, now: Date): Result<v
   return ok(undefined)
 }
 
-/** The classifier's `apply` (Q3 → Q4): one classified reply, in the caller's `tx`. */
-export function applyReply(q: Queries, job: ReplyJob, verdict: ClassifyVerdict, now: Date, deps: ApplyDeps): Result<void> {
-  const { reply } = job
-  if (repo.mailSeen(q, reply.key, reply.messageId)) return ok(undefined)
-  const target = targetOf(reply, verdict)
-  const app = target === null ? undefined : repo.getApplication(q, target.applicationId)
-  if (target === null || app === undefined) {
-    if (verdict.class !== 'unrelated') return recordUnmatched(q, reply, now, verdict)
-    seen(q, reply, null, verdict.class, now)
-    return ok(undefined)
-  }
-  const data = { ...replyData(reply, verdict), rule: target.rule, ...(target.messageId === null ? {} : { messageId: target.messageId }) }
-  const event = (extra: Readonly<Record<string, unknown>> = {}) => ({ kind: 'reply', at: reply.date, data: { ...data, ...extra } }) as const
+/**
+ * The reply lands on `app`: the event, the sends it proves, the row of its class, the follow-ups, the
+ * push — or, with the initial in flight, the deferred event alone. `extra` goes into the event.
+ */
+function landOn(q: Queries, mail: MailFacts, app: Application, target: Target, verdict: ClassifyVerdict, extra: Readonly<Record<string, unknown>>, now: Date, deps: ApplyDeps): Result<void> {
+  const data = { ...replyData(mail, verdict), rule: target.rule, ...(target.messageId === null ? {} : { messageId: target.messageId }), ...extra }
+  const event = (more: Readonly<Record<string, unknown>> = {}) => ({ kind: 'reply', at: mail.date, data: { ...data, ...more } }) as const
 
   if (app.state === 'sending') {
     // v6.1: the event only; the close of the send applies it (T-S2/T-S3/T-S4).
     repo.appendEvent(q, { ...event({ deferred: true }), applicationId: app.id, companyId: app.companyId }, now)
-    seen(q, reply, app.id, verdict.class, now)
     return ok(undefined)
   }
-
   const moved = appTransition(app, { type: 'reply', replyClass: verdict.class, rule: target.rule, messageId: target.messageId }, now)
   if (!moved.ok) {
     // D3 says a matched reply is never a conflict; should the table refuse one all the same, the reply is kept.
     repo.appendEvent(q, { ...event({ notApplied: moved.error.reason }), applicationId: app.id, companyId: app.companyId }, now)
-    seen(q, reply, app.id, verdict.class, now)
     return ok(undefined)
   }
   const next = moved.value
@@ -178,9 +189,56 @@ export function applyReply(q: Queries, job: ReplyJob, verdict: ClassifyVerdict, 
     const cancelled = cancelFollowups(q, app.id, now)
     if (!cancelled.ok) return cancelled
   }
-  seen(q, reply, app.id, verdict.class, now)
   if (verdict.class === 'interview' || verdict.class === 'offer') {
-    deps.push(reply.key, replyPush(app.id, repo.getCompany(q, app.companyId)?.name ?? '', verdict.class))
+    deps.push(mail.key, replyPush(app.id, repo.getCompany(q, app.companyId)?.name ?? '', verdict.class))
   }
+  return ok(undefined)
+}
+
+/** The classifier's `apply` (Q3 → Q4): one classified reply, in the caller's `tx`. */
+export function applyReply(q: Queries, job: ReplyJob, verdict: ClassifyVerdict, now: Date, deps: ApplyDeps): Result<void> {
+  const { reply } = job
+  if (repo.mailSeen(q, reply.key, reply.messageId)) return ok(undefined)
+  const target = targetOf(reply, verdict)
+  const app = target === null ? undefined : repo.getApplication(q, target.applicationId)
+  if (target === null || app === undefined) {
+    if (verdict.class !== 'unrelated') return recordUnmatched(q, reply, now, verdict)
+    seen(q, reply, null, verdict.class, now)
+    return ok(undefined)
+  }
+  const landed = landOn(q, factsOf(reply), app, target, verdict, {}, now, deps)
+  if (!landed.ok) return landed
+  seen(q, reply, app.id, verdict.class, now)
+  return ok(undefined)
+}
+
+const isReplyClass = (value: string | null): value is ReplyClass => value !== null && (REPLY_CLASSES as readonly string[]).includes(value)
+
+/**
+ * «Assign to…» / «Ignore» of an «Unmatched reply» (crit. 56; `POST /replies/:key/assign`), in the
+ * caller's `tx`. `null` ignores it. Assigned, it becomes the application's `reply { assigned: true }`:
+ * with the class Claude gave it, that class decides as a reply matched by its domain would (rule 2:
+ * it proves the initial only); without one (rule 4), only the event — the owner adds an interview or
+ * an offer by hand (T-A28). Either way a `reply-applied { replyEventId }` takes it off the list.
+ */
+export function assignReply(q: Queries, key: string, applicationId: string | null, now: Date, deps: ApplyDeps): Result<void> {
+  const waiting = repo.unmatchedReply(q, key)
+  if (waiting === undefined) return fail('not-found', 'no unmatched reply with that key')
+  const cite = { kind: 'reply-applied', data: { replyEventId: waiting.eventId } } as const
+  if (applicationId === null) {
+    repo.appendEvent(q, { ...cite, data: { ...cite.data, ignored: true }, applicationId: null, companyId: null }, now)
+    return ok(undefined)
+  }
+  const app = repo.getApplication(q, applicationId)
+  if (app === undefined) return fail('not-found', 'no such application')
+  const mail: MailFacts = { key, date: waiting.at, from: waiting.from, subject: waiting.subject, link: waiting.link }
+  if (isReplyClass(waiting.class)) {
+    const verdict: ClassifyVerdict = { class: waiting.class, applicationId, summary: waiting.summary ?? '' }
+    const landed = landOn(q, mail, app, { applicationId, rule: 2, messageId: null, viaAttempt: false }, verdict, { assigned: true }, now, deps)
+    if (!landed.ok) return landed
+  } else {
+    repo.appendEvent(q, { kind: 'reply', at: mail.date, data: { ...replyData(mail, null), assigned: true }, applicationId: app.id, companyId: app.companyId }, now)
+  }
+  repo.appendEvent(q, { ...cite, data: { ...cite.data, applicationId }, applicationId: app.id, companyId: app.companyId }, now)
   return ok(undefined)
 }

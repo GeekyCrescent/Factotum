@@ -12,8 +12,8 @@
  * as module paths. Every batch item carries `seen` (D15 «Lo que se vio es lo que se aprueba»).
  */
 
-import type { Logger, Timers } from '@factotum/core'
-import type { PasswordResult, SendInput, SendResult } from '@factotum/mail'
+import type { Logger, Notifier, Timers } from '@factotum/core'
+import type { ConnectImap, PasswordResult, SendInput, SendResult } from '@factotum/mail'
 
 import type { MailHealth, FileStat } from '../mail-health.ts'
 import type { Decided, DecisionKind } from '../review/decide.ts'
@@ -48,6 +48,8 @@ export interface JobsDeps {
   readonly now: () => Date
   /** `ctx.timers`: the kernel owns every timer (CLAUDE.md §6). */
   readonly timers: Timers
+  /** `ctx.notify`: the push of an interview or an offer (D16). Without it, no push (the event stays). */
+  readonly notify?: Notifier | undefined
   // The seams below are for tests and dev only — never from the configuration.
   /** fake-claude; `CLAUDE_BIN`/`claude` without it. */
   readonly claudeBin?: string | undefined
@@ -60,6 +62,8 @@ export interface JobsDeps {
   /** The network of the address checks and the live ad; `globalThis.fetch` and the system's DNS without them. */
   readonly fetch?: FetchLike | undefined
   readonly lookup?: Lookup | undefined
+  /** The IMAP client of the reply reader (D12); `@factotum/mail`'s imapflow without it. */
+  readonly connect?: ConnectImap | undefined
 }
 
 /** `GET /where`: this host keeps jobs, or relays to the one that does (D13). */
@@ -316,6 +320,35 @@ export interface ApplicationDetail {
   readonly events: readonly JobEvent[]
 }
 
+/** One «Unmatched reply» for the tracker (crit. 56): sender and subject, never a body. */
+export interface UnmatchedReplyView {
+  readonly key: string
+  /** ISO: the date of the mail. */
+  readonly at: string
+  readonly from: string
+  readonly subject: string
+  readonly link: string | null
+  /** When Claude classified it but could not place it. */
+  readonly class: string | null
+  readonly summary: string | null
+  /** The applications the reader matched it to, first in «Assign to…»; [] for rule 4. */
+  readonly candidates: readonly string[]
+}
+
+/** An application «Assign to…» offers: one that sent something, not the test one. */
+export interface AssignOption {
+  readonly id: string
+  readonly company: string
+  readonly role: string
+  readonly state: AppState
+}
+
+/** `GET /replies/unmatched`. */
+export interface UnmatchedAnswer {
+  readonly replies: readonly UnmatchedReplyView[]
+  readonly applications: readonly AssignOption[]
+}
+
 // ── Inputs and outcomes ──────────────────────────────────────────────────────────────────────────
 
 /** `POST /batch/decide` (D15); checked by the facade, so it may come straight from a body. */
@@ -368,6 +401,10 @@ export interface Jobs {
   readonly retrySend: (id: string, kind: SendKind, options?: AnswerOptions) => Result<SendView>
   /** «Close» (T-A26, T-A21): wraps `closeApplication`. */
   readonly close: (id: string, input: { readonly reason: string }) => Result<Application>
+  /** `GET /replies/unmatched` (D12, crit. 56): what waits for «Assign to…» or «Ignore». */
+  readonly unmatchedReplies: () => UnmatchedAnswer
+  /** `POST /replies/:key/assign`: to an application, or `null` to ignore it. */
+  readonly assignReply: (key: string, applicationId: string | null) => Result<void>
   /** Synchronous: reads the caches. */
   readonly health: () => Health
   /** The real path of a version's PDF or preview, read from its artifacts row, confined to `<stateDir>/artifacts/`. */

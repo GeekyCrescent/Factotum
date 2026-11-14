@@ -8,10 +8,10 @@ import { applyDeferredReplies } from '../send/deferred.ts'
 import { appTransition } from '../state.ts'
 import type { Db } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { NOW, send, valueOf } from '../test-state.ts'
+import { errorOf, NOW, send, valueOf } from '../test-state.ts'
 import { capturedLog, tempBase } from '../test-support.ts'
 import type { Application, JobEvent, Send } from '../types.ts'
-import { applyReply, PUSH_COMPANY_MAX, recordUnmatched } from './apply.ts'
+import { applyReply, assignReply, PUSH_COMPANY_MAX, recordUnmatched } from './apply.ts'
 import type { ClassifyVerdict, ReplyJob } from './classify.ts'
 import type { ReplyClass } from './match.ts'
 import type { ReadReply } from './read.ts'
@@ -371,4 +371,65 @@ test('Q4: an unmatched mail (rule 4) is recorded with sender, subject and link, 
     'once',
   )
   assert.equal(db.read((q) => repo.mailSeen(q, replyJob.reply.key, null)), true)
+})
+
+// ── «Assign to…» and «Ignore» (Q5, crit. 56) ─────────────────────────────────────────────────────
+
+function unmatchedIn(db: Db, over: Partial<ReadReply> = {}, given: ClassifyVerdict | null = null): ReplyJob {
+  const replyJob = job({ kind: 'unmatched', rule: 4 }, { body: '', ...over })
+  valueOf(db.tx((q) => recordUnmatched(q, replyJob.reply, NOW, given)))
+  return replyJob
+}
+
+const assign = (db: Db, key: string, applicationId: string | null, pushes: NotificationMessage[] = []) =>
+  db.tx((q) => assignReply(q, key, applicationId, NOW, { push: (_key, message) => pushes.push(message) }))
+
+test('Q5 «Ignore»: the unmatched reply leaves the list, with a `reply-applied { ignored }`; twice is not-found', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const { reply } = unmatchedIn(db)
+
+  valueOf(assign(db, reply.key, null))
+
+  assert.deepEqual(db.read((q) => repo.unmatchedReplies(q)), [])
+  const cited = db.read((q) => q.get<{ data: string }>("SELECT data FROM events WHERE kind = 'reply-applied'"))
+  assert.equal(JSON.parse(cited?.data ?? '{}').ignored, true)
+  errorOf(assign(db, reply.key, null), 'not-found')
+})
+
+test('Q5 «Assign to…» a rule-4 mail: a `reply` on that application with sender, subject, link and the mail’s date, `assigned`, no class — nothing else moves', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const { reply } = unmatchedIn(db, { subject: 'Your interview', from: 'hr@unknown.example' })
+
+  valueOf(assign(db, reply.key, 'app-1'))
+
+  const event = lastOf(db, 'reply')
+  assert.equal(event?.at, MAIL_DATE)
+  assert.deepEqual(event?.data, { key: reply.key, from: 'hr@unknown.example', subject: 'Your interview', link: reply.gmailLink, assigned: true })
+  assert.equal(appOf(db, 'app-1').state, 'sent')
+  assert.deepEqual(db.read((q) => repo.unmatchedReplies(q)), [])
+})
+
+test('Q5 «Assign to…» a mail Claude classified but could not place: the class decides, as by its domain (rule 2), with its push', async () => {
+  using base = tempBase()
+  const db = await store(base, { state: 'send-unknown', sends: [send({ state: 'send-unknown', at: SENT_AT })] })
+  const { reply } = unmatchedIn(db, {}, verdict('interview'))
+  const pushes: NotificationMessage[] = []
+
+  valueOf(assign(db, reply.key, 'app-1', pushes))
+
+  const app = appOf(db, 'app-1')
+  assert.deepEqual([sendOf(app)?.state, app.state, app.outcome], ['sent', 'replied', 'interview'])
+  assert.equal(lastOf(db, 'reply')?.data.assigned, true)
+  assert.deepEqual(pushes.map((p) => p.title), ['Interview: Acme'])
+})
+
+test('Q5 «Assign to…» an application that does not exist, or a key with nothing waiting → not-found', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const { reply } = unmatchedIn(db)
+  errorOf(assign(db, reply.key, 'nope'), 'not-found')
+  errorOf(assign(db, '9:9', 'app-1'), 'not-found')
+  assert.equal(db.read((q) => repo.unmatchedReplies(q)).length, 1, 'still waiting')
 })

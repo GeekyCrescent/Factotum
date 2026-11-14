@@ -58,6 +58,19 @@ test('the first round runs at once, then every 60 s on the injected timers: the 
   assert.equal(timers.tick(CLOCK_MS), 0, 'the interval is gone')
 })
 
+test('Q5: the replies task runs every round, after the backup (its own clock says when it reads)', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const { clock, timers, calls } = clockRig(db, base.dir, { replies: async () => void calls.push('replies') })
+  clock.start()
+  await clock.idle()
+  assert.deepEqual(calls, ['pump', 'checks', 'replies'])
+  timers.tick(CLOCK_MS)
+  await clock.idle()
+  assert.deepEqual(calls.filter((c) => c === 'replies').length, 2)
+  await clock.stop()
+})
+
 test('one round at a time: a tick that comes while a round runs is skipped', async () => {
   using base = tempBase()
   const db = await queueStore(base)

@@ -11,7 +11,9 @@
  * 3. THE ADDRESS CHECKS of the next batch (every round, D9): N4's `prepareTick`, injected — C1 passes
  *    `() => checks.prepareTick({ batchSize: profile.batchSize })`;
  * 4. THE DAILY COPY (D2): `VACUUM INTO <stateDir>/backups/jobs-<YYYY-MM-DD>.db`, 7 kept, every copy
- *    in `backups/` (0700) made 0600 — `VACUUM INTO` writes with the umask.
+ *    in `backups/` (0700) made 0600 — `VACUUM INTO` writes with the umask;
+ * 5. THE REPLIES (D12, Q5): injected (`replies/tick.ts`), asked every round; it reads every
+ *    `replyPollMinutes`, also during an absence, and keeps its own failure count.
  *
  * A TASK NEVER THROWS OUT OF ITS ROUND: a failure is logged and the next task runs. Their clocks live
  * in `meta` and are written AFTER the effect, and only when it WHOLLY succeeded (both can be repeated
@@ -73,6 +75,8 @@ export interface ClockDeps {
   readonly enqueueCv: (q: Queries, applicationId: string) => Result<void>
   /** The seed files the module sends (base names, as `seed_key` has them): never a `byHand` one. */
   readonly seedFiles: () => readonly string[]
+  /** The replies task (Q5, `replies/tick.ts`): asked every round, it reads when `replyPollMinutes` say — absences included. */
+  readonly replies?: () => Promise<void>
 }
 
 export interface Clock {
@@ -190,6 +194,8 @@ export function createClock(deps: ClockDeps): Clock {
     { name: 'pump', run: () => deps.pump() },
     { name: 'address checks', run: () => deps.prepareTick() },
     { name: 'backup', run: backup },
+    // Last: a slow mailbox (≤ 90 s) holds nothing of this round behind it.
+    ...(deps.replies === undefined ? [] : [{ name: 'replies', run: deps.replies }]),
   ]
 
   /** Waits for `task` at most `TASK_TIMEOUT_MS` on the injected timers; a hung one is logged and left. */

@@ -30,6 +30,7 @@ import type { Queries } from '../store/db.ts'
 import { getApplication, getCompany, getOpportunity } from '../store/repo.ts'
 import type { Result } from '../types.ts'
 import { ok } from '../types.ts'
+import { recordUnmatched } from './apply.ts'
 import type { ReplyClass } from './match.ts'
 import type { ReadReply } from './read.ts'
 
@@ -134,6 +135,13 @@ export interface ClassifierDeps extends ClassifyDeps {
 export interface Classifier {
   /** `handlers.classify` of the queue. */
   readonly handler: JobHandler
+  /**
+   * The queue's `classifyFailed`: the work failed for the third time. Its reply leaves memory and
+   * becomes an «Unmatched reply» with its candidates, seen — the owner assigns it, and the next read
+   * does not hand it to Claude again (the pending item of Q1). Without it in memory (a restart),
+   * nothing: the mail is unseen, and the next read submits it anew.
+   */
+  readonly failed: (q: Queries, work: Work, now: Date) => Result<void>
   /** Keeps `job` in memory and enqueues its `classify` work (ref = the mail's key), in the caller's `tx`; pump after. */
   readonly submit: (q: Queries, enqueue: Queue['enqueue'], job: ReplyJob) => Result<Work>
 }
@@ -158,5 +166,11 @@ export function createClassifier(deps: ClassifierDeps): Classifier {
     return work
   }
 
-  return { handler, submit }
+  const failed = (q: Queries, work: Work, now: Date): Result<void> => {
+    const job = waiting.get(work.ref)
+    waiting.delete(work.ref)
+    return job === undefined ? ok(undefined) : recordUnmatched(q, job.reply, now)
+  }
+
+  return { handler, submit, failed }
 }

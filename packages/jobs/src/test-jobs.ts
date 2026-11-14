@@ -8,6 +8,8 @@ import assert from 'node:assert/strict'
 import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { imapDouble } from '@factotum/mail/testing'
+
 import { DOC, MASTER } from './build/test-cv.ts'
 import { FAKE_CHROMIUM, FAKE_CLAUDE, FAKE_PDFINFO, FAKE_PDFTOPPM, GUIDE } from './build/test-builder.ts'
 import type { Jobs, JobsDeps } from './facade/types.ts'
@@ -69,6 +71,8 @@ export function depsOf(rig: Rig, over: Partial<JobsDeps> = {}): JobsDeps & { rea
       throw new Error('offline')
     },
     lookup: async () => ['93.184.216.34'],
+    // No IMAP in tests unless one asks: never the real Gmail.
+    connect: imapDouble([], { networkError: 'no IMAP in tests' }).connect,
     ...over,
   }
 }

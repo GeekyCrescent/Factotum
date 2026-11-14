@@ -120,6 +120,8 @@ export interface QueueDeps {
   readonly pdfExists: (path: string) => boolean
   /** A rewrite failed for good (T-A9, T-F5): the batch puts it at its end (D15). After the `tx`. */
   readonly onRewriteFailed?: ((entity: RewriteFailed) => void) | undefined
+  /** A `classify` failed for good (Q5): in the `tx` of that third failure. */
+  readonly classifyFailed?: ((q: Queries, work: Work, now: Date) => Result<void>) | undefined
 }
 
 export interface EnqueueSpec {

@@ -234,3 +234,45 @@ test('sinceOf: min(lastReplyPoll, replyBackfillFrom) − 1 day; first time the o
   assert.equal(sinceOf({ lastPoll: undefined, backfill: '2026-11-08T00:00:00.000Z', oldestSend: '2026-11-10T00:00:00.000Z' }), '2026-11-07T00:00:00.000Z')
   assert.equal(sinceOf({ lastPoll: undefined, backfill: undefined, oldestSend: undefined }), null)
 })
+
+test('sinceOf: a hold (a mail handed to classification, not applied yet) keeps the window open behind it', () => {
+  assert.equal(sinceOf({ lastPoll: '2026-11-20T00:00:00.000Z', backfill: undefined, oldestSend: undefined, hold: '2026-11-15T06:00:00.000Z' }), '2026-11-14T06:00:00.000Z')
+  assert.equal(sinceOf({ lastPoll: '2026-11-20T00:00:00.000Z', backfill: undefined, oldestSend: undefined, hold: '2026-11-25T00:00:00.000Z' }), '2026-11-19T00:00:00.000Z')
+})
+
+test('Q5: `handle` gets the replies inside the read’s own tx; when it fails, the poll is not saved either', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const seenInTx: string[] = []
+  const handle: ReadInput['handle'] = (q, replies) => {
+    seenInTx.push(...replies.map((r) => r.key))
+    repo.setMeta(q, 'handled', 'yes')
+    return ok(undefined)
+  }
+
+  const read = okOf(await readReplies(input(db, withUidValidity(imapDouble([thread, unmatched]).connect), NOW, { handle })))
+
+  assert.deepEqual(seenInTx, ['7:11', '7:12'])
+  assert.deepEqual(read.replies.map((r) => r.key), ['7:11', '7:12'])
+  assert.deepEqual([meta(db, 'handled'), meta(db, 'lastReplyPoll')], ['yes', NOW.toISOString()])
+
+  using other = tempBase()
+  const db2 = await store(other)
+  const failing: ReadInput['handle'] = () => ({ ok: false, error: { code: 'module-error', reason: 'boom' } })
+  const failed = await readReplies(input(db2, withUidValidity(imapDouble([thread]).connect), NOW, { handle: failing }))
+  assert.deepEqual(failed, { ok: false, reason: 'the read could not be saved (boom)' })
+  assert.equal(meta(db2, 'lastReplyPoll'), undefined, 'rolled back with it')
+})
+
+test('Q5: the hold in `meta` is part of the window', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  valueOf(db.tx((q) => ok(repo.setMeta(q, 'lastReplyPoll', '2026-11-20T00:00:00.000Z'))))
+  valueOf(db.tx((q) => ok(repo.holdReplies(q, '2026-11-15T06:00:00.000Z'))))
+  valueOf(db.tx((q) => ok(repo.holdReplies(q, '2026-11-17T06:00:00.000Z'))))
+  const double = imapDouble([])
+  const read = okOf(await readReplies(input(db, withUidValidity(double.connect), new Date('2026-11-21T00:00:00.000Z'))))
+  assert.equal(read.since, '2026-11-14T06:00:00.000Z', 'the earliest hold, − 1 day')
+  valueOf(db.tx((q) => ok(repo.releaseHold(q))))
+  assert.equal(meta(db, repo.REPLY_HOLD_FROM), undefined)
+})

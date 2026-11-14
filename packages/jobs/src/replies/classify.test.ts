@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { AUTH_PAUSE_MS, PAUSED_UNTIL } from '../ai/queue.ts'
+import { AUTH_PAUSE_MS, MAX_ATTEMPTS, PAUSED_UNTIL, RETRY_DELAYS_MS } from '../ai/queue.ts'
 import { AUTH_REASON, LIMIT_REASON } from '../ai/run.ts'
 import { insertApp, queueStore, rig, workOf } from '../ai/test-queue.ts'
 import { FAKE_CLAUDE, runDir, scriptClaude } from '../build/test-builder.ts'
@@ -144,7 +144,7 @@ function classifierRig(db: Db, stateDir: string) {
     return ok(undefined)
   }
   const classifier = createClassifier({ ...deps(stateDir), apply })
-  const { queue, clock } = rig(db, { handlers: { classify: classifier.handler } })
+  const { queue, clock } = rig(db, { handlers: { classify: classifier.handler }, classifyFailed: classifier.failed })
   const submit = (job: ReplyJob): string => {
     const work = valueOf(db.tx((q) => classifier.submit(q, queue.enqueue, job)))
     queue.pump()
@@ -200,4 +200,25 @@ test('Q3 through the queue: a work whose reply is no longer in memory (a restart
   assert.equal(workOf(db, id).state, 'done')
   assert.equal(applied.length, 0)
   assert.equal(calls(base.dir), 0)
+})
+
+test('Q5 (the pending item of Q1): a classification that fails for the third time becomes an «Unmatched reply» with its candidates, seen; the body leaves memory', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  scriptClaude(base.dir, ['garbage', 'garbage', 'garbage'])
+  const { applied, queue, clock, submit } = classifierRig(db, base.dir)
+
+  const id = submit({ reply: reply(), input: INPUT })
+  await queue.settled()
+  for (const delay of RETRY_DELAYS_MS) {
+    clock.advance(delay + 1)
+    queue.pump()
+    await queue.settled()
+  }
+
+  assert.deepEqual([workOf(db, id).state, workOf(db, id).attempts, applied.length], ['failed', MAX_ATTEMPTS, 0])
+  const unmatched = db.read((q) => repo.unmatchedReplies(q))
+  assert.deepEqual(unmatched.map((u) => [u.key, u.from, u.subject, u.class, u.candidates]), [['7:11', 'Ada Lovelace <ada@acme.example>', 'Re: Application', null, ['app-1']]])
+  assert.equal(db.read((q) => repo.mailSeen(q, '7:11', null)), true, 'the next read does not submit it again')
+  assert.equal(JSON.stringify(db.read((q) => q.all('SELECT data FROM events'))).includes('Monday'), false, 'never the body')
 })
