@@ -219,6 +219,36 @@ export interface RewriteInfo {
   readonly before: string | null
 }
 
+/** One «Unmatched reply» (`GET /replies/unmatched`; crit. 56): sender and subject, never a body. */
+export interface UnmatchedReply {
+  /** `<UIDVALIDITY>:<UID>`: what `POST /replies/:key/assign` names. */
+  readonly key: string
+  /** ISO: the date of the mail. */
+  readonly at: string
+  readonly from: string
+  readonly subject: string
+  readonly link: string | null
+  /** When Claude classified it but could not place it. */
+  readonly class: string | null
+  readonly summary: string | null
+  /** The applications the reader matched it to: first in «Assign to…». */
+  readonly candidates: readonly string[]
+}
+
+/** An application «Assign to…» offers. */
+export interface AssignOption {
+  readonly id: string
+  readonly company: string
+  readonly role: string
+  readonly state: string
+}
+
+/** `GET /replies/unmatched`. */
+export interface UnmatchedAnswer {
+  readonly replies: readonly UnmatchedReply[]
+  readonly applications: readonly AssignOption[]
+}
+
 export interface ReplyCard {
   readonly applicationId: string
   readonly eventId: string
