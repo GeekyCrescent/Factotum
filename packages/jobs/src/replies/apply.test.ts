@@ -209,6 +209,33 @@ test('Q4 (v6.1): initial `send-unknown` after a «Retry» + a reply citing the `
   assert.deepEqual(lastOf(db, 'resolved-by-reply')?.data, { kind: 'initial', rule: 1, viaAttempt: true })
 })
 
+// ── A sender Gmail did not vouch for (D12 «Remitente verificado») ────────────────────────────────
+
+test('D12: an interview by domain from an unverified sender → an «Unmatched reply» with `unverifiedSender`; no state, no send resolved, no follow-up cancelled, no push', async () => {
+  using base = tempBase()
+  const db = await store(base, { state: 'send-unknown', sends: [send({ state: 'send-unknown', at: SENT_AT })] })
+  insertFollowup(db, { id: 'fu-1', state: 'draft' })
+  const before = kinds(db)
+
+  const forged = job({ ...BY_DOMAIN, unverifiedSender: true })
+  const { pushes } = apply(db, forged, verdict('interview', 'app-1'))
+
+  const app = appOf(db, 'app-1')
+  assert.deepEqual([app.state, sendOf(app)?.state, db.read((q) => repo.getFollowup(q, 'fu-1'))?.state], ['send-unknown', 'send-unknown', 'draft'])
+  assert.deepEqual(kinds(db), before, 'nothing on the application')
+  assert.deepEqual(pushes, [])
+  const unmatched = db.read((q) => repo.unmatchedReplies(q))
+  assert.deepEqual(unmatched.map((u) => [u.key, u.class, u.candidates, u.unverifiedSender]), [[forged.reply.key, 'interview', ['app-1'], true]])
+  assert.equal(db.read((q) => repo.mailSeen(q, forged.reply.key, null)), true)
+})
+
+test('D12: an unverified sender by ATS, even `unrelated`, is still shown for the owner to judge', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  apply(db, job({ ...BY_ATS, unverifiedSender: true }), verdict('unrelated'))
+  assert.deepEqual(db.read((q) => repo.unmatchedReplies(q)).map((u) => u.unverifiedSender), [true])
+})
+
 // ── Only a human reply changes the state (v6, H1; T-A29) ─────────────────────────────────────────
 
 test('Q4: an auto-ack and then an interview from the same ATS domain → after the ack still `sent`, the draft follow-up stays; after the interview `replied`, cancelled, ONE push', async () => {

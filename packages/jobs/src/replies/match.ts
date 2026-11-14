@@ -14,6 +14,10 @@
  * 4. Otherwise NO BODY IS READ and nothing goes to Claude: a subject that looks like a job's
  *    (`JOB_SUBJECT`, `offer` included, v6 M5) is an «Unmatched reply»; anything else is ignored.
  *
+ * RULES 2–3 TRUST A `From`, which can be forged (D12 «Remitente verificado»): a match by them whose
+ * sender Gmail did not vouch for (`MatchMail.senderVerified`, `sender.ts`) says `unverifiedSender`,
+ * and the apply makes it an «Unmatched reply» that moves nothing. Rule 1 needs no such thing.
+ *
  * A CANDIDATE (rules 2 and 3; v5 X1, v6 H2/M4/M5, v6.1 C1): an application in `send-unknown`,
  * `sent`, `replied` or `closed` THAT DID SEND (its `initial` row is `sent` or `send-unknown`), not the
  * test one, whose LAST ACTIVITY — its latest `sent`/`send-unknown` row, or its latest reply of a human
@@ -67,6 +71,8 @@ export interface MatchMail {
   /** The sender's address, as the envelope gives it. */
   readonly from: string
   readonly subject: string
+  /** Gmail vouched for `from` (`senderVerified` of `sender.ts`): rules 2–3 apply only then. */
+  readonly senderVerified: boolean
 }
 
 /** An application as the matcher sees it: with its sends, its company's domain and its latest human reply. */
@@ -87,7 +93,7 @@ export type ReplyMatch =
   /** Rule 1: the thread names this send (by its current `messageId`, or one of its `attempts`): `messageId` is the one named. */
   | { readonly kind: 'thread'; readonly rule: 1; readonly applicationId: string; readonly sendKind: SendKind; readonly viaAttempt: boolean; readonly messageId: string }
   /** Rules 2–3: one or more candidates, in the store's order; Claude classifies (and picks, if several). */
-  | { readonly kind: 'candidates'; readonly rule: 2 | 3; readonly applicationIds: readonly string[] }
+  | { readonly kind: 'candidates'; readonly rule: 2 | 3; readonly applicationIds: readonly string[]; readonly unverifiedSender?: true }
   /** Rule 4, a job's subject: shown as «Unmatched reply», sender and subject only. */
   | { readonly kind: 'unmatched'; readonly rule: 4 }
   /** Rule 4, anything else. */
@@ -169,10 +175,11 @@ export function matchReply(mail: MatchMail, world: MatchWorld): ReplyMatch {
   const domain = senderDomain(mail.from)
   if (domain !== null) {
     const candidates = replyCandidates(world.apps, world.now)
+    const unverified = mail.senderVerified ? {} : { unverifiedSender: true as const }
     const ofDomain = candidates.filter((app) => companyDomain(app.domain) === domain)
-    if (ofDomain.length > 0) return { kind: 'candidates', rule: 2, applicationIds: ofDomain.map((app) => app.application.id) }
+    if (ofDomain.length > 0) return { kind: 'candidates', rule: 2, applicationIds: ofDomain.map((app) => app.application.id), ...unverified }
     if (isAts(domain) && candidates.length > 0) {
-      return { kind: 'candidates', rule: 3, applicationIds: candidates.map((app) => app.application.id) }
+      return { kind: 'candidates', rule: 3, applicationIds: candidates.map((app) => app.application.id), ...unverified }
     }
   }
   return JOB_SUBJECT.test(mail.subject) ? { kind: 'unmatched', rule: 4 } : { kind: 'ignored', rule: 4 }

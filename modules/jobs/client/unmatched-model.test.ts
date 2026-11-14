@@ -18,6 +18,7 @@ const reply = (over: Partial<UnmatchedReply> = {}): UnmatchedReply => ({
   class: null,
   summary: null,
   candidates: [],
+  unverifiedSender: false,
   ...over,
 })
 

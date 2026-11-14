@@ -119,6 +119,8 @@ export interface UnmatchedReply {
   readonly summary: string | null
   /** The applications the reader matched it to (rules 1–3) when Claude could not settle it; [] for rule 4. */
   readonly candidates: readonly string[]
+  /** Matched by domain or ATS, but Gmail did not vouch for the sender (D12 «Remitente verificado»). */
+  readonly unverifiedSender: boolean
 }
 
 const PENDING_UNMATCHED = `e.kind = 'reply' AND e.application_id IS NULL AND json_extract(e.data, '$.unmatched') = 1
@@ -137,6 +139,7 @@ const toUnmatched = (row: Row): UnmatchedReply => {
     class: str(data.class),
     summary: str(data.summary),
     candidates: Array.isArray(data.candidates) ? data.candidates.filter((id): id is string => typeof id === 'string') : [],
+    unverifiedSender: data.unverifiedSender === true,
   })
 }
 

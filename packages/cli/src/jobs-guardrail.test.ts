@@ -81,7 +81,16 @@ const SILENT: Logger = { info: () => undefined, warn: () => undefined, error: ()
 
 /** What the reply reader finds in the inbox, the day the world starts. */
 const REPLIES: readonly FakeMail[] = [
-  { uid: 1, internalDate: NOW, from: { address: 'no-reply@greenhouse-mail.io' }, subject: 'Interview invitation', messageId: '<g1@greenhouse-mail.io>', parts: { '1': 'Pick a time.' } },
+  {
+    uid: 1,
+    internalDate: NOW,
+    from: { address: 'no-reply@greenhouse-mail.io' },
+    subject: 'Interview invitation',
+    messageId: '<g1@greenhouse-mail.io>',
+    // An ATS answer as Gmail delivers it: signed by the ATS's own domain (D12 «Remitente verificado»).
+    headers: 'Authentication-Results: mx.google.com; dkim=pass header.i=@greenhouse-mail.io header.s=s1\r\n\r\n',
+    parts: { '1': 'Pick a time.' },
+  },
   { uid: 2, internalDate: NOW, from: { address: 'hr@unknown.example' }, subject: 'Your application', messageId: '<u1@unknown.example>', parts: { '1': 'never read' } },
 ]
 

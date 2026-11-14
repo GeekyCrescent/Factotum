@@ -233,6 +233,8 @@ export interface UnmatchedReply {
   readonly summary: string | null
   /** The applications the reader matched it to: first in «Assign to…». */
   readonly candidates: readonly string[]
+  /** Matched by its domain or an ATS, but Gmail did not vouch for the sender: it moved nothing. */
+  readonly unverifiedSender: boolean
 }
 
 /** An application «Assign to…» offers. */

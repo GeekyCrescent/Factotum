@@ -27,6 +27,8 @@ const BODIES = ['Can we talk on Monday about the role?', 'Thanks for applying to
 const ADDRESSES_IN_MAIL = ['ada@acme.example', 'jo@beta.example', 'no-reply@greenhouse-mail.io', 'hr@unknown.example'] as const
 const NAMES = ['Ada Lovelace', 'Jo Beta'] as const
 const SUBJECTS = ['Re: Graduate engineer', 'Your application at Beta', 'Application received', 'Offer of employment'] as const
+/** What Gmail prepends on receipt (design D12 «Remitente verificado»): rules 2–3 move nothing without it. */
+const authResults = (verdict: string): string => `Authentication-Results: mx.google.com;\r\n       ${verdict}\r\n`
 
 const mails: readonly FakeMail[] = [
   {
@@ -38,8 +40,24 @@ const mails: readonly FakeMail[] = [
     headers: 'In-Reply-To: <acme@jobs.factotum.local>\r\nReferences: <acme@jobs.factotum.local>\r\n\r\n',
     parts: { '1': BODIES[0] },
   },
-  { uid: 22, internalDate: new Date('2026-11-12T06:00:00.000Z'), from: { name: NAMES[1], address: ADDRESSES_IN_MAIL[1] }, subject: SUBJECTS[1], messageId: '<domain@beta.example>', parts: { '1': BODIES[1] } },
-  { uid: 23, internalDate: new Date('2026-11-12T07:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[2] }, subject: SUBJECTS[2], messageId: '<ats@greenhouse-mail.io>', parts: { '1': BODIES[2] } },
+  {
+    uid: 22,
+    internalDate: new Date('2026-11-12T06:00:00.000Z'),
+    from: { name: NAMES[1], address: ADDRESSES_IN_MAIL[1] },
+    subject: SUBJECTS[1],
+    messageId: '<domain@beta.example>',
+    headers: `${authResults('spf=pass smtp.mailfrom=beta.example; dmarc=pass (p=REJECT) header.from=beta.example')}\r\n`,
+    parts: { '1': BODIES[1] },
+  },
+  {
+    uid: 23,
+    internalDate: new Date('2026-11-12T07:00:00.000Z'),
+    from: { address: ADDRESSES_IN_MAIL[2] },
+    subject: SUBJECTS[2],
+    messageId: '<ats@greenhouse-mail.io>',
+    headers: `${authResults('dkim=pass header.i=@greenhouse-mail.io header.s=s1 header.b=abc')}\r\n`,
+    parts: { '1': BODIES[2] },
+  },
   { uid: 24, internalDate: new Date('2026-11-12T08:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[3] }, subject: SUBJECTS[3], messageId: '<offer@unknown.example>', parts: { '1': BODIES[3] } },
 ]
 
@@ -121,7 +139,7 @@ interface Run {
 }
 
 /** First start: the profile, then an absence over NOW. Second start: the sent applications and the four mails. */
-async function runWithMails(dir: string): Promise<Run> {
+async function runWithMails(dir: string, inboxMails: readonly FakeMail[] = mails): Promise<Run> {
   const rig = rigIn(dir)
   const first = await started(depsOf(rig))
   const profile = first.profile().profile
@@ -133,7 +151,7 @@ async function runWithMails(dir: string): Promise<Run> {
 
   const pushes: NotificationMessage[] = []
   const notify: Notifier = { canReach: () => true, send: async (message) => void pushes.push(message) }
-  const inbox = inboxOf(mails)
+  const inbox = inboxOf(inboxMails)
   const deps = depsOf(rig, { connect: inbox.connect, notify })
   const jobs = await started(deps)
   return { jobs, pushes, log: deps.captured.lines, connects: inbox.connects }
@@ -166,6 +184,35 @@ test('Q7: four mails (thread, domain, ATS, unmatched) through the facade → 3 `
     assert.deepEqual(jobs.unmatchedReplies().replies, [])
     assert.equal(jobs.assignReply(unmatched.replies[0]!.key, null).ok, false)
     assert.equal(jobs.health().warnings.some((w) => w.startsWith('Mail reading failing')), false)
+  } finally {
+    await jobs.stop()
+  }
+})
+
+test('D12 «Remitente verificado»: a From of a candidate’s domain with no Gmail verdict, or signed by another domain, moves nothing — an «Unmatched reply», no push', async () => {
+  using base = tempBase()
+  const forged: readonly FakeMail[] = [
+    { uid: 31, internalDate: new Date('2026-11-12T06:00:00.000Z'), from: { address: 'jo@beta.example' }, subject: 'Interview at Beta', messageId: '<forged@x.example>', parts: { '1': 'Come in on Monday.' } },
+    {
+      uid: 32,
+      internalDate: new Date('2026-11-12T07:00:00.000Z'),
+      from: { address: 'jo@beta.example' },
+      subject: 'Interview at Beta',
+      messageId: '<unaligned@x.example>',
+      // A good signature — of the forger's own domain; and a header of the forger's own writing below it.
+      headers: `${authResults('dkim=pass header.i=@evil.example header.s=s1; dmarc=fail header.from=beta.example')}Authentication-Results: mx.google.com; dmarc=pass header.from=beta.example\r\n\r\n`,
+      parts: { '1': 'Come in on Tuesday.' },
+    },
+  ]
+  const { jobs, pushes } = await runWithMails(base.dir, forged)
+  try {
+    await eventually(() => jobs.unmatchedReplies().replies.length === 2, 'both shown as «Unmatched reply»', 30_000)
+
+    const beta = valueOf(jobs.application('a-beta'))
+    assert.equal(beta.application.state, 'sent', 'no state change')
+    assert.equal(beta.events.some((e) => e.kind === 'reply'), false)
+    assert.deepEqual(jobs.unmatchedReplies().replies.map((r) => [r.class, r.unverifiedSender]), [['interview', true], ['interview', true]], 'classified, for «Assign to…»')
+    assert.deepEqual(pushes, [], 'no push')
   } finally {
     await jobs.stop()
   }

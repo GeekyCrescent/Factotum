@@ -81,6 +81,7 @@ function Card({ reply, answer, busy, onSettle }: { readonly reply: UnmatchedRepl
         From {reply.from} · {dayOf(reply.at)}
       </p>
       {reply.summary === null ? null : <p class="j-text">{reply.summary}</p>}
+      {reply.unverifiedSender ? <p class="j-quiet">Gmail could not verify the sender — check it in Gmail before you assign it.</p> : null}
       <div class="j-unmatched-acts">
         {choices.length === 0 ? null : (
           <>

@@ -79,7 +79,7 @@ const okOf = (result: ReadResult) => {
 const meta = (db: Db, key: string) => db.read((q) => repo.getMeta(q, key))
 const day = (value: unknown): string => (value as { since: Date }).since.toISOString().slice(0, 10)
 
-test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the five headers, the body of the matched only; the poll saved', async () => {
+test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the six headers, the body of the matched only; the poll saved', async () => {
   using base = tempBase()
   const db = await store(base)
   const double = imapDouble([thread, unmatched, newsletter])
@@ -92,7 +92,7 @@ test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the five he
   assert.deepEqual(double.calls[1]?.args, ['INBOX', { readOnly: true }])
   assert.equal(day(double.calls[2]?.args[0]), '2026-11-09')
   assert.deepEqual(double.calls[2]?.args[1], { uid: true })
-  assert.deepEqual(REPLY_HEADERS, ['message-id', 'in-reply-to', 'references', 'from', 'list-id'])
+  assert.deepEqual(REPLY_HEADERS, ['message-id', 'in-reply-to', 'references', 'from', 'list-id', 'authentication-results'])
   assert.deepEqual(double.calls[3]?.args, ['11,12,13', { envelope: true, flags: true, bodyStructure: true, internalDate: true, headers: [...REPLY_HEADERS] }, { uid: true }])
   assert.equal(MAX_REPLY_PART_BYTES, 64 * 1024)
   assert.deepEqual(double.calls[4]?.args, ['11', { bodyParts: [{ key: '1', maxLength: MAX_REPLY_PART_BYTES }] }, { uid: true }], 'bodies only of what matched')

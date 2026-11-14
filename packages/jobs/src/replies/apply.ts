@@ -24,6 +24,10 @@
  * NO APPLICATION TO NAME (several candidates and Claude named none, or it is gone): an «Unmatched
  * reply», like rule 4, with Claude's class and summary — unless it is `unrelated`, which is only seen.
  *
+ * A SENDER GMAIL DID NOT VOUCH FOR (rules 2–3 with `unverifiedSender`; D12 «Remitente verificado»):
+ * an «Unmatched reply» with Claude's class and summary and `unverifiedSender: true`, whatever the
+ * class — no state, no send resolved, no follow-up cancelled, no push. «Assign to…» is the owner's.
+ *
  * NOTHING HERE LOGS: the sender, the subject and the summary live in the event, never in a log line.
  */
 
@@ -111,7 +115,8 @@ function seen(q: Queries, reply: ReadReply, applicationId: string | null, cls: s
  */
 export function recordUnmatched(q: Queries, reply: ReadReply, now: Date, verdict: ClassifyVerdict | null = null): Result<void> {
   if (repo.mailSeen(q, reply.key, reply.messageId)) return ok(undefined)
-  const data = { ...replyData(factsOf(reply), verdict), unmatched: true, candidates: candidatesOf(reply) }
+  const unverified = reply.match.kind === 'candidates' && reply.match.unverifiedSender === true ? { unverifiedSender: true } : {}
+  const data = { ...replyData(factsOf(reply), verdict), unmatched: true, candidates: candidatesOf(reply), ...unverified }
   repo.appendEvent(q, { kind: 'reply', at: reply.date, data, applicationId: null, companyId: null }, now)
   seen(q, reply, null, 'unmatched', now)
   return ok(undefined)
@@ -199,6 +204,7 @@ function landOn(q: Queries, mail: MailFacts, app: Application, target: Target, v
 export function applyReply(q: Queries, job: ReplyJob, verdict: ClassifyVerdict, now: Date, deps: ApplyDeps): Result<void> {
   const { reply } = job
   if (repo.mailSeen(q, reply.key, reply.messageId)) return ok(undefined)
+  if (reply.match.kind === 'candidates' && reply.match.unverifiedSender === true) return recordUnmatched(q, reply, now, verdict)
   const target = targetOf(reply, verdict)
   const app = target === null ? undefined : repo.getApplication(q, target.applicationId)
   if (target === null || app === undefined) {

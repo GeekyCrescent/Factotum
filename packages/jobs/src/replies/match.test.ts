@@ -32,7 +32,7 @@ function app(id: string, over: Partial<Application> = {}, extra: Partial<Omit<Ma
 }
 
 function mail(over: Partial<MatchMail> = {}): MatchMail {
-  return { messageId: '<r1@mail.example>', inReplyTo: [], references: [], from: 'jane@elsewhere.example', subject: 'Hello', ...over }
+  return { messageId: '<r1@mail.example>', inReplyTo: [], references: [], from: 'jane@elsewhere.example', subject: 'Hello', senderVerified: true, ...over }
 }
 
 const world = (apps: readonly MatchApp[]) => ({ apps, now: NOW })
@@ -113,6 +113,14 @@ test('rule 2: a by-hand `sent` with no messageId (the `manual` row S6b imports, 
 test('rule 2: a `send-unknown` application is a candidate (v6, H2: its initial), so a domain match reaches it', () => {
   const unknown = app('a1', { state: 'send-unknown', sends: [sent({ state: 'send-unknown' })] })
   assert.deepEqual(matchReply(mail({ from: 'ada@acme.example' }), world([unknown])), { kind: 'candidates', rule: 2, applicationIds: ['a1'] })
+})
+
+test('rules 2–3 with a sender Gmail did not vouch for say `unverifiedSender`; rule 1 never asks', () => {
+  const apps = [app('a1')]
+  assert.deepEqual(matchReply(mail({ from: 'ada@acme.example', senderVerified: false }), world(apps)), { kind: 'candidates', rule: 2, applicationIds: ['a1'], unverifiedSender: true })
+  assert.deepEqual(matchReply(mail({ from: 'x@lever.co', senderVerified: false }), world(apps)), { kind: 'candidates', rule: 3, applicationIds: ['a1'], unverifiedSender: true })
+  const thread = matchReply(mail({ from: 'ada@acme.example', senderVerified: false, inReplyTo: ['<a1@jobs.factotum.local>'] }), world(apps))
+  assert.equal(thread.kind, 'thread')
 })
 
 // ── Rule 3: the ATS ──────────────────────────────────────────────────────────────────────────────

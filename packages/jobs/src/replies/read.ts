@@ -11,7 +11,7 @@
  * read: no IMAP at all. ALWAYS BY UID.
  *
  * WHAT IS READ: envelope, flags, `internalDate` and the headers `message-id`, `in-reply-to`,
- * `references`, `from`, `list-id`; THE BODY ONLY OF WHAT MATCHED (rules 1–3, `match.ts`), one
+ * `references`, `from`, `list-id`, `authentication-results` (the sender's verdict, `sender.ts`); THE BODY ONLY OF WHAT MATCHED (rules 1–3, `match.ts`), one
  * `BODY.PEEK[n]<0.64 KiB>` per part number, cut to `MAX_BODY_CHARS` by `plainText`. An unmatched mail
  * is never read past its headers. A mail in `mail_seen` (by `UIDVALIDITY:UID` or by `Message-ID`), or
  * whose `classify` work is still queued, is skipped: nothing is processed twice.
@@ -47,6 +47,7 @@ import {
 import type { Db, Queries } from '../store/db.ts'
 import { ok, type Result } from '../types.ts'
 import { markMailSeen, mailSeen, pendingClassifyRefs, replyClocks, replyWorld, saveReplyPoll, type ReplyClocks } from '../store/repo.ts'
+import { senderVerified } from './sender.ts'
 import { HUMAN_REPLY_CLASSES, matchReply, messageIdsIn, type MatchMail, type MatchWorld, type ReplyMatch } from './match.ts'
 
 /** What one read may cost: a server that does not answer costs this, not the tick. */
@@ -54,7 +55,7 @@ export const READ_TIMEOUT_MS = 90_000
 /** Per part, cut at the server (D12: 64 KiB). */
 export const MAX_REPLY_PART_BYTES = 64 * 1024
 /** design D12 «Leer». */
-export const REPLY_HEADERS: readonly string[] = ['message-id', 'in-reply-to', 'references', 'from', 'list-id']
+export const REPLY_HEADERS: readonly string[] = ['message-id', 'in-reply-to', 'references', 'from', 'list-id', 'authentication-results']
 
 const DAY_MS = 24 * 60 * 60 * 1000
 /** A hostile subject or display name must not grow a prompt or an event without end. */
@@ -254,6 +255,7 @@ function describe(message: FetchMessageObject, uidValidity: number, user: string
         references: messageIdsIn(headers.get('references') ?? []),
         from: address,
         subject: cut(envelope?.subject ?? '', SUBJECT_MAX),
+        senderVerified: senderVerified(headers.get('authentication-results') ?? [], address),
       },
       fromDisplay: cut(sender?.name ? `${sender.name} <${address}>` : address, FROM_MAX),
       date: (toDate(envelope?.date) ?? received).toISOString(),
