@@ -93,7 +93,7 @@ test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the six hea
   assert.equal(day(double.calls[2]?.args[0]), '2026-11-09')
   assert.deepEqual(double.calls[2]?.args[1], { uid: true })
   assert.deepEqual(REPLY_HEADERS, ['message-id', 'in-reply-to', 'references', 'from', 'list-id', 'authentication-results'])
-  assert.deepEqual(double.calls[3]?.args, ['11,12,13', { envelope: true, flags: true, bodyStructure: true, internalDate: true, headers: [...REPLY_HEADERS] }, { uid: true }])
+  assert.deepEqual(double.calls[3]?.args, ['11:13', { envelope: true, flags: true, bodyStructure: true, internalDate: true, headers: [...REPLY_HEADERS] }, { uid: true }])
   assert.equal(MAX_REPLY_PART_BYTES, 64 * 1024)
   assert.deepEqual(double.calls[4]?.args, ['11', { bodyParts: [{ key: '1', maxLength: MAX_REPLY_PART_BYTES }] }, { uid: true }], 'bodies only of what matched')
 
@@ -117,6 +117,66 @@ test('Q1 first read: EXAMINE INBOX, since the oldest send − 1 day, the six hea
   assert.equal(meta(db, 'lastReplyPoll'), NOW.toISOString())
   const seen = db.read((q) => [repo.mailSeen(q, '7:13', null), repo.mailSeen(q, '7:11', null), repo.mailSeen(q, '7:12', null)])
   assert.deepEqual(seen, [true, false, false], 'the ignored one is done; the others are for Q4')
+})
+
+/** `count` newsletters (ignored, List-Id) with UIDs 1…count, then the thread reply after them. */
+function crowd(count: number): readonly FakeMail[] {
+  const one = (uid: number): FakeMail => ({ ...newsletter, uid, messageId: `<n${uid}@shop.example>` })
+  return [...Array.from({ length: count }, (_v, i) => one(i + 1)), { ...thread, uid: count + 1 }]
+}
+const headerFetches = (calls: readonly { method: string; args: readonly unknown[] }[]): readonly unknown[] =>
+  calls.filter((c) => c.method === 'fetchAll' && !('bodyParts' in (c.args[1] as object))).map((c) => c.args[0])
+
+test('Q1: many UIDs are fetched in chunks of at most 200, each a compressed sequence set', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const double = imapDouble(crowd(449))
+
+  const read = okOf(await readReplies(input(db, withUidValidity(double.connect))))
+
+  assert.deepEqual(headerFetches(double.calls), ['1:200', '201:400', '401:450'])
+  assert.deepEqual(read.replies.map((r) => [r.key, r.match.kind]), [['7:450', 'thread']])
+  assert.equal(read.partial, false)
+  assert.equal(db.read((q) => q.get<{ n: number }>("SELECT count(*) AS n FROM mail_seen WHERE class = 'ignored'"))?.n, 449)
+})
+
+test('Q1: a read the timeout cuts mid-way keeps what it read, leaves the window where it was, and the next read resumes after it', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const mails = crowd(449)
+  const first = imapDouble(mails)
+  // The second chunk of headers never comes: the timeout closes the socket under it.
+  const stalling: ConnectImap = (options) => {
+    const client = first.connect(options)
+    let fetches = 0
+    let fail: ((error: Error) => void) | undefined
+    return {
+      ...client,
+      fetchAll: async (...args: Parameters<typeof client.fetchAll>) => {
+        fetches += 1
+        if (fetches === 2) return await new Promise<never>((_resolve, reject) => (fail = reject))
+        return await client.fetchAll(...args)
+      },
+      close: () => {
+        fail?.(new Error('Connection not available'))
+        client.close()
+      },
+    }
+  }
+
+  const cut = okOf(await readReplies(input(db, withUidValidity(stalling), NOW, { timeoutMs: 50 })))
+
+  assert.equal(cut.partial, true)
+  assert.equal(db.read((q) => q.get<{ n: number }>("SELECT count(*) AS n FROM mail_seen WHERE class = 'ignored'"))?.n, 200, 'the first chunk is kept')
+  assert.equal(meta(db, 'lastReplyPoll'), undefined, 'the window does not move past what was not read')
+
+  const later = new Date(NOW.getTime() + 60_000)
+  const again = imapDouble(mails)
+  const rest = okOf(await readReplies(input(db, withUidValidity(again.connect), later)))
+  assert.deepEqual(headerFetches(again.calls), ['201:400', '401:450'], 'what was handled is not fetched again')
+  assert.deepEqual(rest.replies.map((r) => r.key), ['7:450'])
+  assert.equal(rest.partial, false)
+  assert.equal(meta(db, 'lastReplyPoll'), later.toISOString())
 })
 
 test('Q1 (v4 C1): a by-hand `sent` of 13-nov imported after a read of 20-nov → the next read searches from 12-nov, and does not process again what it saw', async () => {
@@ -161,7 +221,7 @@ test('Q1: a mail whose classification is already queued is left to it', async ()
   const double = imapDouble([thread])
   const read = okOf(await readReplies(input(db, withUidValidity(double.connect))))
   assert.deepEqual(read.replies, [])
-  assert.equal(double.calls.filter((c) => c.method === 'fetchAll').length, 1, 'no body fetched for it')
+  assert.equal(double.calls.filter((c) => c.method === 'fetchAll').length, 0, 'not even its headers fetched')
 })
 
 test('Q1: nothing was ever sent and nothing read → no IMAP at all, and no poll saved', async () => {

@@ -136,6 +136,7 @@ export function createReplyTask(deps: ReplyTaskDeps): ReplyTask {
     })
     if (stopping.signal.aborted) return
     if (!result.ok) return failed(result.reason, at)
+    if (result.partial) log.warn(`jobs replies: the read reached its time limit after ${result.replies.length} replies; the next round goes on from there`)
     worked()
     deps.pump()
   }

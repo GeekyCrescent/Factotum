@@ -94,7 +94,8 @@ export function imapDouble(mails: readonly FakeMail[], options: DoubleOptions = 
       },
       fetchAll: async (range, query, fetchOptions) => {
         calls.push({ method: 'fetchAll', args: [range, query, fetchOptions] })
-        const wanted = mails.filter((mail) => range.split(',').map(Number).includes(mail.uid))
+        const uids = uidsIn(range)
+        const wanted = mails.filter((mail) => uids.has(mail.uid))
         if ('bodyParts' in query) {
           const [{ key, maxLength }] = query.bodyParts
           return await answer('bodies', () =>
@@ -122,6 +123,19 @@ export function imapDouble(mails: readonly FakeMail[], options: DoubleOptions = 
   }
 
   return { connect, calls, built, closed: () => closes }
+}
+
+/** The UIDs of a sequence set as the server reads it: `1,3,5:7` (no `*`). */
+function uidsIn(range: string): ReadonlySet<number> {
+  return new Set(
+    range.split(',').flatMap((part) => {
+      const [from, to] = part.split(':').map(Number)
+      if (from === undefined || !Number.isInteger(from)) return []
+      if (to === undefined) return [from]
+      const [low, high] = from <= to ? [from, to] : [to, from]
+      return Array.from({ length: high - low + 1 }, (_v, i) => low + i)
+    }),
+  )
 }
 
 function dayOf(date: Date): string {

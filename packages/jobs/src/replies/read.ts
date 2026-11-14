@@ -14,10 +14,17 @@
  * `references`, `from`, `list-id`, `authentication-results` (the sender's verdict, `sender.ts`); THE BODY ONLY OF WHAT MATCHED (rules 1–3, `match.ts`), one
  * `BODY.PEEK[n]<0.64 KiB>` per part number, cut to `MAX_BODY_CHARS` by `plainText`. An unmatched mail
  * is never read past its headers. A mail in `mail_seen` (by `UIDVALIDITY:UID` or by `Message-ID`), or
- * whose `classify` work is still queued, is skipped: nothing is processed twice.
+ * whose `classify` work is still queued, is skipped: nothing is processed twice — and one already
+ * handled under this UIDVALIDITY is not even fetched again.
+ *
+ * IN CHUNKS: the UIDs still to handle are fetched `UID_CHUNK` at a time, each a compressed sequence set
+ * (`1:200`), never one command with every UID of the window. WHEN THE TIMEOUT CUTS A READ after at
+ * least one chunk, what was read is kept and saved — but NOT the poll (nor the spent backfill): the
+ * window stays where it was, so the next round (which is due at once) searches the same window, skips
+ * what this one handled, and goes on from there. Nothing in between is lost.
  *
  * WHAT IS WRITTEN, in ONE `tx` after a read that worked: `lastReplyPoll` = the read's instant,
- * `replyBackfillFrom` deleted (v4 C1), the IGNORED mails (rule 4, not a job's subject) marked seen,
+ * `replyBackfillFrom` deleted (v4 C1) — both only when the read was whole — the IGNORED mails (rule 4, not a job's subject) marked seen,
  * and whatever the caller's `handle` writes (Q5: the unmatched recorded, the matched submitted to
  * classification and held). Everything else comes back to the caller too; it is marked seen when
  * applied. The window also stays open behind `replyHoldFrom` (Q5): the earliest mail still waiting
@@ -56,6 +63,9 @@ export const READ_TIMEOUT_MS = 90_000
 export const MAX_REPLY_PART_BYTES = 64 * 1024
 /** design D12 «Leer». */
 export const REPLY_HEADERS: readonly string[] = ['message-id', 'in-reply-to', 'references', 'from', 'list-id', 'authentication-results']
+
+/** UIDs per fetch: a window of thousands of mails is read in commands of this many. */
+export const UID_CHUNK = 200
 
 const DAY_MS = 24 * 60 * 60 * 1000
 /** A hostile subject or display name must not grow a prompt or an event without end. */
@@ -111,7 +121,14 @@ export interface ReadReply {
 }
 
 export type ReadResult =
-  | { readonly ok: true; readonly replies: readonly ReadReply[]; readonly since: string | null; readonly pollAt: string }
+  | {
+      readonly ok: true
+      readonly replies: readonly ReadReply[]
+      readonly since: string | null
+      readonly pollAt: string
+      /** The timeout cut it after some chunks: what was read is saved, the poll is not. */
+      readonly partial: boolean
+    }
   | { readonly ok: false; readonly reason: string }
 
 /** The start of the window, or null when nothing was ever sent nor read (D12; v4 C1). Pure. */
@@ -127,7 +144,7 @@ export async function readReplies(input: ReadInput): Promise<ReadResult> {
   const pollAt = input.now()
   const since = input.db.read((q) => sinceOf(replyClocks(q)))
   if (input.signal.aborted) return { ok: false, reason: 'stopped' }
-  if (since === null) return { ok: true, replies: [], since: null, pollAt: pollAt.toISOString() }
+  if (since === null) return { ok: true, replies: [], since: null, pollAt: pollAt.toISOString(), partial: false }
 
   const timeoutMs = input.timeoutMs ?? READ_TIMEOUT_MS
   const own = new AbortController()
@@ -139,7 +156,8 @@ export async function readReplies(input: ReadInput): Promise<ReadResult> {
 
   try {
     client = input.connect(imapOptions(input.server, input.password))
-    const read = await session(client, input, new Date(since), pollAt, signal)
+    const timedOut = (): boolean => own.signal.aborted && !input.signal.aborted
+    const read = await session(client, input, new Date(since), pollAt, signal, timedOut)
     if (!read.ok) return read
     return save(input, read.value, pollAt, since)
   } catch (error) {
@@ -157,11 +175,45 @@ interface Session {
   readonly ignored: readonly Described[]
   /** Mails left to a `classify` work still pending when they were read. */
   readonly waiting: number
+  /** The timeout cut it after at least one chunk. */
+  readonly partial: boolean
 }
 
 type Step = <T>(work: Promise<T>) => Promise<T>
 
-async function session(client: ImapClient, input: ReadInput, since: Date, now: Date, signal: AbortSignal): Promise<{ ok: true; value: Session } | { ok: false; reason: string }> {
+/** Sorted, unique UIDs as a sequence set: `1:3,7,9:10`. */
+export function uidSet(uids: readonly number[]): string {
+  const sorted = [...new Set(uids)].sort((a, b) => a - b)
+  const ranges: string[] = []
+  let i = 0
+  while (i < sorted.length) {
+    let j = i
+    while (j + 1 < sorted.length && sorted[j + 1] === (sorted[j] ?? 0) + 1) j += 1
+    ranges.push(i === j ? `${sorted[i]}` : `${sorted[i]}:${sorted[j]}`)
+    i = j + 1
+  }
+  return ranges.join(',')
+}
+
+const chunksOf = <T>(list: readonly T[], size: number): readonly (readonly T[])[] =>
+  Array.from({ length: Math.ceil(list.length / size) }, (_v, i) => list.slice(i * size, (i + 1) * size))
+
+/** The UIDs still to handle, ascending: neither seen under this UIDVALIDITY nor left to a pending work. */
+function toHandle(q: Queries, uids: readonly number[], uidValidity: number): { readonly todo: readonly number[]; readonly waiting: number } {
+  const pending = pendingClassifyRefs(q)
+  const unseen = [...new Set(uids)].sort((a, b) => a - b).filter((uid) => !mailSeen(q, `${uidValidity}:${uid}`, null))
+  const todo = unseen.filter((uid) => !pending.has(`${uidValidity}:${uid}`))
+  return { todo, waiting: unseen.length - todo.length }
+}
+
+async function session(
+  client: ImapClient,
+  input: ReadInput,
+  since: Date,
+  now: Date,
+  signal: AbortSignal,
+  timedOut: () => boolean,
+): Promise<{ ok: true; value: Session } | { ok: false; reason: string }> {
   const step: Step = async (work) => {
     const value = await untilAborted(work, signal)
     signal.throwIfAborted()
@@ -172,33 +224,53 @@ async function session(client: ImapClient, input: ReadInput, since: Date, now: D
   const uidValidity = uidValidityOf(opened)
   if (uidValidity === undefined) return { ok: false, reason: 'the server gave no UIDVALIDITY for INBOX' }
   const uids = await step(client.search({ since }, { uid: true }))
-  if (uids === false || uids === undefined || uids.length === 0) return { ok: true, value: { replies: [], ignored: [], waiting: 0 } }
+  if (uids === false || uids === undefined || uids.length === 0) return { ok: true, value: { replies: [], ignored: [], waiting: 0, partial: false } }
 
+  const { todo, waiting, world } = input.db.read((q) => ({ ...toHandle(q, uids, uidValidity), world: { apps: replyWorld(q, HUMAN_REPLY_CLASSES), now } satisfies MatchWorld }))
+  const read: Chunk[] = []
+  for (const chunk of chunksOf(todo, UID_CHUNK)) {
+    try {
+      read.push(await readChunk(client, input, chunk, uidValidity, world, step))
+    } catch (error) {
+      // Cut by the timeout after something was read: keep that; the next read goes on from it.
+      if (timedOut() && read.length > 0) return { ok: true, value: { ...joined(read), waiting, partial: true } }
+      throw error
+    }
+  }
+  return { ok: true, value: { ...joined(read), waiting, partial: false } }
+}
+
+interface Chunk {
+  readonly replies: readonly ReadReply[]
+  readonly ignored: readonly Described[]
+}
+
+const joined = (chunks: readonly Chunk[]): Chunk => ({ replies: chunks.flatMap((c) => c.replies), ignored: chunks.flatMap((c) => c.ignored) })
+
+/** One chunk: its headers, matched, and the bodies of what matched. */
+async function readChunk(client: ImapClient, input: ReadInput, uids: readonly number[], uidValidity: number, world: MatchWorld, step: Step): Promise<Chunk> {
   const query: MetaQuery = { envelope: true, flags: true, bodyStructure: true, internalDate: true, headers: [...REPLY_HEADERS] }
-  const messages = await step(client.fetchAll(uids.join(','), query, { uid: true }))
-  const { fresh, waiting, world } = input.db.read((q) => {
+  const messages = await step(client.fetchAll(uidSet(uids), query, { uid: true }))
+  const fresh = input.db.read((q) => {
     const pending = pendingClassifyRefs(q)
-    const described = messages.flatMap((m) => describe(m, uidValidity, input.server.user))
-    const unseen = described.filter((d) => !mailSeen(q, d.key, d.mail.messageId))
-    const fresh = unseen.filter((d) => !pending.has(d.key))
-    return { fresh, waiting: unseen.length - fresh.length, world: { apps: replyWorld(q, HUMAN_REPLY_CLASSES), now } satisfies MatchWorld }
+    return messages.flatMap((m) => describe(m, uidValidity, input.server.user)).filter((d) => !pending.has(d.key) && !mailSeen(q, d.key, d.mail.messageId))
   })
   const matched = fresh.map((d) => ({ ...d, match: matchReply(d.mail, world) }))
   const wanted = matched.filter((d) => d.match.kind === 'thread' || d.match.kind === 'candidates')
   const bodies = await bodiesOf(client, wanted, step)
   const replies = matched.flatMap((d): ReadReply[] => (d.match.kind === 'ignored' ? [] : [toReply(d, d.match, bodies.get(d.uid) ?? '')]))
-  return { ok: true, value: { replies, ignored: matched.filter((d) => d.match.kind === 'ignored'), waiting } }
+  return { replies, ignored: matched.filter((d) => d.match.kind === 'ignored') }
 }
 
-/** The read's `tx`: the poll, the backfill spent, the ignored ones seen, and the caller's `handle`. */
+/** The read's `tx`: the poll and the backfill spent (a whole read only), the ignored ones seen, and the caller's `handle`. */
 function save(input: ReadInput, read: Session, pollAt: Date, since: string): ReadResult {
   const saved = input.db.tx((q) => {
-    saveReplyPoll(q, pollAt.toISOString())
+    if (!read.partial) saveReplyPoll(q, pollAt.toISOString())
     for (const d of read.ignored) markMailSeen(q, { key: d.key, uidValidity: d.uidValidity, uid: d.uid, messageId: d.mail.messageId, applicationId: null, class: 'ignored' }, pollAt)
     return input.handle === undefined ? ok(undefined) : input.handle(q, read.replies, pollAt, read.waiting)
   })
   if (!saved.ok) return { ok: false, reason: `the read could not be saved (${saved.error.reason})` }
-  return { ok: true, replies: read.replies, since, pollAt: pollAt.toISOString() }
+  return { ok: true, replies: read.replies, since, pollAt: pollAt.toISOString(), partial: read.partial }
 }
 
 /**
@@ -213,7 +285,7 @@ async function bodiesOf(client: ImapClient, mails: readonly Described[], step: S
   }
   const bodies = new Map<number, string>()
   for (const [part, wanted] of byPart) {
-    const fetched = await step(client.fetchAll(wanted.map((w) => w.uid).join(','), { bodyParts: [{ key: part, maxLength: MAX_REPLY_PART_BYTES }] }, { uid: true }))
+    const fetched = await step(client.fetchAll(uidSet(wanted.map((w) => w.uid)), { bodyParts: [{ key: part, maxLength: MAX_REPLY_PART_BYTES }] }, { uid: true }))
     const raw = new Map(fetched.map((message) => [message.uid, message.bodyParts?.get(part)]))
     for (const { uid, picked } of wanted) {
       const bytes = raw.get(uid)
