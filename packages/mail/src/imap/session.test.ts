@@ -33,11 +33,10 @@ test('imapOptions: TLS on IMAP_PORT (993), the account’s login, and no logger'
   assert.equal(options.logger, false)
 })
 
-test('imapOptions: Happy Eyeballs gets 2.5 s per address, and TLS verification is never switched off', () => {
+test('imapOptions: Happy Eyeballs gets 2.5 s per address, and nothing else in tls (verification stays on)', () => {
   const options = imapOptions({ host: 'imap.gmail.com', user: USER }, PASSWORD)
 
   assert.deepEqual(options.tls, { autoSelectFamilyAttemptTimeout: 2_500 })
-  assert.equal('rejectUnauthorized' in (options.tls ?? {}), false)
 })
 
 test('imapOptions: the measured switches and timeouts, nothing else', () => {
