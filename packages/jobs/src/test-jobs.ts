@@ -8,7 +8,8 @@ import assert from 'node:assert/strict'
 import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { imapDouble } from '@factotum/mail/testing'
+import type { ConnectImap } from '@factotum/mail'
+import { imapDouble, type FakeMail } from '@factotum/mail/testing'
 
 import { DOC, MASTER } from './build/test-cv.ts'
 import { FAKE_CHROMIUM, FAKE_CLAUDE, FAKE_PDFINFO, FAKE_PDFTOPPM, GUIDE } from './build/test-builder.ts'
@@ -18,6 +19,19 @@ import { ADS, FIXTURES, HOLD, NOW, WAVE1, WAVE2 } from './seed/test-seed.ts'
 import { capturedLog, realTimers, type CapturedLog } from './test-support.ts'
 
 export { NOW }
+
+/** No IMAP: every read fails as a host that cannot be reached would. The default of `depsOf`. */
+export const OFFLINE_IMAP: ConnectImap = imapDouble([], { networkError: 'no IMAP in tests' }).connect
+
+/** A made-up inbox holding `mails`, with the UIDVALIDITY imapflow gives (the double alone gives none). */
+export function inboxOf(mails: readonly FakeMail[]): { readonly connect: ConnectImap; readonly connects: () => number } {
+  const double = imapDouble(mails)
+  const connect: ConnectImap = (options) => {
+    const client = double.connect(options)
+    return { ...client, mailboxOpen: async (path, o) => ({ ...((await client.mailboxOpen(path, o)) as object), uidValidity: 7n }) }
+  }
+  return { connect, connects: () => double.calls.filter((c) => c.method === 'connect').length }
+}
 
 export interface Rig {
   readonly vault: string
@@ -72,7 +86,7 @@ export function depsOf(rig: Rig, over: Partial<JobsDeps> = {}): JobsDeps & { rea
     },
     lookup: async () => ['93.184.216.34'],
     // No IMAP in tests unless one asks: never the real Gmail.
-    connect: imapDouble([], { networkError: 'no IMAP in tests' }).connect,
+    connect: OFFLINE_IMAP,
     ...over,
   }
 }

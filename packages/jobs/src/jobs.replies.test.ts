@@ -12,13 +12,12 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import type { NotificationMessage, Notifier } from '@factotum/core'
-import type { ConnectImap } from '@factotum/mail'
-import { imapDouble, type FakeMail } from '@factotum/mail/testing'
+import type { FakeMail } from '@factotum/mail/testing'
 
 import type { Jobs } from './facade/types.ts'
 import { openDb, type Db } from './store/db.ts'
 import * as repo from './store/repo.ts'
-import { depsOf, NOW, rigIn, started, type Rig } from './test-jobs.ts'
+import { depsOf, inboxOf, NOW, rigIn, started, type Rig } from './test-jobs.ts'
 import { application, ADDRESSES, contact, send, valueOf } from './test-state.ts'
 import { eventually, tempBase } from './test-support.ts'
 import { ok, type Opportunity } from './types.ts'
@@ -43,13 +42,6 @@ const mails: readonly FakeMail[] = [
   { uid: 23, internalDate: new Date('2026-11-12T07:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[2] }, subject: SUBJECTS[2], messageId: '<ats@greenhouse-mail.io>', parts: { '1': BODIES[2] } },
   { uid: 24, internalDate: new Date('2026-11-12T08:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[3] }, subject: SUBJECTS[3], messageId: '<offer@unknown.example>', parts: { '1': BODIES[3] } },
 ]
-
-function withUidValidity(connect: ConnectImap): ConnectImap {
-  return (options) => {
-    const client = connect(options)
-    return { ...client, mailboxOpen: async (path, o) => ({ ...((await client.mailboxOpen(path, o)) as object), uidValidity: 7n }) }
-  }
-}
 
 const company = (id: string, name: string, domain: string | null): repo.NewCompany => ({
   id,
@@ -141,10 +133,10 @@ async function runWithMails(dir: string): Promise<Run> {
 
   const pushes: NotificationMessage[] = []
   const notify: Notifier = { canReach: () => true, send: async (message) => void pushes.push(message) }
-  const double = imapDouble(mails)
-  const deps = depsOf(rig, { connect: withUidValidity(double.connect), notify })
+  const inbox = inboxOf(mails)
+  const deps = depsOf(rig, { connect: inbox.connect, notify })
   const jobs = await started(deps)
-  return { jobs, pushes, log: deps.captured.lines, connects: () => double.calls.filter((c) => c.method === 'connect').length }
+  return { jobs, pushes, log: deps.captured.lines, connects: inbox.connects }
 }
 
 const replyEvents = (jobs: Jobs, ids: readonly string[]): number =>

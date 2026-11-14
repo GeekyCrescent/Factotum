@@ -14,16 +14,20 @@
  * the day moving. A route or a clock task added later (F3b, K, U…) is walked without touching this file.
  * Every request that is not one of the three is sent with every body shape the routes read — the
  * send-shaped ones included — and must leave the spy untouched; the three are then each shown to reach it.
+ *
+ * A REPLY NEVER SENDS (Q4/Q5): the clock's reply reader has an inbox of its own (the fake IMAP), with an
+ * ATS answer and a job-looking mail from the start, and later an interview in the thread of the one
+ * that went — read, classified and applied, with the spy still at the five clicks.
  */
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Logger, ModuleContext, ModuleRequest, ModuleResponse, RouteTable, Timers } from '@factotum/core'
 import { closeApplication, createJobs, createTestApplication, openDb, type JobsDeps } from '@factotum/jobs'
-import { eventually, FAKE_CLAUDE, NOW, rigIn, type Rig } from '@factotum/jobs/testing'
+import { eventually, FAKE_CLAUDE, inboxOf, NOW, rigIn, type FakeMail, type Rig } from '@factotum/jobs/testing'
 import { jobsModule } from '@factotum/modules'
 
 type SendResult = Awaited<ReturnType<NonNullable<JobsDeps['sendMail']>>>
@@ -65,12 +69,21 @@ interface World {
   outcome: Outcome
   /** The test applications made so far. */
   readonly tests: string[]
+  /** The inbox the reply reader finds (a test may add to it), and how often it was opened. */
+  readonly inbox: FakeMail[]
+  readonly inboxReads: () => number
   /** The last request issued: who a call is pinned on. */
   last: string
   readonly stop: () => Promise<void>
 }
 
 const SILENT: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined }
+
+/** What the reply reader finds in the inbox, the day the world starts. */
+const REPLIES: readonly FakeMail[] = [
+  { uid: 1, internalDate: NOW, from: { address: 'no-reply@greenhouse-mail.io' }, subject: 'Interview invitation', messageId: '<g1@greenhouse-mail.io>', parts: { '1': 'Pick a time.' } },
+  { uid: 2, internalDate: NOW, from: { address: 'hr@unknown.example' }, subject: 'Your application', messageId: '<u1@unknown.example>', parts: { '1': 'never read' } },
+]
 
 async function world(): Promise<World> {
   const rig = rigIn(mkdtempSync(join(tmpdir(), 'factotum-g1-')))
@@ -88,11 +101,16 @@ async function world(): Promise<World> {
     },
   }
   let at = NOW.getTime()
+  // A REPLY NEVER SENDS (Q4/Q5): the clock's reply reader has its own inbox — never the real Gmail.
+  const mails: FakeMail[] = [...REPLIES]
+  const inbox = inboxOf(mails)
   const w: World = {
     rig,
     table: {},
     calls: [],
     tests: [],
+    inbox: mails,
+    inboxReads: () => inbox.connects(),
     tick: () => {
       for (const fn of [...intervals]) fn()
       return intervals.length
@@ -109,7 +127,14 @@ async function world(): Promise<World> {
   }
   // As `main.ts`: `jobsModule(createJobs)` — the factory given the test's seams on top of the module's.
   const module = jobsModule((deps) =>
-    createJobs({ ...deps, claudeBin: FAKE_CLAUDE, sendMail, fetch: async () => Promise.reject(new Error('offline')), lookup: async () => ['93.184.216.34'] }),
+    createJobs({
+      ...deps,
+      claudeBin: FAKE_CLAUDE,
+      sendMail,
+      fetch: async () => Promise.reject(new Error('offline')),
+      lookup: async () => ['93.184.216.34'],
+      connect: inbox.connect,
+    }),
   )
   const ctx = {
     config: rig.config,
@@ -284,6 +309,31 @@ async function expectOf(w: World, id: string): Promise<{ readonly state: string;
   return { state, at }
 }
 
+/** Puts a reply to `id`'s initial in the inbox, dated `at`; every classification answers «interview». */
+async function replyInThread(w: World, id: string, at: Date): Promise<void> {
+  const db = await openDb({ dir: w.rig.stateDir, now: () => new Date() })
+  if (!db.ok) assert.fail(db.error.reason)
+  let messageId: string | null = null
+  try {
+    messageId = db.value.read((q) => q.get<{ message_id: string | null }>("SELECT message_id FROM sends WHERE application_id = ? AND kind = 'initial'", id))?.message_id ?? null
+  } finally {
+    db.value.close()
+  }
+  if (messageId === null) assert.fail('the sent one has a messageId')
+  // The CV runs read the same answer file: the classify fields are added beside them (each schema drops the rest).
+  const answer = join(w.rig.stateDir, 'run', 'fake-claude.answer')
+  writeFileSync(answer, JSON.stringify({ ...(JSON.parse(readFileSync(answer, 'utf8')) as object), class: 'interview', application: 'a0', summary: 'Asks for a call.' }))
+  w.inbox.push({
+    uid: 3,
+    internalDate: at,
+    from: { address: 'owner@example.test' },
+    subject: 'Re: Factotum jobs — test',
+    messageId: '<t1@example.test>',
+    headers: `In-Reply-To: ${messageId}\r\nReferences: ${messageId}\r\n\r\n`,
+    parts: { '1': 'Can we talk?' },
+  })
+}
+
 /** «Approve» then «Send anyway» once its address check has finished (`check-pending` until then). */
 async function approve(w: World, id: string): Promise<void> {
   let answer: ModuleResponse | undefined
@@ -337,9 +387,15 @@ test('guardrail 1: only approve, «Send again» and «Retry» reach SMTP — eve
     await reaches(w, 'failed', third, 'failed', () => approve(w, third))
     await reaches(w, 'ok', third, 'sent', async () => call(w, 'POST /a/:id/sends/:kind/retry', { id: third, kind: 'initial' }, { expect: await expectOf(w, third) }))
 
+    // A reply in the thread of the one that went, an interview: read, classified and applied by the clock.
+    await replyInThread(w, third, WAVE2_DUE)
+
     // Wave 2 comes due and the daily copy is taken: the clock's tasks really ran.
     w.setNow(WAVE2_DUE)
     await walkClock(w, 'with wave 2 due')
+    await eventually(async () => bodyOf<{ events: readonly { kind: string; data: { class?: string } }[] }>(await call(w, 'GET /a/:id', { id: third })).events.some((e) => e.kind === 'reply' && e.data.class === 'interview'), 'the reply landed', SETTLE_MS)
+    assert.ok(w.inboxReads() > 1, 'the clock read the inbox')
+    await walkClock(w, 'after a reply')
     await walkRoutes(w, [...ids, third], 'after a sent one')
     assert.ok(readdirSync(join(w.rig.stateDir, 'backups')).length > 0, 'the daily copy ran')
     assert.equal(w.calls.length, 5, 'exactly the five clicks above')

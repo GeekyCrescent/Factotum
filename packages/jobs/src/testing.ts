@@ -5,6 +5,7 @@
  * fixture clock, timers a test fires by hand, and polling. ALL SYNTHETIC. Excluded from coverage.
  */
 
-export { NOW, rigIn, type Rig } from './test-jobs.ts'
+export { inboxOf, NOW, OFFLINE_IMAP, rigIn, type Rig } from './test-jobs.ts'
+export type { FakeMail } from '@factotum/mail/testing'
 export { FAKE_CLAUDE } from './build/test-builder.ts'
 export { eventually, manualClock, manualTimers, type ManualClock, type ManualTimers } from './test-support.ts'
