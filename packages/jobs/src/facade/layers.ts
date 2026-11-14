@@ -29,6 +29,7 @@ import type { HostConfig } from '../config.ts'
 import { createPasswordHealth, type PasswordHealth } from '../mail-health.ts'
 import { applyReply, type ApplyDeps } from '../replies/apply.ts'
 import { createClassifier, type Classifier } from '../replies/classify.ts'
+import { applyDeferredWithPush } from '../replies/deferred-push.ts'
 import { createReplyTask, type ReplyTask } from '../replies/tick.ts'
 import { createRewriteHandler } from '../review/rewrite.ts'
 import { createNet, systemLookup } from '../scout/net.ts'
@@ -66,7 +67,8 @@ export function buildCheckLayer({ db, deps, config }: Base) {
   return { net, checks, ads, enqueueCheck }
 }
 
-export function buildSendLayer({ db, deps, config, timeZone }: Base, enqueueCheck: (contactId: string, options: { readonly front: true }) => unknown) {
+export function buildSendLayer(base: Base, enqueueCheck: (contactId: string, options: { readonly front: true }) => unknown) {
+  const { db, deps, config, timeZone } = base
   const { log, now, timers, stateDir } = deps
   // Step 5's cache; every real read refreshes it.
   const password = createPasswordHealth({ file: config.mail.passwordFile, now, ...(deps.lstat === undefined ? {} : { lstat: deps.lstat }), ...(deps.readPassword === undefined ? {} : { readPassword: deps.readPassword }) })
@@ -81,6 +83,8 @@ export function buildSendLayer({ db, deps, config, timeZone }: Base, enqueueChec
     enqueueCheck,
     log,
     stateDir,
+    // A reply deferred while the initial was in flight: an interview or an offer pushes once it applies.
+    applyDeferred: applyDeferredWithPush(pushAfterCommit(base)),
   })
   const assist = createAssist({ db, now, timeZone, maxSendsPerDay: config.mail.maxSendsPerDay, sender, enqueueCheck })
   return { password, sender, assist }
