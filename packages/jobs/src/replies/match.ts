@@ -22,6 +22,12 @@
 
 import type { Application, SendKind } from '../types.ts'
 
+/** design D12 «Clasificar»: the closed list of classes a reply can be given. */
+export const REPLY_CLASSES = ['auto-ack', 'rejection', 'interview', 'asks-something', 'offer', 'other', 'unrelated'] as const
+export type ReplyClass = (typeof REPLY_CLASSES)[number]
+/** v6 (H1): only these change state, cancel follow-ups, and count as a candidate's activity. */
+export const HUMAN_REPLY_CLASSES: readonly ReplyClass[] = ['interview', 'asks-something', 'rejection', 'offer']
+
 /** design D12: how long after its last activity an application still takes a reply by domain or ATS. */
 export const REPLY_CANDIDATE_DAYS = 60
 
