@@ -2,7 +2,7 @@
 /**
  * A stand-in for `claude -p --output-format json --json-schema …`, so a generation runs in a test
  * without quota or network (design D10). COPIED FROM packages/tasks/test/fixtures/fake-claude.mjs
- * (S11), plus the modes of D10/A3: `limit` (exit 0 and exit 1), `limit-text`, `api-error`, `usage`.
+ * (S11), plus the modes of D10/A3: `limit` (exit 0 and exit 1), `limit-text`, `api-error`, `auth`, `usage`.
  * LAUNCHED BY PATH, never imported: it stays out of `tsc`.
  *
  * WHAT IT DOES is chosen by the file `fake-claude.modes` in its cwd — one mode per line, call N takes
@@ -21,6 +21,8 @@
  *                terminal_reason "api_error" — and exit code 1
  *   limit-text   is_error, no status, «You've hit your weekly limit» (no hour), exit 1
  *   api-error    an error that is not a limit, as the real CLI: 404, subtype "success", exit 1
+ *   auth         THE REAL CLI LOGGED OUT (measured 14-nov): is_error, subtype "success", no status,
+ *                terminal_reason "api_error", «Failed to authenticate: OAuth session expired…», cost 0, exit 1
  *   usage        a good answer with the three token counters apart (11 / 2222 / 35263, 777 out)
  *   garbage      a line that is not JSON
  *   huge         a good result padded past 1 MB: the reader cuts it
@@ -51,6 +53,8 @@ const ERRORS = {
   'limit-exit1': { exit: 1, fields: { api_error_status: 429, terminal_reason: 'api_error', result: SESSION_LIMIT } },
   'limit-text': { exit: 1, fields: { api_error_status: null, terminal_reason: 'api_error', result: "You've hit your weekly limit" } },
   'api-error': { exit: 1, fields: { api_error_status: 404, terminal_reason: 'api_error', result: 'There is an issue with the selected model.' } },
+  // Measured on the production host (14-nov): an expired login, with no status and nothing spent.
+  auth: { exit: 1, fields: { api_error_status: null, terminal_reason: 'api_error', result: 'Failed to authenticate: OAuth session expired and could not be refreshed', total_cost_usd: 0 } },
 }
 
 if (mode === 'no-stdin') process.exit(0)

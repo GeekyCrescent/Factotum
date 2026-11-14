@@ -11,12 +11,15 @@
  *    `subtype: "success"`. So stdout is parsed first, quietly; a limit (`isLimit`) is `kind: 'limit'`
  *    whatever the code, with `resetsAt` when the text gives an hour. `subtype` is never read:
  *    `is_error` decides, and a non-limit error says its status rather than a bare exit code.
+ *    A LOGIN THAT FAILED (`isAuth`, measured 14-nov on the production host: an expired OAuth session
+ *    exits 1 with `is_error`, no status, `terminal_reason: "api_error"`) is `kind: 'auth'`, read the
+ *    same way and just as early: nothing can succeed until the owner logs in again, so the queue pauses.
  * 2. `RunUsage` COUNTS THE CACHE APART (`cacheCreationTokens`, `cacheReadTokens`): the original
  *    summed them into `inputTokens`, which hid that the stdin variant did not cache (A4).
  *
  * NOTHING THROWS OUT OF HERE: every path is `{ ok: false, kind, reason }`. NO REASON CARRIES A WORD
  * OF THE PROMPT, OF THE ANSWER, OF THE CLI'S `result` OR OF STDERR (criterion 41): of a limit's text
- * only the hour is taken, and never stored. WHAT THE REASON CANNOT SAY GOES TO `input.log` (warn): the
+ * only the hour is taken, and never stored; of a login failure, nothing (`AUTH_REASON`). WHAT THE REASON CANNOT SAY GOES TO `input.log` (warn): the
  * paths and zod codes of a schema failure (never a value, never zod's message), and the last 200
  * characters of stderr on a non-zero exit — the CLI's own error line, which never echoes the prompt.
  * An answer past 1 MB says it was truncated rather than «not JSON».
@@ -42,11 +45,15 @@ export const SETTLE_GRACE_MS = 2_000
 const STDOUT_MAX = 1024 * 1024
 /** The reason of a limit: ours, never the CLI's text. */
 export const LIMIT_REASON = 'claude hit its usage limit'
+/** The reason of a login failure: ours, never the CLI's text. */
+export const AUTH_REASON = 'claude is not logged in on this machine'
 
 export type RunFailure =
   | { readonly ok: false; readonly kind: 'failed'; readonly reason: string }
   /** `resetsAt`: ISO, when the CLI said the hour; absent → the caller pauses 30 min (D10). */
   | { readonly ok: false; readonly kind: 'limit'; readonly reason: string; readonly resetsAt?: string }
+  /** The CLI is logged out (or its key refused): the caller pauses `AUTH_PAUSE_MS` and probes (D10). */
+  | { readonly ok: false; readonly kind: 'auth'; readonly reason: string }
 
 export type RunResult<T> = { readonly ok: true; readonly value: T; readonly usage: RunUsage } | RunFailure
 
@@ -92,6 +99,12 @@ interface Outcome {
 }
 
 const failed = (reason: string): RunFailure => ({ ok: false, kind: 'failed', reason })
+
+/**
+ * A failure that pauses the queue rather than counting an attempt (D10): a usage limit, or a login that
+ * failed. A wrapper (the verifier inside a CV or a rewrite) passes these through untouched.
+ */
+export const isPause = (failure: RunFailure): boolean => failure.kind === 'limit' || failure.kind === 'auth'
 
 export function runClaude<T>(input: RunInput<T>): Promise<RunResult<T>> {
   if (input.signal.aborted) return Promise.resolve(failed('stopped'))
@@ -231,6 +244,7 @@ function conclude<T>(outcome: Outcome, input: RunInput<T>): RunResult<T> {
   // BEFORE THE EXIT CODE (D10 change 1): the real CLI exits 1 with its JSON on stdout.
   const parsed = parse(outcome.stdout)
   if (parsed.kind === 'result' && isLimit(parsed.value)) return limitOf(parsed.value, input.now())
+  if (parsed.kind === 'result' && isAuth(parsed.value)) return { ok: false, kind: 'auth', reason: AUTH_REASON }
   if (parsed.kind === 'result' && parsed.value.is_error === true) {
     return failed(`claude failed: ${statusOf(parsed.value.api_error_status ?? parsed.value.terminal_reason)}`)
   }
@@ -280,6 +294,20 @@ const TOO_MANY_REQUESTS = 429
 export function isLimit(parsed: CliResult): boolean {
   if (parsed.api_error_status === TOO_MANY_REQUESTS) return true
   return parsed.is_error === true && typeof parsed.result === 'string' && LIMIT_TEXT.test(parsed.result)
+}
+
+/**
+ * The texts the CLI uses when it cannot log in. Measured (14-nov, production host, expired session):
+ * «Failed to authenticate: OAuth session expired and could not be refreshed». The others are the
+ * CLI's own lines for no login at all (`not logged in`, `Please run /login`) and for a refused key
+ * (`Invalid API key`); `OAuth` covers the session's other wordings. Kept tight: a text that only
+ * mentions a login in passing must stay a plain failure, retried and counted.
+ */
+const AUTH_TEXT = /failed to authenticate|oauth|not logged in|please run \/login|invalid api key/i
+
+/** A login failure: an error whose text says so. Pure; `subtype` is never read (A3), nor the status (none). */
+export function isAuth(parsed: CliResult): boolean {
+  return parsed.is_error === true && typeof parsed.result === 'string' && AUTH_TEXT.test(parsed.result)
 }
 
 const RESETS = /resets (\d{1,2})(?::(\d{2}))?\s*(am|pm) \(([A-Za-z_/]+)\)/i
