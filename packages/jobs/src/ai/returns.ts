@@ -167,6 +167,7 @@ const isFound = (w: Warning): boolean => FOUND_CODES.has(w.code)
 /**
  * The application with the handler's warnings of this return: those of a text this version rewrote
  * (`cv`, `letter`) are replaced by `found`; those of a text it did not touch stay, `overridden` and all.
+ * A new PDF without a new text (a reprint, H5c) replaces only `cv-overflow`, the print's own warning.
  * `found === undefined` is a return that DID NOT VERIFY (D15 «Lo que se vio es lo que se aprueba»): a
  * verifier's warnings are only replaced by another verification, never by omission — all of them stay.
  */
@@ -175,8 +176,9 @@ function withFound(app: Application, patch: ArtifactsPatch, found: readonly Warn
   const redone = new Set<Warning['where']>()
   if (patch.cv !== undefined) redone.add('cv')
   if (patch.letter !== undefined) redone.add('letter')
-  const kept = app.warnings.filter((w) => !isFound(w) || !redone.has(w.where))
-  return { ...app, warnings: [...kept, ...found] }
+  // `cv-overflow` is the print's: a new PDF (a reprint brings one without a new CV text) redoes it.
+  const replaced = (w: Warning): boolean => isFound(w) && (redone.has(w.where) || (w.code === 'cv-overflow' && patch.pdf !== undefined))
+  return { ...app, warnings: [...app.warnings.filter((w) => !replaced(w)), ...found] }
 }
 
 /** The linter's warnings on the current version, then the handler's own the application carries. */

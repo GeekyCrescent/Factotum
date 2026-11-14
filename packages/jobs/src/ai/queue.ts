@@ -20,6 +20,7 @@
 
 import type { Logger } from '@factotum/core'
 import { uuidv7 } from '@factotum/sessions'
+import { awaitsReprint } from '../build/reprint.ts'
 import { appTransition, type GeneratedKind } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
 import {
@@ -221,6 +222,20 @@ export function createQueue(deps: QueueDeps): Queue {
     return saved.ok ? ok(kinds) : saved
   }
 
+  /**
+   * D3 «`cv-stale`»: an application this return leaves `in-review`/`ready` with `cv-stale` and nothing
+   * of class `cv` pending gets its reprint, in the return's `tx` — a CV or a rewrite that came back
+   * printed with a contact changed meanwhile (T-A2, T-A8), or a reprint that printed one saved during it.
+   * A reprint that FAILED does not queue itself again: «Retry print» is the owner's.
+   */
+  function reprintIfStale(q: Queries, work: Work, result: JobResult): Result<void> {
+    if (work.kind === 'reprint' && !result.ok) return ok(undefined)
+    const app = getApplication(q, work.ref)
+    if (app === undefined || !awaitsReprint(q, app, { workId: work.id, writesCv: classesOf(q, work.kind, work.ref).includes('cv') })) return ok(undefined)
+    const queued = enqueue(q, { kind: 'reprint', ref: app.id })
+    return queued.ok ? ok(undefined) : queued
+  }
+
   const claudeRuns = (): readonly Work[] => [...inFlight.values()].map((r) => r.work).filter((work) => work.kind !== 'reprint')
   const printing = (): boolean => [...inFlight.values()].some((r) => r.work.kind === 'reprint')
 
@@ -282,7 +297,12 @@ export function createQueue(deps: QueueDeps): Queue {
   function conclude(work: Work, result: JobResult): void {
     inFlight.delete(work.id)
     if (stopped) return
-    const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
+    const written = db.tx((q) => {
+      const done = writeReturn(q, work, result, deps, now())
+      if (!done.ok) return done
+      const queued = reprintIfStale(q, work, result)
+      return queued.ok ? done : queued
+    })
     if (written.ok) {
       if (written.value.warning !== null) log.warn(`jobs queue: ${written.value.warning}`)
       if (written.value.rewriteFailed !== null) tell(written.value.rewriteFailed)
