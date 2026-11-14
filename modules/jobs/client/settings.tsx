@@ -9,7 +9,7 @@
  * shown beside the field it names.
  *
  * THE CONTACT PRINTED ON THE CV warns above its fields while printed CVs wait to be sent: changing it
- * marks them out of date, and in this cut nothing reprints them (review 1a; `contactNotices`).
+ * marks them out of date, and the engine reprints them with the new contact (H5c; `contactNotices`).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks'

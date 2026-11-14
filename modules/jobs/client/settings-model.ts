@@ -204,20 +204,23 @@ export const isOnCv = (key: keyof Identity): boolean => ON_CV.has(key)
 
 /**
  * What the contact fields warn while printed CVs wait to be sent: a change to one marks them out of
- * date, and until H5c nothing reprints them. Changing it back undoes it (the next save re-lints them
- * against the hash again). None when nothing is printed, or the engine did not count.
+ * date, and the engine reprints them with the new contact on its own (H5c); a reprint that fails
+ * offers «Retry print» on its card. None when nothing is printed, or the engine did not count.
  */
 export function contactNotices(printed: PrintedCvs | undefined): readonly string[] {
   if (printed === undefined) return []
+  const one = (n: number): boolean => n === 1
   const current =
     printed.current === 0
       ? []
       : [
-          `Changing your name, email, phone, LinkedIn, city or CV availability line marks ${plural(printed.current, 'printed CV')} as out of date; ${printed.current === 1 ? 'it' : 'they'} can\u2019t be reprinted until the next update. Change it back to undo.`,
+          `Changing your name, email, phone, LinkedIn, city or CV availability line marks ${plural(printed.current, 'printed CV')} as out of date; ${one(printed.current) ? 'it is' : 'they are'} reprinted with the new contact on ${one(printed.current) ? 'its' : 'their'} own, and can be approved again once ${one(printed.current) ? 'it is' : 'they are'}.`,
         ]
   const stale =
     printed.stale === 0
       ? []
-      : [`${plural(printed.stale, 'printed CV')} ${printed.stale === 1 ? 'is' : 'are'} out of date: ${printed.stale === 1 ? 'it carries' : 'they carry'} another contact than the one saved. Saving the contact ${printed.stale === 1 ? 'it was' : 'they were'} printed with undoes it.`]
+      : [
+          `${plural(printed.stale, 'printed CV')} ${one(printed.stale) ? 'is' : 'are'} out of date: ${one(printed.stale) ? 'it carries' : 'they carry'} another contact than the one saved, and ${one(printed.stale) ? 'is' : 'are'} being reprinted with it. If a reprint fails, its card offers \u00abRetry print\u00bb.`,
+        ]
   return [...current, ...stale]
 }

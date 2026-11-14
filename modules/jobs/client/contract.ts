@@ -420,8 +420,8 @@ export interface Profile {
 
 /**
  * The printed CVs of applications not sent (`in-review`, `ready`), by the contact they carry (D6
- * `cv-stale`): `current` go out of date if a contact field printed on the CV changes — nothing reprints
- * them until H5c —; `stale` are out of date already, and saving their contact back undoes it.
+ * `cv-stale`): `current` go out of date if a contact field printed on the CV changes, and are reprinted
+ * with the new one (H5c); `stale` are out of date already, and reprinting.
  */
 export interface PrintedCvs {
   readonly current: number

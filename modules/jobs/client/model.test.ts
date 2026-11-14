@@ -432,6 +432,14 @@ test('the batch is polled while something rewrites or an address is being checke
   assert.equal(shouldPollBatch(batch([appItem({ channel: 'form', contact: null }, 'f')]), NOW), false)
 })
 
+test('H5c: the batch is polled while an undecided application is reprinting, so «Approve» comes back when it lands', () => {
+  const reprinting = appItem({ channel: 'form', contact: null, jobs: { cv: IDLE, letter: IDLE, reprint: { state: 'pending', reason: null } } }, 'r')
+  assert.equal(shouldPollBatch(batch([reprinting]), NOW), true)
+  assert.equal(shouldPollBatch(batch([reprinting], { r: 'skipped' }), NOW), false, 'a decided one does not')
+  const failed = appItem({ channel: 'form', contact: null, jobs: { cv: IDLE, letter: IDLE, reprint: { state: 'failed', reason: 'chromium exited 1' } } }, 'f')
+  assert.equal(shouldPollBatch(batch([failed]), NOW), false, 'a failed reprint waits for «Retry print»')
+})
+
 test('a batch not polled says when its first address goes stale, so the poll can start then', () => {
   const twoHours = 2 * 3_600_000
   assert.equal(msUntilStale(batch(three), NOW), ADDRESS_STALE_DAYS * 86_400_000 - twoHours + 1)

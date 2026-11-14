@@ -280,8 +280,14 @@ function waitsForCheck(item: ReviewItem, batch: BatchView, now: Date): boolean {
   return subject.address.status === 'checking' || isStaleCheck(subject.address, now)
 }
 
+/** An undecided application reprinting with the new contact (H5c): polled until «Approve» comes back. */
+function waitsForReprint(item: ReviewItem, batch: BatchView): boolean {
+  if (batch.results[item.itemId] !== undefined) return false
+  return reviewableOf(item)?.jobs?.reprint.state === 'pending'
+}
+
 export function shouldPollBatch(batch: BatchView, now: Date): boolean {
-  return batch.rewriting > 0 || batch.items.some((item) => waitsForCheck(item, batch, now))
+  return batch.rewriting > 0 || batch.items.some((item) => waitsForCheck(item, batch, now) || waitsForReprint(item, batch))
 }
 
 /**
