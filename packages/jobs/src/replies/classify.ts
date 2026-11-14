@@ -29,7 +29,7 @@ import { buildClassifyPrompt, CLASSIFY_JSON_SCHEMA, classifySchema, shortId, typ
 import { runClaude, type RunFailure, type RunUsage } from '../ai/run.ts'
 import type { FixedRunDeps } from '../build/cv.ts'
 import type { Queries } from '../store/db.ts'
-import { getApplication, getCompany, getOpportunity } from '../store/repo.ts'
+import { getApplication, getCompany, getOpportunity, pendingClassifyRefs } from '../store/repo.ts'
 import type { Result } from '../types.ts'
 import { ok } from '../types.ts'
 import { recordUnmatched } from './apply.ts'
@@ -178,7 +178,17 @@ export function createClassifier(deps: ClassifierDeps): Classifier {
     return { ok: true, output: { type: 'apply', apply: applying(work.ref, job, result.verdict) } }
   }
 
+  /**
+   * A reply whose work is no longer queued nor running is of no use in memory: its work failed for
+   * good on a path that never reached `failed` (that `tx` rolled back), or applied it. Dropped.
+   */
+  const prune = (q: Queries): void => {
+    const pending = pendingClassifyRefs(q)
+    for (const ref of [...waiting.keys()]) if (!pending.has(ref)) waiting.delete(ref)
+  }
+
   const submit = (q: Queries, enqueue: Queue['enqueue'], job: ReplyJob): Result<Work> => {
+    prune(q)
     const work = enqueue(q, { kind: 'classify', ref: job.reply.key, lane: 'interactive' })
     if (work.ok) waiting.set(job.reply.key, job)
     return work
@@ -186,8 +196,10 @@ export function createClassifier(deps: ClassifierDeps): Classifier {
 
   const failed = (q: Queries, work: Work, now: Date): Result<void> => {
     const job = waiting.get(work.ref)
-    waiting.delete(work.ref)
-    return job === undefined ? ok(undefined) : recordUnmatched(q, job.reply, now)
+    if (job === undefined) return ok(undefined)
+    const recorded = recordUnmatched(q, job.reply, now)
+    if (recorded.ok) waiting.delete(work.ref)
+    return recorded
   }
 
   const holds = (messageId: string | null): boolean => messageId !== null && [...waiting.values()].some((job) => job.reply.messageId === messageId)

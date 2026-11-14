@@ -209,6 +209,22 @@ test('Q3 through the queue: a work whose reply is no longer in memory (a restart
   assert.equal(log.lines.join('\n').includes('7:99'), false, 'not even the key')
 })
 
+test('Q5: a reply whose work ended failed without the classifier being told leaves memory at the next submit', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const classifier = createClassifier({ ...deps(base.dir), apply: () => ok(undefined) })
+  const { queue } = rig(db, { handlers: { classify: classifier.handler } })
+  valueOf(db.tx((q) => classifier.submit(q, queue.enqueue, { reply: reply(), input: INPUT })))
+  assert.equal(classifier.holds('<r1@acme.example>'), true)
+
+  // Failed for good on a path that never reached `failed` (its own tx rolled back: the row alone).
+  db.read((q) => q.run("UPDATE work SET state = 'failed' WHERE ref = '7:11'"))
+  valueOf(db.tx((q) => classifier.submit(q, queue.enqueue, { reply: reply({ key: '7:12', uid: 12, messageId: '<r2@acme.example>' }), input: INPUT })))
+
+  assert.equal(classifier.holds('<r1@acme.example>'), false, 'dropped')
+  assert.equal(classifier.holds('<r2@acme.example>'), true)
+})
+
 test('Q5: an apply whose return tx rolls back keeps the reply in memory — the retry classifies and applies it', async () => {
   using base = tempBase()
   const db = await store(base)
