@@ -1,6 +1,6 @@
 /**
  * Printing a `CvDoc` and keeping it as a version's files (design D5 steps 5–7 and the layout of
- * step 8; tasks H5b). The CV run uses it, and the reprint of H5c will: the same doc and the same
+ * step 8; tasks H5b). The CV run uses it, and so does the reprint (H5c, `reprint.ts`): the same doc and the same
  * contact give the same HTML (`renderCvHtml`), so a reprint is these steps with today's profile.
  *
  * THE PRINT goes to `<stateDir>/render/<renderId>/` (Chromium, one print per profile at a time) and is

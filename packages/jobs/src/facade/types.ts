@@ -114,8 +114,8 @@ export interface Health {
 /**
  * The printed CVs of applications not sent that a profile save re-lints (`in-review`, `ready`), by the
  * contact they carry (D6 `cv-stale`; review 1a): `current` ones go out of date if a CV contact field
- * changes — and until H5c nothing reprints them —; `stale` ones are out of date already, and changing
- * the field back undoes it (the next save's re-lint compares the hash again).
+ * changes, and are reprinted with the new one (H5c); `stale` ones are out of date already — reprinting,
+ * or waiting for «Retry print» — and changing the field back also clears it (the re-lint compares the hash).
  */
 export interface PrintedCvs {
   readonly current: number
