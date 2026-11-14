@@ -11,7 +11,7 @@ import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
 import { NOW, send, valueOf } from '../test-state.ts'
 import { capturedLog, eventually, realTimers, tempBase } from '../test-support.ts'
-import { ok, type Result } from '../types.ts'
+import { fail, ok, type Result } from '../types.ts'
 import { classifyInputOf, classifyReply, createClassifier, verdictOf, type ClassifyDeps, type ClassifyInput, type ClassifyVerdict, type ReplyJob } from './classify.ts'
 import type { ReadReply } from './read.ts'
 
@@ -137,20 +137,25 @@ interface Applied {
   readonly verdict: ClassifyVerdict
 }
 
-function classifierRig(db: Db, stateDir: string) {
+function classifierRig(db: Db, stateDir: string, refuse: (call: number) => boolean = () => false) {
   const applied: Applied[] = []
+  const log = capturedLog()
+  let calls = 0
   const apply = (_q: Queries, job: ReplyJob, verdict: ClassifyVerdict): Result<void> => {
+    calls += 1
+    // A refused apply: the queue's return `tx` rolls back with it.
+    if (refuse(calls)) return fail('module-error', 'the apply rolled back')
     applied.push({ job, verdict })
     return ok(undefined)
   }
-  const classifier = createClassifier({ ...deps(stateDir), apply })
+  const classifier = createClassifier({ ...deps(stateDir, { log: log.log }), apply })
   const { queue, clock } = rig(db, { handlers: { classify: classifier.handler }, classifyFailed: classifier.failed })
   const submit = (job: ReplyJob): string => {
     const work = valueOf(db.tx((q) => classifier.submit(q, queue.enqueue, job)))
     queue.pump()
     return work.id
   }
-  return { applied, queue, clock, submit }
+  return { applied, queue, clock, submit, log, applyCalls: () => calls }
 }
 
 test('Q3 through the queue: `classify` on the interactive lane, the verdict applied in the queue’s tx, the body kept only in memory', async () => {
@@ -194,12 +199,54 @@ test('Q3 through the queue: a logged-out CLI pauses the queue with no attempt; t
 test('Q3 through the queue: a work whose reply is no longer in memory (a restart) ends done, with no run and nothing applied', async () => {
   using base = tempBase()
   const db = await store(base)
-  const { applied, queue } = classifierRig(db, base.dir)
+  const { applied, queue, log } = classifierRig(db, base.dir)
   const id = valueOf(queue.add({ kind: 'classify', ref: '7:99' })).id
   await queue.settled()
   assert.equal(workOf(db, id).state, 'done')
   assert.equal(applied.length, 0)
   assert.equal(calls(base.dir), 0)
+  assert.ok(log.lines.some((line) => /no longer in memory \(1 since start\)/.test(line)), 'counted, for the log')
+  assert.equal(log.lines.join('\n').includes('7:99'), false, 'not even the key')
+})
+
+test('Q5: an apply whose return tx rolls back keeps the reply in memory — the retry classifies and applies it', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  scriptClaude(base.dir, ['ok', 'ok'], [
+    { class: 'interview', application: 'a0', summary: 'Asks for a call.' },
+    { class: 'interview', application: 'a0', summary: 'Asks for a call.' },
+  ])
+  const { applied, queue, clock, submit, applyCalls } = classifierRig(db, base.dir, (call) => call === 1)
+
+  const id = submit({ reply: reply(), input: INPUT })
+  await queue.settled()
+  assert.deepEqual([workOf(db, id).state, workOf(db, id).attempts], ['queued', 1], 'a failed attempt, retried')
+  clock.advance((RETRY_DELAYS_MS[0] ?? 0) + 1)
+  queue.pump()
+  await queue.settled()
+
+  assert.equal(applyCalls(), 2)
+  assert.deepEqual(applied.map((a) => [a.job.reply.key, a.verdict.class]), [['7:11', 'interview']], 'applied on the retry')
+  assert.equal(workOf(db, id).state, 'done')
+})
+
+test('Q5: an apply that rolls back three times still leaves an «Unmatched reply», seen — never a mail dropped without a trace', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  scriptClaude(base.dir, ['ok', 'ok', 'ok'], [{ class: 'offer', application: 'a0', summary: 's' }, { class: 'offer', application: 'a0', summary: 's' }, { class: 'offer', application: 'a0', summary: 's' }])
+  const { applied, queue, clock, submit } = classifierRig(db, base.dir, () => true)
+
+  const id = submit({ reply: reply(), input: INPUT })
+  await queue.settled()
+  for (const delay of RETRY_DELAYS_MS) {
+    clock.advance(delay + 1)
+    queue.pump()
+    await queue.settled()
+  }
+
+  assert.deepEqual([workOf(db, id).state, applied.length], ['failed', 0])
+  assert.deepEqual(db.read((q) => repo.unmatchedReplies(q)).map((u) => u.key), ['7:11'])
+  assert.equal(db.read((q) => repo.mailSeen(q, '7:11', null)), true)
 })
 
 test('Q5 (the pending item of Q1): a classification that fails for the third time becomes an «Unmatched reply» with its candidates, seen; the body leaves memory', async () => {

@@ -78,8 +78,10 @@ export interface ReadInput {
   /**
    * What the caller does with the replies (Q5: record the unmatched, submit the matched to
    * classification), INSIDE the read's own `tx`: the poll is saved with them, or neither is.
+   * `waiting`: how many mails this read left to a `classify` work still queued or running — their
+   * work may have ended since, with nothing applied, so the caller must not let the window close.
    */
-  readonly handle?: (q: Queries, replies: readonly ReadReply[], pollAt: Date) => Result<void>
+  readonly handle?: (q: Queries, replies: readonly ReadReply[], pollAt: Date, waiting: number) => Result<void>
 }
 
 /** One mail that needs the caller: matched (rules 1–3, with its body) or unmatched (rule 4, without). */
@@ -152,6 +154,8 @@ export async function readReplies(input: ReadInput): Promise<ReadResult> {
 interface Session {
   readonly replies: readonly ReadReply[]
   readonly ignored: readonly Described[]
+  /** Mails left to a `classify` work still pending when they were read. */
+  readonly waiting: number
 }
 
 type Step = <T>(work: Promise<T>) => Promise<T>
@@ -167,23 +171,22 @@ async function session(client: ImapClient, input: ReadInput, since: Date, now: D
   const uidValidity = uidValidityOf(opened)
   if (uidValidity === undefined) return { ok: false, reason: 'the server gave no UIDVALIDITY for INBOX' }
   const uids = await step(client.search({ since }, { uid: true }))
-  if (uids === false || uids === undefined || uids.length === 0) return { ok: true, value: { replies: [], ignored: [] } }
+  if (uids === false || uids === undefined || uids.length === 0) return { ok: true, value: { replies: [], ignored: [], waiting: 0 } }
 
   const query: MetaQuery = { envelope: true, flags: true, bodyStructure: true, internalDate: true, headers: [...REPLY_HEADERS] }
   const messages = await step(client.fetchAll(uids.join(','), query, { uid: true }))
-  const { fresh, world } = input.db.read((q) => {
+  const { fresh, waiting, world } = input.db.read((q) => {
     const pending = pendingClassifyRefs(q)
     const described = messages.flatMap((m) => describe(m, uidValidity, input.server.user))
-    return {
-      fresh: described.filter((d) => !pending.has(d.key) && !mailSeen(q, d.key, d.mail.messageId)),
-      world: { apps: replyWorld(q, HUMAN_REPLY_CLASSES), now } satisfies MatchWorld,
-    }
+    const unseen = described.filter((d) => !mailSeen(q, d.key, d.mail.messageId))
+    const fresh = unseen.filter((d) => !pending.has(d.key))
+    return { fresh, waiting: unseen.length - fresh.length, world: { apps: replyWorld(q, HUMAN_REPLY_CLASSES), now } satisfies MatchWorld }
   })
   const matched = fresh.map((d) => ({ ...d, match: matchReply(d.mail, world) }))
   const wanted = matched.filter((d) => d.match.kind === 'thread' || d.match.kind === 'candidates')
   const bodies = await bodiesOf(client, wanted, step)
   const replies = matched.flatMap((d): ReadReply[] => (d.match.kind === 'ignored' ? [] : [toReply(d, d.match, bodies.get(d.uid) ?? '')]))
-  return { ok: true, value: { replies, ignored: matched.filter((d) => d.match.kind === 'ignored') } }
+  return { ok: true, value: { replies, ignored: matched.filter((d) => d.match.kind === 'ignored'), waiting } }
 }
 
 /** The read's `tx`: the poll, the backfill spent, the ignored ones seen, and the caller's `handle`. */
@@ -191,7 +194,7 @@ function save(input: ReadInput, read: Session, pollAt: Date, since: string): Rea
   const saved = input.db.tx((q) => {
     saveReplyPoll(q, pollAt.toISOString())
     for (const d of read.ignored) markMailSeen(q, { key: d.key, uidValidity: d.uidValidity, uid: d.uid, messageId: d.mail.messageId, applicationId: null, class: 'ignored' }, pollAt)
-    return input.handle === undefined ? ok(undefined) : input.handle(q, read.replies, pollAt)
+    return input.handle === undefined ? ok(undefined) : input.handle(q, read.replies, pollAt, read.waiting)
   })
   if (!saved.ok) return { ok: false, reason: `the read could not be saved (${saved.error.reason})` }
   return { ok: true, replies: read.replies, since, pollAt: pollAt.toISOString() }

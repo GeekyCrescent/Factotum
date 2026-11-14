@@ -15,7 +15,10 @@
  * an unmatched mail (rule 4) becomes an «Unmatched reply»; a matched one goes to classification (the
  * classifier keeps its body in memory) and HOLDS the window at its INTERNALDATE until no classification
  * waits any more — so a classification that outlives its body (a restart after a long pause) is found
- * again by the next read (the pending item of Q1). The queue is pumped after the `tx`.
+ * again by the next read (the pending item of Q1). The hold is released only by a read that left NO
+ * mail to a pending work and finds none pending in its `tx`: a work that ended between the two (a
+ * restart, nothing applied) keeps it for one more read, which finds the mail again. The queue is
+ * pumped after the `tx`.
  *
  * NOTHING HERE LOGS a body, a subject or an address: only counts and the masked reason.
  */
@@ -78,8 +81,8 @@ export function createReplyTask(deps: ReplyTaskDeps): ReplyTask {
   }
 
   /** In the read's `tx`: the unmatched recorded, the matched submitted and held. */
-  const handle = (q: Queries, replies: readonly ReadReply[], pollAt: Date): Result<void> => {
-    if (repo.pendingClassifyRefs(q).size === 0) repo.releaseHold(q)
+  const handle = (q: Queries, replies: readonly ReadReply[], pollAt: Date, waiting: number): Result<void> => {
+    if (waiting === 0 && repo.pendingClassifyRefs(q).size === 0) repo.releaseHold(q)
     for (const reply of replies) {
       const input = reply.match.kind === 'unmatched' ? undefined : classifyInputOf(q, reply)
       if (input === undefined || input.candidates.length === 0) {

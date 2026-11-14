@@ -8,9 +8,11 @@
  * list is outside the schema: a failed run, retried by the queue (2 and 10 min).
  *
  * THE BODY NEVER TOUCHES DISK. The `work` row carries only the mail's key (`ref = UIDVALIDITY:UID`);
- * sender, subject and body wait IN MEMORY in the classifier, keyed by that ref. A work whose reply is
- * not in memory (the daemon restarted) ends `done` with nothing applied: the mail is not in
- * `mail_seen`, so the next read finds it again and submits it anew.
+ * sender, subject and body wait IN MEMORY in the classifier, keyed by that ref, and leave it only when
+ * the verdict was applied (or the work failed for good): a return `tx` that rolls back keeps the reply
+ * for the retry. A work whose reply is not in memory (the daemon restarted) ends `done` with nothing
+ * applied and a counter in the log: the mail is not in `mail_seen`, and `replyHoldFrom` keeps the read
+ * window open behind it (`tick.ts`), so the next read finds it again and submits it anew.
  *
  * A LIMIT OR A LOGGED-OUT CLI is the queue's (D10): the run comes back `kind: 'limit' | 'auth'`, the
  * queue pauses with no attempt counted and requeues the work, and the reply stays in memory for the
@@ -150,14 +152,25 @@ const NOTHING_TO_APPLY = { ok: true, output: { type: 'apply', apply: () => ok(un
 
 export function createClassifier(deps: ClassifierDeps): Classifier {
   const waiting = new Map<string, ReplyJob>()
+  let lost = 0
+
+  /** Applied in the return's `tx`; the reply leaves memory only once that apply worked. */
+  const applying = (ref: string, job: ReplyJob, verdict: ClassifyVerdict) => (q: Queries, now: Date): Result<void> => {
+    const applied = deps.apply(q, job, verdict, now)
+    if (applied.ok) waiting.delete(ref)
+    return applied
+  }
 
   const handler: JobHandler = async (work, ctx) => {
     const job = waiting.get(work.ref)
-    if (job === undefined) return NOTHING_TO_APPLY
+    if (job === undefined) {
+      lost += 1
+      deps.log.warn(`jobs replies: a classify work found its reply no longer in memory (${lost} since start); the next read finds the mail again`)
+      return NOTHING_TO_APPLY
+    }
     const result = await classifyReply(deps, job.input, ctx)
     if (!result.ok) return result
-    waiting.delete(work.ref)
-    return { ok: true, output: { type: 'apply', apply: (q, now) => deps.apply(q, job, result.verdict, now) } }
+    return { ok: true, output: { type: 'apply', apply: applying(work.ref, job, result.verdict) } }
   }
 
   const submit = (q: Queries, enqueue: Queue['enqueue'], job: ReplyJob): Result<Work> => {

@@ -151,6 +151,43 @@ test('Q5: the hold is released once no classification waits; a mail lost to a re
   assert.equal(meta(db, repo.REPLY_HOLD_FROM), '2026-11-13T05:00:00.000Z')
 })
 
+test('Q5: a read that left a mail to its classify work keeps the hold, even when that work ends (a restart) while the read runs', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  const h = harness(db, imapDouble([thread]).connect)
+  await createReplyTask(h.deps).run()
+  h.clock.advance(7 * 24 * 60 * MINUTE)
+  db.read((q) => q.run('UPDATE meta SET value = ? WHERE key = ?', new Date(h.clock.now().getTime() - 10 * MINUTE).toISOString(), 'lastReplyPoll'))
+
+  // The read finds the mail still queued; while it fetches another reply's body, the queue runs the
+  // work after a restart (its reply no longer in memory): `done`, nothing applied.
+  const other: FakeMail = { ...thread, uid: 13, internalDate: new Date('2026-11-20T05:00:00.000Z'), messageId: '<r3@acme.example>' }
+  const during = imapDouble([thread, other])
+  const racing: ConnectImap = (options) => {
+    const client = during.connect(options)
+    let fetches = 0
+    return {
+      ...client,
+      fetchAll: async (...args: Parameters<typeof client.fetchAll>) => {
+        const fetched = await client.fetchAll(...args)
+        fetches += 1
+        if (fetches === 2) db.read((q) => q.run("UPDATE work SET state = 'done' WHERE kind = 'classify' AND ref = '7:11'"))
+        return fetched
+      },
+    }
+  }
+  await createReplyTask({ ...h.deps, connect: withUidValidity(racing) }).run()
+  assert.deepEqual(h.submitted.map((j) => j.reply.key), ['7:11', '7:13'], 'left to its work in this read')
+  db.read((q) => q.run("UPDATE work SET state = 'done' WHERE kind = 'classify'"))
+  assert.equal(meta(db, repo.REPLY_HOLD_FROM), '2026-11-13T05:00:00.000Z', 'the hold stays: nothing applied it')
+
+  // The next read, a week of polls later, still finds it.
+  h.clock.advance(7 * 24 * 60 * MINUTE)
+  db.read((q) => q.run('UPDATE meta SET value = ? WHERE key = ?', new Date(h.clock.now().getTime() - 10 * MINUTE).toISOString(), 'lastReplyPoll'))
+  await createReplyTask({ ...h.deps, connect: withUidValidity(imapDouble([thread]).connect) }).run()
+  assert.deepEqual(h.submitted.map((j) => j.reply.key), ['7:11', '7:13', '7:11'], 'submitted anew')
+})
+
 test('Q5: three failed reads in a row → `meta.replyReadFailing` = when the first failed; the next good read clears it; no secret in the log', async () => {
   using base = tempBase()
   const db = await store(base)
