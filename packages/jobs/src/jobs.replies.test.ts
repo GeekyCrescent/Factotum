@@ -24,24 +24,24 @@ import { eventually, tempBase } from './test-support.ts'
 import { ok, type Opportunity } from './types.ts'
 
 const SENT_AT = '2026-11-10T00:00:00.000Z'
-const BODIES = ['Can we talk on Monday about the role?', 'Thanks for applying to Beta.', 'Your Greenhouse application', 'Never read: the offer body']
-const ADDRESSES_IN_MAIL = ['ada@acme.example', 'jo@beta.example', 'no-reply@greenhouse-mail.io', 'hr@unknown.example']
-const NAMES = ['Ada Lovelace', 'Jo Beta']
-const SUBJECTS = ['Re: Graduate engineer', 'Your application at Beta', 'Application received', 'Offer of employment']
+const BODIES = ['Can we talk on Monday about the role?', 'Thanks for applying to Beta.', 'Your Greenhouse application', 'Never read: the offer body'] as const
+const ADDRESSES_IN_MAIL = ['ada@acme.example', 'jo@beta.example', 'no-reply@greenhouse-mail.io', 'hr@unknown.example'] as const
+const NAMES = ['Ada Lovelace', 'Jo Beta'] as const
+const SUBJECTS = ['Re: Graduate engineer', 'Your application at Beta', 'Application received', 'Offer of employment'] as const
 
 const mails: readonly FakeMail[] = [
   {
     uid: 21,
     internalDate: new Date('2026-11-12T05:00:00.000Z'),
-    from: { name: NAMES[0], address: ADDRESSES_IN_MAIL[0]! },
+    from: { name: NAMES[0], address: ADDRESSES_IN_MAIL[0] },
     subject: SUBJECTS[0],
     messageId: '<thread@acme.example>',
     headers: 'In-Reply-To: <acme@jobs.factotum.local>\r\nReferences: <acme@jobs.factotum.local>\r\n\r\n',
-    parts: { '1': BODIES[0]! },
+    parts: { '1': BODIES[0] },
   },
-  { uid: 22, internalDate: new Date('2026-11-12T06:00:00.000Z'), from: { name: NAMES[1], address: ADDRESSES_IN_MAIL[1]! }, subject: SUBJECTS[1], messageId: '<domain@beta.example>', parts: { '1': BODIES[1]! } },
-  { uid: 23, internalDate: new Date('2026-11-12T07:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[2]! }, subject: SUBJECTS[2], messageId: '<ats@greenhouse-mail.io>', parts: { '1': BODIES[2]! } },
-  { uid: 24, internalDate: new Date('2026-11-12T08:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[3]! }, subject: SUBJECTS[3], messageId: '<offer@unknown.example>', parts: { '1': BODIES[3]! } },
+  { uid: 22, internalDate: new Date('2026-11-12T06:00:00.000Z'), from: { name: NAMES[1], address: ADDRESSES_IN_MAIL[1] }, subject: SUBJECTS[1], messageId: '<domain@beta.example>', parts: { '1': BODIES[1] } },
+  { uid: 23, internalDate: new Date('2026-11-12T07:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[2] }, subject: SUBJECTS[2], messageId: '<ats@greenhouse-mail.io>', parts: { '1': BODIES[2] } },
+  { uid: 24, internalDate: new Date('2026-11-12T08:00:00.000Z'), from: { address: ADDRESSES_IN_MAIL[3] }, subject: SUBJECTS[3], messageId: '<offer@unknown.example>', parts: { '1': BODIES[3] } },
 ]
 
 function withUidValidity(connect: ConnectImap): ConnectImap {
