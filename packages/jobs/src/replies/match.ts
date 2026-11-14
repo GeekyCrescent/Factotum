@@ -10,7 +10,9 @@
  *    whatever the application's state; THE TEST APPLICATION INCLUDED (v6.1).
  * 2. THE DOMAIN. The sender's domain, without `mail.`, `mg.` or `email.`, is the `domain` of a
  *    company with a CANDIDATE application → those candidates (one: that one; several: Claude picks).
- * 3. AN ATS OR JOB BOARD (`ATS_DOMAINS`, or a subdomain of one) → every candidate, for Claude.
+ * 3. AN ATS OR JOB BOARD (`ATS_DOMAINS`, or a subdomain of one) → the candidates, for Claude: those
+ *    whose company the subject or the sender's display name names (as whole words), when any does,
+ *    else all of them — at most `RULE3_MAX_CANDIDATES`, the most recently active first.
  * 4. Otherwise NO BODY IS READ and nothing goes to Claude: a subject that looks like a job's
  *    (`JOB_SUBJECT`, `offer` included, v6 M5) is an «Unmatched reply»; anything else is ignored.
  *
@@ -49,6 +51,9 @@ export const ATS_DOMAINS: readonly string[] = [
   'workablemail.com',
 ]
 
+/** Rule 3: at most this many candidates go to Claude (a prompt does not grow with every application sent). */
+export const RULE3_MAX_CANDIDATES = 20
+
 /** design D12 rule 4 (v6, M5: `offer` too). */
 export const JOB_SUBJECT = /application|interview|position|role|candidate|opportunity|offer/i
 
@@ -70,6 +75,8 @@ export interface MatchMail {
   readonly references: readonly string[]
   /** The sender's address, as the envelope gives it. */
   readonly from: string
+  /** The sender's display name (`Acme via Greenhouse`), or `''`. */
+  readonly fromName: string
   readonly subject: string
   /** Gmail vouched for `from` (`senderVerified` of `sender.ts`): rules 2–3 apply only then. */
   readonly senderVerified: boolean
@@ -79,6 +86,8 @@ export interface MatchMail {
 export interface MatchApp {
   readonly application: Application
   readonly domain: string | null
+  /** Its company's name: rule 3 narrows by it. */
+  readonly company: string
   /** ISO: the `at` of its latest `reply` event of a human class, or null. */
   readonly lastHumanReplyAt: string | null
 }
@@ -150,6 +159,23 @@ export function replyCandidates(apps: readonly MatchApp[], now: Date): readonly 
   })
 }
 
+/** Lower-case words separated by single spaces, padded: a whole-word search is an `includes`. */
+const words = (text: string): string => ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `
+
+/**
+ * Rule 3's list: the candidates the subject or the sender's name names, when any does (else all), the
+ * most recently active first, at most `RULE3_MAX_CANDIDATES`.
+ */
+function atsCandidates(mail: MatchMail, candidates: readonly MatchApp[]): readonly MatchApp[] {
+  const said = words(`${mail.subject} ${mail.fromName}`)
+  const named = candidates.filter((app) => {
+    const name = words(app.company)
+    return name.trim().length >= 2 && said.includes(name)
+  })
+  const recent = (app: MatchApp): string => lastActivity(app) ?? ''
+  return (named.length > 0 ? named : candidates).toSorted((a, b) => recent(b).localeCompare(recent(a))).slice(0, RULE3_MAX_CANDIDATES)
+}
+
 /** Rule 1: the first send, in the store's order, whose current id or an attempt's the thread names. */
 function byThread(mail: MatchMail, apps: readonly MatchApp[]): ReplyMatch | undefined {
   const named = new Set([...mail.inReplyTo, ...mail.references])
@@ -179,7 +205,7 @@ export function matchReply(mail: MatchMail, world: MatchWorld): ReplyMatch {
     const ofDomain = candidates.filter((app) => companyDomain(app.domain) === domain)
     if (ofDomain.length > 0) return { kind: 'candidates', rule: 2, applicationIds: ofDomain.map((app) => app.application.id), ...unverified }
     if (isAts(domain) && candidates.length > 0) {
-      return { kind: 'candidates', rule: 3, applicationIds: candidates.map((app) => app.application.id), ...unverified }
+      return { kind: 'candidates', rule: 3, applicationIds: atsCandidates(mail, candidates).map((app) => app.application.id), ...unverified }
     }
   }
   return JOB_SUBJECT.test(mail.subject) ? { kind: 'unmatched', rule: 4 } : { kind: 'ignored', rule: 4 }

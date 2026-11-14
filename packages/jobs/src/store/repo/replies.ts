@@ -157,6 +157,7 @@ export const unmatchedReply = (q: Queries, key: string): UnmatchedReply | undefi
 export interface ReplyWorldApp {
   readonly application: Application
   readonly domain: string | null
+  readonly company: string
   readonly lastHumanReplyAt: string | null
 }
 
@@ -168,7 +169,7 @@ export function replyWorld(q: Queries, humanClasses: readonly string[]): readonl
   const marks = humanClasses.map(() => '?').join(', ')
   const human = humanClasses.length === 0 ? 'NULL' : `(SELECT max(e.at) FROM events e WHERE e.application_id = a.id AND e.kind = 'reply' AND json_extract(e.data, '$.class') IN (${marks}))`
   const rows = q.all<Row>(
-    `SELECT a.id AS id, c.domain AS domain, ${human} AS human
+    `SELECT a.id AS id, c.domain AS domain, c.name AS company, ${human} AS human
        FROM applications a JOIN companies c ON c.id = a.company_id
       WHERE EXISTS (SELECT 1 FROM sends s WHERE s.application_id = a.id)
       ORDER BY a.created_at, a.id`,
@@ -177,7 +178,7 @@ export function replyWorld(q: Queries, humanClasses: readonly string[]): readonl
   return rows.flatMap((row) => {
     const application = getApplication(q, text(row, 'id'))
     if (application === undefined) return []
-    return [Object.freeze({ application, domain: textOrNull(row, 'domain'), lastHumanReplyAt: textOrNull(row, 'human') })]
+    return [Object.freeze({ application, domain: textOrNull(row, 'domain'), company: textOrNull(row, 'company') ?? '', lastHumanReplyAt: textOrNull(row, 'human') })]
   })
 }
 

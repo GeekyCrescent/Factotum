@@ -326,6 +326,7 @@ function describe(message: FetchMessageObject, uidValidity: number, user: string
         inReplyTo: messageIdsIn(headers.get('in-reply-to') ?? []),
         references: messageIdsIn(headers.get('references') ?? []),
         from: address,
+        fromName: cut(sender?.name ?? '', FROM_MAX),
         subject: cut(envelope?.subject ?? '', SUBJECT_MAX),
         senderVerified: senderVerified(headers.get('authentication-results') ?? [], address),
       },

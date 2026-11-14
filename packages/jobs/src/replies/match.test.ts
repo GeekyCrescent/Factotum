@@ -12,6 +12,7 @@ import {
   messageIdsIn,
   REPLY_CANDIDATE_DAYS,
   replyCandidates,
+  RULE3_MAX_CANDIDATES,
   senderDomain,
   type MatchApp,
   type MatchMail,
@@ -26,13 +27,14 @@ function app(id: string, over: Partial<Application> = {}, extra: Partial<Omit<Ma
   return {
     application: application({ id, state: 'sent', sends: [sent({ messageId: `<${id}@jobs.factotum.local>` })], ...over }),
     domain: 'acme.example',
+    company: 'Acme',
     lastHumanReplyAt: null,
     ...extra,
   }
 }
 
 function mail(over: Partial<MatchMail> = {}): MatchMail {
-  return { messageId: '<r1@mail.example>', inReplyTo: [], references: [], from: 'jane@elsewhere.example', subject: 'Hello', senderVerified: true, ...over }
+  return { messageId: '<r1@mail.example>', inReplyTo: [], references: [], from: 'jane@elsewhere.example', fromName: '', subject: 'Hello', senderVerified: true, ...over }
 }
 
 const world = (apps: readonly MatchApp[]) => ({ apps, now: NOW })
@@ -81,7 +83,7 @@ test('rule 1: the test application (C1) is matched by its thread', async () => {
   const db = await queueStore(base)
   const created = valueOf(createTestApplication(db, { now: () => NOW }, { to: 'owner@example.test' }))
   const testApp = { ...appOf(db, created.id), state: 'sent' as const, sends: [sent({ messageId: '<test@jobs.factotum.local>' })] }
-  const match = matchReply(mail({ inReplyTo: ['<test@jobs.factotum.local>'] }), world([{ application: testApp, domain: null, lastHumanReplyAt: null }]))
+  const match = matchReply(mail({ inReplyTo: ['<test@jobs.factotum.local>'] }), world([{ application: testApp, domain: null, company: 'Test', lastHumanReplyAt: null }]))
   assert.deepEqual(match, { kind: 'thread', rule: 1, applicationId: created.id, sendKind: 'initial', viaAttempt: false, messageId: '<test@jobs.factotum.local>' })
 })
 
@@ -132,6 +134,29 @@ test('rule 3: a sender of an ATS or job board (and its subdomains) → every can
     assert.deepEqual(matchReply(mail({ from }), world(apps)), { kind: 'candidates', rule: 3, applicationIds: ['a1', 'b1'] }, from)
   }
   assert.equal(matchReply(mail({ from: 'x@notgreenhouse-mail.io' }), world(apps)).kind, 'ignored', 'a lookalike is not the ATS')
+})
+
+test(`rule 3 hands Claude at most ${RULE3_MAX_CANDIDATES} candidates, the most recently active first`, () => {
+  // 25 companies, sent 1…25 days ago: c1 is the most recent.
+  const apps = Array.from({ length: 25 }, (_v, i) => app(`c${i + 1}`, { companyId: `co-${i + 1}`, sends: [sent({ at: daysAgo(i + 1) })] }, { domain: `c${i + 1}.example`, company: `Company ${i + 1}` }))
+  const match = matchReply(mail({ from: 'no-reply@greenhouse-mail.io', subject: 'Application received' }), world(apps.toReversed()))
+  assert.ok(match.kind === 'candidates')
+  assert.equal(RULE3_MAX_CANDIDATES, 20)
+  assert.deepEqual(match.applicationIds, Array.from({ length: 20 }, (_v, i) => `c${i + 1}`))
+})
+
+test('rule 3 narrows to the companies the subject or the sender’s name mentions, when any does', () => {
+  const apps = [
+    app('a1'),
+    app('b1', { companyId: 'company-2' }, { domain: 'beta.example', company: 'Beta Health' }),
+    app('g1', { companyId: 'company-3' }, { domain: 'gamma.example', company: 'Gamma' }),
+  ]
+  const bySubject = matchReply(mail({ from: 'no-reply@greenhouse-mail.io', subject: 'Your application to Beta Health — next steps' }), world(apps))
+  assert.deepEqual(bySubject.kind === 'candidates' && bySubject.applicationIds, ['b1'])
+  const byName = matchReply(mail({ from: 'no-reply@greenhouse-mail.io', fromName: 'Gamma Recruiting', subject: 'Interview' }), world(apps))
+  assert.deepEqual(byName.kind === 'candidates' && byName.applicationIds, ['g1'])
+  const partWord = matchReply(mail({ from: 'no-reply@greenhouse-mail.io', subject: 'Gammaray application' }), world(apps))
+  assert.deepEqual(partWord.kind === 'candidates' && partWord.applicationIds, ['a1', 'b1', 'g1'], 'a part of a word names no one: all of them')
 })
 
 test('rule 3 with no candidate at all falls through to rule 4', () => {
@@ -197,7 +222,7 @@ test('candidates: the test application (`test: true`) `sent`, whose domain or AT
   using base = tempBase()
   const db = await queueStore(base)
   const created = valueOf(createTestApplication(db, { now: () => NOW }, { to: 'owner@example.test' }))
-  const testApp: MatchApp = { application: { ...appOf(db, created.id), state: 'sent', sends: [sent()] }, domain: 'example.test', lastHumanReplyAt: null }
+  const testApp: MatchApp = { application: { ...appOf(db, created.id), state: 'sent', sends: [sent()] }, domain: 'example.test', company: 'Test', lastHumanReplyAt: null }
   assert.deepEqual(ids([testApp]), [])
   assert.equal(matchReply(mail({ from: 'owner@example.test', subject: 'Hi' }), world([testApp])).kind, 'ignored', 'no rule 2')
   assert.deepEqual(matchReply(mail({ from: 'no-reply@lever.co', subject: 'Your application' }), world([testApp])), { kind: 'unmatched', rule: 4 }, 'no rule 3')
