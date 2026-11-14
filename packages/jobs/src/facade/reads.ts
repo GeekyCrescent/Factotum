@@ -3,7 +3,7 @@
  * `answer` and a version's `file`. Synchronous, no write: caches and one `db.read` each.
  */
 
-import type { Queue } from '../ai/queue.ts'
+import { AUTH_FAILING, type Queue } from '../ai/queue.ts'
 import { BACKUP_FAILING, WAVE2_FAILING } from '../clock.ts'
 import { contactHashOf } from '../build/render.ts'
 import type { MailHealth } from '../mail-health.ts'
@@ -23,6 +23,8 @@ import { batchView, readyOutside } from './views.ts'
 export const SENDING_STALE_MS = 120_000
 /** Of a `sending` row listed in `sends` (review 1a). */
 export const SENDING_STALE_REASON = 'not confirmed — check Sent before sending again'
+/** While the CLI is logged out (`meta.authFailing`): said instead of the usage-limit line (D10, D13). */
+export const AUTH_WARNING = 'Claude is logged out on this machine — run `claude` and /login there; generation is paused'
 const SENDING_STALE_LINE = "A send was not confirmed after 2 minutes — check Gmail's Sent before sending it again"
 
 export interface ReadsDeps {
@@ -53,7 +55,8 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
     const mail = mailNow()
     const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
     const pausedUntil = queue.pausedUntil()
-    const { stuck, wave2Failing, adsFailing, deferredStuck } = db.read((q) => ({
+    const { loggedOut, stuck, wave2Failing, adsFailing, deferredStuck } = db.read((q) => ({
+      loggedOut: repo.getMeta(q, AUTH_FAILING) !== undefined,
       stuck: repo.sendingBefore(q, staleBefore()),
       wave2Failing: repo.getMeta(q, WAVE2_FAILING) !== undefined,
       adsFailing: repo.getMeta(q, ADS_FAILING) !== undefined,
@@ -62,7 +65,7 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
     const warnings = [
       ...(mail.state === 'bad' && mail.reason !== null ? [mail.reason] : []),
       ...pathWarnings(paths),
-      ...(pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
+      ...(loggedOut ? [AUTH_WARNING] : pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
       ...(backupFailing === null ? [] : ['The daily copy of jobs.db keeps failing']),
       ...(stuck === 0 ? [] : [SENDING_STALE_LINE]),
       ...(wave2Failing ? ['Wave 2: some CVs could not be queued; the clock keeps trying'] : []),
