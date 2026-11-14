@@ -359,7 +359,7 @@ export interface Jobs {
   readonly batch: () => Result<BatchAnswer>
   /** Never waits for SMTP (D9). */
   readonly decide: (input: unknown) => Result<DecisionOutcome>
-  readonly retry: (id: string, job: RetryJob) => Result<{ readonly queued: readonly ('cv' | 'letter')[] }>
+  readonly retry: (id: string, job: RetryJob) => Result<{ readonly queued: readonly RetryJob[] }>
   /** The client's poll. */
   readonly send: (id: string, kind: SendKind) => Result<SendView>
   readonly markSent: (id: string, kind: SendKind) => Result<Application>

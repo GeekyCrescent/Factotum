@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { insertApp, queueStore } from './ai/test-queue.ts'
-import { NO_LETTER_YET, NO_REPRINT_YET, createJobs, failing } from './jobs.ts'
+import { NO_LETTER_YET, createJobs, failing } from './jobs.ts'
 import { seedProfile } from './seed/test-seed.ts'
 import { openDb } from './store/db.ts'
 import * as repo from './store/repo.ts'
@@ -215,12 +215,11 @@ test('C1 start: fits in 10 s with a store of 100 companies and 80 applications',
   }
 })
 
-test('C1 stop: twice is once; the letter handler fails with its reason until T1; «Retry print» waits for H5c', async () => {
+test('C1 stop: twice is once; the letter handler fails with its reason until T1', async () => {
   using base = tempBase()
   const jobs = await started(depsOf(rigIn(base.dir)))
   await Promise.all([jobs.stop(), jobs.stop()])
 
   const letter = await failing(NO_LETTER_YET)({} as never, { signal: new AbortController().signal, timeoutMs: 1 })
   assert.deepEqual(letter, { ok: false, kind: 'failed', reason: 'letter generation arrives with T1' })
-  assert.equal(NO_REPRINT_YET, 'reprint arrives with H5c')
 })

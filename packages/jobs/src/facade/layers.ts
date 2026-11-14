@@ -5,7 +5,8 @@
  *
  * - the checks: the network (https only, private ranges refused, N1), the address checks and the ad walk;
  * - the sends: the password file's health cache, the sender and the assisted paths;
- * - the generation: the CV and rewrite handlers, the queue with the real linter as its guard (L4);
+ * - the generation: the CV, rewrite and reprint handlers, the queue with the real linter as its guard (L4),
+ *   and the re-lint's hook that queues a reprint (H5c);
  * - the clock (D16), over all three.
  */
 
@@ -19,6 +20,7 @@ import { addressSearch } from '../build/address.ts'
 import { createCheckQueue, type CheckQueue } from '../build/checks.ts'
 import { createCvHandler, type ClaudeSettings } from '../build/cv.ts'
 import type { Linter } from '../build/relint.ts'
+import { createReprintHandler } from '../build/reprint.ts'
 import { createVerifier } from '../build/verify.ts'
 import { createClock, type Clock } from '../clock.ts'
 import type { HostConfig } from '../config.ts'
@@ -90,6 +92,7 @@ export function buildGeneration({ db, deps, config }: Base, { font, vault, linte
   const { log, now, timers, stateDir } = deps
   const printDeps = { stateDir, timers, log, font: font ?? new Uint8Array(), chromium: config.chromium, poppler: config.poppler }
   const verify = createVerifier({ stateDir, now, timers, log, claude: claudeOf(config.claude.models.verify, deps), sources: vault.fixed })
+  const print = printer(db, printDeps)
   const cv = font === null ? failing('the CV font could not be read') : createCvHandler({ db, ...printDeps, now, sources: vault.sources, claude: claudeOf(config.claude.models.write, deps), verify })
   const rewrite = createRewriteHandler({
     db,
@@ -99,21 +102,28 @@ export function buildGeneration({ db, deps, config }: Base, { font, vault, linte
     runDir: join(stateDir, 'run'),
     claude: { model: config.claude.models.write, effort: undefined, ...(deps.claudeBin === undefined ? {} : { bin: deps.claudeBin }) },
     readFixed: vault.fixed,
-    print: printer(db, printDeps),
+    print,
     verify,
     log,
   })
+  // D5 «Reimpresión»: no Claude, so it needs only the printer — and works without the font only as the CV does.
+  const reprint = font === null ? failing('the CV font could not be read') : createReprintHandler({ db, print })
   const queue = createQueue({
     db,
     now,
     concurrency: config.claude.concurrency,
-    handlers: { cv, rewrite, letter: failing(NO_LETTER_YET) },
+    handlers: { cv, rewrite, reprint, letter: failing(NO_LETTER_YET) },
     log,
     lint: linter.lint,
     relintOne: linter.relintOne,
     pdfExists: existsSync,
   })
-  return { cv, rewrite, queue }
+  /** The re-lint's hook (D3 «`cv-stale`»): one reprint, in its own `tx`, after the save's. */
+  const enqueueReprint = (applicationId: string): void => {
+    const added = queue.add({ kind: 'reprint', ref: applicationId })
+    if (!added.ok) throw new Error(added.error.reason)
+  }
+  return { cv, rewrite, queue, enqueueReprint }
 }
 
 /** The clock (D16): built, not armed. */

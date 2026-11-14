@@ -14,6 +14,7 @@
  *   test can see whether two prints overlapped on the same profile.
  *
  *   pages=N    writes a "PDF" `%PDF-fake pages=N` that fake-pdfinfo counts
+ *   html       like pages=1, with the HTML it printed after the first line (a test reads the contact in the "PDF")
  *   slow       like pages=1, after 300 ms
  *   no-pdf     exits 0 without writing the PDF
  *   fail       one line on stderr, exit 1
@@ -50,11 +51,13 @@ if (mode === 'hang') {
   process.exit(1)
 } else if (mode === 'slow') {
   setTimeout(() => print('1'), 300)
+} else if (mode === 'html') {
+  print('1', existsSync(html) ? readFileSync(html, 'utf8') : '')
 } else if (mode !== 'no-pdf') {
   print(/^pages=(\d+)$/.exec(mode)?.[1] ?? '1')
 }
 
-function print(pages) {
-  writeFileSync(pdf, `%PDF-fake pages=${pages}\n`)
+function print(pages, body = '') {
+  writeFileSync(pdf, `%PDF-fake pages=${pages}\n${body}`)
   appendFileSync(join(dataDir, 'fake-chromium.timeline'), `end ${process.pid}\n`)
 }
