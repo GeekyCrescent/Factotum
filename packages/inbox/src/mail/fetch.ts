@@ -14,27 +14,36 @@
 
 import type { Timers } from '@factotum/core'
 import type { AccountConfig } from '../config.ts'
-import { countAttachments, decodePart, pickPart, plainText, type PickedPart } from './body.ts'
-import type { ConnectImap, FetchMessageObject, ImapClient, ImapOptions, MetaQuery } from './client.ts'
-import { addressesIn, parseHeaderBlock } from './headers.ts'
+import {
+  addressesIn,
+  closeQuietly,
+  countAttachments,
+  decodePart,
+  imapOptions,
+  parseHeaderBlock,
+  pickPart,
+  plainText,
+  reasonOf,
+  untilAborted,
+  type ConnectImap,
+  type FetchMessageObject,
+  type ImapClient,
+  type MetaQuery,
+  type PickedPart,
+} from '@factotum/mail'
 import { sourceOf } from './sources.ts'
 
 /** What one account may cost a run: a server that does not answer costs this, not the run (criterion 9). */
 export const ACCOUNT_TIMEOUT_MS = 90_000
 /** Per part. A newsletter of several MB is not fetched whole to keep 4 000 characters (guardrail 9). */
 export const MAX_PART_BYTES = 64 * 1024
-/** TLS on 993, and nothing else (guardrail 6). */
-export const IMAP_PORT = 993
 
 /** `List-Unsubscribe`, and the forwarding headers measured in A5. `To` and `Cc` come in the envelope. */
 const HEADERS = ['list-unsubscribe', 'resent-from', 'x-forwarded-for', 'delivered-to']
 const DAY_MS = 24 * 60 * 60 * 1000
-const REASON_MAX = 200
 /** A hostile subject or display name must not grow the prompt or the digest without end. */
 const SUBJECT_MAX = 300
 const FROM_MAX = 200
-/** LOGOUT is politeness: a server that does not answer it does not hold the run (or shutdown) longer. */
-const LOGOUT_MAX_MS = 5_000
 
 export interface FetchedMail {
   readonly accountId: string
@@ -70,30 +79,6 @@ export interface FetchInput {
 
 export type FetchResult = { readonly ok: true; readonly mails: readonly FetchedMail[] } | { readonly ok: false; readonly reason: string }
 
-/** The six options measured in A1, and nothing a config can change. */
-export function imapOptions(account: AccountConfig, password: string): ImapOptions {
-  return {
-    host: account.host,
-    port: IMAP_PORT,
-    secure: true,
-    auth: { user: account.user, pass: password },
-    // Otherwise pino writes to the daemon's stdout, with subjects in it (criterion 27).
-    logger: false,
-    disableAutoIdle: true,
-    disableCompression: true,
-    disableBinary: true,
-    disableAutoEnable: true,
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 60_000,
-    // Node's Happy Eyeballs gives EACH ADDRESS 250 ms by default. Measured 2026-10-06 behind a VPN:
-    // a TCP connect to imap.gmail.com takes 280–560 ms and IPv6 is unreachable, so all four
-    // addresses "time out" and the account fails with ETIMEDOUT in under a second. imapflow merges
-    // `tls` into its `tls.connect()` options; `connectionTimeout` above still caps the whole.
-    tls: { autoSelectFamilyAttemptTimeout: 2_500 },
-  }
-}
-
 export async function fetchAccount(input: FetchInput): Promise<FetchResult> {
   const timeoutMs = input.timeoutMs ?? ACCOUNT_TIMEOUT_MS
   const own = new AbortController()
@@ -110,7 +95,7 @@ export async function fetchAccount(input: FetchInput): Promise<FetchResult> {
     return { ok: true, mails }
   } catch (error) {
     if (signal.aborted) return { ok: false, reason: stoppedReason(own.signal, timeoutMs) }
-    return { ok: false, reason: reasonOf(error, input) }
+    return { ok: false, reason: reasonOf(error, { user: input.account.user, password: input.password }) }
   } finally {
     timer[Symbol.dispose]()
     await closeQuietly(client, signal.aborted, input.timers)
@@ -221,82 +206,14 @@ function describe(message: FetchMessageObject, input: FetchInput): Described | u
   }
 }
 
-/**
- * A closed socket does not always settle what was waiting on it, so every wait also ends when the
- * signal fires. The work left behind is dropped; its rejection is swallowed here, not unhandled.
- */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    work.catch(() => undefined)
-    return Promise.reject(signal.reason)
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-    work.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(value)
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      },
-    )
-  })
-}
-
-/**
- * Aborted: `onAbort` already closed it, at the instant of the abort. Otherwise LOGOUT, politely — but
- * bounded: past LOGOUT_MAX_MS the socket is dropped. The abort listener is still on meanwhile, so the
- * run's cap or `stop()` also cuts it.
- */
-async function closeQuietly(client: ImapClient | undefined, aborted: boolean, timers: Timers): Promise<void> {
-  if (client === undefined || aborted) return
-  let timer: Disposable | undefined
-  const late = new Promise<void>((resolve) => {
-    timer = timers.setTimeout(resolve, LOGOUT_MAX_MS)
-  })
-  try {
-    await Promise.race([client.logout().catch(() => undefined), late])
-  } finally {
-    timer?.[Symbol.dispose]()
-    try {
-      client.close()
-    } catch {
-      // Already closed: the outcome that was wanted.
-    }
-  }
-}
-
 function stoppedReason(own: AbortSignal, timeoutMs: number): string {
   return own.aborted ? `no answer within ${Math.round(timeoutMs / 1000)} s` : 'stopped'
-}
-
-/** The server's words or Node's code — never the password, and the user name masked. */
-function reasonOf(error: unknown, input: FetchInput): string {
-  const record = (error ?? {}) as { authenticationFailed?: unknown; response?: unknown; code?: unknown; message?: unknown }
-  const words =
-    typeof record.response === 'string' && record.response !== ''
-      ? record.response
-      : typeof record.code === 'string'
-        ? record.code
-        : typeof record.message === 'string'
-          ? record.message
-          : 'unknown error'
-  const prefix = record.authenticationFailed === true ? 'login refused: ' : ''
-  const masked = mask(mask(words, input.password, '***'), input.account.user, '<user>')
-  return `${prefix}${masked}`.slice(0, REASON_MAX)
 }
 
 function toDate(value: Date | string | undefined): Date | undefined {
   if (value === undefined) return undefined
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? undefined : date
-}
-
-function mask(text: string, secret: string, as: string): string {
-  return secret === '' ? text : text.split(secret).join(as)
 }
 
 function cut(text: string, max: number): string {

@@ -13,6 +13,7 @@ test('the names the bundled modules declare today resolve to real glyphs', () =>
   assert.equal(navIcon('envelope-simple'), 'envelope-simple')
   assert.equal(navIcon('kanban'), 'kanban')
   assert.equal(navIcon('stack'), 'stack')
+  assert.equal(navIcon('briefcase'), 'briefcase')
 })
 
 test('an unknown or missing name falls back to a circle, never to nothing', () => {

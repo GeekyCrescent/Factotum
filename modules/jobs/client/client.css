@@ -1,0 +1,801 @@
+/*
+ * The jobs module's own classes, all prefixed `j-` (spec 2026-11-12-postulaciones, design D15
+ * «Estilo»; mockup B v2 `maquetas/review-one-at-a-time-v2.html`). Colours, sizes and motion are the
+ * shell's Grafito tokens, by name: nothing here declares a colour value. The shell's `.btn`, `.chip`,
+ * `.notice` and `.sheet` are used as they are, never redefined.
+ */
+
+.j-screen {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.j-loading,
+.j-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-2);
+}
+
+.j-empty .btn {
+  margin-top: var(--space-3);
+}
+
+/* --- The batch bar: «Jobs › Review · 2 of 10», the dots, the send lines --- */
+
+.j-review-bar {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.j-crumb {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-test {
+  margin-right: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-6);
+  background: var(--ask-bg);
+  color: var(--ask);
+  font-weight: 600;
+}
+
+.j-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+}
+
+.j-dot.done {
+  background: var(--text-3);
+  border-color: var(--text-3);
+}
+
+.j-dot.current {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.j-sends {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-small);
+}
+
+.j-send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h) var(--space-2);
+  color: var(--text-2);
+}
+
+.j-send-text {
+  overflow-wrap: anywhere;
+}
+
+.j-send-kind {
+  font-weight: 600;
+}
+
+.j-send-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+}
+
+.j-send.ok {
+  color: var(--ok);
+}
+
+.j-send.err {
+  color: var(--err);
+}
+
+.j-send.ask {
+  color: var(--ask);
+}
+
+.j-notice {
+  margin: var(--space-3) var(--space-4) 0;
+}
+
+/* --- The item and its buttons -------------------------------------------- */
+
+.j-review {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+}
+
+.j-company {
+  margin: 0;
+  font-size: var(--text-heading);
+}
+
+.j-role {
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+}
+
+.j-buttons {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.j-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.j-why {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+/* --- The end of the batch ------------------------------------------------- */
+
+.j-end {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) 0;
+}
+
+.j-end h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+}
+
+.j-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-still {
+  margin: 0;
+  color: var(--ask);
+}
+
+/* --- The card: labels, the two columns, the form, notes, gaps ------------- */
+
+.j-item {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.j-rewritten {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--p2-soft);
+}
+
+.j-rewritten.failed {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+
+.j-rewrite-tag {
+  margin: 0;
+  color: var(--p2);
+  font-size: var(--text-small);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-rewritten.failed .j-rewrite-tag {
+  color: var(--err);
+}
+
+.j-rewritten .btn {
+  justify-self: start;
+}
+
+.j-diff .add {
+  color: var(--ok);
+  text-decoration: none;
+  background: color-mix(in oklch, var(--ok) 14%, transparent);
+}
+
+.j-diff .del {
+  color: var(--err);
+  text-decoration: line-through;
+}
+
+.j-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-label {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-10);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+}
+
+.j-label-detail {
+  overflow-wrap: anywhere;
+}
+
+.j-label.amber {
+  background: var(--ask-bg);
+  color: var(--ask);
+}
+
+.j-label.red {
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.j-ad {
+  justify-self: start;
+  font-size: var(--text-small);
+  color: var(--accent-text);
+}
+
+.j-columns {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (min-width: 900px) {
+  .j-columns {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+.j-column {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.j-doc,
+.j-form,
+.j-gaps,
+.j-blocks {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-doc-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.j-subject {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.j-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.j-quiet {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+
+.j-cv-png {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-6);
+}
+
+.j-cv .btn {
+  justify-self: start;
+}
+
+.j-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.j-to-line {
+  margin: 0;
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.j-address.verified,
+.j-address.sentanyway {
+  color: var(--ok);
+}
+
+.j-address.checking,
+.j-address.rechecking {
+  color: var(--text-3);
+}
+
+.j-address.unverified,
+.j-address.noaddress {
+  color: var(--ask);
+}
+
+.j-to-acts,
+.j-exits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1h);
+}
+
+.j-form ul,
+.j-gaps ul,
+.j-blocks ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-answer {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2);
+}
+
+.j-mark {
+  color: var(--ok);
+}
+
+.j-answer.warn .j-mark {
+  color: var(--ask);
+}
+
+.j-question {
+  margin: 0;
+  font-weight: 600;
+}
+
+.j-notes summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.j-gaps {
+  border-color: var(--ask-border);
+  background: var(--ask-bg);
+}
+
+.j-gaps .j-doc-title,
+.j-gaps li {
+  color: var(--ask);
+}
+
+/* --- What blocks Approve, and the box ------------------------------------ */
+
+.j-blocks {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+}
+
+.j-blocks .j-doc-title {
+  color: var(--err);
+}
+
+.j-block p {
+  margin: 0 0 var(--space-1h);
+  overflow-wrap: anywhere;
+}
+
+.j-ask {
+  display: grid;
+  gap: var(--space-1h);
+}
+
+.j-ask-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.j-ask-box {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--hit);
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-6);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+  resize: vertical;
+}
+
+.j-ask-box:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.j-rule {
+  margin: 0;
+}
+
+/* --- Sheets: the skip sheet, the assist panel ------------------------------ */
+
+.j-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.j-sheet-head h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-choices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-choice {
+  width: 100%;
+  min-height: var(--hit-decide);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding-block: var(--space-1h);
+  white-space: normal;
+  text-align: left;
+}
+
+.j-choice-note {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.j-choice.j-closes .j-choice-note {
+  color: var(--err);
+}
+
+.j-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.j-field {
+  flex: 1;
+  min-width: 12rem;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-field-label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.j-input {
+  min-height: var(--hit);
+  padding: var(--space-1h) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-6);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-input);
+}
+
+textarea.j-input {
+  resize: vertical;
+  field-sizing: content;
+  min-height: calc(var(--hit) * 2);
+}
+
+.j-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.j-error {
+  margin: 0;
+  color: var(--err);
+  font-size: var(--text-small);
+}
+
+/* --- The assist panel ------------------------------------------------------ */
+
+.j-assist-instruction {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-copies {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-copy {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--bg);
+}
+
+.j-copy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.j-skills {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.j-assist-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* --- Settings: the profile, the rules, the import ------------------------- */
+
+.j-settings {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-5);
+}
+
+.j-section {
+  display: grid;
+  gap: var(--space-3);
+  scroll-margin-top: var(--space-6);
+}
+
+.j-section h2 {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: 600;
+}
+
+.j-field {
+  scroll-margin-top: var(--space-6);
+}
+
+.j-field-narrow {
+  flex: none;
+  min-width: 0;
+  max-width: 14rem;
+}
+
+.j-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  font-size: var(--text-small);
+}
+
+.j-check input {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent);
+}
+
+.j-goal {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+}
+
+.j-goal legend {
+  padding: 0 var(--space-1);
+  font-weight: 600;
+}
+
+.j-weights {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2);
+}
+
+.j-weights .j-field {
+  min-width: 0;
+}
+
+.j-save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2h) 0 calc(var(--space-2h) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.j-save-line {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--ok);
+}
+
+.j-save-line.err {
+  color: var(--err);
+}
+
+.j-rules {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-rule-row {
+  display: grid;
+  gap: var(--space-1h);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-rule-row.off .j-text {
+  color: var(--text-3);
+}
+
+.j-rule-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.j-report {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-report-lines {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+/* --- The tracker, minimal (R7) --------------------------------------------- */
+
+.j-tracker {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.j-counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.j-counter {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-counter-value {
+  font-size: var(--text-page);
+  font-weight: 600;
+}
+
+.j-counter-label {
+  font-size: var(--text-small);
+  color: var(--text-2);
+}
+
+.j-tracker-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* --- A finger, not a pointer ---------------------------------------------- */
+
+/* The shell's small button is 36 px; on a touch screen every button of the review takes 44 px
+   (`--hit`). The focus ring is the shell's `:focus-visible`, which nothing here overrides. */
+@media (pointer: coarse) {
+  .j-screen .btn.sm {
+    min-height: var(--hit);
+  }
+}

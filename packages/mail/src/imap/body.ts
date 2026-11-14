@@ -56,8 +56,11 @@ export function countAttachments(structure: MessageStructureObject | undefined):
   return leavesOf(structure).filter(isAttachment).length
 }
 
-/** HTML to text, then quoted lines out, blanks collapsed, and the cut with an ellipsis. */
-export function plainText(raw: string, kind: 'text' | 'html'): string {
+/**
+ * HTML to text, then quoted lines out, blanks collapsed, and the cut with an ellipsis. `max` lets a
+ * reader that wants more than the digest's 4 000 characters ask for them (design D4).
+ */
+export function plainText(raw: string, kind: 'text' | 'html', max: number = MAX_BODY_CHARS): string {
   const text = kind === 'html' ? htmlToText(raw) : raw
   const kept = text
     .replace(/\r\n?/g, '\n')
@@ -68,7 +71,7 @@ export function plainText(raw: string, kind: 'text' | 'html'): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  return kept.length > MAX_BODY_CHARS ? `${kept.slice(0, MAX_BODY_CHARS - 1)}…` : kept
+  return kept.length > max ? `${kept.slice(0, max - 1)}…` : kept
 }
 
 function leavesOf(node: MessageStructureObject): readonly MessageStructureObject[] {

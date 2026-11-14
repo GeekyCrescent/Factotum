@@ -94,3 +94,14 @@ test('an unknown charset reads as UTF-8 rather than failing', () => {
   assert.equal(decodePart(Buffer.from('café'), part('8bit', 'x-made-up')), 'café')
   assert.equal(decodePart(Buffer.from('plain'), part('7bit', 'us-ascii')), 'plain')
 })
+
+test('plainText takes a cap; without one the output is byte for byte the MAX_BODY_CHARS one', () => {
+  const raw = `Intro\r\n> quoted\r\n${'y'.repeat(20_000)}`
+  assert.equal(plainText(raw, 'text'), plainText(raw, 'text', MAX_BODY_CHARS))
+  assert.equal(plainText(raw, 'text').length, MAX_BODY_CHARS)
+  const wide = plainText(raw, 'text', 16 * 1024)
+  assert.equal(wide.length, 16 * 1024)
+  assert.equal(wide.startsWith('Intro\ny'), true)
+  assert.equal(wide.endsWith('…'), true)
+  assert.equal(plainText('<p>short</p>', 'html', 3), 'sh…')
+})

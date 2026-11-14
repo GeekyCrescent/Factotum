@@ -16,11 +16,13 @@ import { fileURLToPath } from 'node:url'
 import {
   ALL_MODULES,
   inboxModule,
+  jobsModule,
   mockupsModule,
   sessionsModule,
   tasksModule,
   type CreateEngine,
   type CreateInbox,
+  type CreateJobs,
   type CreateMockups,
   type CreateTasks,
   type MockupsLink,
@@ -30,6 +32,7 @@ import { createEngine } from '@factotum/sessions'
 import { createInbox } from '@factotum/inbox'
 import { createTasks, createTasksLink } from '@factotum/tasks'
 import { createMockups, createMockupsLink } from '@factotum/mockups'
+import { createJobs } from '@factotum/jobs'
 import { BootError, boot, createStaticSite, resolveEnvironment } from '@factotum/kernel'
 import { VERSION } from '@factotum/kernel/version'
 import { doctor } from './doctor.ts'
@@ -38,6 +41,7 @@ import { install, uninstall } from './install.ts'
 import { qrCommand } from './qr-command.ts'
 import { siteCommand, stripEnvFlag } from './site-command.ts'
 import { pushCommand } from './push-command.ts'
+import { jobsCommand } from './jobs-command.ts'
 import { askTimeoutFrom } from './ask-timeout.ts'
 import { tasksNowOffset } from './tasks-now.ts'
 
@@ -49,6 +53,8 @@ const USAGE = `factotum ${VERSION}
   factotum qr [--env dev|prod]         show the QR again, without touching the config
   factotum site <list|add|rm>          the projects agents may write in (added from the app)
   factotum push reset [--env dev|prod] forget every device subscribed to notifications
+  factotum jobs test-application --to <addr> [--env dev|prod]
+                                       the test application (close it with --close <id> --reason <text>)
   factotum install [--env dev|prod]    keep it running across logins (launchd)
   factotum uninstall [--env dev|prod]  stop doing that
 
@@ -100,6 +106,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'push':
       // Same reason as `site`: `--env` must not reach the subcommand parser.
       return await pushCommand({ env, argv: stripEnvFlag(rest) })
+    case 'jobs':
+      // Same reason as `site`: `--env` must not reach the subcommand parser.
+      return await jobsCommand({ env, argv: stripEnvFlag(rest) })
     case 'start':
       return await start(env)
     case 'install':
@@ -166,6 +175,12 @@ const newTasksLink: () => TasksLink = createTasksLink
 const mockupsFactory: CreateMockups = createMockups
 const newMockupsLink: () => MockupsLink = createMockupsLink
 
+/**
+ * And for job applications (spec 2026-11-12-postulaciones, D1; tasks C3): `modules/jobs/types.ts`
+ * declares by hand what `@factotum/jobs` exports, and this is where the compiler checks they agree.
+ */
+const jobsFactory: CreateJobs = createJobs
+
 async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
   // The engine that runs, with the dev-only knob (spec 2026-10-01-preguntas-con-opciones, D5 ter).
   // `engineFactory` above stays the line that ties the two copies of the types; this only wraps it.
@@ -209,6 +224,7 @@ async function start(env: Parameters<typeof boot>[0]['env']): Promise<number> {
         inboxModule(inboxFactory),
         tasksModule(tasksFactory, tasksLink, { nowOffsetMs: tasksNowOffset(env, process.env, (message) => console.warn(message)) }),
         mockupsModule(mockupsFactory, mockupsLink),
+        jobsModule(jobsFactory),
       ],
       version: VERSION,
       site: createStaticSite(siteRoot()),

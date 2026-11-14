@@ -7,7 +7,7 @@
  * what imapflow itself sends on the wire is the protocol test's job (`fetch.protocol.test.ts`).
  */
 
-import type { ConnectImap, FetchMessageObject, ImapClient, ImapOptions, MessageStructureObject } from './mail/client.ts'
+import type { ConnectImap, FetchMessageObject, ImapClient, ImapOptions, MessageStructureObject } from './imap/client.ts'
 
 export interface FakeMail {
   readonly uid: number

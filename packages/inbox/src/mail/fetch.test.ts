@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AccountConfig } from '../config.ts'
-import { imapDouble, type FakeMail } from '../test-imap-client.ts'
+import { imapDouble, type FakeMail } from '@factotum/mail/testing'
 import { eventually, manualTimers } from '../test-support.ts'
 import { ACCOUNT_TIMEOUT_MS, fetchAccount, MAX_PART_BYTES, type FetchInput } from './fetch.ts'
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SourceConfig } from '../config.ts'
-import { addressesIn, parseHeaderBlock } from './headers.ts'
+import { addressesIn, parseHeaderBlock } from '@factotum/mail'
 import { sourceOf, type Addressing } from './sources.ts'
 
 const ACCOUNT = 'cuenta@gmail.com'
