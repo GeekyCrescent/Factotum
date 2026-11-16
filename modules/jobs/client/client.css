@@ -790,6 +790,47 @@ textarea.j-input {
   gap: var(--space-2);
 }
 
+/* --- The unmatched replies (Q5, crit. 56) ---------------------------------- */
+
+.j-unmatched {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.j-unmatched-head {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.j-unmatched-card {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+  background: var(--surface);
+}
+
+.j-unmatched-subject {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.j-unmatched-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.j-unmatched-acts select {
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* --- A finger, not a pointer ---------------------------------------------- */
 
 /* The shell's small button is 36 px; on a touch screen every button of the review takes 44 px

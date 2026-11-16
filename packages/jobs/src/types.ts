@@ -324,6 +324,10 @@ export interface CvDoc {
   readonly gaps: readonly { readonly requirement: string; readonly why: string }[]
 }
 
+/** How tightly the CV is set (D5 step 7, H6): tried in this order before Claude is asked for «shorter». */
+export const DENSITIES = ['normal', 'compact', 'tight'] as const
+export type Density = (typeof DENSITIES)[number]
+
 /** One version of an APPLICATION's artifacts (follow-ups carry their own). Texts carry slots, never data. */
 export interface Artifacts {
   readonly version: number
@@ -331,6 +335,8 @@ export interface Artifacts {
   readonly pdf: string | null
   readonly png: string | null
   readonly contactHash: string | null
+  /** The density `pdf` was printed at (H6), so a reprint starts from it; absent = `normal` (older versions, the seed). */
+  readonly density?: Density
   readonly letter: { readonly subject: string | null; readonly body: string } | null
   readonly form: readonly { readonly question: string; readonly answer: string; readonly ok: boolean; readonly hint: string | null }[]
   readonly skills: { readonly tick: readonly string[]; readonly doNotTick: readonly string[] } | null

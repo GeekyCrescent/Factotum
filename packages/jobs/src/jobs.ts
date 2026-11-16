@@ -29,8 +29,9 @@ import { z } from 'zod'
 import type { Queue } from './ai/queue.ts'
 import type { CheckQueue } from './build/checks.ts'
 import { createLinter, saveProfileRelinting, saveRuleRelinting, type Linter } from './build/relint.ts'
+import { retryPrint } from './build/reprint.ts'
 import { parseJobsConfig, type HostConfig } from './config.ts'
-import { buildCheckLayer, buildClock, buildGeneration, buildSendLayer, failing, type Base } from './facade/layers.ts'
+import { buildCheckLayer, buildClock, buildGeneration, buildReplies, buildSendLayer, failing, type Base } from './facade/layers.ts'
 import { inFlight, lifecycle, type InFlight, type Lifecycle } from './facade/lifecycle.ts'
 import { views, type Reads } from './facade/reads.ts'
 import { checkPaths, generationWarnings, readFont, vaultReader } from './facade/sources.ts'
@@ -42,6 +43,8 @@ import { decide, DECISION_KINDS, MAX_SEEN_CHARS } from './review/decide.ts'
 import { openReview } from './review/open.ts'
 import { importSeed } from './seed/import.ts'
 import type { ImportReport } from './seed/report.ts'
+import { assignReply, type ApplyDeps } from './replies/apply.ts'
+import { unmatchedAnswer } from './facade/unmatched.ts'
 import { applyDeferredRepliesOnStart } from './send/deferred.ts'
 import { NO_LETTER_YET } from './state.ts'
 import { openDb, type Db } from './store/db.ts'
@@ -52,8 +55,6 @@ import { fail, ok, type Result, type Send, type SendKind } from './types.ts'
 export { NO_LETTER_YET }
 /** A handler that always fails with its reason (`facade/layers.ts`). */
 export { failing }
-/** Until H5c, nothing reprints a CV: «Retry print» says so. */
-export const NO_REPRINT_YET = 'reprint arrives with H5c'
 
 const decisionSchema = z.strictObject({
   itemId: z.string().min(1).max(64),
@@ -144,8 +145,9 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
 
   const { checks, ads, enqueueCheck } = buildCheckLayer(base)
   const { password, sender, assist } = buildSendLayer(base, enqueueCheck)
-  const { queue } = buildGeneration(base, { font, vault, linter })
-  const clock = buildClock(base, { queue, ads, checks })
+  const { queue, enqueueReprint, classifier, push } = buildGeneration(base, { font, vault, linter })
+  const replies = buildReplies(base, { queue, password, classifier })
+  const clock = buildClock(base, { queue, ads, checks, replies })
   const review = openReview({ db, now, timeZone, enqueueChecks: (ids) => checks.enqueueContacts(ids, { front: true }), log })
   const reads = views({ db, queue, mail: password.current, paths, stateDir, now, timeZone })
   const imports = inFlight()
@@ -162,7 +164,11 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     stop: [
       // An import writes into the store and the queue: it ends before either stops.
       [{ name: 'the imports', stop: imports.settled }],
-      [{ name: 'the clock', stop: clock.stop }],
+      // The reader's IMAP is aborted with the clock, so the round it is in ends at once.
+      [
+        { name: 'the reply reader', stop: async () => replies.stop() },
+        { name: 'the clock', stop: clock.stop },
+      ],
       [
         { name: 'the ad walk', stop: ads.stop },
         { name: 'the check queue', stop: checks.stop },
@@ -174,7 +180,7 @@ function compose(deps: JobsDeps, config: HostConfig, timeZone: string, db: Db): 
     log,
   })
 
-  const jobs = facade({ base, linter, queue, checks, sender, assist, review, reads, imports, life, disk })
+  const jobs = facade({ base, linter, queue, enqueueReprint, checks, sender, assist, review, reads, imports, life, disk, push })
   return { jobs, start: life.start }
 }
 
@@ -185,6 +191,8 @@ interface Parts {
   readonly base: Base
   readonly linter: Linter
   readonly queue: Queue
+  /** The re-lint's hook: a reprint of an application that gained `cv-stale` (H5c). */
+  readonly enqueueReprint: (applicationId: string) => void
   readonly checks: CheckQueue
   readonly sender: SendLayer['sender']
   readonly assist: SendLayer['assist']
@@ -194,6 +202,8 @@ interface Parts {
   readonly life: Lifecycle
   /** What is on disk NOW (step 3's check, again): the import says what would fail its CVs. */
   readonly disk: () => Health['paths']
+  /** D16's push, after the commit (`facade/layers.ts`). */
+  readonly push: ApplyDeps['push']
 }
 
 const viewSend = (result: Result<Send>): Result<ReturnType<typeof sendView>> => (result.ok ? ok(sendView(result.value)) : result)
@@ -213,8 +223,14 @@ async function importNow({ base, queue, checks, disk }: Parts, input: { readonly
   return gaps.length === 0 ? report : ok({ ...report.value, warnings: [...gaps, ...report.value.warnings] })
 }
 
-function retryOf({ base, queue }: Parts, id: string, job: RetryJob): Result<{ readonly queued: readonly ('cv' | 'letter')[] }> {
-  if (job === 'reprint') return fail('conflict', NO_REPRINT_YET)
+function retryOf({ base, queue }: Parts, id: string, job: RetryJob): Result<{ readonly queued: readonly RetryJob[] }> {
+  if (job === 'reprint') {
+    // «Retry print» (D3, A6): another reprint, no Claude.
+    const printed = base.db.tx((q) => retryPrint(q, queue.enqueue, id))
+    if (!printed.ok) return printed
+    queue.pump()
+    return ok({ queued: ['reprint'] })
+  }
   const done = base.db.tx((q) => queue.retry(q, id))
   if (!done.ok) return done
   queue.pump()
@@ -223,10 +239,10 @@ function retryOf({ base, queue }: Parts, id: string, job: RetryJob): Result<{ re
 
 /** The `Jobs` object: each method a call into a part. */
 function facade(parts: Parts): Jobs {
-  const { base, linter, queue, sender, assist, review, reads, imports, life } = parts
+  const { base, linter, queue, enqueueReprint, sender, assist, review, reads, imports, life } = parts
   const { db } = base
   const { now, log } = base.deps
-  const relintDeps = { now, linter, log, enqueueReprint: (): void => undefined } // H5c connects the reprint
+  const relintDeps = { now, linter, log, enqueueReprint }
   return {
     where: () => ({ mode: 'host' }),
     overview: reads.overview,
@@ -268,6 +284,8 @@ function facade(parts: Parts): Jobs {
     resolveUnknown: (id, kind, answer, options) => viewSend(assist.resolveUnknown(id, kind, answer, options)),
     retrySend: (id, kind, options) => viewSend(assist.retrySend(id, kind, options)),
     close: (id, input) => closeApplication(db, { now }, id, input),
+    unmatchedReplies: () => db.read((q) => unmatchedAnswer(q)),
+    assignReply: (key, applicationId) => db.tx((q) => assignReply(q, key, applicationId, now(), { push: parts.push })),
     health: reads.health,
     file: reads.file,
     stop: life.stop,

@@ -15,7 +15,7 @@
 
 import { createHash } from 'node:crypto'
 
-import type { CvDoc, Profile } from '../types.ts'
+import type { CvDoc, Density, Profile } from '../types.ts'
 
 export interface CvContact {
   readonly name: string
@@ -87,6 +87,25 @@ li { margin-top: 1.5pt }
 .skills p { margin-top: 1.5pt }
 .label { font-weight: 600 }`
 
+/** H6: less air between the same lines — sections, roles, bullets, and the leading. */
+const COMPACT = `body { line-height: 1.25 }
+h2 { margin: 6pt 0 2.5pt }
+.headline { margin-top: 4pt }
+.summary { margin-top: 2pt }
+.role { margin-top: 3pt }
+li { margin-top: 0.5pt }
+.project { margin-top: 2pt }
+.skills p { margin-top: 0.5pt }`
+
+/** H6: compact, plus a smaller body and page margin. Readable still: nothing is set below 9.5 pt. */
+const TIGHT = `${COMPACT}
+@page { margin: 10mm }
+body { font-size: 9.5pt }
+h2 { font-size: 10pt }`
+
+/** What each density adds AFTER the base CSS (same selectors, so the later rule wins). */
+const DENSITY_CSS: Readonly<Record<Density, string>> = { normal: '', compact: COMPACT, tight: TIGHT }
+
 function fontFace(font: Uint8Array): string {
   const data = Buffer.from(font).toString('base64')
   return `@font-face { font-family: 'Geist'; src: url(data:font/woff2;base64,${data}) format('woff2'); font-weight: 100 900; font-style: normal }`
@@ -139,19 +158,22 @@ function restOf(doc: CvDoc): readonly string[] {
   ]
 }
 
-/** `doc.gaps` are for the owner (`requirement-gap`) and are never printed. */
-export function renderCvHtml(doc: CvDoc, profile: Profile, font: Uint8Array): RenderedCv {
+/**
+ * `doc.gaps` are for the owner (`requirement-gap`) and are never printed. `density` (H6) only adds CSS
+ * and marks `<html data-density>`; it never enters `contactHash`.
+ */
+export function renderCvHtml(doc: CvDoc, profile: Profile, font: Uint8Array, density: Density = 'normal'): RenderedCv {
   const contact = cvContactOf(profile)
   const body = [header(doc, contact), experienceOf(doc), projectsOf(doc), ...restOf(doc)].filter((part) => part !== '').join('\n')
   const html = `<!doctype html>
-<html lang="en">
+<html lang="en" data-density="${density}">
 <head>
 <meta charset="utf-8">
 ${CSP}
 <title>${escapeHtml(contact.name)}</title>
 <style>
 ${fontFace(font)}
-${CSS}
+${CSS}${DENSITY_CSS[density] === '' ? '' : `\n${DENSITY_CSS[density]}`}
 </style>
 </head>
 <body>

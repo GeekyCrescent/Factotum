@@ -9,7 +9,7 @@
  * `openDb`, `createTestApplication`, `closeApplication` — and never `createJobs` nor its startup write.
  */
 
-export { createJobs, NO_LETTER_YET, NO_REPRINT_YET } from './jobs.ts'
+export { createJobs, NO_LETTER_YET } from './jobs.ts'
 export type {
   ApplicationCard,
   ApplicationDetail,

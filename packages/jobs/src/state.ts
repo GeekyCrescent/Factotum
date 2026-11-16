@@ -410,9 +410,11 @@ function instruction(app: Application, hasLetter: boolean): Result<Application> 
 }
 
 function approve(app: Application, event: Extract<AppEvent, { type: 'approve' }>, now: Date): Result<Application> {
-  if (app.state !== 'ready') return notInTable('approve', app.state)
+  // `in-review` is waiting for the owner (a block, `cv-stale` while it reprints): `blocked`, not a conflict.
+  if (app.state !== 'ready' && app.state !== 'in-review') return notInTable('approve', app.state)
   if (!event.pdfExists) return fail('blocked', 'missing-cv')
   if (hasBlock(app.warnings)) return fail('blocked', 'lint-blocks')
+  if (app.state !== 'ready') return notInTable('approve', app.state)
   if (isManualChannel(app.channel)) return ok({ ...app, state: 'approved' }) // T-A12
   const gate = approvalGate(event.address, now, event.sendAnyway)
   if (!gate.ok) return gate

@@ -24,6 +24,8 @@
  *   auth         THE REAL CLI LOGGED OUT (measured 14-nov): is_error, subtype "success", no status,
  *                terminal_reason "api_error", «Failed to authenticate: OAuth session expired…», cost 0, exit 1
  *   usage        a good answer with the three token counters apart (11 / 2222 / 35263, 777 out)
+ *   two-models   THE REAL CLI (H6, 14-nov): `modelUsage` lists the small model it uses itself FIRST,
+ *                and the model that did the work second, with the outputs and the cost
  *   garbage      a line that is not JSON
  *   huge         a good result padded past 1 MB: the reader cuts it
  *   null         the JSON `null`: valid JSON, not a result
@@ -115,7 +117,13 @@ function answer() {
     num_turns: 2,
     total_cost_usd: 0.0021,
     usage,
-    modelUsage: { 'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 60, costUSD: 0.0021 } },
+    modelUsage:
+      mode === 'two-models'
+        ? {
+            'claude-haiku-4-5-20251001': { inputTokens: 412, outputTokens: 18, costUSD: 0.0005 },
+            'claude-sonnet-5-5': { inputTokens: 10, outputTokens: 2900, costUSD: 0.7195 },
+          }
+        : { 'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 60, costUSD: 0.0021 } },
     ...(error === undefined ? { structured_output: output } : error.fields),
     ...(mode === 'odd-usage' ? { total_cost_usd: '0.01', duration_ms: 'soon', usage: 'many' } : {}),
     ...(mode === 'huge' ? { padding: 'x'.repeat(1200 * 1024) } : {}),

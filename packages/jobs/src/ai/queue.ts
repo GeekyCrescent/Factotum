@@ -20,6 +20,7 @@
 
 import type { Logger } from '@factotum/core'
 import { uuidv7 } from '@factotum/sessions'
+import { awaitsReprint } from '../build/reprint.ts'
 import { appTransition, type GeneratedKind } from '../state.ts'
 import type { Db, Queries } from '../store/db.ts'
 import {
@@ -71,7 +72,7 @@ const INTERACTIVE_KINDS: ReadonlySet<WorkKind> = new Set<WorkKind>(['rewrite', '
 export const defaultLane = (kind: WorkKind): Lane => (INTERACTIVE_KINDS.has(kind) ? 'interactive' : 'bulk')
 
 /** What a generation brought back for an application: the fields it produced, the rest stays (G4). */
-export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'contactHash' | 'letter' | 'form' | 'skills' | 'linkedin'>> &
+export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'contactHash' | 'density' | 'letter' | 'form' | 'skills' | 'linkedin'>> &
   Pick<Artifacts, 'profileVersion' | 'rules' | 'usage' | 'origin'>
 
 export type JobOutput =
@@ -119,6 +120,8 @@ export interface QueueDeps {
   readonly pdfExists: (path: string) => boolean
   /** A rewrite failed for good (T-A9, T-F5): the batch puts it at its end (D15). After the `tx`. */
   readonly onRewriteFailed?: ((entity: RewriteFailed) => void) | undefined
+  /** A `classify` failed for good (Q5): in the `tx` of that third failure. */
+  readonly classifyFailed?: ((q: Queries, work: Work, now: Date) => Result<void>) | undefined
 }
 
 export interface EnqueueSpec {
@@ -221,6 +224,24 @@ export function createQueue(deps: QueueDeps): Queue {
     return saved.ok ? ok(kinds) : saved
   }
 
+  /**
+   * D3 «`cv-stale`»: an application this return leaves `in-review`/`ready` with `cv-stale` and nothing
+   * of class `cv` pending gets its reprint, in the return's `tx` — a CV or a rewrite that came back
+   * printed with a contact changed meanwhile (T-A2, T-A8), or a reprint that printed one saved during it.
+   * A reprint that FAILED does not queue itself again: «Retry print» is the owner's. Nor does one that
+   * printed NOTHING (its output is not a new version): another would find the same and loop.
+   */
+  function reprintIfStale(q: Queries, work: Work, result: JobResult): Result<void> {
+    if (work.kind === 'reprint' && (!result.ok || result.output.type !== 'application')) return ok(undefined)
+    // Only a generation's return (cv, letter, rewrite, reprint) speaks for the application's texts.
+    const classes = classesOf(q, work.kind, work.ref)
+    if (classes.length === 0) return ok(undefined)
+    const app = getApplication(q, work.ref)
+    if (app === undefined || !awaitsReprint(q, app, { workId: work.id, writesCv: classes.includes('cv') })) return ok(undefined)
+    const queued = enqueue(q, { kind: 'reprint', ref: app.id })
+    return queued.ok ? ok(undefined) : queued
+  }
+
   const claudeRuns = (): readonly Work[] => [...inFlight.values()].map((r) => r.work).filter((work) => work.kind !== 'reprint')
   const printing = (): boolean => [...inFlight.values()].some((r) => r.work.kind === 'reprint')
 
@@ -282,7 +303,12 @@ export function createQueue(deps: QueueDeps): Queue {
   function conclude(work: Work, result: JobResult): void {
     inFlight.delete(work.id)
     if (stopped) return
-    const written = db.tx((q) => writeReturn(q, work, result, deps, now()))
+    const written = db.tx((q) => {
+      const done = writeReturn(q, work, result, deps, now())
+      if (!done.ok) return done
+      const queued = reprintIfStale(q, work, result)
+      return queued.ok ? done : queued
+    })
     if (written.ok) {
       if (written.value.warning !== null) log.warn(`jobs queue: ${written.value.warning}`)
       if (written.value.rewriteFailed !== null) tell(written.value.rewriteFailed)

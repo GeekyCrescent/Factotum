@@ -117,17 +117,19 @@ test('a save that comes back takes the saved profile, unless the owner typed mea
   assert.equal(afterSave(null, posted, saved).situation, 'saved by the engine')
 })
 
-test('review 1a: with printed CVs not sent, the contact fields warn that a change marks them out of date — and how to undo it', () => {
+test('H5c: with printed CVs not sent, the contact fields warn that a change marks them out of date and reprints them', () => {
   // Act
   const one = contactNotices({ current: 1, stale: 0 })
   const many = contactNotices({ current: 12, stale: 3 })
+  const single = contactNotices({ current: 0, stale: 1 })
 
   // Assert
-  assert.deepEqual(one, ['Changing your name, email, phone, LinkedIn, city or CV availability line marks 1 printed CV as out of date; it can\u2019t be reprinted until the next update. Change it back to undo.'])
+  assert.deepEqual(one, ['Changing your name, email, phone, LinkedIn, city or CV availability line marks 1 printed CV as out of date; it is reprinted with the new contact on its own, and can be approved again once it is.'])
   assert.deepEqual(many, [
-    'Changing your name, email, phone, LinkedIn, city or CV availability line marks 12 printed CVs as out of date; they can\u2019t be reprinted until the next update. Change it back to undo.',
-    '3 printed CVs are out of date: they carry another contact than the one saved. Saving the contact they were printed with undoes it.',
+    'Changing your name, email, phone, LinkedIn, city or CV availability line marks 12 printed CVs as out of date; they are reprinted with the new contact on their own, and can be approved again once they are.',
+    '3 printed CVs are out of date: they carry another contact than the one saved, and are being reprinted with it. If a reprint fails, its card offers \u00abRetry print\u00bb.',
   ])
+  assert.deepEqual(single, ['1 printed CV is out of date: it carries another contact than the one saved, and is being reprinted with it. If a reprint fails, its card offers \u00abRetry print\u00bb.'])
 })
 
 test('review 1a: nothing printed, or a profile answer from before the count, says nothing', () => {

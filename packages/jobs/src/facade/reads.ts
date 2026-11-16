@@ -5,6 +5,7 @@
 
 import { AUTH_FAILING, type Queue } from '../ai/queue.ts'
 import { BACKUP_FAILING, WAVE2_FAILING } from '../clock.ts'
+import { REPLY_READ_FAILING } from '../replies/tick.ts'
 import { contactHashOf } from '../build/render.ts'
 import type { MailHealth } from '../mail-health.ts'
 import type { ReviewItemRef } from '../review/batch.ts'
@@ -55,15 +56,17 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
     const mail = mailNow()
     const backupFailing = db.read((q) => repo.getMeta(q, BACKUP_FAILING)) ?? null
     const pausedUntil = queue.pausedUntil()
-    const { loggedOut, stuck, wave2Failing, adsFailing, deferredStuck } = db.read((q) => ({
+    const { loggedOut, stuck, wave2Failing, adsFailing, deferredStuck, readFailing } = db.read((q) => ({
       loggedOut: repo.getMeta(q, AUTH_FAILING) !== undefined,
       stuck: repo.sendingBefore(q, staleBefore()),
       wave2Failing: repo.getMeta(q, WAVE2_FAILING) !== undefined,
       adsFailing: repo.getMeta(q, ADS_FAILING) !== undefined,
       deferredStuck: hasDeferredStuck(q),
+      readFailing: repo.getMeta(q, REPLY_READ_FAILING),
     }))
     const warnings = [
       ...(mail.state === 'bad' && mail.reason !== null ? [mail.reason] : []),
+      ...(readFailing === undefined ? [] : [`Mail reading failing since ${hourOf(readFailing, now(), timeZone)}`]),
       ...pathWarnings(paths),
       ...(loggedOut ? [AUTH_WARNING] : pausedUntil === null ? [] : [`Claude usage limit — resumes at ${pausedUntil}`]),
       ...(backupFailing === null ? [] : ['The daily copy of jobs.db keeps failing']),
@@ -119,6 +122,14 @@ export function views({ db, queue, mail: mailNow, paths, stateDir, now, timeZone
   }
 
   return { health, overview, answer, file, printedCvs }
+}
+
+/** «09:05» in the zone; «13 Nov 09:05» when that is not today there (crit. 57). */
+export function hourOf(iso: string, now: Date, timeZone: string): string {
+  const at = new Date(iso)
+  const hour = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at)
+  const day = (d: Date): string => new Intl.DateTimeFormat('en-GB', { timeZone, day: 'numeric', month: 'short' }).format(d)
+  return day(at) === day(now) ? hour : `${day(at)} ${hour}`
 }
 
 /** The states a profile save re-lints (`relint.ts`): where a printed CV can go `cv-stale`. */

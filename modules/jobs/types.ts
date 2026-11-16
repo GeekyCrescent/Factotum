@@ -8,7 +8,7 @@
  * at ONE assignment in `packages/cli/src/main.ts`, which catches a member renamed or removed, or an
  * argument that changes shape — and NOT a field added on the other side.
  *
- * ONLY WHAT THE ROUTES OF CUT 1a CALL (tasks C2). A view the module only hands over is `unknown`
+ * ONLY WHAT THE ROUTES CALL (tasks C2; Q5 adds the two of the unmatched replies). A view the module only hands over is `unknown`
  * here: its shape is the engine's, and the screen that reads it declares it in `client/contract.ts`.
  * The answers the client already reads (`BatchAnswer`, `SendView`) are typed against that contract,
  * so the server and the screen cannot drift apart without `tsc` saying so.
@@ -111,6 +111,10 @@ export interface Jobs {
   readonly saveRule: (input: unknown, id?: string) => Result<Rule & { readonly relinted: number }>
   /** `POST /import { dryRun }` (D8): the report. */
   readonly importSeed: (input: { readonly dryRun: boolean }) => Promise<Result<unknown>>
+  /** `GET /replies/unmatched` (D12, crit. 56): handed over as it is (`client/contract.ts`, `UnmatchedAnswer`). */
+  readonly unmatchedReplies: () => unknown
+  /** `POST /replies/:key/assign`: to an application, or `null` to ignore it. */
+  readonly assignReply: (key: string, applicationId: string | null) => Result<void>
   /** Synchronous: reads caches only (D13 `start` step 5). */
   readonly health: () => unknown
   /** The absolute path of an artifact's file, read from its row — never built from the request. */

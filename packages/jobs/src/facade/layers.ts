@@ -5,24 +5,32 @@
  *
  * - the checks: the network (https only, private ranges refused, N1), the address checks and the ad walk;
  * - the sends: the password file's health cache, the sender and the assisted paths;
- * - the generation: the CV and rewrite handlers, the queue with the real linter as its guard (L4);
- * - the clock (D16), over all three.
+ * - the generation: the CV, rewrite and reprint handlers, the queue with the real linter as its guard (L4),
+ *   and the re-lint's hook that queues a reprint (H5c);
+ * - the replies (D12): the classifier (the queue's `classify`), its pushes, and the reading task;
+ * - the clock (D16), over all of them.
  */
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { sendMail as smtpSend } from '@factotum/mail'
+import type { NotificationMessage } from '@factotum/core'
+import { connectImapFlow, sendMail as smtpSend } from '@factotum/mail'
 
 import { createQueue, type JobHandler, type Queue } from '../ai/queue.ts'
 import { addressSearch } from '../build/address.ts'
 import { createCheckQueue, type CheckQueue } from '../build/checks.ts'
 import { createCvHandler, type ClaudeSettings } from '../build/cv.ts'
 import type { Linter } from '../build/relint.ts'
+import { createReprintHandler } from '../build/reprint.ts'
 import { createVerifier } from '../build/verify.ts'
 import { createClock, type Clock } from '../clock.ts'
 import type { HostConfig } from '../config.ts'
-import { createPasswordHealth } from '../mail-health.ts'
+import { createPasswordHealth, type PasswordHealth } from '../mail-health.ts'
+import { applyReply, type ApplyDeps } from '../replies/apply.ts'
+import { createClassifier, type Classifier } from '../replies/classify.ts'
+import { applyDeferredWithPush } from '../replies/deferred-push.ts'
+import { createReplyTask, type ReplyTask } from '../replies/tick.ts'
 import { createRewriteHandler } from '../review/rewrite.ts'
 import { createNet, systemLookup } from '../scout/net.ts'
 import { createAssist } from '../send/assist.ts'
@@ -59,7 +67,8 @@ export function buildCheckLayer({ db, deps, config }: Base) {
   return { net, checks, ads, enqueueCheck }
 }
 
-export function buildSendLayer({ db, deps, config, timeZone }: Base, enqueueCheck: (contactId: string, options: { readonly front: true }) => unknown) {
+export function buildSendLayer(base: Base, enqueueCheck: (contactId: string, options: { readonly front: true }) => unknown) {
+  const { db, deps, config, timeZone } = base
   const { log, now, timers, stateDir } = deps
   // Step 5's cache; every real read refreshes it.
   const password = createPasswordHealth({ file: config.mail.passwordFile, now, ...(deps.lstat === undefined ? {} : { lstat: deps.lstat }), ...(deps.readPassword === undefined ? {} : { readPassword: deps.readPassword }) })
@@ -74,6 +83,8 @@ export function buildSendLayer({ db, deps, config, timeZone }: Base, enqueueChec
     enqueueCheck,
     log,
     stateDir,
+    // A reply deferred while the initial was in flight: an interview or an offer pushes once it applies.
+    applyDeferred: applyDeferredWithPush(pushAfterCommit(base)),
   })
   const assist = createAssist({ db, now, timeZone, maxSendsPerDay: config.mail.maxSendsPerDay, sender, enqueueCheck })
   return { password, sender, assist }
@@ -86,10 +97,33 @@ export interface OnDisk {
   readonly linter: Linter
 }
 
-export function buildGeneration({ db, deps, config }: Base, { font, vault, linter }: OnDisk) {
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/**
+ * D16's push of an interview or an offer, AFTER THE COMMIT: the apply runs inside the queue's `tx`, so
+ * the push waits a microtask (the `tx` is synchronous) and goes only if that mail is now seen — the
+ * `tx` committed. No device, no push and no retry: the event stays in the tracker.
+ */
+export function pushAfterCommit({ db, deps }: Base): ApplyDeps['push'] {
+  return (key: string, message: NotificationMessage) =>
+    queueMicrotask(() => {
+      try {
+        const notify = deps.notify
+        if (notify === undefined || !notify.canReach()) return
+        if (!db.read((q) => repo.mailSeen(q, key, null))) return
+        void notify.send(message)
+      } catch (error) {
+        deps.log.error(`jobs replies: a push was not sent (${messageOf(error)})`)
+      }
+    })
+}
+
+export function buildGeneration(base: Base, { font, vault, linter }: OnDisk) {
+  const { db, deps, config } = base
   const { log, now, timers, stateDir } = deps
   const printDeps = { stateDir, timers, log, font: font ?? new Uint8Array(), chromium: config.chromium, poppler: config.poppler }
   const verify = createVerifier({ stateDir, now, timers, log, claude: claudeOf(config.claude.models.verify, deps), sources: vault.fixed })
+  const print = printer(db, printDeps)
   const cv = font === null ? failing('the CV font could not be read') : createCvHandler({ db, ...printDeps, now, sources: vault.sources, claude: claudeOf(config.claude.models.write, deps), verify })
   const rewrite = createRewriteHandler({
     db,
@@ -99,25 +133,64 @@ export function buildGeneration({ db, deps, config }: Base, { font, vault, linte
     runDir: join(stateDir, 'run'),
     claude: { model: config.claude.models.write, effort: undefined, ...(deps.claudeBin === undefined ? {} : { bin: deps.claudeBin }) },
     readFixed: vault.fixed,
-    print: printer(db, printDeps),
+    print,
     verify,
     log,
+  })
+  // D5 «Reimpresión»: no Claude, so it needs only the printer — and works without the font only as the CV does.
+  const reprint = font === null ? failing('the CV font could not be read') : createReprintHandler({ db, print, relintOne: linter.relintOne })
+  // D12 «Clasificar» on `models.classify`; Q4 applies the verdict in the queue's `tx`.
+  const push = pushAfterCommit(base)
+  const classifier = createClassifier({
+    stateDir,
+    now,
+    timers,
+    log,
+    claude: claudeOf(config.claude.models.classify, deps),
+    apply: (q, job, verdict, at) => applyReply(q, job, verdict, at, { push }),
   })
   const queue = createQueue({
     db,
     now,
     concurrency: config.claude.concurrency,
-    handlers: { cv, rewrite, letter: failing(NO_LETTER_YET) },
+    handlers: { cv, rewrite, reprint, letter: failing(NO_LETTER_YET), classify: classifier.handler },
     log,
     lint: linter.lint,
     relintOne: linter.relintOne,
     pdfExists: existsSync,
+    classifyFailed: classifier.failed,
   })
-  return { cv, rewrite, queue }
+  /** The re-lint's hook (D3 «`cv-stale`»): one reprint, in its own `tx`, after the save's. */
+  const enqueueReprint = (applicationId: string): void => {
+    const added = queue.add({ kind: 'reprint', ref: applicationId })
+    if (!added.ok) throw new Error(added.error.reason)
+  }
+  return { cv, rewrite, queue, enqueueReprint, classifier, push }
+}
+
+/** The reading task of the clock (Q5): built, not running; the password read inside it, at every read. */
+export function buildReplies({ db, deps, config }: Base, { queue, password, classifier }: { readonly queue: Queue; readonly password: PasswordHealth; readonly classifier: Classifier }): ReplyTask {
+  return createReplyTask({
+    db,
+    now: deps.now,
+    timers: deps.timers,
+    log: deps.log,
+    pollMinutes: config.mail.replyPollMinutes,
+    server: { host: config.mail.imapHost, user: config.mail.address },
+    passwordFile: config.mail.passwordFile,
+    readPassword: password.readPassword,
+    connect: deps.connect ?? connectImapFlow,
+    classifier,
+    enqueue: queue.enqueue,
+    pump: queue.pump,
+  })
 }
 
 /** The clock (D16): built, not armed. */
-export function buildClock({ db, deps, config, timeZone }: Base, { queue, ads, checks }: { readonly queue: Queue; readonly ads: AdRevalidator; readonly checks: CheckQueue }): Clock {
+export function buildClock(
+  { db, deps, config, timeZone }: Base,
+  { queue, ads, checks, replies }: { readonly queue: Queue; readonly ads: AdRevalidator; readonly checks: CheckQueue; readonly replies: ReplyTask },
+): Clock {
   const { log, now, timers, stateDir } = deps
   const profileNow = (): Profile => {
     const current = db.read((q) => repo.latestProfileVersion(q))
@@ -139,5 +212,6 @@ export function buildClock({ db, deps, config, timeZone }: Base, { queue, ads, c
     },
     enqueueCv: queue.enqueueCv,
     seedFiles,
+    replies: replies.run,
   })
 }

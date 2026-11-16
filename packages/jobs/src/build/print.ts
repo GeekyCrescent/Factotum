@@ -1,6 +1,6 @@
 /**
  * Printing a `CvDoc` and keeping it as a version's files (design D5 steps 5–7 and the layout of
- * step 8; tasks H5b). The CV run uses it, and the reprint of H5c will: the same doc and the same
+ * step 8; tasks H5b). The CV run uses it, and so does the reprint (H5c, `reprint.ts`): the same doc and the same
  * contact give the same HTML (`renderCvHtml`), so a reprint is these steps with today's profile.
  *
  * THE PRINT goes to `<stateDir>/render/<renderId>/` (Chromium, one print per profile at a time) and is
@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import type { Logger, Timers } from '@factotum/core'
 
 import type { RunFailure } from '../ai/run.ts'
-import type { CvDoc, Profile, Result } from '../types.ts'
+import { DENSITIES, type CvDoc, type Density, type Profile, type Result } from '../types.ts'
 import { printPdf } from './chromium.ts'
 import { countPages, renderPreview, type Poppler } from './pdf.ts'
 import { renderCvHtml } from './render.ts'
@@ -48,6 +48,8 @@ export interface Printed {
   readonly pages: number
   /** The contact the template printed (`contactHashOf`). */
   readonly contactHash: string
+  /** The density it was set at (H6). */
+  readonly density: Density
 }
 
 export interface Kept {
@@ -66,14 +68,27 @@ const codeOf = (error: unknown): string => {
   return typeof code === 'string' ? code : 'error'
 }
 
-/** Steps 5–7a: the HTML of `doc` with `profile`'s contact, printed, its pages counted. */
-export async function printCv(deps: PrintDeps, renderId: string, doc: CvDoc, profile: Profile, signal: AbortSignal): Promise<Found<Printed>> {
-  const { html, contactHash } = renderCvHtml(doc, profile, deps.font)
+/** Steps 5–7a at one density: the HTML of `doc` with `profile`'s contact, printed, its pages counted. */
+export async function printCv(deps: PrintDeps, renderId: string, doc: CvDoc, profile: Profile, signal: AbortSignal, density: Density = 'normal'): Promise<Found<Printed>> {
+  const { html, contactHash } = renderCvHtml(doc, profile, deps.font, density)
   const pdf = await printPdf({ bin: deps.chromium, stateDir: deps.stateDir, timers: deps.timers, signal }, renderId, html)
   if (!pdf.ok) return failed(pdf.error.reason)
   const pages = await countPages({ poppler: deps.poppler, timers: deps.timers, signal }, pdf.value)
   if (!pages.ok) return failed(pages.error.reason)
-  return found({ pdf: pdf.value, pages: pages.value, contactHash })
+  return found({ pdf: pdf.value, pages: pages.value, contactHash, density })
+}
+
+/**
+ * Steps 5–7a fitted without Claude (H6): printed at `from`, then at each tighter density while it runs
+ * past one page. The first one-page print, or the tightest one. Each print replaces the last in the
+ * render folder, so the one returned is the one on disk.
+ */
+export async function printFitted(deps: PrintDeps, renderId: string, doc: CvDoc, profile: Profile, signal: AbortSignal, from: Density = 'normal'): Promise<Found<Printed>> {
+  const index = DENSITIES.indexOf(from)
+  const printed = await printCv(deps, renderId, doc, profile, signal, from)
+  const tighter = DENSITIES[index + 1]
+  if (!printed.ok || printed.value.pages <= 1 || index < 0 || tighter === undefined) return printed
+  return printFitted(deps, renderId, doc, profile, signal, tighter)
 }
 
 /** `<stateDir>/artifacts/<applicationId>/v<k>`, made new, from `k = from` on. */

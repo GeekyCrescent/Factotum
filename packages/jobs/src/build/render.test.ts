@@ -64,6 +64,35 @@ test('A4 with a 12 mm margin', () => {
   assert.match(html, /@page \{ size: A4; margin: 12mm \}/)
 })
 
+/** The `font-size` values (pt) of the HTML's CSS. */
+const fontSizes = (html: string): number[] => [...html.matchAll(/font-size: ([\d.]+)pt/g)].map((m) => Number(m[1]))
+
+test('H6: three densities — normal is the base, compact tightens the spacing, tight adds 9.5 pt and a 10 mm page; each marked', () => {
+  const normal = renderCvHtml(DOC, PROFILE, FONT).html
+  assert.equal(renderCvHtml(DOC, PROFILE, FONT, 'normal').html, normal, 'normal is the default')
+  assert.ok(normal.includes('<html lang="en" data-density="normal">'))
+  assert.equal(normal.includes('line-height: 1.25'), false)
+
+  const compact = renderCvHtml(DOC, PROFILE, FONT, 'compact').html
+  assert.ok(compact.includes('data-density="compact"'))
+  assert.match(compact, /body \{ line-height: 1\.25 \}/)
+  assert.match(compact, /h2 \{ margin: 6pt 0 2\.5pt \}/)
+  assert.equal(compact.includes('margin: 10mm'), false, 'compact keeps the 12 mm page')
+
+  const tight = renderCvHtml(DOC, PROFILE, FONT, 'tight').html
+  assert.ok(tight.includes('data-density="tight"'))
+  assert.match(tight, /body \{ line-height: 1\.25 \}/, 'tight is compact and more')
+  assert.match(tight, /@page \{ margin: 10mm \}/)
+  assert.match(tight, /body \{ font-size: 9\.5pt \}/)
+  assert.ok(tight.indexOf('font-size: 9.5pt') > tight.indexOf('font-size: 10pt'), 'the override comes after the base rule')
+  assert.ok(Math.min(...fontSizes(tight)) >= 9.5, 'readable: nothing below 9.5 pt')
+})
+
+test('H6: the density never enters the contact hash', () => {
+  const hashes = (['normal', 'compact', 'tight'] as const).map((d) => renderCvHtml(DOC, PROFILE, FONT, d).contactHash)
+  assert.deepEqual(hashes, [contactHashOf(PROFILE), contactHashOf(PROFILE), contactHashOf(PROFILE)])
+})
+
 test('deterministic: the same doc and the same contact give the same HTML and the same hash', () => {
   assert.deepEqual(renderCvHtml(DOC, PROFILE, FONT), renderCvHtml(structuredClone(DOC), structuredClone(PROFILE), FONT))
 })

@@ -1,6 +1,6 @@
 /**
  * The verifier (design D6 «El verificador»; tasks L3): `claude -p` with `cv-maestro` in front and the
- * CV or the letter by stdin, answering `{ unsupported: { where, claim, why }[] }` (≤ 10). Each one is an
+ * CV or the letter by stdin, beside the profile's own statements (H6: a second source), answering `{ unsupported: { where, claim, why }[] }` (≤ 10). Each one is an
  * `unsupported-claim` WARNING THAT BLOCKS.
  *
  * IT RUNS ON EVERY CV AND EVERY REWRITE — NEVER ON THE SEED'S TEXTS: they passed the check of
@@ -39,7 +39,7 @@ async function check(deps: VerifierDeps, target: VerifyTarget, ctx: JobContext):
   if (target.origin === 'seed' || (target.cv === null && target.letter === null)) return CLEAN
   const sources = deps.sources()
   if (!sources.ok) return failed(sources.error.reason)
-  const prompt = buildVerifyPrompt({ ...sources.value, cv: target.cv, letter: target.letter })
+  const prompt = buildVerifyPrompt({ ...sources.value, cv: target.cv, letter: target.letter, profile: target.profile })
   const run = await runFixed(deps, prompt, { json: VERIFY_JSON_SCHEMA, output: verifySchema }, ctx)
   return run.ok ? { ok: true, warnings: unsupportedWarnings(run.value.unsupported), usage: run.usage } : run
 }

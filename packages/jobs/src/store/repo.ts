@@ -38,6 +38,7 @@ export { getOpportunity, insertOpportunity, opportunityIdByDedupeKey, saveOpport
 export { getRule, insertProfileVersion, insertRule, latestProfileVersion, listRules, profileVersionOf, updateRule } from './repo/profile.ts'
 export { recoverOnStart, type Recovered, type Skipped } from './repo/recover.ts'
 export * from './repo/review.ts'
+export * from './repo/replies.ts'
 export { heldDraftsDue, seedDraftsWithoutCv } from './repo/seed.ts'
 export { sendingBefore, smtpSendTimesSince } from './repo/sends.ts'
 export {

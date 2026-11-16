@@ -114,7 +114,7 @@ test('C1 flow: the test application is not in the overview; retry and the send p
     assert.deepEqual(jobs.overview().byState, counts, 'not counted')
     assert.equal(valueOf(jobs.application(test.id)).application.test, true)
 
-    errorOf(jobs.retry(test.id, 'reprint'), 'conflict', 'reprint arrives with H5c')
+    errorOf(jobs.retry(test.id, 'reprint'), 'conflict', 'only a CV waiting for review is reprinted')
     errorOf(jobs.retry(test.id, 'cv'), 'conflict')
     errorOf(jobs.send(test.id, 'initial'), 'not-found')
     errorOf(jobs.retrySend(test.id, 'initial'), 'conflict')

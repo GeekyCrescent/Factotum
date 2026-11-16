@@ -23,7 +23,7 @@ function aPrint(stateDir: string): Printed {
   const pdf = join(stateDir, 'render', 'r1', 'cv.pdf')
   mkdirSync(join(stateDir, 'render', 'r1'), { recursive: true })
   writeFileSync(pdf, '%PDF-fake pages=1\n')
-  return { pdf, pages: 1, contactHash: 'hash' }
+  return { pdf, pages: 1, contactHash: 'hash', density: 'normal' }
 }
 
 test('a print whose pages cannot be counted is a failed run with the reason', async () => {
@@ -47,7 +47,7 @@ test('an artifacts folder that cannot be made, a print that is gone, a preview t
   assert.match(noFolder.ok ? '' : noFolder.reason, /the artifacts folder could not be made/)
 
   using other = tempBase()
-  const gone = await keepPrint(deps(other.dir), 'app-1', 2, { pdf: join(other.dir, 'nothing.pdf'), pages: 1, contactHash: 'h' }, signal)
+  const gone = await keepPrint(deps(other.dir), 'app-1', 2, { pdf: join(other.dir, 'nothing.pdf'), pages: 1, contactHash: 'h', density: 'normal' }, signal)
   assert.match(gone.ok ? '' : gone.reason, /the PDF could not be moved/)
 
   const noPreview = await keepPrint(deps(other.dir, { poppler: { pdfinfo: FAKE_PDFINFO, pdftoppm: join(other.dir, 'no-pdftoppm') } }), 'app-1', 5, aPrint(other.dir), signal)

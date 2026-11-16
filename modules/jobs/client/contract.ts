@@ -219,6 +219,38 @@ export interface RewriteInfo {
   readonly before: string | null
 }
 
+/** One «Unmatched reply» (`GET /replies/unmatched`; crit. 56): sender and subject, never a body. */
+export interface UnmatchedReply {
+  /** `<UIDVALIDITY>:<UID>`: what `POST /replies/:key/assign` names. */
+  readonly key: string
+  /** ISO: the date of the mail. */
+  readonly at: string
+  readonly from: string
+  readonly subject: string
+  readonly link: string | null
+  /** When Claude classified it but could not place it. */
+  readonly class: string | null
+  readonly summary: string | null
+  /** The applications the reader matched it to: first in «Assign to…». */
+  readonly candidates: readonly string[]
+  /** Matched by its domain or an ATS, but Gmail did not vouch for the sender: it moved nothing. */
+  readonly unverifiedSender: boolean
+}
+
+/** An application «Assign to…» offers. */
+export interface AssignOption {
+  readonly id: string
+  readonly company: string
+  readonly role: string
+  readonly state: string
+}
+
+/** `GET /replies/unmatched`. */
+export interface UnmatchedAnswer {
+  readonly replies: readonly UnmatchedReply[]
+  readonly applications: readonly AssignOption[]
+}
+
 export interface ReplyCard {
   readonly applicationId: string
   readonly eventId: string
@@ -420,8 +452,8 @@ export interface Profile {
 
 /**
  * The printed CVs of applications not sent (`in-review`, `ready`), by the contact they carry (D6
- * `cv-stale`): `current` go out of date if a contact field printed on the CV changes — nothing reprints
- * them until H5c —; `stale` are out of date already, and saving their contact back undoes it.
+ * `cv-stale`): `current` go out of date if a contact field printed on the CV changes, and are reprinted
+ * with the new one (H5c); `stale` are out of date already, and reprinting.
  */
 export interface PrintedCvs {
   readonly current: number

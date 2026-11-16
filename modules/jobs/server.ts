@@ -60,6 +60,8 @@ const STATUS_OF: Readonly<Record<Exclude<JobsError['code'], 'invalid'>, number>>
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 /** An artifact version: a whole number from 1, no leading zero. */
 const VERSION_PATTERN = /^[1-9]\d{0,5}$/
+/** A reply's key: `<UIDVALIDITY>:<UID>`, as the engine mints it. */
+const REPLY_KEY_PATTERN = /^\d{1,10}:\d{1,10}$/
 /** The download's name (`Juan-Rodrigo-Ferro-Rayon-CV-Acme.pdf`): ASCII letters, digits and `-`. */
 const PDF_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,119}\.pdf$/
 
@@ -191,6 +193,18 @@ function routeTable(holder: Holder, log: Logger): RouteTable {
       const job = fieldOf(req.body, 'job')
       if (!oneOf<RetryJob>(RETRY_JOBS, job)) return invalid('job', `one of ${RETRY_JOBS.join(', ')}`)
       return answer(jobs.retry(id(req), job))
+    }),
+
+    // D12, crit. 56: the «Unmatched replies» and their «Assign to…» / «Ignore» (`applicationId: null`).
+    'GET /replies/unmatched': withJobs((jobs) => ok(jobs.unmatchedReplies())),
+    'POST /replies/:key/assign': withJobs((jobs, req) => {
+      const key = req.params.key ?? ''
+      if (!REPLY_KEY_PATTERN.test(key)) return invalid('key', 'UIDVALIDITY:UID')
+      const applicationId = fieldOf(req.body, 'applicationId')
+      if (applicationId !== null && (typeof applicationId !== 'string' || !ID_PATTERN.test(applicationId))) {
+        return invalid('applicationId', 'an application id, or null to ignore it')
+      }
+      return answer(jobs.assignReply(key, applicationId), () => ({ ok: true }))
     }),
 
     'POST /import': withJobs(async (jobs, req) => {

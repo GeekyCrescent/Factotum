@@ -48,6 +48,8 @@ function fakeJobs(calls: Calls, over: Partial<Jobs> = {}): Jobs {
       return { ok: true, value: { imported: 0 } }
     },
     health: record('health', { password: 'ok' }),
+    unmatchedReplies: record('unmatchedReplies', { replies: [{ key: '7:12', from: 'hr@x.example', subject: 'Your interview' }], applications: [] }),
+    assignReply: record('assignReply', { ok: true, value: undefined }),
     file: (id, version, kind) => {
       calls.log.push(`file ${JSON.stringify([id, version, kind])}`)
       return { ok: true, value: kind === 'png' ? PNG_PATH : PDF_PATH }
@@ -470,6 +472,42 @@ test('a path the engine answers that is not absolute is never handed to the kern
 })
 
 // ── The rest of cut 1a ───────────────────────────────────────────────────────────────────────────
+
+// ── The unmatched replies (Q5, D12, crit. 56) ────────────────────────────────────────────────────
+
+test('GET /replies/unmatched hands over what the engine answers', async () => {
+  const { routes, calls } = await started()
+  const response = await call(routes, 'GET /replies/unmatched')
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body, { replies: [{ key: '7:12', from: 'hr@x.example', subject: 'Your interview' }], applications: [] })
+  assert.equal(response.headers?.['cache-control'], 'no-store')
+  assert.deepEqual(calls.log, ['unmatchedReplies []'])
+})
+
+test('POST /replies/:key/assign { applicationId } assigns it; { applicationId: null } ignores it; both answer { ok: true }', async () => {
+  const { routes, calls } = await started()
+  const assigned = await call(routes, 'POST /replies/:key/assign', { params: { key: '7:12' }, body: { applicationId: ID } })
+  const ignored = await call(routes, 'POST /replies/:key/assign', { params: { key: '7:12' }, body: { applicationId: null } })
+  assert.deepEqual([assigned.status, assigned.body, ignored.status, ignored.body], [200, { ok: true }, 200, { ok: true }])
+  assert.deepEqual(calls.log, [`assignReply ["7:12","${ID}"]`, 'assignReply ["7:12",null]'])
+})
+
+test('POST /replies/:key/assign: a key that is not UIDVALIDITY:UID is a 400 on key, a missing applicationId a 400 on applicationId; the engine is never asked', async () => {
+  const { routes, calls } = await started()
+  const badKey = await call(routes, 'POST /replies/:key/assign', { params: { key: '../7' }, body: { applicationId: null } })
+  const noId = await call(routes, 'POST /replies/:key/assign', { params: { key: '7:12' }, body: {} })
+  const badId = await call(routes, 'POST /replies/:key/assign', { params: { key: '7:12' }, body: { applicationId: '../../etc' } })
+  assert.deepEqual([badKey.status, errorOf(badKey)?.field], [400, 'key'])
+  assert.deepEqual([noId.status, errorOf(noId)?.field], [400, 'applicationId'])
+  assert.deepEqual([badId.status, errorOf(badId)?.field], [400, 'applicationId'])
+  assert.deepEqual(calls.log, [])
+})
+
+test('POST /replies/:key/assign of a reply no longer waiting is a 404', async () => {
+  const { routes } = await started({ assignReply: failing('not-found', 'no unmatched reply with that key') })
+  const response = await call(routes, 'POST /replies/:key/assign', { params: { key: '7:12' }, body: { applicationId: null } })
+  assert.deepEqual([response.status, errorOf(response)?.code], [404, 'not-found'])
+})
 
 test('GET /overview, GET /health and GET /a/:id hand over what the engine answers', async () => {
   const { routes, calls } = await started()

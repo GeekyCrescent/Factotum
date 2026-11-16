@@ -12,7 +12,7 @@
  *
  * NO CLAUDE AND NO CHROMIUM INSIDE THE `tx`. The one thing a re-lint asks for is a reprint, for each
  * application that GAINED `cv-stale`; it is named in the report and the caller enqueues it AFTER the
- * `tx` (`saveProfileRelinting`, the hook `enqueueReprint` — a no-op until H5c connects it).
+ * `tx` (`saveProfileRelinting`, the hook `enqueueReprint`, which the facade connects to the queue, H5c).
  *
  * A ROW IT CANNOT LINT IS SKIPPED, NEVER FATAL (`relintUnsent`): with the vault offline the master CV
  * cannot be read, and the owner must still be able to edit the profile. The row keeps its warnings,
@@ -236,8 +236,8 @@ export interface RelintSaveDeps {
   readonly now: () => Date
   readonly linter: Linter
   /**
-   * D3 «`cv-stale`»: one reprint per application that gained it, AFTER the `tx`. A no-op until H5c
-   * connects it to the queue (v4, C3).
+   * D3 «`cv-stale`»: one reprint per application that gained it, AFTER the `tx`: the facade's queues a
+   * `reprint` work (H5c; v4, C3).
    */
   readonly enqueueReprint: (applicationId: string) => void
   readonly log?: Logger | undefined

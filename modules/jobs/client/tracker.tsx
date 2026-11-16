@@ -4,6 +4,8 @@
  * «Continue review» while the open batch has an undecided item, which is never armed over (R8). The list of applications, the
  * filters and the detail are T2a's.
  *
+ * THE «UNMATCHED REPLIES» are here (crit. 56, Q5): «Assign to…» and «Ignore» (`unmatched.tsx`).
+ *
  * THE SENDS THAT NEED THE OWNER are here too, one card per send («did it go?», failed): after a
  * restart, the review's bar no longer has them, and this is where they are answered. Their answers go
  * through this screen's one lock, as in the review.
@@ -15,6 +17,7 @@ import { createLock, runOrSay } from './guard.ts'
 import { refusalOf } from './model.ts'
 import { SendLines } from './send-lines.tsx'
 import { countersOf, startOf } from './tracker-model.ts'
+import { UnmatchedReplies } from './unmatched.tsx'
 import { useSends } from './use-sends.ts'
 
 export function Tracker({ props }: { readonly props: ViewProps }) {
@@ -106,6 +109,7 @@ export function Tracker({ props }: { readonly props: ViewProps }) {
             <p>{text}</p>
           </div>
         ))}
+        <UnmatchedReplies api={api} lock={lock} onAssigned={() => void load()} />
         {overview === null ? (
           error === null ? <p class="j-loading">Loading…</p> : null
         ) : (
