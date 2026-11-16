@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { capturedLog, eventually, manualTimers, PROCESS_GONE_MS, realTimers } from '../test-support.ts'
-import { AUTH_REASON, isAuth, isLimit, KILL_GRACE_MS, LIMIT_REASON, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
+import { AUTH_REASON, isAuth, isLimit, KILL_GRACE_MS, LIMIT_REASON, modelOf, resetsAtOf, runClaude, SETTLE_GRACE_MS, type RunInput } from './run.ts'
 
 const FAKE = fileURLToPath(new URL('../../test/fixtures/fake-claude.mjs', import.meta.url))
 const OUTPUT = z.object({ title: z.string() })
@@ -61,6 +61,25 @@ test('a good answer is the structured output with its usage, the cache counted a
     usage: { inputTokens: 10, cacheCreationTokens: 1000, cacheReadTokens: 500, outputTokens: 60, costUsd: 0.0021, ms: 1234, model: 'claude-haiku-4-5-20251001' },
   })
   assert.equal(await readFile(join(cwd, 'fake-claude.prompt.1'), 'utf8'), 'the prompt')
+})
+
+test('H6: the model recorded is the one that did the work, not the small one the CLI lists first', async () => {
+  const { input } = await rig(['two-models'])
+  const result = await runClaude(input)
+  assert.equal(result.ok && result.usage.model, 'claude-sonnet-5-5')
+})
+
+test('H6: modelOf takes the most output tokens, then the cost when the outputs are missing; nothing usable is undefined', () => {
+  const small = { inputTokens: 400, outputTokens: 20, costUSD: 0.0005 }
+  const big = { inputTokens: 10, outputTokens: 3000, costUSD: 0.72 }
+  assert.equal(modelOf({ 'claude-haiku-4-5': small, 'claude-sonnet-5-5': big }), 'claude-sonnet-5-5')
+  assert.equal(modelOf({ 'claude-sonnet-5-5': big, 'claude-haiku-4-5': small }), 'claude-sonnet-5-5')
+  assert.equal(modelOf({ 'claude-haiku-4-5': { costUSD: 0.0005 }, 'claude-sonnet-5-5': { costUSD: 0.72 } }), 'claude-sonnet-5-5', 'no outputs: the cost decides')
+  assert.equal(modelOf({ 'claude-haiku-4-5': { outputTokens: 'many', costUSD: 0.0005 }, 'claude-sonnet-5-5': { costUSD: 0.72 } }), 'claude-sonnet-5-5')
+  assert.equal(modelOf({ only: 'not an object' }), 'only', 'one model is that model')
+  assert.equal(modelOf({}), undefined)
+  assert.equal(modelOf(null), undefined)
+  assert.equal(modelOf('claude-sonnet-5-5'), undefined)
 })
 
 test('usage: the three token counters come back separate, never summed (A4)', async () => {

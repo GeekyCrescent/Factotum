@@ -381,9 +381,29 @@ function statusOf(value: unknown): string {
   return typeof value === 'string' && /^[a-z_]{1,40}$/.test(value) ? value : 'unknown'
 }
 
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null ? (value as Readonly<Record<string, unknown>>) : {}
+
+/**
+ * The model that did the work, from the CLI's `modelUsage` (H6). The CLI also lists a small model it
+ * uses itself — measured on the production host, FIRST — so the first key is not it: the entry with the
+ * most output tokens, then the highest cost (when the outputs are missing). Undefined when there is none. Pure.
+ */
+export function modelOf(modelUsage: unknown): string | undefined {
+  if (typeof modelUsage !== 'object' || modelUsage === null) return undefined
+  const ranked = Object.entries(modelUsage as Readonly<Record<string, unknown>>).map(([model, entry]) => {
+    const counts = recordOf(entry)
+    return { model, outputs: numberOf(counts.outputTokens), cost: numberOf(counts.costUSD) }
+  })
+  const heaviest = ranked.reduce<(typeof ranked)[number] | undefined>(
+    (best, next) => (best === undefined || next.outputs > best.outputs || (next.outputs === best.outputs && next.cost > best.cost) ? next : best),
+    undefined,
+  )
+  return heaviest?.model
+}
+
 function usageOf(parsed: CliResult): RunUsage {
-  const usage = (typeof parsed.usage === 'object' && parsed.usage !== null ? parsed.usage : {}) as Readonly<Record<string, unknown>>
-  const models = typeof parsed.modelUsage === 'object' && parsed.modelUsage !== null ? Object.keys(parsed.modelUsage) : []
+  const usage = recordOf(parsed.usage)
   return {
     inputTokens: numberOf(usage.input_tokens),
     cacheCreationTokens: numberOf(usage.cache_creation_input_tokens),
@@ -391,7 +411,7 @@ function usageOf(parsed: CliResult): RunUsage {
     outputTokens: numberOf(usage.output_tokens),
     costUsd: numberOf(parsed.total_cost_usd),
     ms: numberOf(parsed.duration_ms),
-    model: models[0],
+    model: modelOf(parsed.modelUsage),
   }
 }
 
