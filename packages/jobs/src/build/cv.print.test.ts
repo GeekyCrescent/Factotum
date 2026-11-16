@@ -57,7 +57,7 @@ test('one page: printed with the profile’s contact, saved under artifacts/<id>
   assert.equal(artifacts.contactHash, contactHashOf(PROFILE))
   assert.ok(chromiumHtml(base.dir, 1).includes(PROFILE.identity.phone), 'the contact is the profile’s, printed by the template')
   assert.equal(claudeCalls(base.dir), 1)
-  assert.deepEqual(spy.calls, [{ cv: DOC, letter: null, origin: 'generated' }], 'the verifier checks the CV this run wrote, not the seed’s letter')
+  assert.deepEqual(spy.calls, [{ cv: DOC, letter: null, origin: 'generated', profile: PROFILE }], 'the verifier checks the CV this run wrote, not the seed’s letter, against the profile it was written with')
   assert.ok(eventsOf(db, APP_ID).some((e) => e.kind === 'prepared' && e.data.version === 2 && e.data.kind === 'cv'))
   assert.equal(existsSync(join(base.dir, 'render', onlyWork(db).id)), false, 'the render folder is cleared')
 })

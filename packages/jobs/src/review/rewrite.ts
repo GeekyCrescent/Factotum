@@ -32,7 +32,7 @@ import { addUsage, UNCHECKED_PREFIX, type VerifyFn } from '../build/cv.ts'
 import { slotsPreserved, type SlotFields, type SlotName } from '../build/slots.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { fail, ok, type Application, type Artifacts, type CvDoc, type Density, type ProfileVersion, type Result, type RunUsage, type Warning } from '../types.ts'
+import { fail, ok, type Application, type Artifacts, type CvDoc, type Density, type Profile, type ProfileVersion, type Result, type RunUsage, type Warning } from '../types.ts'
 
 type Letter = NonNullable<Artifacts['letter']>
 
@@ -200,8 +200,8 @@ async function reprint(deps: RewriteDeps, app: Application, cv: CvDoc, signal: A
 const letterText = (letter: Letter): string => (letter.subject === null ? letter.body : `${letter.subject}\n\n${letter.body}`)
 
 /** The changed texts through the verifier (D6: every rewrite); one that does not run fails the attempt. */
-async function verifyChanged(deps: RewriteDeps, changed: Changed, ctx: JobContext): Promise<RunFailure | { readonly ok: true; readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }> {
-  const checked = await deps.verify({ cv: changed.cv, letter: changed.letter === null ? null : letterText(changed.letter), origin: 'rewritten' }, ctx)
+async function verifyChanged(deps: RewriteDeps, changed: Changed, profile: Profile, ctx: JobContext): Promise<RunFailure | { readonly ok: true; readonly warnings: readonly Warning[]; readonly usage: RunUsage | null }> {
+  const checked = await deps.verify({ cv: changed.cv, letter: changed.letter === null ? null : letterText(changed.letter), origin: 'rewritten', profile }, ctx)
   if (checked.ok || isPause(checked)) return checked
   return failed(`${UNCHECKED_PREFIX}${checked.reason}`)
 }
@@ -211,7 +211,7 @@ async function compose(deps: RewriteDeps, context: Context, answer: RunResult<Re
   const changed = changedOf(context.current, answer.value)
   const printed = changed.cv === null ? null : await reprint(deps, context.app, changed.cv, ctx.signal)
   if (printed !== null && !printed.ok) return printed
-  const checked = await verifyChanged(deps, changed, ctx)
+  const checked = await verifyChanged(deps, changed, context.prompt.profile, ctx)
   if (!checked.ok) return checked
   const artifacts: ArtifactsPatch = {
     ...(printed === null ? {} : printed.patch),

@@ -267,7 +267,7 @@ describe('the rewrite of an application (R2, design D10)', () => {
       const app = appOf(w.db, 'a1')
       assert.equal(app.state, 'in-review')
       assert.deepEqual(app.warnings, [letterClaim('led 40 people')])
-      assert.deepEqual(w.verified, [{ cv: null, letter: 'Application\n\nDear Ada,\n\nShorter. {portfolio}\n\n{signature}', origin: 'rewritten' }], 'only the letter changed: only it is read')
+      assert.deepEqual(w.verified, [{ cv: null, letter: 'Application\n\nDear Ada,\n\nShorter. {portfolio}\n\n{signature}', origin: 'rewritten', profile: valueOf(loadProfileSeed()) }], 'only the letter changed: only it is read, against the profile')
     })
 
     test('the block goes when the new verification passes', async () => {
@@ -299,7 +299,7 @@ describe('the rewrite of an application (R2, design D10)', () => {
       w.answer(answer({ cv, letter: ARTIFACTS.letter }))
       const workId = instruct(w, 'a1', 'Change the headline')
       await run(w, workId, 0)
-      assert.deepEqual(w.verified, [{ cv, letter: null, origin: 'rewritten' }])
+      assert.deepEqual(w.verified, [{ cv, letter: null, origin: 'rewritten', profile: valueOf(loadProfileSeed()) }])
       const app = appOf(w.db, 'a1')
       assert.equal(app.state, 'in-review')
       assert.deepEqual(app.warnings, [{ code: 'cv-overflow', where: 'cv', detail: 'the CV prints on 2 pages', blocks: true, overridden: null }])
