@@ -13,7 +13,7 @@ import { delimiter, extname, isAbsolute, join, sep } from 'node:path'
 import { CLAUDE_BIN, uuidv7 } from '@factotum/sessions'
 
 import type { CvSources } from '../build/cv.ts'
-import { clearRender, keepPrint, printCv, type PrintDeps } from '../build/print.ts'
+import { clearRender, keepPrint, printFitted, type PrintDeps } from '../build/print.ts'
 import type { HostConfig } from '../config.ts'
 import type { PrintFn } from '../review/rewrite.ts'
 import { parseCvs } from '../seed/kit.ts'
@@ -185,16 +185,16 @@ export function confinedArtifact(stateDir: string, path: string, extension: '.pd
 
 /** The rewrite's printer (`RewriteDeps.print`): H5b's steps 5–7 with today's profile, its render folder cleared. */
 export function printer(db: Db, deps: PrintDeps): PrintFn {
-  return async ({ applicationId, version, cv, signal, profile: given }) => {
+  return async ({ applicationId, version, cv, signal, profile: given, from }) => {
     const profile = given ?? db.read((q) => latestProfileVersion(q))
     if (profile === undefined) return fail('module-error', 'there is no profile to print with')
     const renderId = uuidv7()
     try {
-      const printed = await printCv(deps, renderId, cv, profile.profile, signal)
+      const printed = await printFitted(deps, renderId, cv, profile.profile, signal, from)
       if (!printed.ok) return fail('module-error', printed.reason)
       const kept = await keepPrint(deps, applicationId, version, printed.value, signal)
       if (!kept.ok) return fail('module-error', kept.reason)
-      return ok({ pdf: kept.value.pdf, png: kept.value.png, contactHash: printed.value.contactHash, pages: printed.value.pages })
+      return ok({ pdf: kept.value.pdf, png: kept.value.png, contactHash: printed.value.contactHash, pages: printed.value.pages, density: printed.value.density })
     } finally {
       clearRender(deps, renderId)
     }

@@ -92,7 +92,7 @@ async function world(print?: PrintFn, overrides: Partial<RewriteDeps> = {}, veri
       print ??
       (async ({ version }) => {
         prints.push(version)
-        return ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: `hash-${version}`, pages: 1 })
+        return ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: `hash-${version}`, pages: 1, density: 'normal' })
       }),
     ...overrides,
   })
@@ -293,7 +293,7 @@ describe('the rewrite of an application (R2, design D10)', () => {
     })
 
     test('a CV that changed is read too, and a reprint on 2 pages is cv-overflow', async () => {
-      const w = await world(async ({ version }) => ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: 'h', pages: 2 }))
+      const w = await world(async ({ version }) => ok({ pdf: `artifacts/a1/v${version}/cv.pdf`, png: `artifacts/a1/v${version}/cv.png`, contactHash: 'h', pages: 2, density: 'tight' }))
       insertApp(w.db, { id: 'a1', state: 'ready' }, ARTIFACTS)
       const cv = { ...CV, headline: 'Graduate engineer' }
       w.answer(answer({ cv, letter: ARTIFACTS.letter }))

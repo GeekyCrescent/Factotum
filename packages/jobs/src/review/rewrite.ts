@@ -32,7 +32,7 @@ import { addUsage, UNCHECKED_PREFIX, type VerifyFn } from '../build/cv.ts'
 import { slotsPreserved, type SlotFields, type SlotName } from '../build/slots.ts'
 import type { Db, Queries } from '../store/db.ts'
 import * as repo from '../store/repo.ts'
-import { fail, ok, type Application, type Artifacts, type CvDoc, type ProfileVersion, type Result, type RunUsage, type Warning } from '../types.ts'
+import { fail, ok, type Application, type Artifacts, type CvDoc, type Density, type ProfileVersion, type Result, type RunUsage, type Warning } from '../types.ts'
 
 type Letter = NonNullable<Artifacts['letter']>
 
@@ -52,7 +52,9 @@ export type PrintFn = (input: {
   readonly signal: AbortSignal
   /** The profile to print with, when the caller already read it (and names its version); else today's. */
   readonly profile?: ProfileVersion
-}) => Promise<Result<Pick<Artifacts, 'pdf' | 'png' | 'contactHash'> & { readonly pages: number }>>
+  /** The density to start from (H6): a reprint's is the version's; else `normal`. Tighter ones follow while it runs long. */
+  readonly from?: Density
+}) => Promise<Result<Pick<Artifacts, 'pdf' | 'png' | 'contactHash'> & { readonly pages: number; readonly density: Density }>>
 
 export interface RewriteDeps {
   readonly db: Db
@@ -187,7 +189,7 @@ function changedOf(current: Artifacts, answer: RewriteOutput): Changed {
 }
 
 /** D5 steps 5–7 for a CV that changed: its files, and `cv-overflow` past one page (no «shorter» here: D5). */
-async function reprint(deps: RewriteDeps, app: Application, cv: CvDoc, signal: AbortSignal): Promise<RunFailure | { readonly ok: true; readonly patch: Pick<ArtifactsPatch, 'cv' | 'pdf' | 'png' | 'contactHash'>; readonly overflow: readonly Warning[] }> {
+async function reprint(deps: RewriteDeps, app: Application, cv: CvDoc, signal: AbortSignal): Promise<RunFailure | { readonly ok: true; readonly patch: Pick<ArtifactsPatch, 'cv' | 'pdf' | 'png' | 'contactHash' | 'density'>; readonly overflow: readonly Warning[] }> {
   const print = await deps.print({ applicationId: app.id, version: app.version + 1, cv, signal })
   if (!print.ok) return failed(`the print failed: ${print.error.reason}`)
   const { pages, ...files } = print.value

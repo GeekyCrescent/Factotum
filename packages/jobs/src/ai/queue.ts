@@ -72,7 +72,7 @@ const INTERACTIVE_KINDS: ReadonlySet<WorkKind> = new Set<WorkKind>(['rewrite', '
 export const defaultLane = (kind: WorkKind): Lane => (INTERACTIVE_KINDS.has(kind) ? 'interactive' : 'bulk')
 
 /** What a generation brought back for an application: the fields it produced, the rest stays (G4). */
-export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'contactHash' | 'letter' | 'form' | 'skills' | 'linkedin'>> &
+export type ArtifactsPatch = Partial<Pick<Artifacts, 'cv' | 'pdf' | 'png' | 'contactHash' | 'density' | 'letter' | 'form' | 'skills' | 'linkedin'>> &
   Pick<Artifacts, 'profileVersion' | 'rules' | 'usage' | 'origin'>
 
 export type JobOutput =

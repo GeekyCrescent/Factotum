@@ -62,11 +62,30 @@ test('one page: printed with the profile’s contact, saved under artifacts/<id>
   assert.equal(existsSync(join(base.dir, 'render', onlyWork(db).id)), false, 'the render folder is cleared')
 })
 
-test('two pages, then one: «shorter» once, with the previous CV and its instruction; the shorter CV is the one kept', async () => {
+const prints = (stateDir: string): number => readFileSync(join(stateDir, 'chromium', 'fake-chromium.calls'), 'utf8').trim().split('\n').length
+
+test('H6: two pages at normal and one at compact: the compact print is kept, and Claude is never asked for «shorter»', async () => {
   using base = tempBase()
   const db = await builderStore(base)
   scriptClaude(base.dir, ['ok'], [DOC, SHORT_DOC])
-  scriptChromium(base.dir, 'pages=2', 'pages=1')
+  scriptChromium(base.dir, 'density:2,1,1')
+  const { queue } = builderRig(db, builderDeps(db, base.dir), { pdfExists: existsSync })
+  await runQueue(queue)
+
+  assert.equal(claudeCalls(base.dir), 1, 'no «shorter»: the density fitted it without Claude')
+  assert.equal(prints(base.dir), 2)
+  assert.ok(chromiumHtml(base.dir, 1).includes('data-density="normal"') && chromiumHtml(base.dir, 2).includes('data-density="compact"'))
+  const artifacts = built(db)
+  assert.deepEqual([artifacts.cv, artifacts.density], [DOC, 'compact'], 'the density is kept for the reprint')
+  assert.equal(artifacts.contactHash, contactHashOf(PROFILE))
+  assert.deepEqual([appOf(db, APP_ID).state, appOf(db, APP_ID).warnings], ['ready', []])
+})
+
+test('two pages at every density, then one: «shorter» once, with the previous CV and its instruction; the shorter CV is the one kept', async () => {
+  using base = tempBase()
+  const db = await builderStore(base)
+  scriptClaude(base.dir, ['ok'], [DOC, SHORT_DOC])
+  scriptChromium(base.dir, 'pages=2', 'pages=2', 'pages=2', 'pages=1')
   const spy = spyVerify()
   const { queue } = builderRig(db, builderDeps(db, base.dir, { verify: spy.verify }), { pdfExists: existsSync })
   await runQueue(queue)
@@ -79,11 +98,13 @@ test('two pages, then one: «shorter» once, with the previous CV and its instru
   assert.equal(readFileSync(artifacts.pdf!, 'utf8').trim(), '%PDF-fake pages=1')
   assert.equal(artifacts.usage?.costUsd, 0.0042, 'the cost of both runs')
   assert.equal(artifacts.usage?.outputTokens, 120)
+  assert.equal(artifacts.density, 'normal', 'the shorter CV is tried from normal again, and fits there')
+  assert.ok(chromiumHtml(base.dir, 4).includes('data-density="normal"'))
   assert.deepEqual(spy.calls.map((c) => c.cv), [SHORT_DOC])
   assert.equal(appOf(db, APP_ID).state, 'ready')
 })
 
-test('two pages, then two: `cv-overflow` blocks, the PDF is kept, and «shorter» ran only once', async () => {
+test('two pages at every density, before and after «shorter»: `cv-overflow` blocks, the tight PDF is kept, and «shorter» ran only once', async () => {
   using base = tempBase()
   const db = await builderStore(base)
   scriptClaude(base.dir, ['ok'], [DOC, SHORT_DOC])
@@ -92,6 +113,9 @@ test('two pages, then two: `cv-overflow` blocks, the PDF is kept, and «shorter�
   await runQueue(queue)
 
   assert.equal(claudeCalls(base.dir), 2)
+  assert.equal(prints(base.dir), 6, 'three densities, «shorter», three densities')
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map((n) => /data-density="(\w+)"/.exec(chromiumHtml(base.dir, n))?.[1]), ['normal', 'compact', 'tight', 'normal', 'compact', 'tight'])
+  assert.equal(built(db).density, 'tight')
   const app = appOf(db, APP_ID)
   assert.equal(app.state, 'in-review')
   assert.deepEqual(app.warnings, [{ code: 'cv-overflow', where: 'cv', detail: 'the CV prints on 2 pages', blocks: true, overridden: null }])

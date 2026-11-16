@@ -113,8 +113,32 @@ test('H5c: a reprint that no longer fits one page is cv-overflow, with no «shor
   const app = appOf(w.db, 'app-1')
   assert.equal(app.state, 'in-review')
   assert.deepEqual(app.warnings.map((x) => x.code), ['cv-overflow'], 'the contact is current; the page count blocks')
-  assert.equal(prints(base.dir), 1, 'printed once')
+  assert.equal(prints(base.dir), 3, 'printed at each density, and never Claude')
   assert.equal(current(w.db).contactHash, contactHashOf(TODAY))
+})
+
+test('H6: a reprint prints at the density the version was kept at, and keeps it', async () => {
+  using base = tempBase()
+  const w = await world(base, {}, { ...PRINTED, density: 'compact' })
+
+  await reprint(w)
+
+  assert.equal(prints(base.dir), 1)
+  const html = readFileSync(join(base.dir, 'chromium', 'fake-chromium.html.1'), 'utf8')
+  assert.equal(html, renderCvHtml(DOC, TODAY, FONT, 'compact').html)
+  assert.deepEqual([current(w.db).density, appOf(w.db, 'app-1').state], ['compact', 'ready'])
+})
+
+test('H6: a new contact that makes it longer goes on from the kept density to the next, never back to normal', async () => {
+  using base = tempBase()
+  const w = await world(base, {}, { ...PRINTED, density: 'compact' })
+  scriptChromium(base.dir, 'density:1,2,1')
+
+  await reprint(w)
+
+  assert.equal(prints(base.dir), 2)
+  assert.ok(readFileSync(join(base.dir, 'chromium', 'fake-chromium.html.2'), 'utf8').includes('data-density="tight"'))
+  assert.deepEqual([current(w.db).density, appOf(w.db, 'app-1').warnings], ['tight', []])
 })
 
 test('H5c: a reprint on one page clears an old cv-overflow and keeps the verifier’s warning with its «I checked it»', async () => {

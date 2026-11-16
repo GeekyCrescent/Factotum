@@ -1,10 +1,13 @@
 /** The versions of an application's artifacts (design D5). */
 
-import type { Artifacts } from '../../types.ts'
+import { DENSITIES, type Artifacts, type Density } from '../../types.ts'
 import type { Queries } from '../db.ts'
 import { deepFreeze, json, textOrNull, type Row } from './rows.ts'
 
-type ArtifactContent = Pick<Artifacts, 'cv' | 'letter' | 'form' | 'skills' | 'linkedin' | 'origin'>
+/** The density rides in `content` (H6): no column, no migration; absent = `normal`. */
+type ArtifactContent = Pick<Artifacts, 'cv' | 'letter' | 'form' | 'skills' | 'linkedin' | 'origin' | 'density'>
+
+const isDensity = (value: unknown): value is Density => (DENSITIES as readonly unknown[]).includes(value)
 
 /**
  * A version of an application's artifacts. It carries NO event of its own: a version is the content
@@ -12,7 +15,15 @@ type ArtifactContent = Pick<Artifacts, 'cv' | 'letter' | 'form' | 'skills' | 'li
  * the same `tx` by the same caller.
  */
 export function insertArtifacts(q: Queries, applicationId: string, a: Artifacts, now: Date): void {
-  const content: ArtifactContent = { cv: a.cv, letter: a.letter, form: a.form, skills: a.skills, linkedin: a.linkedin, origin: a.origin }
+  const content: ArtifactContent = {
+    cv: a.cv,
+    letter: a.letter,
+    form: a.form,
+    skills: a.skills,
+    linkedin: a.linkedin,
+    origin: a.origin,
+    ...(a.density === undefined ? {} : { density: a.density }),
+  }
   q.run(
     `INSERT INTO artifacts (application_id, version, content, pdf, png, contact_hash, profile_version, rules, usage, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -47,5 +58,6 @@ export function getArtifacts(q: Queries, applicationId: string, version: number)
     rules: json(row, 'rules', []),
     usage: json(row, 'usage', null),
     origin: content.origin,
+    ...(isDensity(content.density) ? { density: content.density } : {}),
   })
 }

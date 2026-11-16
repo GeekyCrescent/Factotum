@@ -2,10 +2,11 @@
  * The reprint (design D5 «Reimpresión», D10 `reprint`, D3 «`cv-stale`»; tasks H5c): the queue's handler
  * for `kind: 'reprint'`, and the two ways one is asked for besides a profile save.
  *
- * WHAT IT DOES: D5 steps 5–7 again — `printCv`, `keepPrint`, `clearRender`, through the same printer
+ * WHAT IT DOES: D5 steps 5–7 again — `printFitted`, `keepPrint`, `clearRender`, through the same printer
  * the rewrite uses — with the SAME `CvDoc` of the current version and TODAY's profile. NO CLAUDE: the
  * text cannot change, so the HTML is the one the same doc and contact always give (`renderCvHtml`).
- * It answers a new version `origin: 'reprinted'` with the new PDF, PNG and `contactHash`; the queue
+ * It prints at the DENSITY the version was kept at (H6), and goes on to the tighter ones only if the new
+ * contact makes it run long — never back to a looser one. It answers a new version `origin: 'reprinted'` with the new PDF, PNG and `contactHash`; the queue
  * writes it (the guard of G4: a newer request of class `cv` discards it) and re-lints it (T-A5). More
  * than one page is `cv-overflow`, with no «shorter»: that one is Claude, and the owner's to ask for.
  *
@@ -98,7 +99,7 @@ export function createReprintHandler(deps: ReprintDeps): JobHandler {
     if (artifacts?.contactHash === contactHashOf(profile.profile)) return relinted(deps, app.id)
     if (artifacts?.cv === null || artifacts?.cv === undefined) return failed('there is no CV to reprint')
     // The profile read once, here: the PDF is printed with it and the version names it.
-    const printed = await deps.print({ applicationId: app.id, version: app.version + 1, cv: artifacts.cv, signal: ctx.signal, profile })
+    const printed = await deps.print({ applicationId: app.id, version: app.version + 1, cv: artifacts.cv, signal: ctx.signal, profile, from: artifacts.density ?? 'normal' })
     if (!printed.ok) return failed(`the print failed: ${printed.error.reason}`)
     const { pages, ...files } = printed.value
     return {

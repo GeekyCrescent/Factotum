@@ -8,7 +8,8 @@
  * goes on, and the transition of step 8 (`in-review` with a block, `ready` without) is the return's.
  *
  * STEPS 5–8 (H5b, `print.ts`): paint with the profile's contact, print, count the pages. More than one
- * → «shorter» ONCE (back to step 1 with the previous CV and `SHORTER`); still more → `cv-overflow`,
+ * → the same doc at `compact`, then `tight` (H6, `printFitted`: no Claude) → «shorter» ONCE (back to
+ * step 1 with the previous CV and `SHORTER`), through the densities again; still more → `cv-overflow`,
  * which blocks. The kept print goes to `<stateDir>/artifacts/<id>/v<k>/`, and THE VERIFIER (injected,
  * L3) reads the CV this run wrote. Its `unsupported-claim`s and `cv-overflow` go back with the version
  * (`JobOutput.warnings`); a verifier that could not run fails the attempt — a CV is never `ready` unchecked.
@@ -37,7 +38,7 @@ import { enabledRules } from '../rules.ts'
 import type { Db } from '../store/db.ts'
 import { companyRecord, getApplication, getArtifacts, getCompany, getOpportunity, latestProfileVersion, type Work } from '../store/repo.ts'
 import type { Application, Artifacts, Company, CvDoc, Opportunity, ProfileVersion, Result, Rule, RunUsage, Warning } from '../types.ts'
-import { clearRender, failed, keepPrint, printCv, type Found, type PrintDeps, type Printed } from './print.ts'
+import { clearRender, failed, keepPrint, printFitted, type Found, type PrintDeps, type Printed } from './print.ts'
 
 export type { Found } from './print.ts'
 
@@ -189,16 +190,19 @@ interface Fitted {
   readonly printed: Printed
 }
 
-/** Steps 1–7a: write and print; on more than one page, «shorter» once and print again. */
+/**
+ * Steps 1–7a: write and print, through the densities first (H6: no Claude); still more than one page,
+ * «shorter» once and print it through the densities again.
+ */
 async function fitOnePage(deps: CvBuilderDeps, job: CvJob, sources: CvSources, renderId: string, ctx: JobContext): Promise<Found<Fitted>> {
   const first = await writeCvDoc(deps, promptInput(job, sources), ctx)
   if (!first.ok) return first
-  const printed = await printCv(deps, renderId, first.value, job.profile.profile, ctx.signal)
+  const printed = await printFitted(deps, renderId, first.value, job.profile.profile, ctx.signal)
   if (!printed.ok) return printed
   if (printed.value.pages <= 1) return { ok: true, value: { doc: first.value, usage: first.usage, printed: printed.value } }
   const shorter = await writeCvDoc(deps, promptInput(job, sources, { doc: first.value, instruction: SHORTER }), ctx)
   if (!shorter.ok) return shorter
-  const again = await printCv(deps, renderId, shorter.value, job.profile.profile, ctx.signal)
+  const again = await printFitted(deps, renderId, shorter.value, job.profile.profile, ctx.signal)
   if (!again.ok) return again
   return { ok: true, value: { doc: shorter.value, usage: addUsage(first.usage, shorter.usage), printed: again.value } }
 }
@@ -233,6 +237,7 @@ async function keepAndVerify(deps: CvBuilderDeps, job: CvJob, fitted: Fitted, ct
     pdf: kept.value.pdf,
     png: kept.value.png,
     contactHash: printed.contactHash,
+    density: printed.density,
     profileVersion: job.profile.version,
     rules: job.rules.map((rule) => rule.id),
     usage: addUsage(fitted.usage, checked.value.usage),

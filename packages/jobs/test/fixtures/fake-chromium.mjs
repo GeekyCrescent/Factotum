@@ -14,6 +14,7 @@
  *   test can see whether two prints overlapped on the same profile.
  *
  *   pages=N    writes a "PDF" `%PDF-fake pages=N` that fake-pdfinfo counts
+ *   density:N,C,T  N pages when the HTML is marked `data-density="normal"`, C at `compact`, T at `tight`
  *   html       like pages=1, with the HTML it printed after the first line (a test reads the contact in the "PDF")
  *   slow       like pages=1, after 300 ms
  *   no-pdf     exits 0 without writing the PDF
@@ -53,6 +54,11 @@ if (mode === 'hang') {
   setTimeout(() => print('1'), 300)
 } else if (mode === 'html') {
   print('1', existsSync(html) ? readFileSync(html, 'utf8') : '')
+} else if (mode.startsWith('density:')) {
+  // `density:N,C,T`: N pages at `normal`, C at `compact`, T at `tight`, read from the HTML's marker.
+  const [normal, compact, tight] = mode.slice('density:'.length).split(',')
+  const marked = /data-density="(\w+)"/.exec(existsSync(html) ? readFileSync(html, 'utf8') : '')?.[1] ?? 'normal'
+  print({ normal, compact, tight }[marked] ?? '1')
 } else if (mode !== 'no-pdf') {
   print(/^pages=(\d+)$/.exec(mode)?.[1] ?? '1')
 }
