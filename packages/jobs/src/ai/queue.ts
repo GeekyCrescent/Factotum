@@ -56,9 +56,10 @@ export {
 
 /** design D10 «Timeouts», by kind. `reprint` and `score` are not Claude writing: a minute. */
 export const TIMEOUT_MS: Readonly<Record<WorkKind, number>> = {
-  cv: 180_000,
+  // Measured on omarchy with the 43 real CVs (18-nov): a CV took 174 s on average, a rewrite overran 120 s.
+  cv: 240_000,
   letter: 120_000,
-  rewrite: 120_000,
+  rewrite: 240_000,
   verify: 120_000,
   classify: 60_000,
   extract: 60_000,
