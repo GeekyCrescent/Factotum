@@ -163,5 +163,12 @@ test('the handler gets the work, its abort signal and the timeout of its kind (D
   queue.add({ kind: 'cv', ref: 'a1' })
   queue.add({ kind: 'classify', ref: 'm1' })
   await queue.settled()
-  assert.deepEqual(seen.sort((a, b) => a - b), [60_000, 180_000])
+  assert.deepEqual(seen.sort((a, b) => a - b), [60_000, 240_000])
+})
+
+test('a CV and a rewrite get 240 s: on omarchy a real CV took 174 s on average and a rewrite overran 120 s', async () => {
+  const { TIMEOUT_MS } = await import('./queue.ts')
+  assert.equal(TIMEOUT_MS.cv, 240_000)
+  assert.equal(TIMEOUT_MS.rewrite, 240_000)
+  assert.equal(TIMEOUT_MS.verify, 120_000)
 })
