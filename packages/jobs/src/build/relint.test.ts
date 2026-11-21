@@ -274,6 +274,32 @@ test('L4 + G4: a CV that comes back on a ready application is re-linted by the q
   assert.deepEqual(app.warnings.map((w) => w.code), ['forbidden-stack'])
 })
 
+test('L4 + T-A8: a LinkedIn application flagged too-long whose rewrite brings a short note loses the warning (the Quillio card)', async () => {
+  using base = tempBase()
+  const db = await store(base)
+  // The seed's shape: a long letter (1,074 characters) and a LinkedIn note, on the linkedin channel.
+  const LETTER = `${'word '.repeat(214)}end.`
+  const tooLong: Warning = { code: 'too-long', where: 'letter', detail: `LinkedIn note ${LETTER.length} characters (at most 280)`, blocks: false, overridden: null }
+  const before: Artifacts = { ...CLEAN, letter: { subject: null, body: LETTER }, linkedin: `${'note '.repeat(60)}end.` }
+  insertApp(db, { state: 'rewriting', rewriteFrom: 'ready', channel: 'linkedin', target: { contactId: 'contact-1', to: null, url: null, contactName: 'Tom', instruction: 'LinkedIn message to Tom' }, warnings: [tooLong] }, before)
+  const handler = controlled()
+  const real = linter()
+  const { queue } = rig(db, { handlers: { rewrite: handler.handler }, lint: real.lint, relintOne: real.relintOne })
+  const work = valueOf(queue.add({ kind: 'rewrite', ref: 'app-1' }))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // What the rewrite handler patches when Claude shortens the note: the letter did not change, so it is not in the patch.
+  const NOTE = 'Hi Tom, I evaluated a speech-to-text + LLM pipeline end to end; I would like to talk about the role.'
+  handler.finish(work.id, { ok: true, output: { type: 'application', artifacts: { linkedin: NOTE, form: [], profileVersion: 2, rules: [], usage: null, origin: 'rewritten' }, warnings: [] } })
+  await queue.settled()
+
+  const app = appOf(db, 'app-1')
+  assert.equal(app.version, CLEAN.version + 1)
+  assert.equal(db.read((q) => repo.getArtifacts(q, 'app-1', app.version))?.letter?.body, LETTER, 'the long letter is still in the version')
+  assert.deepEqual(app.warnings.filter((w) => w.code === 'too-long'), [], 'the note sent is short: no too-long')
+  assert.equal(app.state, 'ready')
+})
+
 test('L4 + G4: the queue\'s lint of a returned generation is L1 over the store, follow-ups by their profile', async () => {
   using base = tempBase()
   const db = await store(base)

@@ -4,11 +4,22 @@ import type { ReviewItem } from './contract.ts'
 import { afterTextOf, rewrittenView, stillRewriting } from './rewrite-model.ts'
 import { application, followup, rewrite } from './test-fixtures.ts'
 
-test('a rewrite that came back shows its tag, the word diff and «before → after words»', () => {
+test('a rewrite that came back shows, by default, no diff: the tag, «before → after words» and «Show changes»', () => {
   const view = rewrittenView(rewrite({ before: 'Hi Sean, a long letter', instruction: 'shorter' }), 'Hi Sean, a letter')
   assert.equal(view.tag, 'rewritten · “shorter”')
   assert.equal(view.failed, false)
   assert.equal(view.count, '5 → 4 words')
+  assert.equal(view.parts, null)
+  assert.equal(view.legend, null)
+  assert.equal(view.toggle, 'Show changes')
+  assert.equal(view.retry, null)
+})
+
+test('«Show changes» draws the spaced diff, its legend, and offers «Hide changes»', () => {
+  const view = rewrittenView(rewrite({ before: 'Hi Sean, a long letter', instruction: 'shorter' }), 'Hi Sean, a letter', true)
+  assert.equal(view.toggle, 'Hide changes')
+  assert.equal(view.legend, 'struck = removed, underlined = added')
+  assert.equal(view.parts?.map((p) => p.text).join(''), 'Hi Sean, a long letter')
   assert.deepEqual(
     view.parts?.filter((p) => p.kind !== 'same').map((p) => [p.kind, p.text.trim()]),
     [['del', 'long']],
@@ -35,6 +46,9 @@ test('without the text before, or after, there is no diff to draw', () => {
   assert.equal(rewrittenView(rewrite({ before: null }), 'x').parts, null)
   assert.equal(rewrittenView(rewrite(), null).parts, null)
   assert.equal(rewrittenView(rewrite(), null).count, null)
+  assert.equal(rewrittenView(rewrite(), null, true).parts, null)
+  assert.equal(rewrittenView(rewrite(), null).toggle, null)
+  assert.equal(rewrittenView(rewrite({ failed: true }), 'x', true).toggle, null)
 })
 
 test('the text a rewrite is compared on: the letter, the LinkedIn note of a LinkedIn application, the follow-up body', () => {

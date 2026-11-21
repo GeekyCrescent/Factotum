@@ -122,11 +122,19 @@ function rewriteInfo(q: Queries, item: Extract<SeenItem, { kind: 'rewritten' }>,
   const followupId = item.target === 'followup' ? item.id : null
   const instruction = stringOr(lastEvent(q, applicationId, followupId, 'instruction')?.data.instruction)
   const reason = item.failed ? stringOr(lastEvent(q, applicationId, followupId, 'rewrite-failed')?.data.reason) : null
-  const before =
-    item.target === 'application'
-      ? (repo.getArtifacts(q, item.id, item.fromVersion)?.letter?.body ?? null)
-      : (repo.getFollowup(q, item.id)?.versions.find((v) => v.version === item.fromVersion)?.body ?? null)
+  const before = item.target === 'application' ? sentTextAt(q, item.id, item.fromVersion) : (repo.getFollowup(q, item.id)?.versions.find((v) => v.version === item.fromVersion)?.body ?? null)
   return { fromVersion: item.fromVersion, failed: item.failed, instruction, reason, before: fillOrNull(before, profile) }
+}
+
+/**
+ * The text of an application's version that the card shows and the owner sends: on `linkedin`, the
+ * note when there is one (the assist panel copies `linkedin ?? letter.body`), else the letter. The
+ * rewrite's «before» must be the same field as the card's «now», or the diff compares a letter with a note.
+ */
+function sentTextAt(q: Queries, applicationId: string, version: number): string | null {
+  const artifacts = repo.getArtifacts(q, applicationId, version)
+  const isLinkedin = repo.getApplication(q, applicationId)?.channel === 'linkedin'
+  return (isLinkedin ? artifacts?.linkedin : null) ?? artifacts?.letter?.body ?? null
 }
 
 function replyCard(q: Queries, item: Extract<SeenItem, { kind: 'reply' }>): ReplyCard {

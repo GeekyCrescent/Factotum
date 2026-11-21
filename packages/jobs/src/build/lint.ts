@@ -179,9 +179,16 @@ function tooLong(where: Where, raw: string, filledText: string, channel: Channel
   return over('letter', wordsIn(filledText), MAX_LETTER_WORDS, 'words')
 }
 
+/**
+ * Only the length of what is SENT. On the `linkedin` channel the message is the note when there is one
+ * (the assist panel copies `linkedin ?? letter.body`): the letter beside a note is never sent, so it is
+ * not held to the note's 280 characters — that was the seed's five 956–1,074-character letters (§M L5)
+ * and a rewritten card still warning about the old letter after its note came back short.
+ */
 function tooLongIn(artifacts: Artifacts, texts: readonly Text[], channel: Channel): readonly Warning[] {
   const raw: Partial<Record<Where, string>> = { subject: artifacts.letter?.subject ?? '', letter: artifacts.letter?.body ?? '', linkedin: artifacts.linkedin ?? '' }
-  return texts.filter((t) => t.where in raw).flatMap((t) => tooLong(t.where, raw[t.where] ?? '', t.text, channel))
+  const isUnsentLetter = (where: Where): boolean => where === 'letter' && channel === 'linkedin' && artifacts.linkedin !== null
+  return texts.filter((t) => t.where in raw && !isUnsentLetter(t.where)).flatMap((t) => tooLong(t.where, raw[t.where] ?? '', t.text, channel))
 }
 
 // — The CV and the letter —
