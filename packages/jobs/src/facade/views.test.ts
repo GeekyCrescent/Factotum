@@ -83,6 +83,29 @@ test('C1 views: follow-up, rewritten (both targets), reply and proposal items; T
   assert.equal(db.read((q) => reviewItem(q, { itemId: 'x', seen: SEEN, kind: 'rewritten', target: 'followup', id: 'nope', fromVersion: 1, failed: false }, PROFILE)), null)
 })
 
+test('C1 views: a rewritten LinkedIn application compares the note before with the note now, not the letter', async () => {
+  using base = tempBase()
+  const db = await queueStore(base)
+  const v1 = { ...ARTIFACTS, letter: { subject: null, body: 'The long letter that is never sent.' }, linkedin: 'The old note.' }
+  insertApp(db, { id: 'a-li', state: 'ready', channel: 'linkedin', version: 2 }, v1)
+  valueOf(
+    db.tx((q) => {
+      repo.insertArtifacts(q, 'a-li', { ...v1, version: 2, linkedin: 'The new note.' }, NOW)
+      return ok(undefined)
+    }),
+  )
+  const noNote = { ...ARTIFACTS, letter: { subject: null, body: 'A letter sent as the message.' }, linkedin: null }
+  insertApp(db, { id: 'a-li-letter', state: 'ready', channel: 'linkedin' }, noNote)
+  const item = (id: string): SeenItem => ({ itemId: id, seen: SEEN, kind: 'rewritten', target: 'application', id, fromVersion: 1, failed: false })
+
+  const [withNote, withoutNote] = db.read((q) => [reviewItem(q, item('a-li'), PROFILE), reviewItem(q, item('a-li-letter'), PROFILE)])
+
+  assert.ok(withNote?.kind === 'rewritten')
+  assert.equal(withNote.rewrite.before, 'The old note.')
+  assert.ok(withoutNote?.kind === 'rewritten')
+  assert.equal(withoutNote.rewrite.before, 'A letter sent as the message.')
+})
+
 test('C1 views: ready outside the open batch, never the test one', async () => {
   using base = tempBase()
   const db = await queueStore(base)

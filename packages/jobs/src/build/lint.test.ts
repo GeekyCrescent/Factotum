@@ -216,6 +216,20 @@ test('too long: a letter (not an email) over 220 words, a LinkedIn note over 280
   ])
 })
 
+test('too long on the linkedin channel: the note is what is sent, so a long letter beside it is not measured', () => {
+  // The seed's L5 class and the Quillio card: a 1,074-character letter next to a short note.
+  const LETTER = 'x'.repeat(1074)
+  const artifacts: Artifacts = { ...letter(LETTER, null), linkedin: 'A short note.' }
+  assert.deepEqual(only(lint(artifacts, { ...CTX, channel: 'linkedin', to: null }), 'too-long'), [])
+  const longNote: Artifacts = { ...artifacts, linkedin: 'n'.repeat(281) }
+  assert.deepEqual(only(lint(longNote, { ...CTX, channel: 'linkedin', to: null }), 'too-long'), [notice('too-long', 'linkedin', 'LinkedIn note 281 characters (at most 280)')])
+})
+
+test('too long on the linkedin channel with no note: the letter is the message sent, against 280 characters', () => {
+  const artifacts: Artifacts = { ...letter('y'.repeat(281), null), linkedin: null }
+  assert.deepEqual(only(lint(artifacts, { ...CTX, channel: 'linkedin', to: null }), 'too-long'), [notice('too-long', 'letter', 'LinkedIn note 281 characters (at most 280)')])
+})
+
 // — Phone —
 
 test('phone: an empty phone blocks the CV, whose contact needs it', () => {
