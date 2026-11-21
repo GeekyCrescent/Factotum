@@ -2,37 +2,52 @@
  * A rewritten item, as data (spec 2026-11-12-postulaciones, design D15 «Reescrita»; requirements
  * crit. 30, 32; A4). Pure: `rewritten.tsx` draws what this says.
  *
- * BACK: the tag «rewritten · "<instruction>"», the word diff of the text before against the text now,
- * and «212 → 158 words». FAILED (three tries, A4): «rewrite failed · "<instruction>"» with the short
+ * BACK: the tag «rewritten · "<instruction>"», «212 → 158 words» and «Show changes». By default no
+ * diff: the card's letter below already shows the new text clean, exactly as it would be sent.
+ * «Show changes» draws the word diff of the text before against the text now (`diffParts`, every word
+ * apart from its neighbour) with a one-line legend; «Hide changes» puts it away. FAILED (three tries, A4): «rewrite failed · "<instruction>"» with the short
  * reason, the version before with no diff, and «Try again» with the same instruction in the box.
  */
 
 import type { ReviewItem, RewriteInfo } from './contract.ts'
-import { countLine, wordDiff, type DiffPart } from './diff.ts'
+import { countLine, diffParts, type DiffPart } from './diff.ts'
 
 export interface RewrittenView {
   readonly tag: string
   readonly failed: boolean
   readonly reason: string | null
-  /** null: nothing to compare (failed, or a text missing). */
+  /** null: changes hidden (the default), or nothing to compare (failed, or a text missing). */
   readonly parts: readonly DiffPart[] | null
   readonly count: string | null
+  /** «Show changes» / «Hide changes»; null when there is nothing to compare. */
+  readonly toggle: string | null
+  /** «struck = removed, underlined = added», while the changes show. */
+  readonly legend: string | null
   /** «Try again» writes this in the box; null = no «Try again». */
   readonly retry: string | null
 }
 
-export function rewrittenView(rewrite: RewriteInfo, after: string | null): RewrittenView {
+export const SHOW_CHANGES = 'Show changes'
+export const HIDE_CHANGES = 'Hide changes'
+export const DIFF_LEGEND = 'struck = removed, underlined = added'
+
+export function rewrittenView(rewrite: RewriteInfo, after: string | null, showChanges = false): RewrittenView {
   const quoted = rewrite.instruction === null ? '' : ` · “${rewrite.instruction}”`
   if (rewrite.failed) {
-    return { tag: `rewrite failed${quoted}`, failed: true, reason: rewrite.reason, parts: null, count: null, retry: rewrite.instruction }
+    return { tag: `rewrite failed${quoted}`, failed: true, reason: rewrite.reason, parts: null, count: null, toggle: null, legend: null, retry: rewrite.instruction }
   }
-  const comparable = rewrite.before !== null && after !== null
+  const tag = `rewritten${quoted}`
+  if (rewrite.before === null || after === null) {
+    return { tag, failed: false, reason: null, parts: null, count: null, toggle: null, legend: null, retry: null }
+  }
   return {
-    tag: `rewritten${quoted}`,
+    tag,
     failed: false,
     reason: null,
-    parts: comparable ? wordDiff(rewrite.before ?? '', after ?? '') : null,
-    count: comparable ? countLine(rewrite.before ?? '', after ?? '') : null,
+    parts: showChanges ? diffParts(rewrite.before, after) : null,
+    count: countLine(rewrite.before, after),
+    toggle: showChanges ? HIDE_CHANGES : SHOW_CHANGES,
+    legend: showChanges ? DIFF_LEGEND : null,
     retry: null,
   }
 }

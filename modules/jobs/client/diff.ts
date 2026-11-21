@@ -33,28 +33,105 @@ function append(parts: readonly DiffPart[], kind: DiffPart['kind'], text: string
   return [...parts, { kind, text }]
 }
 
-export function wordDiff(before: string, after: string): readonly DiffPart[] {
+/** One part per token, unmerged: the walk of the LCS table. */
+function tokenOps(before: string, after: string): readonly DiffPart[] {
   const a = tokens(before)
   const b = tokens(after)
   const table = suffixTable(a, b)
   const at = (i: number, j: number): number => table[i]?.[j] ?? 0
-  let parts: readonly DiffPart[] = []
+  const ops: DiffPart[] = []
   let i = 0
   let j = 0
   while (i < a.length || j < b.length) {
     if (i < a.length && j < b.length && a[i] === b[j]) {
-      parts = append(parts, 'same', a[i] as string)
+      ops.push({ kind: 'same', text: a[i] as string })
       i += 1
       j += 1
     } else if (i < a.length && (j >= b.length || at(i + 1, j) >= at(i, j + 1))) {
-      parts = append(parts, 'del', a[i] as string)
+      ops.push({ kind: 'del', text: a[i] as string })
       i += 1
     } else {
-      parts = append(parts, 'add', b[j] as string)
+      ops.push({ kind: 'add', text: b[j] as string })
       j += 1
     }
   }
-  return parts
+  return ops
+}
+
+const merged = (parts: readonly DiffPart[]): readonly DiffPart[] =>
+  parts.reduce<readonly DiffPart[]>((done, part) => (part.text === '' ? done : append(done, part.kind, part.text)), [])
+
+/** The exact diff: same+add joined is `after`, same+del joined is `before`. */
+export function wordDiff(before: string, after: string): readonly DiffPart[] {
+  return merged(tokenOps(before, after))
+}
+
+const isSpace = (token: string): boolean => /^\s+$/.test(token)
+const leading = (text: string): string => /^\s*/.exec(text)?.[0] ?? ''
+const trailing = (text: string): string => /\s*$/.exec(text)?.[0] ?? ''
+
+/** Where the change starting at `start` ends (exclusive): changes joined by the spaces between them. */
+function changeEnd(ops: readonly DiffPart[], start: number): number {
+  let end = start + 1
+  for (;;) {
+    const next = ops[end]
+    if (next === undefined) return end
+    if (next.kind !== 'same') end += 1
+    else if (isSpace(next.text) && ops[end + 1] !== undefined && ops[end + 1]?.kind !== 'same') end += 2
+    else return end
+  }
+}
+
+/**
+ * One change as drawn: everything struck, a space, everything added — the layout (line breaks) of the
+ * new text around it, or of the old one when the new has none.
+ */
+function changeParts(change: readonly DiffPart[]): readonly DiffPart[] {
+  const oldRaw = change.filter((op) => op.kind !== 'add').map((op) => op.text).join('')
+  const newRaw = change.filter((op) => op.kind !== 'del').map((op) => op.text).join('')
+  const removed = oldRaw.trim()
+  const added = newRaw.trim()
+  if (removed === '' && added === '') return [{ kind: 'same', text: newRaw === '' ? oldRaw : newRaw }]
+  return [
+    { kind: 'same', text: leading(newRaw) || leading(oldRaw) },
+    { kind: 'del', text: removed },
+    { kind: 'same', text: removed !== '' && added !== '' ? ' ' : '' },
+    { kind: 'add', text: added },
+    { kind: 'same', text: trailing(newRaw) || trailing(oldRaw) },
+  ]
+}
+
+/** A space between any two parts that would otherwise meet word to word. */
+function spaced(parts: readonly DiffPart[]): readonly DiffPart[] {
+  return parts.flatMap((part, at) => {
+    const left = parts[at - 1]
+    const touches = left !== undefined && /\S$/.test(left.text) && /^\S/.test(part.text)
+    return touches ? [{ kind: 'same', text: ' ' } as const, part] : [part]
+  })
+}
+
+/**
+ * The diff as the card draws it (design D15): each change is the struck old run, a space, the added
+ * run, and no two words of neighbouring parts ever touch — the whitespace the exact diff spends on
+ * keeping both texts whole is not what a reader needs. Spacing aside, dropping the `del` parts still
+ * reads the new text, and dropping the `add` parts the old one.
+ */
+export function diffParts(before: string, after: string): readonly DiffPart[] {
+  const ops = tokenOps(before, after)
+  const drawn: DiffPart[] = []
+  let at = 0
+  while (at < ops.length) {
+    const op = ops[at] as DiffPart
+    if (op.kind === 'same') {
+      drawn.push(op)
+      at += 1
+    } else {
+      const end = changeEnd(ops, at)
+      drawn.push(...changeParts(ops.slice(at, end)))
+      at = end
+    }
+  }
+  return merged(spaced(merged(drawn)))
 }
 
 export function wordCount(text: string): number {

@@ -225,15 +225,37 @@
   justify-self: start;
 }
 
+.j-rewrite-count {
+  font-weight: 400;
+}
+
+.j-rewrite-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.j-diff-legend {
+  margin: 0;
+  font-size: var(--text-small);
+}
+
 .j-diff .add {
   color: var(--ok);
-  text-decoration: none;
-  background: color-mix(in oklch, var(--ok) 14%, transparent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  background: color-mix(in oklch, var(--ok) 12%, transparent);
 }
 
 .j-diff .del {
-  color: var(--err);
+  color: color-mix(in oklch, var(--err) 70%, var(--text-2));
   text-decoration: line-through;
+  background: color-mix(in oklch, var(--err) 8%, transparent);
 }
 
 .j-labels {
